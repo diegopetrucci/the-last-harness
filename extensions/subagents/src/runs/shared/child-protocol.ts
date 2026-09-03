@@ -5,7 +5,8 @@
  * end of the pipe is not trusted. Keep bytes bounded before decoding/parsing,
  * and only expose protocol events after their consumed fields have been
  * validated. Stderr is diagnostic data: retain a bounded UTF-8 tail while
- * allowing the durable transcript/output stream to receive the raw bytes.
+ * allowing the async output stream to receive raw bytes. The optional debug
+ * profile also records those bytes in the diagnostic child transcript.
  */
 
 import { Buffer } from "node:buffer";
@@ -206,8 +207,8 @@ export interface BoundedMessageLedger {
 
 /**
  * Retain recent validated messages without allowing a chatty child to grow the
- * parent process indefinitely. Durable JSONL/transcript writers receive the
- * raw line before this in-memory retention policy is applied.
+ * parent process indefinitely. When configured, JSONL/transcript writers
+ * receive the raw line before this in-memory retention policy is applied.
  */
 export function appendBoundedChildMessage(
   messages: Message[],
@@ -291,7 +292,7 @@ export function parseChildProtocolLine(line: string): ChildProtocolEvent | undef
 
 /** Format a bounded protocol overflow without embedding unbounded child data. */
 export function formatProtocolOutputLimit(limit: ProtocolOutputLimit): string {
-  return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline).`;
+  return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline); the line is not retained in full: a bounded prefix and tail remain in the protocol_output_limit record, and subsequent input on that stream is dropped. Inspect the bounded result/session diagnostics, and set artifacts.mode to "debug" before reproducing if the surrounding child protocol is required.`;
 }
 
 function sliceUtf8Prefix(value: string, maxBytes: number): string {
@@ -590,10 +591,10 @@ export function formatBoundedRawStdout(prefix: BoundedBytePrefix): string {
 
 /** Describe a non-fatal stderr tail overflow for diagnostic event logs. */
 export function formatStderrTailOverflow(tail: BoundedByteTail): string {
-  return `stderr truncated: child output exceeded ${tail.maxBytes()} bytes; retained the bounded tail in this result (and the transcript artifact when enabled).`;
+  return `stderr truncated: child output exceeded ${tail.maxBytes()} bytes; the bounded tail remains available in this result. Inspect the existing async output-N.log for the raw stderr stream. Set artifacts.mode to "debug" before reproducing only if the diagnostic child transcript or surrounding child protocol is needed.`;
 }
 
 /** Describe a non-fatal stderr line overflow for diagnostic event logs. */
 export function formatStderrLineOverflow(limit: ProtocolOutputLimit): string {
-  return `stderr overflow: a child stderr line exceeded ${limit.limitBytes} bytes; stderr events after that line may be omitted while the bounded tail remains available.`;
+  return `stderr overflow: a child stderr line exceeded ${limit.limitBytes} bytes; this line and later per-line stderr events are omitted from events.jsonl while the bounded tail remains available. Inspect the existing async output-N.log for the raw stderr stream. Set artifacts.mode to "debug" before reproducing only if the diagnostic child transcript or surrounding child protocol is needed.`;
 }

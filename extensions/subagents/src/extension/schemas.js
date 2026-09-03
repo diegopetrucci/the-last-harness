@@ -87,6 +87,8 @@ const SubagentParamsSchema = Type.Object({
         description: "Optional run-level timeout in ms for foreground and async/background runs.",
     })),
     cwd: Type.Optional(Type.String()),
-    artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
+    artifacts: Type.Optional(Type.Boolean({
+        description: "Write per-child run artifacts (default: true)",
+    })),
 }, { additionalProperties: false });
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);

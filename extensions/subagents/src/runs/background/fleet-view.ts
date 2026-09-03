@@ -345,7 +345,7 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
     );
     lines.push(`  status: subagent({ action: "status", id: "${runId}" })`);
     lines.push(
-      "  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.",
+      "  status transcript: live in the expanded foreground result; the canonical session appears after completion when sessions are enabled. This is not the optional _transcript.jsonl diagnostic artifact.",
     );
     lines.push(
       ...formatNestedRunStatusLines(control.nestedChildren, {
@@ -376,7 +376,9 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
       `- ${runId} | ${safeTerminalText(run.state)}${activity ? ` | ${activity}` : ""} | ${mode} | ${safeProgress}${pending} | ${safeCwd}`,
     );
     lines.push(`  status: subagent({ action: "status", id: "${runId}" })`);
-    lines.push(`  transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
+    lines.push(
+      `  status transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`,
+    );
     for (const step of run.steps) {
       const agent = safeTerminalText(step.agent);
       const stepActivity = formatActivityFacts(step);
@@ -394,7 +396,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
         lines.push(`    session: ${safeTerminalText(shortenPath(step.sessionFile))}`);
       if (step.status === "running" || step.recentOutput?.length || fs.existsSync(output)) {
         lines.push(
-          `    transcript: subagent({ action: "status", id: "${runId}", index: ${step.index}, view: "transcript" })`,
+          `    status transcript: subagent({ action: "status", id: "${runId}", index: ${step.index}, view: "transcript" })`,
         );
       }
       lines.push(
@@ -479,10 +481,10 @@ export function inspectSubagentFleet(
   lines.push("Commands:");
   lines.push('  Refresh fleet: subagent({ action: "status", view: "fleet" })');
   lines.push(
-    '  Tail run transcript: subagent({ action: "status", id: "<run-id>", view: "transcript" })',
+    '  Tail status transcript: subagent({ action: "status", id: "<run-id>", view: "transcript" })',
   );
   lines.push(
-    '  Tail child transcript: subagent({ action: "status", id: "<run-id>", index: 0, view: "transcript" })',
+    '  Tail child status transcript: subagent({ action: "status", id: "<run-id>", index: 0, view: "transcript" })',
   );
 
   return {
@@ -496,10 +498,10 @@ function validateTranscriptIndex(
   steps: AsyncJobStep[],
 ): number | undefined {
   if (index === undefined) return undefined;
-  if (!Number.isInteger(index)) throw new Error("Transcript index must be an integer.");
+  if (!Number.isInteger(index)) throw new Error("Status transcript index must be an integer.");
   if (index < 0 || index >= steps.length)
     throw new Error(
-      `Transcript index ${index} is out of range for ${steps.length} child step${steps.length === 1 ? "" : "s"}.`,
+      `Status transcript index ${index} is out of range for ${steps.length} child step${steps.length === 1 ? "" : "s"}.`,
     );
   return index;
 }
@@ -525,7 +527,7 @@ function selectTranscriptStep(
   const step = selectedIndex !== undefined ? steps[selectedIndex] : undefined;
   const hint =
     options.index === undefined && steps.length > 1
-      ? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
+      ? `Tip: pass index to inspect a specific child status transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
       : undefined;
   return { index: selectedIndex, step, hint };
 }
@@ -624,14 +626,14 @@ export function formatAsyncRunTranscript(
 
   const warnings: string[] = [];
   let transcriptLines: string[] = [];
-  let transcriptSource = "Transcript tail";
+  let transcriptSource = "Status transcript tail (retained output/session; not _transcript.jsonl)";
   let truncated = false;
   for (const outputPath of outputPaths) {
     const tail = readContainedTextTail(outputPath, lineLimit, [asyncDir], "output");
     if (tail.error) warnings.push(`Output read failed for ${tail.path}: ${tail.error}`);
     if (tail.lines.length === 0) continue;
     transcriptLines = tail.lines;
-    transcriptSource = `Transcript tail from ${tail.path}`;
+    transcriptSource = `Status transcript tail from ${tail.path} (not _transcript.jsonl)`;
     truncated = tail.truncated;
     break;
   }
@@ -648,7 +650,7 @@ export function formatAsyncRunTranscript(
     transcriptLines = sessionTail.lines;
     warnings.push(...sessionTail.warnings);
     if (transcriptLines.length > 0)
-      transcriptSource = `Session transcript tail from ${sessionFile}`;
+      transcriptSource = `Canonical session tail from ${sessionFile} (status transcript view)`;
   }
 
   if (warnings.length) {
@@ -680,7 +682,12 @@ export function formatNestedRunTranscript(
   ].filter((line): line is string => Boolean(line));
   appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
   if (!run.sessionFile) {
-    appendTranscriptBody(lines, "Transcript tail", [], false);
+    appendTranscriptBody(
+      lines,
+      "Status transcript tail (retained output/session; not _transcript.jsonl)",
+      [],
+      false,
+    );
     return safeTerminalDocument(lines.join("\n"));
   }
   const sessionTail = readSessionTranscriptTail(
@@ -694,7 +701,7 @@ export function formatNestedRunTranscript(
   }
   appendTranscriptBody(
     lines,
-    `Session transcript tail from ${run.sessionFile}`,
+    `Canonical session tail from ${run.sessionFile} (status transcript view)`,
     sessionTail.lines,
     false,
   );
@@ -744,11 +751,11 @@ export function formatAsyncResultTranscript(
       : [];
   let index = options.index;
   if (index !== undefined && !Number.isInteger(index))
-    throw new Error("Transcript index must be an integer.");
+    throw new Error("Status transcript index must be an integer.");
   if (index === undefined && children.length === 1) index = 0;
   if (index !== undefined && (index < 0 || index >= children.length))
     throw new Error(
-      `Transcript index ${index} is out of range for ${children.length} result child${children.length === 1 ? "" : "ren"}.`,
+      `Status transcript index ${index} is out of range for ${children.length} result child${children.length === 1 ? "" : "ren"}.`,
     );
   const child = index !== undefined ? children[index] : undefined;
   const output =
@@ -767,13 +774,13 @@ export function formatAsyncResultTranscript(
       ? `Child: ${index} (${safeTerminalText(child.agent ?? "subagent")})`
       : undefined,
     index === undefined && children.length > 1
-      ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${safeTerminalText(candidate.agent ?? "subagent")}`).join(", ")}).`
+      ? `Tip: pass index to inspect a specific child status transcript (${children.map((candidate, childIndex) => `${childIndex}=${safeTerminalText(candidate.agent ?? "subagent")}`).join(", ")}).`
       : undefined,
   ].filter((line): line is string => Boolean(line));
   appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
   appendTranscriptBody(
     lines,
-    "Result transcript tail",
+    "Result status transcript tail (retained result output; not _transcript.jsonl)",
     transcriptLines.filter((line) => line.trim()),
     output.split(/\r?\n/).length > lineLimit,
   );

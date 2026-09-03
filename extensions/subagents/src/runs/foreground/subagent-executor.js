@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { discoverAgentsWithProjectSnapshot, } from "../../agents/agents.js";
 import { PROJECT_AGENT_DIRECTORY, PROJECT_AGENT_PACKAGE, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
 import { resolveProjectAgentSnapshot, createProjectAgentRunCapture, projectAgentRunCaptureEquals, PROJECT_AGENT_TERMINAL_RETENTION_MS, normalizeProjectAgentRunCapture, retainProjectAgentRunReference, retainProjectAgentRunReferenceFrom, releaseProjectAgentRunReference, resolveProjectAgentRunReference, lookupProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
-import { getArtifactsDir } from "../../shared/artifacts.js";
+import { getArtifactsDir, resolveArtifactConfig } from "../../shared/artifacts.js";
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundPauseMessage, formatForegroundSupervisorPauseMessage, UNCHANGED_SUPERVISOR_RESUME_MESSAGE, } from "../../shared/foreground-pause.js";
 import { toModelInfo } from "../../shared/model-info.js";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
@@ -39,7 +39,7 @@ import { safeTerminalDocument, safeTerminalText } from "../../shared/display-tex
 import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { inspectSubagentStatus } from "../background/run-status.js";
-import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SUBAGENT_ACTIONS, TEMP_ROOT_DIR, SUBAGENT_CONTROL_EVENT, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, } from "../../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ACTIONS, TEMP_ROOT_DIR, SUBAGENT_CONTROL_EVENT, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, } from "../../shared/types.js";
 const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
 function readModelRegistrySnapshot(ctx) {
@@ -1363,7 +1363,7 @@ function resolveForegroundResumeTarget(params, state) {
         return undefined;
     const { run, index, child } = resolved;
     if (child.cancel?.cancelledAt)
-        throw new Error(`Foreground run '${run.runId}' child ${index} was cancelled while paused and cannot be resumed. Inspect status or transcript artifacts if needed.`);
+        throw new Error(`Foreground run '${run.runId}' child ${index} was cancelled while paused and cannot be resumed. Inspect status and any retained output/session artifacts if needed; compact mode may omit the diagnostic child transcript.`);
     if (!child.sessionFile)
         throw new Error(`Foreground run '${run.runId}' child ${index} does not have a persisted session file to resume from.`);
     if (path.extname(child.sessionFile) !== ".jsonl")
@@ -1967,7 +1967,7 @@ function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index) {
             content: [
                 {
                     type: "text",
-                    text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing artifacts and transcript were preserved; resume is no longer available for that child.`,
+                    text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing enabled artifacts and the canonical child session were preserved; compact mode may omit the diagnostic child transcript. Resume is no longer available for that child.`,
                 },
             ],
             details: { mode: "management", results: [] },
@@ -3332,10 +3332,6 @@ async function resumeAsyncRun(input) {
         };
     }
     const runId = continuationRunId;
-    const artifactConfig = {
-        ...DEFAULT_ARTIFACT_CONFIG,
-        enabled: input.params.artifacts !== false,
-    };
     const artifactsDir = getArtifactsDir(parentSessionFile);
     const resumeModelResolution = buildResumeModelResolution(target, input.params.model);
     const restoredModelIdentity = explicitResumeModel(input.params.model) || target.kind !== "revive"
@@ -3414,7 +3410,7 @@ async function resumeAsyncRun(input) {
             cwd: effectiveCwd,
             maxOutput: input.params.maxOutput,
             artifactsDir,
-            artifactConfig,
+            artifactConfig: input.artifactConfig,
             shareEnabled: input.params.share === true,
             sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
             sessionFile: target.sessionFile,
@@ -4762,7 +4758,7 @@ function executeStatusAction(params, ctx, deps) {
                             content: [
                                 {
                                     type: "text",
-                                    text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+                                    text: "Live foreground status transcript is already visible in the expanded running subagent result. The canonical session becomes inspectable after the foreground run completes when sessions are enabled; this view is not the optional _transcript.jsonl diagnostic artifact.",
                                 },
                             ],
                             details: { mode: "management", results: [] },
@@ -4790,7 +4786,7 @@ function executeStatusAction(params, ctx, deps) {
                 content: [
                     {
                         type: "text",
-                        text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+                        text: "Live foreground status transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background status transcript; neither view is the optional _transcript.jsonl diagnostic artifact.",
                     },
                 ],
                 details: { mode: "management", results: [] },
@@ -5189,6 +5185,7 @@ async function executeInterruptAction(params, ctx, deps) {
     };
 }
 export function createSubagentExecutor(deps) {
+    const configuredArtifactConfig = deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
     const execute = async (_id, params, signal, onUpdate, ctx) => {
         deps.state.baseCwd = ctx.cwd;
         deps.state.foregroundRuns ??= new Map();
@@ -5210,7 +5207,16 @@ export function createSubagentExecutor(deps) {
             if (action === "status")
                 return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
             if (action === "resume") {
-                return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+                return resumeAsyncRun({
+                    params: paramsWithResolvedCwd,
+                    requestCwd,
+                    ctx,
+                    deps,
+                    artifactConfig: {
+                        ...configuredArtifactConfig,
+                        enabled: paramsWithResolvedCwd.artifacts !== false,
+                    },
+                });
             }
             if (action === "steer")
                 return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
@@ -5290,7 +5296,7 @@ export function createSubagentExecutor(deps) {
         const effectiveAsync = requestedAsync;
         const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
         const artifactConfig = {
-            ...DEFAULT_ARTIFACT_CONFIG,
+            ...configuredArtifactConfig,
             enabled: effectiveParams.artifacts !== false,
         };
         const artifactsDir = getArtifactsDir(parentSessionFile);

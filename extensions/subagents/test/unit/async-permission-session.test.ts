@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
+import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
 
 function makeAgent(name: string): AgentConfig {
   return {
@@ -23,6 +24,7 @@ describe("async permission forwarding session identity", () => {
     const built = buildAsyncRunnerPlan("run-abc", {
       tasks: [{ agent: "worker", task: "Do work" }],
       agents: [makeAgent("worker")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: {
         pi: {} as never,
         cwd: "/tmp/project",
@@ -51,6 +53,7 @@ describe("async permission forwarding session identity", () => {
         makeAgent("reviewer"),
         { ...makeAgent("worker"), model: "anthropic/claude-sonnet-4-5:high", thinking: "high" },
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: {
         pi: {} as never,
         cwd: "/tmp/project",
@@ -89,6 +92,7 @@ describe("async permission forwarding session identity", () => {
           thinking: "high",
         },
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: {
         pi: {} as never,
         cwd: "/tmp/project",
@@ -133,6 +137,7 @@ describe("async permission forwarding session identity", () => {
           thinking: "high",
         },
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: {
         pi: {} as never,
         cwd: "/tmp/project",

@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { acceptChildMessageRequest, consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepChildMessage, stepSteerInboxDir, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest, } from "./control-channel.js";
-import { appendJsonl as appendRawJsonl, getArtifactPaths, writeArtifactWithFloor, } from "../../shared/artifacts.js";
+import { appendJsonl as appendRawJsonl, getArtifactPaths, resolveArtifactConfig, writeArtifactWithFloor, } from "../../shared/artifacts.js";
 import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot, } from "../shared/pi-spawn.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
@@ -250,8 +250,10 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                 writeOutputLine(line);
             }
         };
-        const appendChildEvent = (event) => {
+        const appendChildEvent = (event, category = "projection") => {
             if (!childEventContext)
+                return;
+            if (category === "projection" && childEventContext.includeChildEventProjections === false)
                 return;
             if (!shouldPersistChildEvent(event))
                 return;
@@ -346,7 +348,7 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                 appendChildEvent({
                     type: "subagent.child.stderr.truncated",
                     message: formatStderrTailOverflow(stderrTail),
-                });
+                }, "runner-diagnostic");
             }
             if (chunk.length > 0)
                 wroteHumanReadableOutput = true;
@@ -548,7 +550,7 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                 appendChildEvent({
                     type: "subagent.child.stderr.overflow",
                     message: formatStderrLineOverflow(limit),
-                });
+                }, "runner-diagnostic");
             },
         });
         child.stdout.on("data", (chunk) => {
@@ -1468,6 +1470,7 @@ async function runSingleStep(step, ctx) {
             runId: stepCtx.id,
             stepIndex: stepCtx.flatIndex,
             agent: step.agent,
+            includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
         }, stepCtx.registerInterrupt, stepCtx.onChildEvent, setup.transcriptWriter, stepCtx.registerTimeout, stepCtx.timeoutMessage, stepCtx.onChildProtocolOutputLimit, {
             restored: setup.restoredSession,
             configuredModel: candidate,
@@ -1650,7 +1653,8 @@ async function runSubagent(config) {
         persistMissingRunPlanFailure(config, error);
         throw new Error(error);
     }
-    return runSubagentWithInput({ ...config, plan }, plan);
+    const artifactConfig = resolveArtifactConfig(config.artifactConfig, { legacy: true });
+    return runSubagentWithInput({ ...config, plan, artifactConfig }, plan);
 }
 async function runSubagentWithInput(config, plan) {
     const { id, resultPath, cwd, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;

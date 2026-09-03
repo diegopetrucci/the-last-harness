@@ -591,8 +591,9 @@ export function copyTlhSubagentPrompts(
  * (4m30).
  *
  * The default is added only when its setting is missing. Existing user values
- * and unrelated keys are left untouched. Re-running the installer is therefore
- * safe and will not clobber user edits.
+ * (including the human-owned artifacts.mode profile) and unrelated keys are
+ * left untouched. Re-running the installer is therefore safe and will not
+ * clobber user edits.
  *
  * Revert path: open <agentDir>/extensions/subagent/config.json and set
  * "control.activeNoticeAfterMs" to the value you want. Existing values are

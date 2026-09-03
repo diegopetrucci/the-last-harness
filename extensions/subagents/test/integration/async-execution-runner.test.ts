@@ -14,6 +14,7 @@ import {
   createEventBus,
   createMockPi,
   createTempDir,
+  events,
   makeAgent,
   makeMinimalCtx,
   removeTempDir,
@@ -26,6 +27,7 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
+import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
   ASYNC_DIR,
   type AsyncResultPayload,
@@ -48,6 +50,33 @@ import type {
   RunnerSubagentStep,
   SubagentRunConfig,
 } from "../../src/runs/shared/parallel-utils.ts";
+import type { ArtifactConfig } from "../../src/shared/types.ts";
+
+type PersistedEventArtifactConfig = ArtifactConfig & {
+  /** Internal field is absent from legacy runner envelopes. */
+  includeChildEventProjections?: boolean;
+};
+
+type PersistedEventRunnerConfig = Omit<SubagentRunConfig, "artifactConfig"> & {
+  artifactConfig: PersistedEventArtifactConfig;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readEventTypes(asyncDir: string): string[] {
+  const eventPath = path.join(asyncDir, "events.jsonl");
+  assert.ok(fs.existsSync(eventPath), "runner should persist an event log");
+  const text = fs.readFileSync(eventPath, "utf-8").trim();
+  assert.ok(text.length > 0, "event log should contain lifecycle records");
+  return text.split("\n").map((line, index) => {
+    const parsed: unknown = JSON.parse(line);
+    if (!isRecord(parsed)) throw new Error(`event ${index} should be a JSON object`);
+    if (typeof parsed.type !== "string") throw new Error(`event ${index} should have a type`);
+    return parsed.type;
+  });
+}
 
 function inferredAcceptanceRejectionOutput(output: string): string {
   return [
@@ -1026,12 +1055,14 @@ describe("async execution utilities", () => {
       asyncDir,
       artifactsDir,
       artifactConfig: {
+        mode: "debug",
         enabled: true,
         includeInput: true,
         includeOutput: true,
         includeJsonl: true,
         includeMetadata: true,
         includeTranscript: true,
+        includeChildEventProjections: true,
         cleanupDays: 7,
       },
       sessionId: "session-invalid-tool-policy",
@@ -1075,6 +1106,199 @@ describe("async execution utilities", () => {
     );
   });
 
+  it("enforces the compact profile at the persisted runner boundary", () => {
+    const id = `async-persisted-compact-${Date.now().toString(36)}`;
+    const asyncDir = path.join(tempDir, id);
+    const resultPath = path.join(tempDir, `${id}-result.json`);
+    const configPath = path.join(tempDir, `${id}-config.json`);
+    const sessionFile = path.join(tempDir, `${id}-session.jsonl`);
+    const outputFile = path.join(asyncDir, "output-0.log");
+    mockPi.onCall({ output: "persisted compact result" });
+    const config: SubagentRunConfig = {
+      id,
+      plan: {
+        kind: "single",
+        task: {
+          agent: "worker",
+          task: "Inspect the persisted profile.",
+          inheritProjectContext: false,
+          inheritSkills: false,
+          sessionFile,
+        },
+      },
+      resultPath,
+      cwd: tempDir,
+      asyncDir,
+      artifactsDir: path.join(tempDir, `${id}-artifacts`),
+      piArgv1: path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs"),
+      // Contradictory legacy flags must not escalate an explicit compact mode.
+      artifactConfig: {
+        mode: "compact",
+        enabled: true,
+        includeInput: true,
+        includeOutput: true,
+        includeJsonl: true,
+        includeMetadata: true,
+        includeTranscript: true,
+        includeChildEventProjections: false,
+        cleanupDays: 7,
+      },
+      sessionId: `session-${id}`,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+
+    const persisted: unknown = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    if (!isRecord(persisted)) throw new Error("persisted runner config should be an object");
+    if (!isRecord(persisted.artifactConfig))
+      throw new Error("persisted runner config should include artifactConfig");
+    assert.equal(persisted.artifactConfig.mode, "compact");
+
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+
+    assert.equal(runner.status, 0, runner.stderr);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const artifactPaths = payload.results[0]?.artifactPaths;
+    assert.ok(artifactPaths, "compact runner result should retain artifact paths");
+    assert.equal(status.runId, id);
+    assert.equal(status.mode, "single");
+    assert.equal(status.state, "complete");
+    assert.equal(status.sessionFile, sessionFile);
+    assert.equal(status.steps?.[0]?.sessionFile, sessionFile);
+    assert.equal(status.steps?.[0]?.transcriptPath, undefined);
+    assert.equal(status.outputFile, outputFile);
+    assert.equal(fs.existsSync(outputFile), true);
+    assert.match(fs.readFileSync(outputFile, "utf-8"), /persisted compact result/);
+    assert.equal(payload.id, id);
+    assert.equal(payload.mode, status.mode);
+    assert.equal(payload.state, status.state);
+    assert.equal(payload.asyncDir, asyncDir);
+    assert.equal(payload.results[0]?.sessionFile, sessionFile);
+    assert.equal(fs.existsSync(artifactPaths.inputPath), false);
+    assert.equal(fs.existsSync(artifactPaths.transcriptPath), false);
+    assert.equal(fs.existsSync(artifactPaths.jsonlPath), false);
+    assert.equal(fs.existsSync(artifactPaths.outputPath), true);
+    assert.match(fs.readFileSync(artifactPaths.outputPath, "utf-8"), /persisted compact result/);
+    assert.equal(fs.existsSync(artifactPaths.metadataPath), true);
+    assert.equal(payload.results[0]?.transcriptPath, undefined);
+  });
+
+  it("suppresses compact child projections while retaining detailed legacy event logs", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const piArgv1 = path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs");
+    const runProfile = (
+      label: string,
+      artifactConfig: PersistedEventArtifactConfig,
+    ): { asyncDir: string; eventTypes: string[]; output: string } => {
+      const id = `async-event-projections-${label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      mockPi.onCall({
+        jsonl: [
+          events.toolStart("read", { path: "fixture.txt" }),
+          events.toolEnd("read"),
+          events.toolResult("read", "tool result"),
+          events.assistantMessage("canonical result"),
+          { type: "future_child_event", payload: "unknown" },
+          "raw child stdout",
+        ],
+        stderr: "raw child stderr\n",
+      });
+      const config: PersistedEventRunnerConfig = {
+        id,
+        plan: {
+          kind: "single",
+          task: {
+            agent: "worker",
+            task: "Exercise event projection policy.",
+            inheritProjectContext: false,
+            inheritSkills: false,
+          },
+        },
+        resultPath,
+        cwd: tempDir,
+        asyncDir,
+        artifactConfig,
+        piArgv1,
+        sessionId: `session-${id}`,
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+      const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env: { ...process.env },
+      });
+      assert.equal(runner.status, 0, `${label}: ${runner.stderr}`);
+      const outputPath = path.join(asyncDir, "output-0.log");
+      assert.ok(fs.existsSync(outputPath), `${label}: runner should preserve output log`);
+      return {
+        asyncDir,
+        eventTypes: readEventTypes(asyncDir),
+        output: fs.readFileSync(outputPath, "utf-8"),
+      };
+    };
+
+    const compact = runProfile("compact", resolveArtifactConfig({ mode: "compact" }));
+    assert.deepEqual(compact.eventTypes, [
+      "subagent.run.started",
+      "subagent.step.started",
+      "subagent.step.completed",
+      "subagent.run.completed",
+    ]);
+    assert.match(compact.output, /canonical result/);
+    assert.match(compact.output, /raw child stdout/);
+    assert.match(compact.output, /raw child stderr/);
+
+    const debug = runProfile("debug", resolveArtifactConfig({ mode: "debug" }));
+    const debugProjectionTypes = [
+      "message_end",
+      "tool_execution_start",
+      "tool_execution_end",
+      "tool_result_end",
+      "future_child_event",
+      "subagent.child.stdout",
+      "subagent.child.stderr",
+    ];
+    for (const type of debugProjectionTypes) {
+      assert.ok(debug.eventTypes.includes(type), `debug event log should include ${type}`);
+    }
+    assert.ok(debug.eventTypes.includes("subagent.run.started"));
+    assert.ok(debug.eventTypes.includes("subagent.run.completed"));
+
+    const legacyArtifactConfig: PersistedEventArtifactConfig = {
+      // In-flight runs from the artifact-profile rollout have a mode but not
+      // the child-projection flag introduced by this ticket.
+      mode: "compact",
+      enabled: true,
+      includeInput: true,
+      includeOutput: true,
+      includeJsonl: true,
+      includeTranscript: true,
+      includeMetadata: true,
+      cleanupDays: 7,
+    };
+    const legacy = runProfile("legacy", legacyArtifactConfig);
+    assert.deepEqual(
+      new Set(legacy.eventTypes),
+      new Set(debug.eventTypes),
+      "legacy envelopes without the internal flag should retain detailed projections",
+    );
+  });
+
   it("sanitizes persisted fallback notices in both initial status step projections", async () => {
     const id = `async-persisted-fallback-notice-${Date.now().toString(36)}`;
     const asyncDir = path.join(tempDir, id);
@@ -1107,6 +1331,17 @@ describe("async execution utilities", () => {
       resultPath,
       cwd: tempDir,
       asyncDir,
+      artifactConfig: {
+        mode: "compact",
+        enabled: true,
+        includeInput: false,
+        includeOutput: true,
+        includeJsonl: false,
+        includeMetadata: true,
+        includeTranscript: false,
+        includeChildEventProjections: false,
+        cleanupDays: 7,
+      },
       piArgv1: path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs"),
       sessionId: "session-persisted-fallback-notice",
     };

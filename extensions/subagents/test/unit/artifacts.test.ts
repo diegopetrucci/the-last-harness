@@ -8,9 +8,97 @@ import {
   getArtifactsDir,
   getProjectArtifactsDir,
   getProjectSubagentsDir,
+  resolveArtifactConfig,
   writeArtifactWithFloor,
 } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
+
+describe("artifact profile resolution", () => {
+  it("defaults external settings to compact and keeps the caller switch separate", () => {
+    assert.deepEqual(resolveArtifactConfig(undefined), {
+      mode: "compact",
+      enabled: true,
+      includeInput: false,
+      includeOutput: true,
+      includeJsonl: false,
+      includeTranscript: false,
+      includeChildEventProjections: false,
+      includeMetadata: true,
+      cleanupDays: 7,
+    });
+    assert.equal(resolveArtifactConfig(undefined, { enabled: false }).enabled, false);
+    assert.equal(resolveArtifactConfig(undefined, { enabled: false }).mode, "compact");
+  });
+
+  it("restores input/transcript only for explicit debug mode", () => {
+    const resolved = resolveArtifactConfig({
+      mode: "debug",
+      includeInput: false,
+      includeTranscript: false,
+      includeJsonl: true,
+    });
+    assert.equal(resolved.mode, "debug");
+    assert.equal(resolved.includeInput, true);
+    assert.equal(resolved.includeTranscript, true);
+    assert.equal(resolved.includeChildEventProjections, true);
+    assert.equal(resolved.includeJsonl, false);
+  });
+
+  it("falls back to compact for invalid modes and warns only once", () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(String(args[0]));
+    try {
+      assert.equal(resolveArtifactConfig({ mode: "verbose" }).mode, "compact");
+      assert.equal(resolveArtifactConfig({ mode: "trace" }).mode, "compact");
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.deepEqual(warnings, [
+      "[pi-subagents] Invalid artifacts.mode; using compact artifact mode.",
+    ]);
+  });
+
+  it("keeps detailed behavior for historical persisted configs without a mode", () => {
+    const resolved = resolveArtifactConfig(
+      {
+        enabled: true,
+        includeInput: true,
+        includeOutput: true,
+        includeJsonl: true,
+        includeTranscript: true,
+        includeMetadata: true,
+        cleanupDays: 3,
+      },
+      { legacy: true },
+    );
+    assert.equal(resolved.mode, "debug");
+    assert.equal(resolved.includeInput, true);
+    assert.equal(resolved.includeTranscript, true);
+    assert.equal(resolved.includeChildEventProjections, true);
+    assert.equal(resolved.includeJsonl, true);
+    assert.equal(resolved.cleanupDays, 3);
+  });
+
+  it("keeps detailed child projections for in-flight compact configs without the internal flag", () => {
+    const resolved = resolveArtifactConfig(
+      {
+        mode: "compact",
+        enabled: true,
+        includeInput: false,
+        includeOutput: true,
+        includeJsonl: false,
+        includeTranscript: false,
+        includeMetadata: true,
+        cleanupDays: 7,
+      },
+      { legacy: true },
+    );
+    assert.equal(resolved.mode, "compact");
+    assert.equal(resolved.includeChildEventProjections, true);
+    assert.equal(resolved.includeTranscript, false);
+  });
+});
 
 describe("project-local artifact paths", () => {
   it("places generated subagent files under .pi-subagents for a project cwd", () => {

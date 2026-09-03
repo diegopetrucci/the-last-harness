@@ -19,6 +19,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Subagent run artifacts now use the compact profile by default: output, metadata, lifecycle data, and canonical child sessions remain available while task inputs, diagnostic child transcripts, and high-volume child-event projections are omitted. Set the human-owned `artifacts.mode` to `debug` in the isolated subagent config before reproducing a failure that needs exact child protocol or raw stderr; installs and updates preserve that setting.
 - Architect implementation tickets continue to route to `developer`, while a separate final-validation ticket with exact commands derived from `VALIDATING.md` or repository discovery routes to the command-only `test-runner`; ticket-local developer validation remains required and the final runner does not edit, install dependencies, fix failures, or change tickets.
 - TLH-primary project custom delegation follows the live OpenRouter session model when the caller omits `model`, overriding a root file's model; other providers keep the root file's model unless the caller explicitly overrides it.
 - TLH no longer installs `subagents.agentDirs` for canonical minor agents. The nine canonical minor roles load from the fixed installer-managed `<agent-dir>/tlh/agents/subagents/` paths; existing user/project `agentDirs` values are preserved by install/update but are inert for TLH role discovery and may be removed manually.
@@ -36,7 +37,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Child `tools` policies now preserve three states: omitted inherits Pi defaults; explicit empty/MCP-only disables tools (while runtime-required tools are added); named and extension-path entries are translated to exact allowlists or `--no-builtin-tools`, and lazy-skill path-only declarations fail early with guidance.
 - Malformed custom-agent markdown is isolated from discovery: invalid definitions are skipped without hiding valid agents, and list/unknown-agent diagnostics identify the source path and validation error.
 - Child-derived terminal text is sanitized only at display boundaries (including terminal controls and binary-looking content); durable transcripts, output artifacts, metadata, and logs retain unsanitized values subject to their existing retention limits.
-- Child protocol input is validated and bounded; oversized protocol lines terminate deterministically with `protocol_output_limit` using SIGTERM followed by bounded SIGKILL escalation, while stderr diagnostics remain bounded and raw transcript bytes are retained.
+- Child protocol input is validated and bounded; oversized protocol lines terminate deterministically with `protocol_output_limit` using SIGTERM followed by bounded SIGKILL escalation, while stderr diagnostics remain bounded and debug-mode diagnostic transcript bytes are retained when requested.
 - Acceptance parsing now ignores blank evidence entries and preserves saved-output references when an otherwise successful run is rejected; acceptance failures remain visible alongside bounded child diagnostics.
 - Fallback selection now filters only positively unavailable known models with complete registry evidence, keeps uncertain or unknown fallbacks, and retries only classified provider/transient failures rather than deterministic child-tool failures.
 

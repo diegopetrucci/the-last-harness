@@ -78,6 +78,8 @@ describe("registered subagent tool description", () => {
     assert.match(description, /keep one writer/i);
     assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
     assert.match(description, /affects inferred acceptance only, never tools?/i);
+    assert.match(description, /artifacts controls whether per-child run artifacts are written/i);
+    assert.doesNotMatch(description, /artifacts\.mode|\bdebug artifacts?\b/i);
 
     assert.match(description, /status\.json/);
     assert.match(description, /events\.jsonl/);

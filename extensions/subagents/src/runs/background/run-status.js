@@ -187,12 +187,12 @@ function formatRememberedForegroundStatus(run) {
         lines.push(parts.join(", "));
         if (child.pause?.kind !== "awaiting_supervisor") {
             if (child.transcriptPath)
-                lines.push(`  Transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`);
+                lines.push(`  Diagnostic transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`);
             if (child.artifactPaths?.outputPath)
                 lines.push(`  Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`);
         }
         if (child.transcriptError)
-            lines.push(`  Transcript warning: ${safeTerminalText(child.transcriptError)}`);
+            lines.push(`  Diagnostic transcript warning: ${safeTerminalText(child.transcriptError)}`);
         if (child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt) {
             lines.push(...formatForegroundSupervisorPauseMessage({
                 headline: `Child ${child.index + 1} is paused awaiting supervisor.`,
@@ -209,9 +209,9 @@ function formatRememberedForegroundStatus(run) {
     }
     lines.push("", `Status: subagent({ action: "status", id: "${runId}" })`);
     if (run.children.length === 1)
-        lines.push(`Transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
+        lines.push(`Status transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
     else
-        lines.push(`Transcript: subagent({ action: "status", id: "${runId}", index: 0, view: "transcript" })`);
+        lines.push(`Status transcript: subagent({ action: "status", id: "${runId}", index: 0, view: "transcript" })`);
     const resumable = run.children.find((child) => !child.cancel?.cancelledAt && hasExistingSessionFile(child.sessionFile));
     const awaitingSupervisor = run.children.some((child) => child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt);
     if (resumable && !awaitingSupervisor) {
@@ -220,7 +220,7 @@ function formatRememberedForegroundStatus(run) {
             : `Resume child with guidance: subagent({ action: "resume", id: "${runId}", index: ${resumable.index}, message: "..." })`);
     }
     else if (run.children.some((child) => child.cancel?.cancelledAt)) {
-        lines.push("Resume: unavailable; this paused foreground run was cancelled and kept its existing artifacts.");
+        lines.push("Resume: unavailable; this paused foreground run was cancelled and kept its retained output/session artifacts; compact mode may omit the diagnostic child transcript.");
     }
     else {
         lines.push("Resume: unavailable; no child session file was persisted.");
@@ -230,13 +230,13 @@ function formatRememberedForegroundStatus(run) {
 function formatRememberedForegroundTranscript(run, options) {
     let index = options.index;
     if (index !== undefined && !Number.isInteger(index))
-        throw new Error("Transcript index must be an integer.");
+        throw new Error("Status transcript index must be an integer.");
     if (index === undefined && run.children.length === 1)
         index = 0;
     if (index === undefined)
-        return `Transcript view requires index for foreground run '${safeTerminalText(run.runId)}' with ${run.children.length} children.`;
+        return `Status transcript view requires index for foreground run '${safeTerminalText(run.runId)}' with ${run.children.length} children.`;
     if (index < 0 || index >= run.children.length)
-        throw new Error(`Transcript index ${index} is out of range for ${run.children.length} foreground children.`);
+        throw new Error(`Status transcript index ${index} is out of range for ${run.children.length} foreground children.`);
     const child = run.children[index];
     const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
     const outputLines = safeTerminalText(rememberedForegroundChildOutput(child))
@@ -248,13 +248,13 @@ function formatRememberedForegroundTranscript(run, options) {
         `State: ${safeTerminalText(child.cancel?.cancelledAt ? "cancelled" : child.status)}`,
         `Child: ${index} (${safeTerminalText(child.agent)})`,
         child.transcriptPath
-            ? `Transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`
+            ? `Diagnostic transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`
             : undefined,
         child.artifactPaths?.outputPath
             ? `Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`
             : undefined,
     ].filter((line) => Boolean(line));
-    lines.push("Result transcript tail:");
+    lines.push("Status transcript tail (retained output/session; not _transcript.jsonl):");
     if (outputLines.length === 0)
         lines.push("  (no recovered final output available yet)");
     else
@@ -514,8 +514,8 @@ export function inspectSubagentStatus(params, deps = {}) {
                         {
                             type: "text",
                             text: runs.length === 0
-                                ? "No active async run transcript is available."
-                                : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.`,
+                                ? "No active async run status transcript is available."
+                                : `Status transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.`,
                         },
                     ],
                     isError: true,
@@ -672,7 +672,7 @@ export function inspectSubagentStatus(params, deps = {}) {
                         content: [
                             {
                                 type: "text",
-                                text: "Transcript view is only available for async runs owned by the current session.",
+                                text: "Status transcript view is only available for async runs owned by the current session.",
                             },
                         ],
                         isError: true,

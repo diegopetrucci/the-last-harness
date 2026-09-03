@@ -599,7 +599,12 @@ export interface SingleResult {
   modelFallbackNotice?: string;
   controlEvents?: ControlEvent[];
   error?: string;
-  /** Bounded stderr tail retained for diagnostics; durable raw stderr stays in the transcript. */
+  /**
+   * Bounded stderr tail retained for diagnostics. Raw stderr is durable in
+   * async output-N.log and, when enabled, the debug child transcript;
+   * foreground runs retain only the bounded stderr tail unless debug is
+   * enabled.
+   */
   stderr?: string;
   stderrTruncated?: boolean;
   protocolOutputLimit?: ProtocolOutputLimit;
@@ -670,7 +675,15 @@ export interface ArtifactPaths {
   metadataPath: string;
 }
 
+export type ArtifactMode = "compact" | "debug";
+
+/**
+ * Resolved per-child artifact policy. `mode` remains optional for readers of
+ * historical detached-run configs written before artifact profiles existed;
+ * newly created configs always persist it explicitly.
+ */
 export interface ArtifactConfig {
+  mode?: ArtifactMode;
   enabled: boolean;
   includeInput: boolean;
   includeOutput: boolean;
@@ -678,6 +691,19 @@ export interface ArtifactConfig {
   includeTranscript?: boolean;
   includeMetadata: boolean;
   cleanupDays: number;
+}
+
+/** Fully resolved policy used for newly launched child executions. */
+export interface ResolvedArtifactConfig extends Omit<ArtifactConfig, "mode" | "includeTranscript"> {
+  mode: ArtifactMode;
+  includeTranscript: boolean;
+  /** Internal provenance gate for high-volume child-derived event projections. */
+  includeChildEventProjections: boolean;
+}
+
+/** Boundary-facing artifact settings: `mode` is the only consumed field. */
+export interface ExtensionArtifactConfig {
+  mode?: unknown;
 }
 
 // ============================================================================
@@ -1193,7 +1219,7 @@ export interface RunSyncOptions {
   controlConfig?: ResolvedControlConfig;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
-  artifactConfig?: ArtifactConfig;
+  artifactConfig?: ResolvedArtifactConfig;
   runId: string;
   index?: number;
   sessionDir?: string;
@@ -1243,6 +1269,9 @@ export interface ExtensionConfig {
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
   heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
+  artifacts?: ExtensionArtifactConfig;
+  /** Unknown settings remain tolerated and are preserved by the boundary reader. */
+  [key: string]: unknown;
 }
 
 // ============================================================================
@@ -1254,12 +1283,14 @@ export const DEFAULT_MAX_OUTPUT: Required<MaxOutputConfig> = {
   lines: 5000,
 };
 
-export const DEFAULT_ARTIFACT_CONFIG: ArtifactConfig = {
+export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
+  mode: "compact",
   enabled: true,
-  includeInput: true,
+  includeInput: false,
   includeOutput: true,
   includeJsonl: false,
-  includeTranscript: true,
+  includeTranscript: false,
+  includeChildEventProjections: false,
   includeMetadata: true,
   cleanupDays: 7,
 };

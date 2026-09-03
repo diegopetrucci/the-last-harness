@@ -14,6 +14,7 @@ import {
   RESULTS_DIR,
   SUBAGENT_ASYNC_STARTED_EVENT,
   type SubagentState,
+  DEFAULT_ARTIFACT_CONFIG,
 } from "../../src/shared/types.ts";
 import { makeAgent, makeAsyncCtx, makeMinimalCtx } from "../support/helpers.ts";
 import type { TextContent } from "@earendil-works/pi-ai";
@@ -167,12 +168,8 @@ describe("reviewed dispatch route preflight", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-reviewed-async-"));
     tempDirs.push(root);
     const artifactConfig = {
+      ...DEFAULT_ARTIFACT_CONFIG,
       enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeMetadata: false,
-      cleanupDays: 7,
     } as const;
     const singleId = `reviewed-single-${Date.now().toString(36)}`;
     const single = executeAsyncSingle(singleId, {

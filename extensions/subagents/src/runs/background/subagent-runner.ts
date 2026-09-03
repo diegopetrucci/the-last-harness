@@ -22,6 +22,7 @@ import {
 import {
   appendJsonl as appendRawJsonl,
   getArtifactPaths,
+  resolveArtifactConfig,
   writeArtifactWithFloor,
 } from "../../shared/artifacts.ts";
 import {
@@ -39,7 +40,6 @@ import {
 } from "../shared/single-output.ts";
 import {
   type ActivityState,
-  type ArtifactConfig,
   type ArtifactPaths,
   type AsyncResultArtifact,
   type AsyncStatus,
@@ -51,6 +51,7 @@ import {
   type ModelAttempt,
   type NestedRouteInfo,
   type NestedRunSummary,
+  type ResolvedArtifactConfig,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
@@ -383,7 +384,11 @@ interface ChildEventContext {
   runId: string;
   stepIndex: number;
   agent: string;
+  /** Undefined preserves detailed behavior for legacy/in-flight envelopes. */
+  includeChildEventProjections?: boolean;
 }
+
+type ChildEventCategory = "projection" | "runner-diagnostic";
 
 type ChildEvent = ChildProtocolEvent;
 
@@ -521,8 +526,13 @@ function runPiStreaming(
       }
     };
 
-    const appendChildEvent = (event: Record<string, unknown>) => {
+    const appendChildEvent = (
+      event: Record<string, unknown>,
+      category: ChildEventCategory = "projection",
+    ) => {
       if (!childEventContext) return;
+      if (category === "projection" && childEventContext.includeChildEventProjections === false)
+        return;
       if (!shouldPersistChildEvent(event)) return;
       appendDiagnosticJsonl(
         childEventContext.eventsPath,
@@ -543,9 +553,9 @@ function runPiStreaming(
       line: string,
     ) => {
       appendChildEvent({ type, line });
-      // Stderr is streamed to the transcript as raw chunks so split UTF-8 and
-      // line endings remain byte-faithful. Only stdout fallback lines need a
-      // direct transcript record here.
+      // When the debug transcript is enabled, stderr is streamed as raw chunks
+      // so split UTF-8 and line endings remain byte-faithful. Only stdout
+      // fallback lines need a direct transcript record here.
       if (type === "subagent.child.stdout") transcriptWriter?.writeStdoutLine(line);
     };
 
@@ -562,8 +572,9 @@ function runPiStreaming(
         return;
       }
       if (parsed.kind === "unknown") {
-        // Retain unknown object envelopes as diagnostics and raw transcript
-        // lines, but never pass their unchecked fields into orchestration logic.
+        // Treat unknown object envelopes as diagnostic/raw transcript
+        // projections when enabled, but never pass unchecked fields into
+        // orchestration logic.
         appendChildEvent(parsed.value);
         transcriptWriter?.writeStdoutLine(line);
         return;
@@ -635,10 +646,13 @@ function runPiStreaming(
       const wasTruncated = stderrTail.wasTruncated();
       stderrTail.push(chunk);
       if (!wasTruncated && stderrTail.wasTruncated()) {
-        appendChildEvent({
-          type: "subagent.child.stderr.truncated",
-          message: formatStderrTailOverflow(stderrTail),
-        });
+        appendChildEvent(
+          {
+            type: "subagent.child.stderr.truncated",
+            message: formatStderrTailOverflow(stderrTail),
+          },
+          "runner-diagnostic",
+        );
       }
       if (chunk.length > 0) wroteHumanReadableOutput = true;
       outputStream.write(chunk);
@@ -835,16 +849,20 @@ function runPiStreaming(
       maxPendingLineBytes: MAX_CHILD_STDERR_LINE_BYTES,
       onLine: (line) => {
         if (!line.trim()) return;
-        // Raw stderr is already streamed to the transcript; this is a bounded
-        // diagnostic projection for the async event log only.
+        // Raw stderr is streamed to output; the optional debug transcript also
+        // receives it. This is a bounded diagnostic projection for the async
+        // event log only.
         appendChildEvent({ type: "subagent.child.stderr", line });
       },
       onLimit: (limit) => {
         stderrLineOverflow = true;
-        appendChildEvent({
-          type: "subagent.child.stderr.overflow",
-          message: formatStderrLineOverflow(limit),
-        });
+        appendChildEvent(
+          {
+            type: "subagent.child.stderr.overflow",
+            message: formatStderrLineOverflow(limit),
+          },
+          "runner-diagnostic",
+        );
       },
     });
     child.stdout.on("data", (chunk: Buffer) => {
@@ -1131,7 +1149,7 @@ interface SingleStepContext {
   sessionEnabled: boolean;
   sessionDir?: string;
   artifactsDir?: string;
-  artifactConfig?: Partial<ArtifactConfig>;
+  artifactConfig: ResolvedArtifactConfig;
   id: string;
   flatIndex: number;
   flatStepCount: number;
@@ -2110,6 +2128,7 @@ async function runSingleStep(
         runId: stepCtx.id,
         stepIndex: stepCtx.flatIndex,
         agent: step.agent,
+        includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
       },
       stepCtx.registerInterrupt,
       stepCtx.onChildEvent,
@@ -2209,7 +2228,7 @@ type RunnerStatusPayload = Omit<
 
 function resolveAsyncStepTranscriptPath(input: {
   artifactsDir?: string;
-  artifactConfig?: Partial<ArtifactConfig>;
+  artifactConfig: ResolvedArtifactConfig;
   runId: string;
   agent: string;
   flatIndex: number;
@@ -2241,7 +2260,10 @@ const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR =
   "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
 const ASYNC_RUNNER_INVALID_CONFIG_ERROR = "Async runner config is malformed.";
 
-type RunnerConfigEnvelope = Omit<SubagentRunConfig, "plan"> & { plan?: unknown };
+type RunnerConfigEnvelope = Omit<SubagentRunConfig, "plan" | "artifactConfig"> & {
+  plan?: unknown;
+  artifactConfig?: unknown;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -2368,7 +2390,8 @@ async function runSubagent(config: RunnerConfigEnvelope): Promise<void> {
     persistMissingRunPlanFailure(config, error);
     throw new Error(error);
   }
-  return runSubagentWithInput({ ...config, plan }, plan);
+  const artifactConfig = resolveArtifactConfig(config.artifactConfig, { legacy: true });
+  return runSubagentWithInput({ ...config, plan, artifactConfig }, plan);
 }
 
 async function runSubagentWithInput(

@@ -1,10 +1,85 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isEffectivelyEmpty } from "../runs/shared/acceptance.js";
-import { TEMP_ARTIFACTS_DIR } from "./types.js";
+import { DEFAULT_ARTIFACT_CONFIG, TEMP_ARTIFACTS_DIR, } from "./types.js";
 import { getAgentDir } from "./utils.js";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
+const LEGACY_DETAILED_ARTIFACT_CONFIG = {
+    mode: "debug",
+    enabled: true,
+    includeInput: true,
+    includeOutput: true,
+    includeJsonl: false,
+    includeTranscript: true,
+    includeChildEventProjections: true,
+    includeMetadata: true,
+    cleanupDays: DEFAULT_ARTIFACT_CONFIG.cleanupDays,
+};
+let invalidArtifactModeWarningShown = false;
+function isArtifactConfigRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function warnInvalidArtifactMode() {
+    if (invalidArtifactModeWarningShown)
+        return;
+    invalidArtifactModeWarningShown = true;
+    console.warn("[pi-subagents] Invalid artifacts.mode; using compact artifact mode.");
+}
+function resolveArtifactMode(value, legacy) {
+    if (value === undefined)
+        return legacy ? "debug" : "compact";
+    if (value === "compact" || value === "debug")
+        return value;
+    warnInvalidArtifactMode();
+    return "compact";
+}
+function optionalBoolean(value, fallback) {
+    return typeof value === "boolean" ? value : fallback;
+}
+function optionalCleanupDays(value, fallback) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+export function resolveArtifactConfig(source, options = {}) {
+    const sourceRecord = isArtifactConfigRecord(source) ? source : undefined;
+    const legacy = options.legacy === true;
+    const sourceMode = sourceRecord
+        ? Object.hasOwn(sourceRecord, "mode")
+            ? sourceRecord.mode
+            : undefined
+        : source;
+    const hasExplicitMode = sourceMode !== undefined;
+    const mode = resolveArtifactMode(sourceMode, legacy && !hasExplicitMode);
+    const profile = mode === "debug" ? LEGACY_DETAILED_ARTIFACT_CONFIG : DEFAULT_ARTIFACT_CONFIG;
+    const enabled = options.enabled ??
+        (legacy ? optionalBoolean(sourceRecord?.enabled, profile.enabled) : profile.enabled);
+    if (!hasExplicitMode && legacy) {
+        return {
+            mode,
+            enabled,
+            includeInput: optionalBoolean(sourceRecord?.includeInput, profile.includeInput),
+            includeOutput: optionalBoolean(sourceRecord?.includeOutput, profile.includeOutput),
+            includeJsonl: optionalBoolean(sourceRecord?.includeJsonl, profile.includeJsonl),
+            includeTranscript: optionalBoolean(sourceRecord?.includeTranscript, profile.includeTranscript ?? false),
+            includeChildEventProjections: optionalBoolean(sourceRecord?.includeChildEventProjections, true),
+            includeMetadata: optionalBoolean(sourceRecord?.includeMetadata, profile.includeMetadata),
+            cleanupDays: optionalCleanupDays(sourceRecord?.cleanupDays, profile.cleanupDays),
+        };
+    }
+    return {
+        mode,
+        enabled,
+        includeInput: profile.includeInput,
+        includeOutput: profile.includeOutput,
+        includeJsonl: false,
+        includeTranscript: profile.includeTranscript ?? false,
+        includeChildEventProjections: legacy
+            ? optionalBoolean(sourceRecord?.includeChildEventProjections, true)
+            : profile.includeChildEventProjections,
+        includeMetadata: profile.includeMetadata,
+        cleanupDays: profile.cleanupDays,
+    };
+}
 export function getProjectSubagentsDir(cwd) {
     return path.join(cwd, PROJECT_ARTIFACT_ROOT);
 }

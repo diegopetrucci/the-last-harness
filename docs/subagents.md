@@ -236,9 +236,9 @@ A child that needs a decision, structured interview, or meaningful progress upda
 
 ### Child protocol and display boundaries
 
-Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
+Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state. The optional debug artifact profile retains those protocol observations in the diagnostic child transcript for investigation. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail. Foreground compact failures retain only that tail; async runs always stream raw stderr to `output-N.log` regardless of artifact profile, and debug mode additionally records it in the diagnostic child transcript. An oversized stderr line is diagnostic overflow, not a second control protocol.
 
-Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
+Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
 
 ## Prompt-cache heartbeat
 
@@ -384,7 +384,31 @@ Fallbacks are filtered conservatively: a fallback is removed only when a complet
 
 A fallback retry occurs only for classified provider or transient failures, such as rate/usage limits, network or timeout errors, and the specific `stream ended without finish_reason` condition. Deterministic child-tool failures (for example, a command failing with an exit code) are not retried under another model.
 
-Debug artifacts are enabled by default. Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference. Inspect artifacts before retrying a failed or interrupted run; remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
+### Artifact profiles and recovery
+
+Per-child run artifacts are written by default using the **compact** profile. The caller-facing `artifacts` Boolean only controls whether those run artifacts are written; it does not choose diagnostic detail. Compact is intentionally the normal retention level:
+
+- **Retained:** supervisor-facing output (`*_output.md` when run artifacts are requested, and async `output-N.log`, whose raw stderr is retained in every profile), metadata (`*_meta.json`) when run artifacts are requested, plus lifecycle/status data and the canonical child session (`session.jsonl`) used for ordinary recovery.
+- **Omitted:** task input (`*_input.md`), the diagnostic child transcript (`*_transcript.jsonl`), and high-volume child-event projections. Compact `events.jsonl` can still contain bounded runner diagnostics such as stderr truncation/overflow notices or protocol-limit records, but it omits ordinary per-line stderr events; its existence is not a promise that a full child transcript was retained.
+- **Foreground failures:** only the bounded stderr tail is retained in result/status diagnostics. Compact foreground mode does not retain exact child protocol or raw stderr in the diagnostic transcript. Async `output-N.log` retains raw stderr for every profile; debug additionally provides the diagnostic child transcript.
+
+`subagent({ action: "status", id: "...", view: "transcript" })` is a **status transcript view**, not a read of the optional `_transcript.jsonl` diagnostic artifact. It renders retained output, recent status output, or the canonical session tail. The view can remain useful when compact mode has no diagnostic transcript. The canonical child session is the ordinary recovery record; use the status/session pointers to inspect or resume a paused or failed run.
+
+For a failure that requires the diagnostic child transcript or surrounding child protocol, set the human-owned profile before reproducing it. Compact foreground results retain only a bounded stderr tail; async `output-N.log` already retains raw stderr regardless of profile.
+
+```json
+{
+  "artifacts": {
+    "mode": "debug"
+  }
+}
+```
+
+Merge this block into the existing config; do not replace the file or remove existing `control`, `heartbeat`, or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update add only missing TLH defaults and preserve this human-owned value and other unrelated config keys.
+
+After editing `<agent-dir>/extensions/subagent/config.json`, reload the extension with `/reload` or stop and restart the `tlh` process before starting a new run. A run already in flight keeps the profile resolved at dispatch. To undo the opt-in, remove the `artifacts` block (compact is the absent-key default) or set `"mode": "compact"`, then reload or restart. Existing files are not deleted by this change; inspect them first and remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
+
+Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference.
 
 ## Configuration and diagnostics
 
@@ -394,7 +418,7 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30); the parent-facing subagent tool description is always compact. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Existing values and unrelated keys survive. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The `artifacts` block in this file is human-owned: its optional `mode` is `compact` by default and may be set to `debug` for a diagnostic reproduction. The model-facing `artifacts` parameter remains only the run-artifact switch; it cannot select this profile. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30), preserve `artifacts.mode`, and preserve unrelated values and keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
 Parallel limits are configured here: `parallel.maxTasks` caps tasks per call (default `8`), and `parallel.concurrency` caps simultaneously running children (default `4`).
 

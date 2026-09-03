@@ -12,11 +12,13 @@ export const DEFAULT_MAX_OUTPUT = {
     lines: 5000,
 };
 export const DEFAULT_ARTIFACT_CONFIG = {
+    mode: "compact",
     enabled: true,
-    includeInput: true,
+    includeInput: false,
     includeOutput: true,
     includeJsonl: false,
-    includeTranscript: true,
+    includeTranscript: false,
+    includeChildEventProjections: false,
     includeMetadata: true,
     cleanupDays: 7,
 };

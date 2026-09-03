@@ -5,7 +5,7 @@ import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-wo
 import { Text, isKeyRelease, matchesKey, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
 import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, resolveArtifactConfig, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
@@ -27,7 +27,7 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
-import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 export { loadConfig } from "./config.js";
 function isCurrentHeartbeatEvent(data, currentSessionId) {
@@ -222,13 +222,14 @@ export default function registerSubagentExtension(pi) {
     ensureAccessibleDir(ASYNC_DIR);
     cleanupRuntimeDirs();
     const config = loadConfig();
+    const artifactConfig = resolveArtifactConfig(config.artifacts);
     const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
     let heartbeatSessionCtx = null;
     const hbWiring = createHeartbeatWiring(pi, config, {
         getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
     });
     const tempArtifactsDir = getArtifactsDir(null);
-    cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+    cleanupAllArtifactDirs(artifactConfig.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
     const state = {
         baseCwd: "",
@@ -303,6 +304,7 @@ export default function registerSubagentExtension(pi) {
         pi,
         state,
         config,
+        artifactConfig,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,
@@ -553,7 +555,7 @@ export default function registerSubagentExtension(pi) {
         try {
             const sessionFile = ctx.sessionManager.getSessionFile();
             if (sessionFile) {
-                cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+                cleanupOldArtifacts(getArtifactsDir(sessionFile), artifactConfig.cleanupDays);
             }
         }
         catch {

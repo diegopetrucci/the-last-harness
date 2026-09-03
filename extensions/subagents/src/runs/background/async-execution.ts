@@ -55,8 +55,8 @@ import {
 } from "../shared/acceptance.ts";
 import {
   type AcceptanceInput,
-  type ArtifactConfig,
   type OutputMode,
+  type ResolvedArtifactConfig,
   type ToolBudgetConfig,
   type ContextPressureProjection,
   type ContextUsageDiagnostics,
@@ -129,7 +129,7 @@ interface AsyncSingleParams {
   projectAgent?: ProjectAgentRunCapture;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
-  artifactConfig: ArtifactConfig;
+  artifactConfig: ResolvedArtifactConfig;
   shareEnabled: boolean;
   sessionRoot?: string;
   sessionFile?: string;
@@ -190,7 +190,7 @@ interface AsyncParallelParams {
   cwd?: string;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
-  artifactConfig: ArtifactConfig;
+  artifactConfig: ResolvedArtifactConfig;
   shareEnabled: boolean;
   sessionRoot?: string;
   sessionFilesByFlatIndex?: (string | undefined)[];
@@ -415,8 +415,11 @@ interface AsyncRunnerPlanBuildResult {
   runnerCwd: string;
 }
 
-type AsyncParallelPlanParams = Omit<AsyncParallelParams, "artifactConfig" | "shareEnabled"> &
-  Partial<Pick<AsyncParallelParams, "artifactConfig" | "shareEnabled">>;
+type AsyncParallelPlanParams = Omit<AsyncParallelParams, "artifactConfig" | "shareEnabled"> & {
+  /** New plans always carry the trusted parent's fully resolved artifact policy. */
+  artifactConfig: ResolvedArtifactConfig;
+  shareEnabled?: boolean;
+};
 
 /**
  * Build the direct parallel plan consumed by the detached runner.
