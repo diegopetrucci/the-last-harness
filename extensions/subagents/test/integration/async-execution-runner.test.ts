@@ -1099,6 +1099,10 @@ describe("async execution utilities", () => {
     assert.ok(fs.existsSync(artifactPaths.inputPath));
     assert.ok(fs.existsSync(artifactPaths.outputPath));
     assert.ok(fs.existsSync(artifactPaths.metadataPath));
+    const metadata = JSON.parse(fs.readFileSync(artifactPaths.metadataPath, "utf-8")) as {
+      task?: unknown;
+    };
+    assert.equal(metadata.task, "Inspect the task");
     assert.ok(
       fs
         .readFileSync(artifactPaths.outputPath, "utf-8")
@@ -1170,6 +1174,10 @@ describe("async execution utilities", () => {
     ) as AsyncStatusPayload;
     const artifactPaths = payload.results[0]?.artifactPaths;
     assert.ok(artifactPaths, "compact runner result should retain artifact paths");
+    const metadata = JSON.parse(fs.readFileSync(artifactPaths.metadataPath, "utf-8")) as {
+      task?: unknown;
+    };
+    assert.equal(metadata.task, undefined);
     assert.equal(status.runId, id);
     assert.equal(status.mode, "single");
     assert.equal(status.state, "complete");
@@ -1191,6 +1199,74 @@ describe("async execution utilities", () => {
     assert.match(fs.readFileSync(artifactPaths.outputPath, "utf-8"), /persisted compact result/);
     assert.equal(fs.existsSync(artifactPaths.metadataPath), true);
     assert.equal(payload.results[0]?.transcriptPath, undefined);
+  });
+
+  it("omits compact task metadata but retains debug and mode-less legacy task text", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const piArgv1 = path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs");
+    const runProfile = (label: string, artifactConfig: ArtifactConfig): Record<string, unknown> => {
+      const id = `async-metadata-task-${label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      const task = "Persist this full task text.";
+      mockPi.onCall({ output: `${label} metadata result` });
+      const config: PersistedEventRunnerConfig = {
+        id,
+        plan: {
+          kind: "single",
+          task: {
+            agent: "worker",
+            task,
+            inheritProjectContext: false,
+            inheritSkills: false,
+          },
+        },
+        resultPath,
+        cwd: tempDir,
+        asyncDir,
+        artifactsDir: path.join(tempDir, `${id}-artifacts`),
+        artifactConfig,
+        piArgv1,
+        sessionId: `session-${id}`,
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+      const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env: { ...process.env },
+      });
+      assert.equal(runner.status, 0, `${label}: ${runner.stderr}`);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const artifactPaths = payload.results[0]?.artifactPaths;
+      assert.ok(artifactPaths, `${label}: expected metadata artifact path`);
+      return JSON.parse(fs.readFileSync(artifactPaths.metadataPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+    };
+
+    const compact = runProfile("compact", resolveArtifactConfig({ mode: "compact" }));
+    assert.equal(compact.task, undefined);
+
+    const debug = runProfile("debug", resolveArtifactConfig({ mode: "debug" }));
+    assert.equal(debug.task, "Persist this full task text.");
+
+    const legacy = runProfile("legacy", {
+      // Historical detached configs have no artifact profile mode and retain
+      // their detailed metadata behavior at the persisted-runner boundary.
+      enabled: true,
+      includeInput: true,
+      includeOutput: true,
+      includeJsonl: true,
+      includeTranscript: true,
+      includeMetadata: true,
+      cleanupDays: 7,
+    });
+    assert.equal(legacy.task, "Persist this full task text.");
   });
 
   it("suppresses compact child projections while retaining detailed legacy event logs", () => {

@@ -1351,7 +1351,7 @@ function finalizeSingleStepArtifacts(input) {
                 runId: ctx.id,
                 agent: step.agent,
                 projectAgent: step.projectAgent,
-                task,
+                ...(ctx.artifactConfig.mode !== "compact" ? { task } : {}),
                 exitCode: outcome.effectiveFinalExitCode,
                 exitSignal: finalResult?.exitSignal,
                 model: finalResult?.model,

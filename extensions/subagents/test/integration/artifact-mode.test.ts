@@ -149,8 +149,10 @@ describe(
       assert.equal(fs.existsSync(result.artifactPaths.metadataPath), true);
       assert.equal(fs.existsSync(path.join(tempDir, "compact-run.jsonl")), true);
       const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf8")) as {
+        task?: unknown;
         transcriptPath?: unknown;
       };
+      assert.equal(metadata.task, undefined);
       assert.equal(metadata.transcriptPath, undefined);
     });
 
@@ -170,6 +172,10 @@ describe(
       assert.equal(fs.existsSync(result.artifactPaths.inputPath), true);
       assert.equal(fs.existsSync(result.artifactPaths.transcriptPath), true);
       assert.equal(fs.existsSync(result.artifactPaths.jsonlPath), false);
+      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf8")) as {
+        task?: unknown;
+      };
+      assert.equal(metadata.task, "Inspect the workspace.");
     });
 
     it("keeps compact artifacts across a paused session continuation", async () => {

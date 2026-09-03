@@ -930,7 +930,7 @@ function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizationInput)
       runId: options.runId,
       agent: agentName,
       projectAgent: result.projectAgent,
-      task,
+      ...(options.artifactConfig?.mode !== "compact" ? { task } : {}),
       exitCode: result.exitCode,
       exitSignal: result.exitSignal,
       timedOut: result.timedOut,

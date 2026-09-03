@@ -202,7 +202,6 @@ export function writeArtifactWithFloor(
 interface ForegroundSubagentArtifactMetadata extends Pick<
   SingleResult,
   | "agent"
-  | "task"
   | "projectAgent"
   | "exitCode"
   | "exitSignal"
@@ -230,6 +229,8 @@ interface ForegroundSubagentArtifactMetadata extends Pick<
   | "skillsWarning"
   | "activeRuntimeMs"
 > {
+  /** Compact metadata intentionally omits this full task text. */
+  task?: SingleResult["task"];
   runId: string;
   durationMs?: number;
   timeoutMs?: number;
