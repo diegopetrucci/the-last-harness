@@ -1005,43 +1005,8 @@ function applyOpenRouterModelToProjectTargets(
   }
 }
 
-const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
-const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set([
-  "librarian",
-  "web-scout",
-  "repo-scout",
-  "diff-summarizer",
-]);
-
 function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
   return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
-}
-
-function capScoutSubagentTimeout(input: unknown): void {
-  if (
-    !isRecord(input) ||
-    isOpaqueSubagentManagementActionInput(input) ||
-    // pi-subagents 0.31.12 fixed resume timeout propagation end to end (fork issue #112) and made
-    // agent ceilings cumulative across resume segments. TLH deliberately retains this resume
-    // exemption pending live-session re-evaluation; see issue #420 for that investigation.
-    isSubagentResumeAction(input) ||
-    !subagentCallTargetsMatching(input, (agent) =>
-      SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()),
-    )
-  ) {
-    return;
-  }
-  const { timeoutMs } = input;
-  if (
-    typeof timeoutMs === "number" &&
-    Number.isFinite(timeoutMs) &&
-    timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS
-  ) {
-    return;
-  }
-  // The current subagent API exposes only a run-level timeout, so any execution batch containing
-  // a capped scout target must cap the whole execution request.
-  input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
 }
 
 function embeddedDelegationBlockedReason(
@@ -3319,7 +3284,6 @@ function createTlhPrimaryAgentRuntime(
           },
         },
       );
-      capScoutSubagentTimeout(event.input);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
       const allowedSubagents = allowedSubagentsForExperimentalConfig();

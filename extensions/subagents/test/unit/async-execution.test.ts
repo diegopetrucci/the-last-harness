@@ -168,7 +168,7 @@ describe("async runner execution", () => {
     assert.deepEqual(restoredPolicies, policies);
   });
 
-  it("preserves independent agent ceilings while a shorter caller timeout remains global", () => {
+  it("persists independent agent ceilings under one run policy", () => {
     const result = buildAsyncRunnerPlan("run-mixed-ceilings", {
       tasks: [
         { agent: "fast", task: "short ceiling" },
@@ -183,13 +183,12 @@ describe("async runner execution", () => {
       artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
-      timeoutMs: 250,
     });
 
     assert.ok("plan" in result, "expected successful plan build");
     assert.deepEqual(
       result.plan.tasks.map((step) => step.timeoutMs),
-      [100, undefined, undefined],
+      [100, 300, 900],
     );
   });
 

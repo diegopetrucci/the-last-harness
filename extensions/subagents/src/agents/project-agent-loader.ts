@@ -20,6 +20,7 @@ import {
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName } from "./identity.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.ts";
 import type { AgentConfig } from "./agents.ts";
 
 /** The only project-owned directory considered by the TLH project-agent loader. */
@@ -1138,10 +1139,8 @@ function parseProjectAgentDefinitionFromText(
     "maxSubagentDepth",
     filePath,
   );
-  const maxExecutionTimeMs = parseStrictPositiveInteger(
-    frontmatter,
-    "maxExecutionTimeMs",
-    filePath,
+  const maxExecutionTimeMs = resolveCustomAgentMaxExecutionTimeMs(
+    parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath),
   );
   const toolBudget = parseToolBudget(frontmatter.toolBudget, filePath);
   const completionGuard =

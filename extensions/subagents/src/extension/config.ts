@@ -29,11 +29,11 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
   }
 
   // Keep this settings object intentionally open: existing and future keys are
-  // tolerated, while the artifact block is copied into its own boundary type so
-  // the shared resolver can validate the only field TLH consumes (`mode`).
+  // tolerated, while consumed nested blocks are copied through an own-property
+  // boundary so resolvers can validate only the fields TLH owns.
   const config: ExtensionConfig = {};
   for (const [key, value] of Object.entries(parsed)) {
-    if (key !== "artifacts") defineOwnProperty(config, key, value);
+    if (key !== "artifacts" && key !== "execution") defineOwnProperty(config, key, value);
   }
 
   if (Object.hasOwn(parsed, "artifacts")) {
@@ -49,6 +49,21 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
       defineOwnProperty(artifacts, "mode", rawArtifacts);
     }
     defineOwnProperty(config, "artifacts", artifacts);
+  }
+
+  if (Object.hasOwn(parsed, "execution")) {
+    const rawExecution = parsed.execution;
+    if (isConfigObject(rawExecution)) {
+      const execution: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(rawExecution)) {
+        defineOwnProperty(execution, key, value);
+      }
+      defineOwnProperty(config, "execution", execution);
+    } else {
+      // Preserve an invalid block for the shared resolver to reject safely,
+      // rather than coercing it into a valid maxRunTimeMs value.
+      defineOwnProperty(config, "execution", rawExecution);
+    }
   }
   return config;
 }

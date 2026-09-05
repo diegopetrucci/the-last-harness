@@ -8,6 +8,8 @@ import {
 } from "../../shared/types.ts";
 import {
   lifecycleContinuationForIndex,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
 import {
@@ -164,6 +166,7 @@ type AsyncResumeTarget = {
   claimed?: boolean;
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   projectAgent?: ProjectAgentRunCapture;
   /** Present only when the persisted run carried a run-level project inventory. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -388,6 +391,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
           `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
         );
       }
+      // Checkpoint timestamps are optional diagnostics. Invalid external values
+      // are unknown and must not affect continuation selection.
+      const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+        child.activeRuntimeCheckpointAt,
+      );
       // Acceptance is accepted opaquely — the caller validates contract fields.
       const acceptance =
         child.acceptance !== undefined &&
@@ -414,6 +422,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
         ...(terminationReason ? { terminationReason } : {}),
         ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(acceptance ? { acceptance } : {}),
         ...(projectAgent ? { projectAgent } : {}),
       };
@@ -435,6 +444,10 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
     )
     .filter((capture): capture is ProjectAgentRunCapture => Boolean(capture));
+  const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    data.activeRuntimeCheckpointAt,
+  );
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -465,6 +478,8 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         }
       : {}),
     ...(typeof success === "boolean" ? { success } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
@@ -1148,6 +1163,16 @@ function resolveTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(selectedStatusStep?.activeRuntimeMs);
+  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(
+    context.resultSteps[index]?.activeRuntimeMs,
+  );
+  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    selectedStatusStep?.activeRuntimeCheckpointAt,
+  );
+  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    context.resultSteps[index]?.activeRuntimeCheckpointAt,
+  );
   return {
     ...targetWithModelMetadata,
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
@@ -1160,10 +1185,15 @@ function resolveTerminalAsyncResumeTarget(
     ...(diagnosticMetadata.terminationReason
       ? { terminationReason: diagnosticMetadata.terminationReason }
       : {}),
-    ...(selectedStatusStep?.activeRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
-      : context.resultSteps[index]?.activeRuntimeMs !== undefined
-        ? { activeRuntimeMs: context.resultSteps[index]!.activeRuntimeMs }
+    ...(selectedActiveRuntimeMs !== undefined
+      ? { activeRuntimeMs: selectedActiveRuntimeMs }
+      : resultActiveRuntimeMs !== undefined
+        ? { activeRuntimeMs: resultActiveRuntimeMs }
+        : {}),
+    ...(selectedActiveRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
+      : resultActiveRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
         : {}),
   };
 }

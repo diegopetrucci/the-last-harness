@@ -82,10 +82,6 @@ const SubagentParamsSchema = Type.Object({
     model: Type.Optional(Type.String({
         description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')",
     })),
-    timeoutMs: Type.Optional(Type.Integer({
-        minimum: 1,
-        description: "Optional run-level timeout in ms for foreground and async/background runs.",
-    })),
     cwd: Type.Optional(Type.String()),
     artifacts: Type.Optional(Type.Boolean({
         description: "Write per-child run artifacts (default: true)",

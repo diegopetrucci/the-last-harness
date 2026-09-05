@@ -7,6 +7,7 @@ import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, 
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./lifecycle-state.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
 const REGISTRY_FILE = "registry.json";
@@ -194,6 +195,8 @@ function sanitizeStep(input, depth) {
         ? raw.status
         : "pending";
     const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     return {
         agent,
@@ -223,6 +226,8 @@ function sanitizeStep(input, depth) {
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
         ...(parseContextUsageDiagnostics(raw.contextUsage)
@@ -263,6 +268,8 @@ export function sanitizeSummary(input, depth = 0) {
         : undefined;
     const totalTokens = sanitizeTokenUsage(raw.totalTokens);
     const totalCost = sanitizeCost(raw.totalCost);
+    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     return {
         id: raw.id,
@@ -338,6 +345,8 @@ export function sanitizeSummary(input, depth = 0) {
         ...(clampNumber(raw.lastUpdate) !== undefined
             ? { lastUpdate: clampNumber(raw.lastUpdate) }
             : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
         ...(clampNumber(raw.deadlineAt) !== undefined
             ? { deadlineAt: clampNumber(raw.deadlineAt) }
@@ -856,6 +865,10 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
         ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
         ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+        ...(status.activeRuntimeMs !== undefined ? { activeRuntimeMs: status.activeRuntimeMs } : {}),
+        ...(status.activeRuntimeCheckpointAt !== undefined
+            ? { activeRuntimeCheckpointAt: status.activeRuntimeCheckpointAt }
+            : {}),
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
@@ -892,6 +905,12 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                         ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
                         ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
                         ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                        ...(step.activeRuntimeMs !== undefined
+                            ? { activeRuntimeMs: step.activeRuntimeMs }
+                            : {}),
+                        ...(step.activeRuntimeCheckpointAt !== undefined
+                            ? { activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt }
+                            : {}),
                         ...(step.error ? { error: step.error } : {}),
                         ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                         ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),

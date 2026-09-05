@@ -328,6 +328,70 @@ describe(
       }
     });
 
+    it("keeps observed runtime evidence monotonic across status polls", async () => {
+      const asyncRoot = createTempDir("pi-async-job-runtime-monotonic-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const runDir = path.join(asyncRoot, "run-runtime-monotonic");
+        fs.mkdirSync(runDir, { recursive: true });
+        const statusPath = path.join(runDir, "status.json");
+        const writeStatus = (activeRuntimeMs: number, activeRuntimeCheckpointAt: number) =>
+          fs.writeFileSync(
+            statusPath,
+            JSON.stringify({
+              runId: "run-runtime-monotonic",
+              mode: "single",
+              state: "running",
+              sessionId: "session-runtime-monotonic",
+              startedAt: 1000,
+              lastUpdate: activeRuntimeCheckpointAt,
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+              steps: [
+                {
+                  agent: "worker",
+                  status: "running",
+                  activeRuntimeMs,
+                  activeRuntimeCheckpointAt,
+                },
+              ],
+            }),
+            "utf-8",
+          );
+        writeStatus(100, 2_000);
+
+        const state = createState();
+        state.currentSessionId = "session-runtime-monotonic";
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 10 },
+        );
+        tracker.restoreActiveJobs();
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 100,
+          "initial runtime evidence poll",
+        );
+
+        writeStatus(600, 3_000);
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 600,
+          "higher runtime evidence poll",
+        );
+        writeStatus(250, 2_500);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        assert.equal(state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs, 600);
+        assert.equal(
+          state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeCheckpointAt,
+          3_000,
+        );
+      } finally {
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
     it("continues restoring jobs when a persisted control-event tail probe fails", async () => {
       for (const failure of [
         { operation: "stat", code: "EACCES" },

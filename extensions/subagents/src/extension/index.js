@@ -26,6 +26,7 @@ import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } 
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
+import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
@@ -223,6 +224,7 @@ export default function registerSubagentExtension(pi) {
     cleanupRuntimeDirs();
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);
+    const executionPolicy = resolveExecutionPolicy(config.execution);
     const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
     let heartbeatSessionCtx = null;
     const hbWiring = createHeartbeatWiring(pi, config, {
@@ -305,6 +307,7 @@ export default function registerSubagentExtension(pi) {
         state,
         config,
         artifactConfig,
+        executionPolicy,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,

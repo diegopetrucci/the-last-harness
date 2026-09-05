@@ -17,6 +17,10 @@ import {
 import { readStatus } from "../../shared/utils.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import {
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "../shared/lifecycle-state.ts";
+import {
   hasLiveNestedDescendants,
   updateAsyncJobNestedProjection,
 } from "../shared/nested-events.ts";
@@ -193,6 +197,8 @@ export function createAsyncJobTracker(
       ).length,
       startedAt: run.startedAt,
       updatedAt: run.lastUpdate ?? run.startedAt,
+      activeRuntimeMs: run.activeRuntimeMs,
+      activeRuntimeCheckpointAt: run.activeRuntimeCheckpointAt,
       timeoutMs: run.timeoutMs,
       deadlineAt: run.deadlineAt,
       timedOut: run.timedOut,
@@ -509,6 +515,23 @@ export function createAsyncJobTracker(
             job.mode = normalizeSubagentRunMode(status.mode);
             job.currentStep = status.currentStep ?? job.currentStep;
             job.startedAt = status.startedAt ?? job.startedAt;
+            const persistedRuntime = normalizeActiveRuntimeMs(status.activeRuntimeMs);
+            const observedRuntime = normalizeActiveRuntimeMs(job.activeRuntimeMs);
+            if (persistedRuntime !== undefined || observedRuntime !== undefined) {
+              job.activeRuntimeMs = Math.max(persistedRuntime ?? 0, observedRuntime ?? 0);
+            }
+            const persistedCheckpoint = normalizeActiveRuntimeCheckpointAt(
+              status.activeRuntimeCheckpointAt,
+            );
+            const observedCheckpoint = normalizeActiveRuntimeCheckpointAt(
+              job.activeRuntimeCheckpointAt,
+            );
+            if (persistedCheckpoint !== undefined || observedCheckpoint !== undefined) {
+              job.activeRuntimeCheckpointAt = Math.max(
+                persistedCheckpoint ?? 0,
+                observedCheckpoint ?? 0,
+              );
+            }
             if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
             if (
               job.status !== "complete" &&

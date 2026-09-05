@@ -24,7 +24,7 @@ import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/mod
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
-import { isPositiveSafeInteger } from "./execution-ceiling.ts";
+import { canonicalAgentMaxExecutionTimeMs, isPositiveSafeInteger } from "./execution-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -979,7 +979,20 @@ function loadCanonicalPackagedAgents(agentDiagnostics: AgentDiscoveryDiagnostic[
     if (!isCanonicalPackagedMinorAgent(agent)) continue;
     byName.set(agent.name, agent);
   }
-  return Array.from(byName.values());
+
+  // Keep role ceilings code-owned and apply them before any human settings
+  // overrides. An explicit false override therefore clears this value rather
+  // than being replaced by a fallback later in discovery.
+  return Array.from(byName.values()).map((agent) => {
+    const defaultMaxExecutionTimeMs = canonicalAgentMaxExecutionTimeMs(agent.name);
+    if (defaultMaxExecutionTimeMs === undefined || agent.maxExecutionTimeMs !== undefined) {
+      return agent;
+    }
+    const next = { ...agent, maxExecutionTimeMs: defaultMaxExecutionTimeMs };
+    const frontmatterFields = agentFrontmatterFields.get(agent);
+    if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
+    return next;
+  });
 }
 
 // `excludeProjectPackages` remains accepted for the snapshot seam's call shape; generic package

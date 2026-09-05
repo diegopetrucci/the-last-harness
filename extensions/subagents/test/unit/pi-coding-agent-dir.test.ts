@@ -12,6 +12,7 @@ import {
   resolveSkillPath,
 } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
+import { resolveExecutionPolicy } from "../../src/agents/execution-ceiling.ts";
 import { cleanupAllArtifactDirs, resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
   getConfigDirName,
@@ -32,6 +33,10 @@ let oldUserProfile: string | undefined;
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf-8");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readInstalledRuntimeConfigDirName(): string {
@@ -92,11 +97,11 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(config.maxSubagentDepth, 3);
   });
 
-  it("copies open config keys safely and restricts artifact settings to mode", () => {
+  it("copies open config keys safely and restricts consumed nested settings", () => {
     const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
     writeFile(
       configPath,
-      '{"__proto__":{"polluted":true},"futureSetting":{"enabled":true},"artifacts":{"mode":"debug","includeInput":true,"includeJsonl":true}}',
+      '{"__proto__":{"polluted":true},"futureSetting":{"enabled":true},"execution":{"maxRunTimeMs":1234,"futureExecution":{"enabled":true},"__proto__":{"polluted":true}},"artifacts":{"mode":"debug","includeInput":true,"includeJsonl":true}}',
     );
 
     const config = loadConfig();
@@ -104,7 +109,24 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(Object.prototype.hasOwnProperty.call(config, "__proto__"), true);
     assert.deepEqual(config["__proto__"], { polluted: true });
     assert.deepEqual(config.futureSetting, { enabled: true });
+    assert.ok(isRecord(config.execution));
+    assert.equal(config.execution.maxRunTimeMs, 1234);
+    assert.deepEqual(config.execution.futureExecution, { enabled: true });
+    assert.equal(Object.hasOwn(config.execution, "__proto__"), true);
+    assert.deepEqual(config.execution["__proto__"], { polluted: true });
     assert.deepEqual(config.artifacts, { mode: "debug" });
+  });
+
+  it("rejects non-object execution blocks through the real config boundary", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    for (const invalidExecution of [false, 900_000]) {
+      writeFile(configPath, JSON.stringify({ execution: invalidExecution }));
+      const config = loadConfig();
+      const policy = resolveExecutionPolicy(config.execution);
+      assert.equal(policy.maxRunTimeMs, 14_400_000);
+      assert.match(policy.diagnostic ?? "", /Invalid execution\.maxRunTimeMs/);
+      assert.match(policy.diagnostic ?? "", /positive safe integer or false/);
+    }
   });
 
   it("routes malformed artifact settings through compact fallback without dropping open keys", () => {

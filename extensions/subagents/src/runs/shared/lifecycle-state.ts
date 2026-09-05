@@ -15,11 +15,167 @@ import type {
 
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
+/** Internal runner cadence for durable active-runtime accounting evidence. */
+export const ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS = 30_000;
 const SAFE_LIFECYCLE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const DEFAULT_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200] as const;
 const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
+
+/**
+ * Runtime evidence is an internal accounting value, not a wall-clock
+ * duration. Values crossing a persistence boundary are accepted only when
+ * they are finite and non-negative. Rounding consumed time upward and
+ * clamping it to a safe integer prevents legacy evidence from widening a
+ * continuation budget or producing an unsafe durable number.
+ */
+export function normalizeActiveRuntimeMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))
+    : undefined;
+}
+
+/** Normalize an accounting checkpoint timestamp without allowing unsafe output. */
+export function normalizeActiveRuntimeCheckpointAt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+    : undefined;
+}
+
+export function boundedActiveRuntimeMs(value: unknown, fallback = 0): number {
+  return normalizeActiveRuntimeMs(value) ?? normalizeActiveRuntimeMs(fallback) ?? 0;
+}
+
+/**
+ * Pure persistence gate for runner-owned accounting checkpoints. A frozen
+ * tracker may still expose its final total, but it must never trigger another
+ * periodic status write. The runner supplies the pre-checkpoint frozen state so
+ * a final freeze can publish one last runtime advance before teardown.
+ */
+export function shouldPersistActiveRuntimeCheckpoint(input: {
+  previousActiveRuntimeMs: unknown;
+  currentActiveRuntimeMs: unknown;
+  trackerFrozen: boolean;
+}): boolean {
+  if (input.trackerFrozen) return false;
+  const current = normalizeActiveRuntimeMs(input.currentActiveRuntimeMs);
+  const previous = normalizeActiveRuntimeMs(input.previousActiveRuntimeMs);
+  return current !== undefined && (previous === undefined || current > previous);
+}
+
+export interface ActiveRuntimeTracker {
+  current(now?: number): number;
+  checkpoint(now?: number): number;
+  /** Freeze this segment so post-terminal cleanup time is never charged. */
+  freeze(now?: number): number;
+  /** Whether this segment has already been frozen. */
+  isFrozen(): boolean;
+  finalize(now?: number): number;
+}
+
+export interface ActiveRuntimeCheckpointUpdate {
+  activeRuntimeMs: number;
+  activeRuntimeCheckpointAt: number;
+}
+
+export interface ActiveRuntimeCheckpointCandidate {
+  tracker: ActiveRuntimeTracker;
+  previousActiveRuntimeMs: unknown;
+  previousActiveRuntimeCheckpointAt: unknown;
+  apply: (update: ActiveRuntimeCheckpointUpdate) => void;
+}
+
+/**
+ * Apply one runner checkpoint decision across its active steps. The tracker
+ * frozen flag is sampled before checkpoint/freeze so a final freeze can publish
+ * one last runtime advance, while repeated or already-frozen calls do not
+ * invoke the injected persistence callback.
+ */
+export function applyActiveRuntimeCheckpoint(
+  candidates: readonly ActiveRuntimeCheckpointCandidate[],
+  input: { now: number; freeze?: boolean; persist?: () => void },
+): boolean {
+  let advanced = false;
+  for (const candidate of candidates) {
+    const trackerFrozen = candidate.tracker.isFrozen();
+    const runtime = input.freeze
+      ? candidate.tracker.freeze(input.now)
+      : candidate.tracker.checkpoint(input.now);
+    if (
+      !shouldPersistActiveRuntimeCheckpoint({
+        previousActiveRuntimeMs: candidate.previousActiveRuntimeMs,
+        currentActiveRuntimeMs: runtime,
+        trackerFrozen,
+      })
+    )
+      continue;
+    candidate.apply({
+      activeRuntimeMs: Math.max(
+        normalizeActiveRuntimeMs(candidate.previousActiveRuntimeMs) ?? 0,
+        runtime,
+      ),
+      activeRuntimeCheckpointAt: Math.max(
+        normalizeActiveRuntimeCheckpointAt(candidate.previousActiveRuntimeCheckpointAt) ?? 0,
+        normalizeActiveRuntimeCheckpointAt(input.now) ?? 0,
+      ),
+    });
+    advanced = true;
+  }
+  if (advanced) input.persist?.();
+  return advanced;
+}
+
+/**
+ * Track one active execution segment without ever charging the same interval
+ * twice. A checkpoint advances the segment origin, so a later finalization
+ * adds only the time since that checkpoint. Paused time belongs outside this
+ * tracker; a resumed segment should create a new tracker with the checkpointed
+ * total as its prior value.
+ */
+export function createActiveRuntimeTracker(
+  input: {
+    priorActiveRuntimeMs?: unknown;
+    segmentStartedAt?: number;
+    now?: () => number;
+  } = {},
+): ActiveRuntimeTracker {
+  const now = input.now ?? (() => Date.now());
+  const suppliedSegmentStart = normalizeActiveRuntimeCheckpointAt(input.segmentStartedAt);
+  const initialNow =
+    suppliedSegmentStart ?? normalizeActiveRuntimeCheckpointAt(now()) ?? Date.now();
+  let total = boundedActiveRuntimeMs(input.priorActiveRuntimeMs);
+  let segmentStartedAt = suppliedSegmentStart ?? initialNow;
+  let frozen = false;
+
+  const current = (at = now()): number => {
+    if (frozen) return total;
+    const normalizedAt = normalizeActiveRuntimeCheckpointAt(at);
+    const elapsed = normalizedAt === undefined ? 0 : Math.max(0, normalizedAt - segmentStartedAt);
+    return Math.min(Number.MAX_SAFE_INTEGER, total + elapsed);
+  };
+  const checkpoint = (at = now()): number => {
+    const normalizedAt = normalizeActiveRuntimeCheckpointAt(at) ?? segmentStartedAt;
+    const checkpointAt = Math.max(segmentStartedAt, normalizedAt);
+    total = current(checkpointAt);
+    segmentStartedAt = checkpointAt;
+    return total;
+  };
+  const freeze = (at = now()): number => {
+    if (!frozen) {
+      checkpoint(at);
+      frozen = true;
+    }
+    return total;
+  };
+  return {
+    current,
+    checkpoint,
+    freeze,
+    isFrozen: () => frozen,
+    finalize: (at = now()) => (frozen ? total : checkpoint(at)),
+  };
+}
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 type ContinuationClaimLiveness =
@@ -361,8 +517,33 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
   const continuation = normalizeContinuationMetadata(status.lifecycle?.continuation);
   const continuationsByIndex = normalizeContinuationMap(status.lifecycle?.continuationsByIndex);
   const generation = lifecycleGeneration(status);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    status.activeRuntimeCheckpointAt,
+  );
+  const {
+    activeRuntimeMs: _activeRuntimeMs,
+    activeRuntimeCheckpointAt: _checkpointAt,
+    ...rest
+  } = status;
+  const steps = status.steps?.map((step) => {
+    const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+    const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+    const {
+      activeRuntimeMs: _stepActiveRuntimeMs,
+      activeRuntimeCheckpointAt: _stepCheckpointAt,
+      ...stepRest
+    } = step;
+    return {
+      ...stepRest,
+      ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
+      ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
+    };
+  });
   return {
-    ...status,
+    ...rest,
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(typeof status.state === "string"
       ? { state: status.state as AsyncStatus["state"] }
       : { state: "failed" as const }),
@@ -370,6 +551,7 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
     ...(pause ? {} : { pause: undefined }),
     ...(cancel ? { cancel } : {}),
     ...(cancel ? {} : { cancel: undefined }),
+    ...(steps !== undefined ? { steps } : {}),
     lifecycle: {
       generation,
       ...(continuation ? { continuation } : {}),
@@ -440,6 +622,27 @@ const TERMINAL_STEP_STATUSES: ReadonlySet<string> = new Set([
   "completed",
 ]);
 
+function mergeActiveRuntimeEvidence(
+  inMemory: AsyncStatus | NonNullable<AsyncStatus["steps"]>[number],
+  persisted: AsyncStatus | NonNullable<AsyncStatus["steps"]>[number] | null | undefined,
+): {
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
+} {
+  const values = [
+    normalizeActiveRuntimeMs(inMemory.activeRuntimeMs),
+    normalizeActiveRuntimeMs(persisted?.activeRuntimeMs),
+  ].filter((value): value is number => value !== undefined);
+  const checkpoints = [
+    normalizeActiveRuntimeCheckpointAt(inMemory.activeRuntimeCheckpointAt),
+    normalizeActiveRuntimeCheckpointAt(persisted?.activeRuntimeCheckpointAt),
+  ].filter((value): value is number => value !== undefined);
+  return {
+    ...(values.length > 0 ? { activeRuntimeMs: Math.max(...values) } : {}),
+    ...(checkpoints.length > 0 ? { activeRuntimeCheckpointAt: Math.max(...checkpoints) } : {}),
+  };
+}
+
 /**
  * Merge in-memory status with persisted status and write atomically.
  */
@@ -482,7 +685,8 @@ function mergeAndWriteStatus(
   // model info, acceptance, etc.) from the in-memory step for unaffected steps.
   const steps = inMemory.steps?.map((step, i) => {
     const persistedStep = persisted.steps?.[i];
-    if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status)) return step;
+    const runtimeStep = { ...step, ...mergeActiveRuntimeEvidence(step, persistedStep) };
+    if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status)) return runtimeStep;
     // Lifecycle-owned metadata comes from the persisted winner authoritatively,
     // including its absence: status, endedAt, exitCode, cancel, error, pause.
     // Source-owned settlement data (model, tokens, acceptance, processCleanup)
@@ -496,19 +700,19 @@ function mergeAndWriteStatus(
       // A terminal step has no active pause.
       pause: undefined as undefined,
     };
-    if (persistedStep.status === step.status) {
+    if (persistedStep.status === runtimeStep.status) {
       // Both sides agree on the terminal status. The concurrent writer may have
       // committed lifecycle metadata (cancel, endedAt, error) after the source
       // runner's last sync. Apply persisted lifecycle fields authoritatively,
       // including clearing fields absent from the persisted winner (e.g. a
       // cancelled step has no error — a stale in-memory error must not survive).
-      return { ...step, ...lifecycleOverrides };
+      return { ...runtimeStep, ...lifecycleOverrides };
     }
     // Persisted step is terminal and in-memory step has a different status.
     // Carry the terminal lifecycle metadata from disk; take source-owned
     // settlement fields (model, tokens, acceptance, processCleanup, etc.)
     // from the in-memory step so settlement data is not lost.
-    return { ...step, ...lifecycleOverrides };
+    return { ...runtimeStep, ...lifecycleOverrides };
   });
   // When the persisted run state is terminal and differs from the in-memory state,
   // lifecycle-owned metadata comes from the persisted winner authoritatively —
@@ -533,6 +737,7 @@ function mergeAndWriteStatus(
       : {};
   const merged: AsyncStatus = {
     ...inMemory,
+    ...mergeActiveRuntimeEvidence(inMemory, persisted),
     ...terminalRunOverrides,
     state,
     ...(steps !== undefined ? { steps } : {}),

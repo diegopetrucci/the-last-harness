@@ -7,6 +7,7 @@ import { getProjectAgentSnapshotProvenance, registerProjectAgentSnapshot, resolv
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
+import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
 export const PROJECT_AGENT_PARENT_DIRECTORY = path.join(".tlh", "agents");
 export const PROJECT_AGENT_PACKAGE = "embedded";
@@ -764,7 +765,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         acceptanceRole = frontmatter.acceptanceRole;
     }
     const parsedMaxSubagentDepth = parseStrictNonNegativeInteger(frontmatter, "maxSubagentDepth", filePath);
-    const maxExecutionTimeMs = parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath);
+    const maxExecutionTimeMs = resolveCustomAgentMaxExecutionTimeMs(parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath));
     const toolBudget = parseToolBudget(frontmatter.toolBudget, filePath);
     const completionGuard = frontmatter.completionGuard === undefined
         ? undefined

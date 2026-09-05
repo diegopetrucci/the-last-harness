@@ -11,7 +11,7 @@ import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
-import { isPositiveSafeInteger } from "./execution-ceiling.js";
+import { canonicalAgentMaxExecutionTimeMs, isPositiveSafeInteger } from "./execution-ceiling.js";
 function defaultSystemPromptMode(name) {
     return name === "delegate" ? "append" : "replace";
 }
@@ -680,7 +680,17 @@ function loadCanonicalPackagedAgents(agentDiagnostics) {
             continue;
         byName.set(agent.name, agent);
     }
-    return Array.from(byName.values());
+    return Array.from(byName.values()).map((agent) => {
+        const defaultMaxExecutionTimeMs = canonicalAgentMaxExecutionTimeMs(agent.name);
+        if (defaultMaxExecutionTimeMs === undefined || agent.maxExecutionTimeMs !== undefined) {
+            return agent;
+        }
+        const next = { ...agent, maxExecutionTimeMs: defaultMaxExecutionTimeMs };
+        const frontmatterFields = agentFrontmatterFields.get(agent);
+        if (frontmatterFields)
+            agentFrontmatterFields.set(next, frontmatterFields);
+        return next;
+    });
 }
 export function discoverAgents(cwd, scope, _options = {}) {
     const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);

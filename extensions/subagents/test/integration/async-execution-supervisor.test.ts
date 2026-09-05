@@ -163,7 +163,6 @@ describe("async execution utilities", () => {
           : undefined,
     },
     async () => {
-      const resumeTimeoutMs = scaleTestTimeout(1_000);
       const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
       const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
       const originalGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
@@ -267,7 +266,6 @@ describe("async execution utilities", () => {
             action: "resume",
             id,
             message: "Supervisor replied: continue.",
-            timeoutMs: resumeTimeoutMs,
           },
           new AbortController().signal,
           undefined,
@@ -290,7 +288,7 @@ describe("async execution utilities", () => {
           [SUBAGENT_CHILD_AGENT_ENV]: "developer",
           [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
         });
-        assert.equal(continuationPayload.timeoutMs, resumeTimeoutMs);
+        assert.equal(continuationPayload.timeoutMs, undefined);
         assert.ok((continuationPayload.results[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         const continuationStatus = JSON.parse(
           fs.readFileSync(
@@ -302,7 +300,11 @@ describe("async execution utilities", () => {
             "utf-8",
           ),
         ) as AsyncStatusPayload;
-        assert.equal(continuationStatus.steps?.[0]?.timeoutMs, resumeTimeoutMs);
+        assert.ok(
+          typeof continuationStatus.steps?.[0]?.timeoutMs === "number" &&
+            continuationStatus.steps[0].timeoutMs > 0 &&
+            continuationStatus.steps[0].timeoutMs <= (canonicalDeveloper.maxExecutionTimeMs ?? 0),
+        );
         assert.ok((continuationStatus.steps?.[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         assert.notEqual(continuationPayload.results[0]?.acceptance?.status, "skipped");
         assert.equal(continuationPayload.results[0]?.acceptance?.status, "checked");

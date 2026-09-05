@@ -82,7 +82,9 @@ describe("async stale-run reconciliation", () => {
       assert.equal(status.state, "failed");
       assert.equal(status.sessionId, "session-current");
       assert.equal(status.steps?.[0]?.status, "failed");
-      assert.equal(status.steps?.[0]?.activeRuntimeMs, 1250);
+      // Reconciliation has no evidence for the offline interval, so it keeps
+      // the latest persisted checkpoint instead of charging wall-clock time.
+      assert.equal(status.steps?.[0]?.activeRuntimeMs, 250);
       assert.match(status.steps?.[0]?.error, /process 12345 exited or disappeared/);
       const resultJson = JSON.parse(
         fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"),
@@ -91,7 +93,7 @@ describe("async stale-run reconciliation", () => {
       assert.equal(resultJson.sessionId, "session-current");
       assert.equal(resultJson.state, "failed");
       assert.equal(resultJson.exitCode, 1);
-      assert.equal(resultJson.results[0].activeRuntimeMs, 1250);
+      assert.equal(resultJson.results[0].activeRuntimeMs, 250);
       assert.match(resultJson.summary, /process 12345 exited or disappeared/);
       assert.match(
         fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"),
@@ -104,7 +106,51 @@ describe("async stale-run reconciliation", () => {
         { requireSessionFile: false },
       );
       assert.equal(resultOnlyTarget.kind, "revive");
-      assert.equal(resultOnlyTarget.activeRuntimeMs, 1250);
+      assert.equal(resultOnlyTarget.activeRuntimeMs, 250);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses terminal child runtime evidence without charging the offline gap", () => {
+    const root = tempRoot("pi-stale-run-result-runtime-");
+    try {
+      const asyncDir = path.join(root, "run-result-runtime");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-result-runtime",
+        mode: "single",
+        state: "running",
+        startedAt: 1_000,
+        lastUpdate: 1_500,
+        currentStep: 0,
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            startedAt: 1_000,
+            activeRuntimeMs: 250,
+            activeRuntimeCheckpointAt: 1_500,
+          },
+        ],
+      });
+      fs.mkdirSync(resultsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(resultsDir, "run-result-runtime.json"),
+        JSON.stringify({
+          id: "run-result-runtime",
+          success: false,
+          state: "failed",
+          results: [{ agent: "worker", success: false, activeRuntimeMs: 700 }],
+        }),
+        "utf-8",
+      );
+
+      const result = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 9_000_000 });
+      assert.equal(result.repaired, true);
+      assert.equal(result.status?.steps?.[0]?.activeRuntimeMs, 700);
+      const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+      assert.equal(status.steps?.[0]?.activeRuntimeMs, 700);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

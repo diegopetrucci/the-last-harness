@@ -4,13 +4,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS,
   TERMINAL_RUN_STATES,
+  applyActiveRuntimeCheckpoint,
   boundSupervisorSummary,
+  createActiveRuntimeTracker,
   finalizeLifecycleContinuationLaunch,
   lifecycleGeneration,
   mergeAndWriteSourceRunnerStatus,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
   recoverStoppedLifecycleOwnership,
+  shouldPersistActiveRuntimeCheckpoint,
   transitionLifecycleStatus,
   withLifecycleContinuation,
   withLifecycleStatusLock,
@@ -40,6 +46,115 @@ function expectNoSecretInError(fn: () => void, secret: string, expected: RegExp)
 }
 
 describe("lifecycle state helpers", () => {
+  it("normalizes runtime evidence conservatively and saturates tracker totals", () => {
+    assert.equal(normalizeActiveRuntimeMs(1.5), 2);
+    assert.equal(normalizeActiveRuntimeMs(Number.MAX_SAFE_INTEGER + 1), Number.MAX_SAFE_INTEGER);
+    assert.equal(normalizeActiveRuntimeMs(Number.POSITIVE_INFINITY), undefined);
+    assert.equal(normalizeActiveRuntimeMs(-1), undefined);
+    assert.equal(normalizeActiveRuntimeCheckpointAt(1_000.9), 1_000);
+    assert.equal(
+      normalizeActiveRuntimeCheckpointAt(Number.MAX_SAFE_INTEGER + 1),
+      Number.MAX_SAFE_INTEGER,
+    );
+    assert.equal(normalizeActiveRuntimeCheckpointAt(Number.NaN), undefined);
+
+    const tracker = createActiveRuntimeTracker({
+      priorActiveRuntimeMs: Number.MAX_SAFE_INTEGER,
+      segmentStartedAt: 1_000,
+    });
+    assert.equal(tracker.current(2_000), Number.MAX_SAFE_INTEGER);
+  });
+
+  it("tracks active segments without charging checkpoints or paused time twice", () => {
+    const tracker = createActiveRuntimeTracker({
+      priorActiveRuntimeMs: 250,
+      segmentStartedAt: 1_000,
+    });
+    assert.equal(tracker.current(1_500), 750);
+    assert.equal(tracker.checkpoint(1_500), 750);
+    assert.equal(tracker.current(1_600), 850);
+    assert.equal(tracker.finalize(1_600), 850);
+    assert.equal(tracker.finalize(1_800), 1_050);
+
+    const resumed = createActiveRuntimeTracker({
+      priorActiveRuntimeMs: 750,
+      segmentStartedAt: 10_000,
+    });
+    assert.equal(resumed.finalize(10_100), 850);
+
+    const frozen = createActiveRuntimeTracker({ segmentStartedAt: 20_000 });
+    assert.equal(frozen.freeze(20_125), 125);
+    assert.equal(frozen.isFrozen(), true);
+    assert.equal(frozen.current(99_999), 125);
+    assert.equal(frozen.finalize(99_999), 125);
+  });
+
+  it("gates durable runtime checkpoints on active advancement and an unfrozen tracker", () => {
+    assert.equal(ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, 30_000);
+    assert.equal(
+      shouldPersistActiveRuntimeCheckpoint({
+        previousActiveRuntimeMs: 1_000,
+        currentActiveRuntimeMs: 1_000,
+        trackerFrozen: false,
+      }),
+      false,
+    );
+    assert.equal(
+      shouldPersistActiveRuntimeCheckpoint({
+        previousActiveRuntimeMs: 1_000,
+        currentActiveRuntimeMs: 1_001,
+        trackerFrozen: false,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldPersistActiveRuntimeCheckpoint({
+        previousActiveRuntimeMs: 1_000,
+        currentActiveRuntimeMs: 1_001,
+        trackerFrozen: true,
+      }),
+      false,
+    );
+  });
+
+  it("applies checkpoint persistence only for real or final-freeze advances", () => {
+    let runtime = 0;
+    let checkpointAt = 0;
+    let persistenceCalls = 0;
+    const tracker = createActiveRuntimeTracker({ segmentStartedAt: 1_000 });
+    const candidate = () => ({
+      tracker,
+      previousActiveRuntimeMs: runtime,
+      previousActiveRuntimeCheckpointAt: checkpointAt,
+      apply(update: { activeRuntimeMs: number; activeRuntimeCheckpointAt: number }) {
+        runtime = update.activeRuntimeMs;
+        checkpointAt = update.activeRuntimeCheckpointAt;
+      },
+    });
+    const persist = () => {
+      persistenceCalls += 1;
+    };
+
+    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 1_100, persist }), true);
+    assert.equal(runtime, 100);
+    assert.equal(checkpointAt, 1_100);
+    assert.equal(persistenceCalls, 1);
+
+    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 1_100, persist }), false);
+    assert.equal(persistenceCalls, 1);
+
+    assert.equal(
+      applyActiveRuntimeCheckpoint([candidate()], { now: 1_200, freeze: true, persist }),
+      true,
+    );
+    assert.equal(runtime, 200);
+    assert.equal(checkpointAt, 1_200);
+    assert.equal(persistenceCalls, 2);
+
+    assert.equal(applyActiveRuntimeCheckpoint([candidate()], { now: 9_999, persist }), false);
+    assert.equal(persistenceCalls, 2);
+  });
+
   it("bounds and sanitizes supervisor summaries", () => {
     const bounded = boundSupervisorSummary("  waiting\u0000\nfor\t supervisor  ", 18);
     assert.equal(bounded, "waiting for sup…");
@@ -1082,6 +1197,56 @@ describe("lifecycle state helpers", () => {
       });
       assert.equal(missingOwner.recovered, false);
       assert.equal(missingOwner.liveness, "missing-owner");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges higher persisted runtime evidence without lowering local lifecycle state", () => {
+    const root = tempRoot("pi-lifecycle-runtime-merge-");
+    try {
+      const asyncDir = path.join(root, "run-runtime-merge");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-runtime-merge",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        lastUpdate: 1_900,
+        activeRuntimeMs: 900,
+        activeRuntimeCheckpointAt: 1_900,
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            activeRuntimeMs: 900,
+            activeRuntimeCheckpointAt: 1_900,
+          },
+        ],
+      });
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-runtime-merge",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        lastUpdate: 1_400,
+        activeRuntimeMs: 400,
+        activeRuntimeCheckpointAt: 1_400,
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            activeRuntimeMs: 400,
+            activeRuntimeCheckpointAt: 1_400,
+          },
+        ],
+      });
+
+      assert.equal(merged.activeRuntimeMs, 900);
+      assert.equal(merged.activeRuntimeCheckpointAt, 1_900);
+      assert.equal(merged.steps?.[0]?.activeRuntimeMs, 900);
+      assert.equal(merged.steps?.[0]?.activeRuntimeCheckpointAt, 1_900);
+      assert.equal(readStatus(asyncDir)?.activeRuntimeMs, 900);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

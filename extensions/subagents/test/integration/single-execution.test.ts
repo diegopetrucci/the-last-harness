@@ -367,6 +367,7 @@ describe(
         foregroundControls: new Map(),
         lastForegroundControlId: null,
       },
+      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
     ) {
       return createSubagentExecutor!({
         pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -376,6 +377,7 @@ describe(
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
+        runSync: runSyncOverride,
       });
     }
 
@@ -2944,67 +2946,109 @@ describe(
     );
 
     it(
-      "rejects invalid foreground timeout values before spawning",
+      "uses the human-owned run ceiling for foreground execution",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
+          { execution: { maxRunTimeMs: 1_234 } },
+          undefined,
+          wrappedRunSync,
+        );
 
         const result = await executor.execute(
-          "timeout-validation",
-          { agent: "echo", task: "Task", timeoutMs: 0 },
+          "timeout-policy-default",
+          { agent: "echo", task: "Task" },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
         );
 
-        assert.equal(result.isError, true);
-        assert.match(result.content[0]?.text ?? "", /timeoutMs must be a positive integer/);
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [1_234]);
+      },
+    );
+
+    it(
+      "keeps role ceilings active when the human run policy is explicitly false",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "role policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 600 })],
+          { execution: { maxRunTimeMs: false } },
+          undefined,
+          wrappedRunSync,
+        );
+
+        const result = await executor.execute(
+          "timeout-policy-role",
+          { agent: "echo", task: "Task" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [600]);
+      },
+    );
+
+    it(
+      "rejects own retired timeout fields before foreground or async launch",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const executor = makeExecutor();
+        const cases = [
+          { agent: "echo", task: "Task", timeoutMs: 1 },
+          { agent: "echo", task: "Task", async: true, timeoutMs: 1 },
+          { tasks: [{ agent: "echo", task: "Task", timeoutMs: 1 }] },
+          { action: "resume", id: "legacy-run", message: "Continue", timeoutMs: 1 },
+        ];
+
+        for (const [index, params] of cases.entries()) {
+          const result = await executor.execute(
+            `timeout-retired-${index}`,
+            params as any,
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /timeoutMs is no longer supported/);
+          assert.match(result.content[0]?.text ?? "", /execution\.maxRunTimeMs/);
+          assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
+        }
         assert.equal(mockPi.callCount(), 0);
-      },
-    );
-
-    it(
-      "allows timeout settings for async runs before spawning",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const executor = makeExecutor();
-
-        const result = await executor.execute(
-          "timeout-async-validation",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.match(result.content[0]?.text ?? "", /Async:/);
-        assert.equal(result.details?.timeoutMs, 1_000);
-      },
-    );
-
-    it(
-      "clamps async timeout requests to the agent execution ceiling",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs: 600 })]);
-
-        const result = await executor.execute(
-          "timeout-async-clamped",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.equal(result.details?.timeoutMs, 600);
       },
     );
 
@@ -3064,7 +3108,7 @@ describe(
         );
         const result = await executor.execute(
           "resume-timeout-forwarding",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 10_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3165,8 +3209,10 @@ describe(
       },
       async () => {
         // The run phase and the resume phase deliberately use different ceilings.
-        // A generous run ceiling means the child completes on its own instead of
-        // racing a kill, so activeRuntimeMs is a real duration (>= runDelayMs).
+        // A generous run ceiling means the child reaches a terminal failure on its
+        // own instead of racing a kill, so activeRuntimeMs is a real duration
+        // (>= runDelayMs). Non-success terminal runs retain that budget; a
+        // successful completion would intentionally reset it before revival.
         // The resume ceiling is far below that duration, so
         // remainingExecutionTimeMs(resumeCeilingMs, activeRuntimeMs) is 0 and the
         // pre-spawn guard rejects the resume. CPU contention only makes
@@ -3175,7 +3221,11 @@ describe(
         const runDelayMs = 150;
         const runCeilingMs = 10_000;
         const resumeCeilingMs = 50;
-        mockPi.onCall({ delay: runDelayMs, output: "finished under the generous ceiling" });
+        mockPi.onCall({
+          delay: runDelayMs,
+          output: "finished under the generous ceiling",
+          exitCode: 1,
+        });
         const state = {
           baseCwd: tempDir,
           currentSessionId: null,
@@ -3196,10 +3246,8 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.ok(
-          !completed.isError,
-          "producer run should complete successfully under the generous ceiling",
-        );
+        assert.equal(completed.isError, true);
+        assert.match(completed.content[0]?.text ?? "", /Child process exited with code 1/);
 
         const remembered = [...state.foregroundRuns.values()][0];
         const activeRuntimeMs = remembered?.children[0]?.activeRuntimeMs;
@@ -3213,7 +3261,7 @@ describe(
         );
         const result = await resumeExecutor.execute(
           "resume-ceiling-exhausted",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 1_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3225,6 +3273,82 @@ describe(
           new RegExp(`exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms`),
         );
         assert.equal(mockPi.callCount(), 1);
+      },
+    );
+
+    it(
+      "resets the logical runtime budget after successful completion before resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const completedDelayMs = 750;
+        const resumeCeilingMs = 500;
+        mockPi.onCall({
+          delay: completedDelayMs,
+          output: "completed successfully",
+        });
+        mockPi.onCall({ output: "fresh follow-up" });
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 10_000 })],
+          {},
+          state,
+        );
+        const completed = await initialExecutor.execute(
+          "producer-successful-run",
+          { agent: "echo", task: "Complete successfully before resuming" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(completed.isError, undefined);
+
+        const remembered = [...state.foregroundRuns.values()][0];
+        const activeRuntimeMs = remembered?.children[0]?.activeRuntimeMs;
+        assert.ok(
+          typeof activeRuntimeMs === "number" && activeRuntimeMs >= resumeCeilingMs,
+          `expected the successful source to consume at least ${resumeCeilingMs}ms, got ${activeRuntimeMs}ms`,
+        );
+        assert.equal(remembered?.children[0]?.status, "completed");
+
+        const resumeExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
+          {},
+          state,
+        );
+        const resumed = await resumeExecutor.execute(
+          "resume-after-success",
+          { action: "resume", id: remembered!.runId, message: "Continue with a fresh budget." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resumed.isError, undefined);
+        assert.ok(resumed.details?.asyncId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumed.details.asyncId!), "utf-8"),
+        ) as {
+          state?: string;
+          success?: boolean;
+          error?: string;
+          results?: Array<{ output?: string; error?: string }>;
+        };
+        assert.equal(
+          resumedPayload.state,
+          "complete",
+          `successful completion reset should allow resume: state=${resumedPayload.state}, error=${resumedPayload.error ?? resumedPayload.results?.[0]?.error ?? "none"}`,
+        );
+        assert.equal(resumedPayload.success, true);
+        assert.match(resumedPayload.results?.[0]?.output ?? "", /fresh follow-up/);
+        assert.equal(mockPi.callCount(), 2);
       },
     );
 

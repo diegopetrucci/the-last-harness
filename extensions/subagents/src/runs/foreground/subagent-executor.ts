@@ -67,7 +67,11 @@ import {
   type StepOverrides,
 } from "../../shared/settings.ts";
 import { normalizeSkillInput } from "../../agents/skills.ts";
-import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
+import {
+  resolveExecutionPolicy,
+  remainingExecutionTimeMs,
+  type ResolvedExecutionPolicy,
+} from "../../agents/execution-ceiling.ts";
 import {
   executeAsyncParallel,
   executeAsyncSingle,
@@ -113,6 +117,8 @@ import {
 import {
   lifecycleContinuationForIndex,
   lifecycleGeneration,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   markLifecycleContinuationSpawned,
   recoverStaleLifecycleContinuationClaim,
   recoverStaleLifecycleContinuationStatus,
@@ -221,7 +227,6 @@ export interface SubagentParamsLike {
   chain?: unknown;
   tasks?: TaskParam[];
   async?: boolean;
-  timeoutMs?: number;
   toolBudget?: ToolBudgetConfig;
   clarify?: boolean;
   share?: boolean;
@@ -285,6 +290,8 @@ interface ExecutorDeps {
   config: ExtensionConfig;
   /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
   artifactConfig?: ResolvedArtifactConfig;
+  /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
+  executionPolicy?: ResolvedExecutionPolicy;
   tempArtifactsDir: string;
   getSubagentSessionRoot: (parentSessionFile: string | null) => string;
   expandTilde: (p: string) => string;
@@ -1415,7 +1422,16 @@ function persistPausedForegroundCohortRun(input: {
           : undefined,
       endedAt: input.stage === "paused" ? now : undefined,
       durationMs: result.progress?.durationMs,
-      activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
+      activeRuntimeMs:
+        normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
+        normalizeActiveRuntimeMs(result.progress?.durationMs),
+      ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
+        ? {
+            activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+              result.activeRuntimeCheckpointAt,
+            ),
+          }
+        : {}),
       model: result.model,
       thinking: result.modelIdentity?.thinking ?? result.thinking,
       ...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
@@ -1451,6 +1467,20 @@ function persistPausedForegroundCohortRun(input: {
       ? { ...step, terminationReason: "paused" as const }
       : step,
   );
+  const activeRuntimeValues = steps
+    .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
+    .filter((value): value is number => value !== undefined);
+  const activeRuntimeCheckpointValues = steps
+    .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
+    .filter((value): value is number => value !== undefined);
+  const activeRuntimeMs =
+    activeRuntimeValues.length > 0
+      ? activeRuntimeValues.reduce((sum, value) => sum + value, 0)
+      : undefined;
+  const activeRuntimeCheckpointAt =
+    activeRuntimeCheckpointValues.length > 0
+      ? Math.max(...activeRuntimeCheckpointValues)
+      : undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     const current = readStatus(asyncDir);
     if (!current) {
@@ -1465,6 +1495,8 @@ function persistPausedForegroundCohortRun(input: {
         cwd: input.cwd,
         ...(pause ? { pause } : {}),
         ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         pid: input.stage === "pausing" ? input.ownerPid : undefined,
         steps,
       });
@@ -1487,6 +1519,22 @@ function persistPausedForegroundCohortRun(input: {
             cwd: input.cwd,
             ...(pause ? { pause } : {}),
             ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
+            ...(activeRuntimeMs !== undefined
+              ? {
+                  activeRuntimeMs: Math.max(
+                    normalizeActiveRuntimeMs(status.activeRuntimeMs) ?? 0,
+                    activeRuntimeMs,
+                  ),
+                }
+              : {}),
+            ...(activeRuntimeCheckpointAt !== undefined
+              ? {
+                  activeRuntimeCheckpointAt: Math.max(
+                    normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) ?? 0,
+                    activeRuntimeCheckpointAt,
+                  ),
+                }
+              : {}),
             steps,
           };
         },
@@ -1543,7 +1591,16 @@ function buildPausedStepFromResult(
         ? now
         : undefined,
     durationMs: result.progress?.durationMs,
-    activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
+    activeRuntimeMs:
+      normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
+      normalizeActiveRuntimeMs(result.progress?.durationMs),
+    ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
+      ? {
+          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+            result.activeRuntimeCheckpointAt,
+          ),
+        }
+      : {}),
     model: result.model,
     thinking: result.modelIdentity?.thinking ?? result.thinking,
     ...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
@@ -1656,6 +1713,10 @@ function persistPausedForegroundSingleRun(input: {
         ...(input.result.pause.request ? { request: input.result.pause.request } : {}),
       } satisfies AsyncStatus["pause"])
     : undefined;
+  const activeRuntimeMs = normalizeActiveRuntimeMs(input.result.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    input.result.activeRuntimeCheckpointAt,
+  );
   const current = readStatus(asyncDir);
   if (!current) {
     if (input.stage !== "pausing")
@@ -1673,6 +1734,8 @@ function persistPausedForegroundSingleRun(input: {
           : now,
       lastUpdate: now,
       cwd: input.cwd,
+      ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+      ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       ...(pause ? { pause } : {}),
       steps: [
         {
@@ -1705,6 +1768,8 @@ function persistPausedForegroundSingleRun(input: {
             ? { terminationReason: pausedForegroundTerminationReason(input.result) }
             : {}),
           ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+          ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+          ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         },
       ],
       sessionFile: input.result.sessionFile,
@@ -1723,6 +1788,22 @@ function persistPausedForegroundSingleRun(input: {
       lastUpdate: now,
       ...(input.stage === "paused" ? { endedAt: now } : {}),
       cwd: input.cwd,
+      ...(activeRuntimeMs !== undefined
+        ? {
+            activeRuntimeMs: Math.max(
+              normalizeActiveRuntimeMs(status.activeRuntimeMs) ?? 0,
+              activeRuntimeMs,
+            ),
+          }
+        : {}),
+      ...(activeRuntimeCheckpointAt !== undefined
+        ? {
+            activeRuntimeCheckpointAt: Math.max(
+              normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) ?? 0,
+              activeRuntimeCheckpointAt,
+            ),
+          }
+        : {}),
       ...(pause ? { pause } : {}),
       sessionFile: input.result.sessionFile ?? status.sessionFile,
       steps: status.steps?.map((step, index) =>
@@ -1760,6 +1841,22 @@ function persistPausedForegroundSingleRun(input: {
                 ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                 : {}),
               ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+              ...(activeRuntimeMs !== undefined
+                ? {
+                    activeRuntimeMs: Math.max(
+                      normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0,
+                      activeRuntimeMs,
+                    ),
+                  }
+                : {}),
+              ...(activeRuntimeCheckpointAt !== undefined
+                ? {
+                    activeRuntimeCheckpointAt: Math.max(
+                      normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0,
+                      activeRuntimeCheckpointAt,
+                    ),
+                  }
+                : {}),
             }
           : step,
       ),
@@ -1937,7 +2034,9 @@ function rememberForegroundRun(
     cwd: input.cwd,
     updatedAt,
     children: input.results.map((result, index) => {
-      const activeRuntimeMs = result.activeRuntimeMs ?? result.progress?.durationMs;
+      const activeRuntimeMs =
+        normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
+        normalizeActiveRuntimeMs(result.progress?.durationMs);
       const child = {
         agent: result.agent,
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
@@ -1969,6 +2068,13 @@ function rememberForegroundRun(
           ? { terminationReason: pausedForegroundTerminationReason(result) }
           : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
+          ? {
+              activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+                result.activeRuntimeCheckpointAt,
+              ),
+            }
+          : {}),
       };
       return child;
     }),
@@ -1998,7 +2104,9 @@ function updateRememberedForegroundChild(
     agent: input.result.agent,
     index: input.index,
   };
-  const activeRuntimeMs = input.result.activeRuntimeMs ?? input.result.progress?.durationMs;
+  const activeRuntimeMs =
+    normalizeActiveRuntimeMs(input.result.activeRuntimeMs) ??
+    normalizeActiveRuntimeMs(input.result.progress?.durationMs);
   run.children[input.index] = {
     ...child,
     agent: input.result.agent,
@@ -2033,6 +2141,13 @@ function updateRememberedForegroundChild(
       ? { terminationReason: pausedForegroundTerminationReason(input.result) }
       : {}),
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt) !== undefined
+      ? {
+          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+            input.result.activeRuntimeCheckpointAt,
+          ),
+        }
+      : {}),
   };
   trimRememberedForegroundRuns(state);
 }
@@ -2094,6 +2209,7 @@ function resolveForegroundResumeTarget(
       contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
       contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
       activeRuntimeMs?: number;
+      activeRuntimeCheckpointAt?: number;
       projectAgents?: ProjectAgentRunCapture[];
     }
   | undefined {
@@ -2170,7 +2286,16 @@ function resolveForegroundResumeTarget(
           ),
         }
       : {}),
-    ...(child.activeRuntimeMs !== undefined ? { activeRuntimeMs: child.activeRuntimeMs } : {}),
+    ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
+      ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
+      : {}),
+    ...(normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt) !== undefined
+      ? {
+          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+            child.activeRuntimeCheckpointAt,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -2199,6 +2324,7 @@ type NestedResumeSourceTarget = {
   contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   asyncDir?: string;
 };
 type ResumeSourceTarget =
@@ -3319,6 +3445,7 @@ type NestedResumeStatusStep = {
   contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   projectAgentMarker?: true;
 };
 
@@ -3352,6 +3479,8 @@ function readNestedResumeStatusStep(
       `Nested run '${runId}' persisted status does not have a valid step at index 0.`,
     );
   const activeRuntimeMs = (step as { activeRuntimeMs?: unknown }).activeRuntimeMs;
+  const activeRuntimeCheckpointAt = (step as { activeRuntimeCheckpointAt?: unknown })
+    .activeRuntimeCheckpointAt;
   if (
     activeRuntimeMs !== undefined &&
     (typeof activeRuntimeMs !== "number" ||
@@ -3384,6 +3513,11 @@ function readNestedResumeStatusStep(
     ...(contextPressure ? { contextPressure } : {}),
     ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
     ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+    ...(normalizeActiveRuntimeCheckpointAt(activeRuntimeCheckpointAt) !== undefined
+      ? {
+          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(activeRuntimeCheckpointAt),
+        }
+      : {}),
     ...(malformedProjectAgentMarker ? { projectAgentMarker: true as const } : {}),
     ...(raw.acceptance
       ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] }
@@ -3484,6 +3618,9 @@ function resolveNestedResumeTarget(
       : {}),
     ...(statusStep?.activeRuntimeMs !== undefined
       ? { activeRuntimeMs: statusStep.activeRuntimeMs }
+      : {}),
+    ...(statusStep?.activeRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: statusStep.activeRuntimeCheckpointAt }
       : {}),
     ...(asyncDir ? { asyncDir } : {}),
     ...(run.state === "paused" ? { pauseKind: "cohort_pause" as const } : {}),
@@ -4290,6 +4427,7 @@ async function resumeAsyncRun(input: {
   ctx: ExtensionContext;
   deps: ExecutorDeps;
   artifactConfig: ResolvedArtifactConfig;
+  executionPolicy: ResolvedExecutionPolicy;
 }): Promise<SubagentToolResult<Details>> {
   const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -4422,15 +4560,42 @@ async function resumeAsyncRun(input: {
     };
   }
 
-  const callerTimeout = resolveForegroundTimeout(input.params);
-  if (callerTimeout.error) {
+  const runTimeoutMs =
+    input.executionPolicy.maxRunTimeMs === false ? undefined : input.executionPolicy.maxRunTimeMs;
+  // A successful completed source is the sole reset boundary. Every other
+  // resumable outcome carries only validated logical runtime evidence; paused
+  // wall time never enters the continuation budget.
+  const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
+  if (
+    target.state !== "complete" &&
+    target.activeRuntimeMs !== undefined &&
+    normalizedTargetActiveRuntimeMs === undefined
+  ) {
     return {
-      content: [{ type: "text", text: callerTimeout.error }],
+      content: [
+        { type: "text", text: "Invalid active runtime evidence; continuation cannot start." },
+      ],
       isError: true,
       details: { mode: "management", results: [] },
     };
   }
-  const activeRuntimeMs = Math.max(0, target.activeRuntimeMs ?? 0);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    target.activeRuntimeCheckpointAt,
+  );
+  if (
+    target.state !== "complete" &&
+    target.activeRuntimeCheckpointAt !== undefined &&
+    activeRuntimeCheckpointAt === undefined
+  ) {
+    return {
+      content: [
+        { type: "text", text: "Invalid active runtime checkpoint; continuation cannot start." },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  const activeRuntimeMs = target.state === "complete" ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
   const remainingAgentTimeMs = remainingExecutionTimeMs(
     agentConfig.maxExecutionTimeMs,
     activeRuntimeMs,
@@ -4588,7 +4753,10 @@ async function resumeAsyncRun(input: {
       acceptance: input.params.acceptance,
       continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
       activeRuntimeMs,
-      timeoutMs: callerTimeout.timeoutMs,
+      ...(target.state !== "complete" && activeRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt }
+        : {}),
+      timeoutMs: runTimeoutMs,
       outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
       maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
       controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
@@ -4782,6 +4950,8 @@ function unknownAgentMessage(
 function retiredExecutionControlError(params: SubagentParamsLike): string | undefined {
   const input = params as Record<string, unknown>;
   const topLevelGuidance: Record<string, string> = {
+    timeoutMs:
+      "Configure `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json`; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing `timeoutMs`.",
     concurrency:
       "Configure `parallel.concurrency` in `<agent-dir>/extensions/subagent/config.json`; per-call concurrency is no longer supported.",
     fallbackModels:
@@ -4796,6 +4966,9 @@ function retiredExecutionControlError(params: SubagentParamsLike): string | unde
   if (Array.isArray(input.tasks)) {
     for (const [index, rawTask] of input.tasks.entries()) {
       if (!isRecordValue(rawTask)) continue;
+      if (Object.hasOwn(rawTask, "timeoutMs")) {
+        return `tasks[${index}].timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
+      }
       if (Object.hasOwn(rawTask, "reads")) {
         return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
       }
@@ -4894,18 +5067,6 @@ function buildRequestedModeError(
     isError: true,
     details: { mode: getRequestedModeLabel(params), results: [] },
   };
-}
-
-function resolveForegroundTimeout(params: SubagentParamsLike): {
-  timeoutMs?: number;
-  error?: string;
-} {
-  const rawTimeout = params.timeoutMs;
-  if (rawTimeout === undefined) return {};
-  if (typeof rawTimeout !== "number" || !Number.isInteger(rawTimeout) || rawTimeout <= 0) {
-    return { error: "timeoutMs must be a positive integer." };
-  }
-  return { timeoutMs: rawTimeout };
 }
 
 function resolveEffectiveSingleTimeout(
@@ -5136,7 +5297,6 @@ function runAsyncPath(
       currentMaxSubagentDepth,
       a.maxSubagentDepth,
     );
-    const effectiveTimeoutMs = resolveEffectiveSingleTimeout(data.timeoutMs, a.maxExecutionTimeMs);
     const modelOverride = resolveSubagentModelOverride(
       (params.model as string | undefined) ?? a.model,
       ctx.model,
@@ -5173,7 +5333,7 @@ function runAsyncPath(
         controlConfig,
         nestedRoute,
         acceptance: params.acceptance,
-        timeoutMs: effectiveTimeoutMs,
+        timeoutMs: data.timeoutMs,
         toolBudget: data.toolBudget,
         projectAgent: data.projectAgentCaptures?.find(
           (capture) => capture.provenance.agent === params.agent,
@@ -5984,8 +6144,7 @@ async function runSinglePath(
     : undefined;
 
   const deadlineAt =
-    data.deadlineAt ??
-    (effectiveTimeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined);
+    data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
   let r: SingleResult;
   try {
     r = await (data.runSync ?? runSync)(ctx.cwd, agents, params.agent!, task, {
@@ -6770,6 +6929,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 } {
   const configuredArtifactConfig =
     deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
+  const executionPolicy = deps.executionPolicy ?? resolveExecutionPolicy(deps.config.execution);
 
   const execute = async (
     _id: string,
@@ -6807,6 +6967,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
             ...configuredArtifactConfig,
             enabled: paramsWithResolvedCwd.artifacts !== false,
           },
+          executionPolicy,
         });
       }
       if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
@@ -6852,9 +7013,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const normalizedParams = normalized.params!;
 
     let effectiveParams = normalizedParams;
-    const foregroundTimeout = resolveForegroundTimeout(effectiveParams);
-    if (foregroundTimeout.error)
-      return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+    const runTimeoutMs =
+      executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
     const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
     if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
@@ -6994,7 +7154,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       effectiveAsync,
       controlConfig,
       nestedRoute,
-      timeoutMs: foregroundTimeout.timeoutMs,
+      timeoutMs: runTimeoutMs,
       toolBudget: runToolBudget.toolBudget,
       modelScope,
       runSync: deps.runSync,

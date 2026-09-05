@@ -579,30 +579,8 @@ function applyOpenRouterModelToProjectTargets(input, projectTargets, currentMode
             apply(task);
     }
 }
-const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
-const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set([
-    "librarian",
-    "web-scout",
-    "repo-scout",
-    "diff-summarizer",
-]);
 function isOpaqueSubagentManagementActionInput(input) {
     return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
-}
-function capScoutSubagentTimeout(input) {
-    if (!isRecord(input) ||
-        isOpaqueSubagentManagementActionInput(input) ||
-        isSubagentResumeAction(input) ||
-        !subagentCallTargetsMatching(input, (agent) => SCOUT_TIMEOUT_CAPPED_SUBAGENTS.has(agent.trim().toLowerCase()))) {
-        return;
-    }
-    const { timeoutMs } = input;
-    if (typeof timeoutMs === "number" &&
-        Number.isFinite(timeoutMs) &&
-        timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
-        return;
-    }
-    input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
 }
 function embeddedDelegationBlockedReason(selection, input) {
     if (isOpaqueSubagentManagementActionInput(input)) {
@@ -2145,7 +2123,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                     warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message);
                 },
             });
-            capScoutSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const allowedSubagents = allowedSubagentsForExperimentalConfig();

@@ -120,7 +120,12 @@ import {
   resolveEffectiveAcceptance,
 } from "../shared/acceptance.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
-import { boundSupervisorSummary } from "../shared/lifecycle-state.ts";
+import {
+  boundSupervisorSummary,
+  createActiveRuntimeTracker,
+  normalizeActiveRuntimeMs,
+  type ActiveRuntimeTracker,
+} from "../shared/lifecycle-state.ts";
 import {
   FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
   formatForegroundSupervisorPauseMessage,
@@ -189,8 +194,45 @@ function finalizeTerminationReason(result: SingleResult): void {
   });
 }
 
+const CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE =
+  "Subagent exceeded the configured maximum execution time.";
+
 function formatTimeoutMessage(timeoutMs: number): string {
   return `Subagent timed out after ${timeoutMs}ms.`;
+}
+
+function resolveTimeoutMessage(input: {
+  startedAt: number;
+  callerTimeoutMs?: number;
+  roleTimeoutMs?: number;
+  sharedDeadlineAt?: number;
+}): string | undefined {
+  const callerDeadlineAt =
+    input.callerTimeoutMs === undefined ? undefined : input.startedAt + input.callerTimeoutMs;
+  const roleDeadlineAt =
+    input.roleTimeoutMs === undefined ? undefined : input.startedAt + input.roleTimeoutMs;
+  const deadlines = [
+    { owner: "caller" as const, at: callerDeadlineAt },
+    { owner: "role" as const, at: roleDeadlineAt },
+    { owner: "run" as const, at: input.sharedDeadlineAt },
+  ].filter(
+    (deadline): deadline is { owner: "caller" | "role" | "run"; at: number } =>
+      deadline.at !== undefined,
+  );
+  if (deadlines.length === 0) return undefined;
+  const ownerPriority = { role: 0, run: 1, caller: 2 } as const;
+  const winningDeadline = deadlines.reduce((winner, deadline) =>
+    deadline.at < winner.at ||
+    (deadline.at === winner.at && ownerPriority[deadline.owner] < ownerPriority[winner.owner])
+      ? deadline
+      : winner,
+  );
+  if (winningDeadline.owner === "run") return CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE;
+  if (winningDeadline.owner === "role" && input.roleTimeoutMs !== undefined) {
+    return formatTimeoutMessage(input.roleTimeoutMs);
+  }
+  if (input.callerTimeoutMs !== undefined) return formatTimeoutMessage(input.callerTimeoutMs);
+  return undefined;
 }
 
 function resolveEffectiveSingleTimeout(
@@ -227,7 +269,12 @@ function formatTimeoutDiagnostics(
   options: RunSyncOptions,
   artifactPaths?: ArtifactPaths,
 ): string {
-  const timeoutMessage = result.error ?? formatTimeoutMessage(options.timeoutMs ?? 0);
+  const timeoutMessage =
+    result.error ??
+    options.timeoutMessage ??
+    (options.deadlineAt !== undefined
+      ? CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE
+      : formatTimeoutMessage(options.timeoutMs ?? 0));
   const progress = result.progress;
   const details: string[] = [];
   const recentTools = progress?.recentTools.slice(-TIMEOUT_RECENT_TOOLS) ?? [];
@@ -290,7 +337,7 @@ function resolveAttemptTimeout(
     timeoutMs: options.timeoutMs,
     deadlineAt,
     remainingMs: Math.max(0, deadlineAt - Date.now()),
-    message: formatTimeoutMessage(options.timeoutMs),
+    message: options.timeoutMessage ?? formatTimeoutMessage(options.timeoutMs),
   };
 }
 
@@ -583,7 +630,11 @@ function finalizeSingleAttemptOutput(input: SingleAttemptFinalizationInput): Sin
     ? boundChildError(formatProtocolOutputLimit(result.protocolOutputLimit))
     : acceptanceParsed.stripped;
   if (result.timedOut) {
-    const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
+    const timeoutMessage =
+      options.timeoutMessage ??
+      (options.deadlineAt !== undefined
+        ? CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE
+        : formatTimeoutMessage(options.timeoutMs ?? 0));
     fullOutput = fullOutput.trim()
       ? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
       : timeoutMessage;
@@ -987,6 +1038,7 @@ async function runSingleAttempt(
     originalTask?: string;
     contextPressureCrossedThresholds: Set<ContextPressureThreshold>;
     contextPressure?: ContextPressureProjection;
+    runtimeTracker: ActiveRuntimeTracker;
   },
 ): Promise<SingleResult> {
   const effectiveThinking = agent.thinking;
@@ -1063,6 +1115,7 @@ async function runSingleAttempt(
       lastActivityAt: now,
       error: message,
     };
+    shared.runtimeTracker.freeze(now);
     return {
       agent: agent.name,
       task: shared.originalTask ?? task,
@@ -1130,6 +1183,7 @@ async function runSingleAttempt(
   result.progress = progress;
   const attemptTimeout = resolveAttemptTimeout(options);
   if (attemptTimeout?.remainingMs === 0) {
+    shared.runtimeTracker.freeze(Date.now());
     result.exitCode = 1;
     result.timedOut = true;
     result.error = attemptTimeout.message;
@@ -1233,6 +1287,7 @@ async function runSingleAttempt(
     const pauseForSupervisor = (pause: NonNullable<SingleResult["pause"]>) => {
       if (supervisorPauseRequested || processClosed || settled) return;
       if (!claimChildTerminalReason(terminalReason, "paused")) return;
+      shared.runtimeTracker.freeze(Date.now());
       const ownerPid = processGroupId;
       result.pause = {
         ...pause,
@@ -1686,6 +1741,7 @@ async function runSingleAttempt(
       timeoutTimer = scheduleDeadline(attemptTimeout.deadlineAt, () => {
         if (processClosed || settled || interruptedByControl || protocolOutputLimit) return;
         if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
+        shared.runtimeTracker.freeze(Date.now());
         result.timedOut = true;
         result.error = boundChildError(attemptTimeout.message);
         result.finalOutput = result.error;
@@ -1714,6 +1770,7 @@ async function runSingleAttempt(
       onLimit: (limit) => {
         if (protocolOutputLimit) return;
         if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
+        shared.runtimeTracker.freeze(Date.now());
         protocolOutputLimit = limit;
         const message = boundChildError(formatProtocolOutputLimit(limit));
         result.protocolOutputLimit = limit;
@@ -1764,8 +1821,10 @@ async function runSingleAttempt(
       // processLine must be called before processClosed = true: the onUpdate guards at line 874/890
       // check processClosed and would suppress the trailing line's progress update if set earlier.
       // processClosed must be set before the first await so timeout and kill guards cannot
-      // observe a stale false during the artifact flush window.
+      // observe a stale false during the artifact flush window. Freeze accounting before
+      // that async artifact/cleanup window so teardown time is never charged as execution.
       processClosed = true;
+      shared.runtimeTracker.freeze(Date.now());
       void (async () => {
         // jsonlWriter.close() marks itself closed and drops its stream synchronously before
         // its first await (jsonl-writer.ts), so processLine() must be called before close()
@@ -1890,8 +1949,10 @@ async function runSingleAttempt(
         result.error = boundChildError(error instanceof Error ? error.message : String(error));
       }
       // processClosed must be set before the first await so timeout, abort, and interrupt
-      // paths cannot observe a stale false and reinterpret a real process error.
+      // paths cannot observe a stale false and reinterpret a real process error. Freeze
+      // before the async artifact flush, which is not child execution time.
       processClosed = true;
+      shared.runtimeTracker.freeze(Date.now());
       void (async () => {
         await jsonlWriter.close().catch(() => {
           // JSONL artifact flush is best effort.
@@ -1911,6 +1972,7 @@ async function runSingleAttempt(
           pauseForSupervisor(pendingSupervisorPause);
           return;
         }
+        shared.runtimeTracker.freeze(Date.now());
         proc.kill("SIGTERM");
         setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
       };
@@ -1926,6 +1988,7 @@ async function runSingleAttempt(
         if (processClosed || settled || protocolOutputLimit) return;
         if (result.timedOut) return;
         if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
+        shared.runtimeTracker.freeze(Date.now());
         interruptedByControl = true;
         clearTimeoutTimers();
         progress.status = "running";
@@ -1984,13 +2047,21 @@ export async function runSync(
       error: `Unknown agent: ${agentName}`,
     };
   }
+  const runStartedAt = Date.now();
   const effectiveTimeoutMs = resolveEffectiveSingleTimeout(
     options.timeoutMs,
     agent.maxExecutionTimeMs,
   );
+  const timeoutMessage = resolveTimeoutMessage({
+    startedAt: runStartedAt,
+    callerTimeoutMs: options.timeoutMs,
+    roleTimeoutMs: agent.maxExecutionTimeMs,
+    sharedDeadlineAt: options.deadlineAt,
+  });
   options = {
     ...options,
     timeoutMs: effectiveTimeoutMs,
+    ...(timeoutMessage ? { timeoutMessage } : {}),
     deadlineAt: resolveEffectiveTimeoutDeadline(options.deadlineAt, effectiveTimeoutMs),
     ...(agent.supervisorBridge === false ? { pauseBlockingSupervisor: false } : {}),
   };
@@ -2078,6 +2149,7 @@ export async function runSync(
   let contextPressure = parseContextPressureProjection(options.contextPressure);
   let totalToolCount = 0;
   let totalDurationMs = 0;
+  let totalActiveRuntimeMs = 0;
 
   const { artifactPathsResult, jsonlPath, transcriptWriter } = setupForegroundArtifacts(
     runtimeCwd,
@@ -2095,6 +2167,7 @@ export async function runSync(
   for (let i = 0; i < modelsToTry.length; i++) {
     const candidate = modelsToTry[i];
     const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+    const runtimeTracker = createActiveRuntimeTracker({ segmentStartedAt: Date.now() });
     const result = await runSingleAttempt(
       runtimeCwd,
       agent,
@@ -2117,8 +2190,11 @@ export async function runSync(
         originalTask: task,
         contextPressureCrossedThresholds,
         contextPressure,
+        runtimeTracker,
       },
     );
+    result.activeRuntimeMs = runtimeTracker.finalize();
+    result.activeRuntimeCheckpointAt = Date.now();
     lastResult = result;
     contextPressure = result.contextPressure ?? contextPressure;
     finalAttemptContextUsage = result.contextUsage;
@@ -2139,7 +2215,11 @@ export async function runSync(
     else if (candidate) attemptedModels.push(candidate);
     sumUsage(aggregateUsage, result.usage);
     totalToolCount += result.progressSummary?.toolCount ?? 0;
-    totalDurationMs += result.progressSummary?.durationMs ?? 0;
+    totalDurationMs += normalizeActiveRuntimeMs(result.progressSummary?.durationMs) ?? 0;
+    totalActiveRuntimeMs +=
+      normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
+      normalizeActiveRuntimeMs(result.progressSummary?.durationMs) ??
+      0;
     const attemptSucceeded = result.exitCode === 0 && !result.error;
     const attempt: ModelAttempt = {
       model: result.model ?? candidate ?? agent.model ?? "default",
@@ -2206,7 +2286,9 @@ export async function runSync(
     tokens: aggregateUsage.input + aggregateUsage.output,
     durationMs: totalDurationMs,
   };
-  result.activeRuntimeMs = totalDurationMs;
+  // Wall duration is retained for diagnostics, while logical runtime is the
+  // monotonic sum of each active attempt (including fallback/retry attempts).
+  result.activeRuntimeMs = totalActiveRuntimeMs;
   if (attemptNotes.length > 0 && result.progress) {
     const existingNotes = new Set(result.progress.recentOutput);
     result.progress.recentOutput = [

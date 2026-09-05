@@ -125,6 +125,44 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(findAgent("repo-scout").model, "deepseek-v4-flash");
   });
 
+  it("applies code-owned max execution defaults before human overrides", () => {
+    const expected = {
+      developer: 7_200_000,
+      "code-reviewer": 1_800_000,
+      "test-runner": 3_600_000,
+      librarian: 14_400_000,
+      oracle: 2_700_000,
+      contrarian: 1_800_000,
+      "repo-scout": 600_000,
+      "web-scout": 300_000,
+      "diff-summarizer": 300_000,
+    };
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: {
+          developer: { maxExecutionTimeMs: false },
+          librarian: { maxExecutionTimeMs: 1_234 },
+        },
+      },
+    });
+    for (const name of Object.keys(expected)) {
+      writeCanonicalAgent(
+        name,
+        `---\nname: ${name}\ndescription: ${name} agent\n---\n\n${name}.\n`,
+      );
+    }
+
+    const agents = discoverAgents(tempProject, "both").agents;
+    assert.deepEqual(
+      Object.fromEntries(agents.map((agent) => [agent.name, agent.maxExecutionTimeMs])),
+      {
+        ...expected,
+        developer: undefined,
+        librarian: 1_234,
+      },
+    );
+  });
+
   it("applies max execution time overrides to canonical roles", () => {
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
       subagents: {

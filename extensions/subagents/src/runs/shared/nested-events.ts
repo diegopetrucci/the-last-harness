@@ -45,6 +45,7 @@ import {
   parseContextUsageDiagnostics,
   parseSubagentTerminationReason,
 } from "../../shared/context-diagnostics.ts";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./lifecycle-state.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -308,6 +309,10 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
       ? raw.status
       : "pending";
   const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    raw.activeRuntimeCheckpointAt,
+  );
   const projectAgent = projectAgentProjection(raw);
   return {
     agent,
@@ -337,6 +342,8 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
     ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
     ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
     ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
     ...(raw.timedOut === true ? { timedOut: true } : {}),
     ...(parseContextUsageDiagnostics(raw.contextUsage)
@@ -380,6 +387,10 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     : undefined;
   const totalTokens = sanitizeTokenUsage(raw.totalTokens);
   const totalCost = sanitizeCost(raw.totalCost);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    raw.activeRuntimeCheckpointAt,
+  );
   const projectAgent = projectAgentProjection(raw);
   return {
     id: raw.id,
@@ -456,6 +467,8 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     ...(clampNumber(raw.lastUpdate) !== undefined
       ? { lastUpdate: clampNumber(raw.lastUpdate) }
       : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
     ...(clampNumber(raw.deadlineAt) !== undefined
       ? { deadlineAt: clampNumber(raw.deadlineAt) }
@@ -1039,6 +1052,10 @@ export function nestedSummaryFromAsyncStatus(
     ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
     ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
     ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+    ...(status.activeRuntimeMs !== undefined ? { activeRuntimeMs: status.activeRuntimeMs } : {}),
+    ...(status.activeRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: status.activeRuntimeCheckpointAt }
+      : {}),
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
@@ -1075,6 +1092,12 @@ export function nestedSummaryFromAsyncStatus(
                 ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
                 ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
                 ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                ...(step.activeRuntimeMs !== undefined
+                  ? { activeRuntimeMs: step.activeRuntimeMs }
+                  : {}),
+                ...(step.activeRuntimeCheckpointAt !== undefined
+                  ? { activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt }
+                  : {}),
                 ...(step.error ? { error: step.error } : {}),
                 ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                 ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),

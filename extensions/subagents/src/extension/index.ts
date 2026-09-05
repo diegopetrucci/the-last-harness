@@ -78,6 +78,7 @@ import registerSubagentNotify, {
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
+import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
@@ -367,6 +368,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   const config = loadConfig();
   const artifactConfig = resolveArtifactConfig(config.artifacts);
+  const executionPolicy = resolveExecutionPolicy(config.execution);
   const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
   // Lazily captured session context for modelRegistry access.
   // ctx is not available at extension setup; we capture it from the session_start
@@ -471,6 +473,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     state,
     config,
     artifactConfig,
+    executionPolicy,
     tempArtifactsDir,
     getSubagentSessionRoot,
     expandTilde,
