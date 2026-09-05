@@ -475,6 +475,41 @@ function validateStatusForResume(status, source) {
         });
     }
 }
+function validateRawStatusStepsForResume(statusPath) {
+    let content;
+    try {
+        content = fs.readFileSync(statusPath, "utf-8");
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return;
+        throw error;
+    }
+    let raw;
+    try {
+        raw = JSON.parse(content);
+    }
+    catch {
+        return;
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return;
+    const steps = raw.steps;
+    if (!Array.isArray(steps))
+        return;
+    for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step || typeof step !== "object" || Array.isArray(step))
+            continue;
+        const activeRuntimeMs = step.activeRuntimeMs;
+        if (activeRuntimeMs !== undefined &&
+            (typeof activeRuntimeMs !== "number" ||
+                !Number.isFinite(activeRuntimeMs) ||
+                activeRuntimeMs < 0)) {
+            throw new Error(`Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`);
+        }
+    }
+}
 function validateResumeSessionFile(runId, sessionFile, options = {}) {
     if (path.extname(sessionFile) !== ".jsonl")
         throw new Error(`Async run '${runId}' session file must be a .jsonl file: ${sessionFile}`);
@@ -756,6 +791,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
     if (!location.asyncDir && !location.resultPath) {
         throw new Error("Async run not found. Provide id or dir.");
+    }
+    if (location.asyncDir) {
+        validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
     }
     const reconciliation = location.asyncDir && !options.readOnly
         ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })

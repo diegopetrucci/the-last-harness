@@ -1367,6 +1367,173 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("rejects malformed steps[].activeRuntimeMs in status (negative)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-neg-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      writeJson(path.join(asyncRoot, "run-bad-runtime-neg", "status.json"), {
+        runId: "run-bad-runtime-neg",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "running", activeRuntimeMs: -1 }],
+      });
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-neg" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (string)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-str-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: a string value is genuinely persistable and cannot
+      // be expressed through the typed fixture helper.
+      const dir = path.join(asyncRoot, "run-bad-runtime-str");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-str",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: "500ms" }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-str" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (null)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-null-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: null is the persistable form produced by
+      // JSON.stringify for NaN/Infinity, covering the case where a corrupt writer
+      // emits an explicit null budget field.
+      const dir = path.join(asyncRoot, "run-bad-runtime-null");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-null",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: null }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-null" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (object)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-obj-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: an object shape is a genuinely persistable
+      // non-integer value that a corrupt writer could produce.
+      const dir = path.join(asyncRoot, "run-bad-runtime-obj");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-obj",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: { ms: 500 } }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-obj" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts valid steps[].activeRuntimeMs with malformed activeRuntimeCheckpointAt in status", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-valid-runtime-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "valid-runtime.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      // activeRuntimeCheckpointAt: -999 is a malformed (negative) but persistable
+      // value. It must NOT be strictly rejected — it is only normalized away
+      // (checkpoint metadata cannot widen a budget). Resume must still succeed
+      // with activeRuntimeMs intact and the checkpoint omitted from the target.
+      writeJson(path.join(asyncRoot, "run-valid-runtime", "status.json"), {
+        runId: "run-valid-runtime",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        sessionFile,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            activeRuntimeMs: 500,
+            activeRuntimeCheckpointAt: -999,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-valid-runtime" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      assert.equal(target.kind, "revive");
+      assert.equal(target.activeRuntimeMs, 500);
+      // Malformed checkpoint is normalized to undefined, not strictly rejected.
+      assert.equal(target.activeRuntimeCheckpointAt, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("revives a completed child by index while a sibling async child is still running", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-partial-"));
     try {

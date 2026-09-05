@@ -839,6 +839,50 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
   }
 }
 
+/**
+ * Fail-closed pre-normalization check for steps[].activeRuntimeMs in a raw
+ * status file. normalizeAsyncLifecycleStatus silently drops invalid values
+ * before validateStatusForResume runs, so we must validate the raw JSON here
+ * to mirror the result-path strict rejection at lines 385-393.
+ *
+ * activeRuntimeCheckpointAt is deliberately NOT checked; it cannot widen a
+ * budget and is only normalized (never strictly validated) on all paths.
+ */
+function validateRawStatusStepsForResume(statusPath: string): void {
+  let content: string;
+  try {
+    content = fs.readFileSync(statusPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    // JSON parse errors are reported later by the reconciler/readStatus path.
+    return;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  const steps = (raw as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return;
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const activeRuntimeMs = (step as Record<string, unknown>).activeRuntimeMs;
+    if (
+      activeRuntimeMs !== undefined &&
+      (typeof activeRuntimeMs !== "number" ||
+        !Number.isFinite(activeRuntimeMs) ||
+        activeRuntimeMs < 0)
+    ) {
+      throw new Error(
+        `Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`,
+      );
+    }
+  }
+}
+
 function validateResumeSessionFile(
   runId: string,
   sessionFile: string,
@@ -1238,6 +1282,13 @@ export function resolveAsyncResumeTarget(
   const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
   if (!location.asyncDir && !location.resultPath) {
     throw new Error("Async run not found. Provide id or dir.");
+  }
+
+  // Validate raw status JSON before normalization strips malformed budget fields.
+  // normalizeAsyncLifecycleStatus silently drops invalid steps[].activeRuntimeMs;
+  // fail-closed here mirrors the result-path strict rejection (lines 385-393).
+  if (location.asyncDir) {
+    validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
   }
 
   const reconciliation =
