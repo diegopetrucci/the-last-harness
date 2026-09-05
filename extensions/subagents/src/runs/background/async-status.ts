@@ -46,6 +46,10 @@ import { safeTerminalDocument, safeTerminalText } from "../../shared/display-tex
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import {
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
+} from "../shared/lifecycle-state.ts";
+import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
   parseContextUsageDiagnostics,
@@ -71,6 +75,7 @@ interface AsyncRunStepSummary {
   lastSteerAt?: number;
   durationMs?: number;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   tokens?: TokenUsage;
@@ -113,6 +118,8 @@ export interface AsyncRunSummary {
   startedAt: number;
   lastUpdate?: number;
   endedAt?: number;
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
@@ -259,7 +266,25 @@ export function validatePersistedAsyncStatus(
       }
     }
   }
+  const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    status.activeRuntimeCheckpointAt,
+  );
+  if (activeRuntimeMs === undefined) status.activeRuntimeMs = undefined;
+  else status.activeRuntimeMs = activeRuntimeMs;
+  if (activeRuntimeCheckpointAt === undefined) status.activeRuntimeCheckpointAt = undefined;
+  else status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
   for (const step of status.steps ?? []) {
+    // Invalid external accounting evidence is unknown, not a reason to
+    // fabricate elapsed time or to trust a caller-supplied value.
+    const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+      step.activeRuntimeCheckpointAt,
+    );
+    if (activeRuntimeMs === undefined) step.activeRuntimeMs = undefined;
+    else step.activeRuntimeMs = activeRuntimeMs;
+    if (activeRuntimeCheckpointAt === undefined) step.activeRuntimeCheckpointAt = undefined;
+    else step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
     if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
       throw createAsyncStatusValidationError({
         asyncDir,
@@ -299,6 +324,10 @@ function statusToSummary(
   const summarizedSteps = steps.map((step, index) => {
     const stepActivityState = step.activityState;
     const stepLastActivityAt = step.lastActivityAt;
+    const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+      step.activeRuntimeCheckpointAt,
+    );
     return {
       index,
       agent: step.agent,
@@ -320,7 +349,8 @@ function statusToSummary(
       ...(step.steerCount !== undefined ? { steerCount: step.steerCount } : {}),
       ...(step.lastSteerAt !== undefined ? { lastSteerAt: step.lastSteerAt } : {}),
       ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-      ...(step.activeRuntimeMs !== undefined ? { activeRuntimeMs: step.activeRuntimeMs } : {}),
+      ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+      ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
       ...(step.deadlineAt !== undefined ? { deadlineAt: step.deadlineAt } : {}),
       ...(step.tokens ? { tokens: step.tokens } : {}),
@@ -370,6 +400,16 @@ function statusToSummary(
     startedAt: status.startedAt,
     lastUpdate: status.lastUpdate,
     endedAt: status.endedAt,
+    ...(normalizeActiveRuntimeMs(status.activeRuntimeMs) !== undefined
+      ? { activeRuntimeMs: normalizeActiveRuntimeMs(status.activeRuntimeMs) }
+      : {}),
+    ...(normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) !== undefined
+      ? {
+          activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+            status.activeRuntimeCheckpointAt,
+          ),
+        }
+      : {}),
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),

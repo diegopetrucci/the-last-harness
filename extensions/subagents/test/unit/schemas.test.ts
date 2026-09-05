@@ -103,12 +103,8 @@ describe("SubagentParams schema", () => {
     assert.match(description, /resume/);
   });
 
-  it("includes foreground timeout", () => {
-    const timeoutSchema = getPropertySchema(SubagentParams, ["timeoutMs"]);
-    assert.ok(timeoutSchema, "timeoutMs schema should exist");
-    assert.equal(timeoutSchema.minimum, 1);
-    assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
-    assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
+  it("does not expose a public execution timeout", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["timeoutMs"]), undefined);
   });
 
   it("includes id, index, and message control parameters", () => {
@@ -313,7 +309,6 @@ describe("SubagentParams schema", () => {
         ],
       },
       { tasks: [{ agent: "reviewer", task: "check this", model: "anthropic/claude-sonnet-4" }] },
-      { agent: "worker", task: "Fix", timeoutMs: 1000 },
       { action: "status", id: "run-1" },
       { action: "interrupt", id: "run-1" },
       { action: "resume", id: "run-1", message: "focus on tests" },
@@ -331,7 +326,8 @@ describe("SubagentParams schema", () => {
     ];
     const invalidValues = [
       { output: 123 },
-      { timeoutMs: 0 },
+      { timeoutMs: 1 },
+      { tasks: [{ agent: "reviewer", task: "check this", timeoutMs: 1 }] },
       { tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
       { tasks: [{ agent: "reviewer", task: "check this", progress: true }] },
       { fallbackModels: ["openai/gpt-4o"] },
@@ -412,7 +408,6 @@ describe("SubagentParams schema", () => {
       "output",
       "outputMode",
       "model",
-      "timeoutMs",
       "cwd",
       "artifacts",
     ].sort();

@@ -365,6 +365,8 @@ export function widgetRenderKey(job) {
         completedSteps: job.completedSteps,
         startedAt: job.startedAt,
         updatedAt: job.updatedAt,
+        activeRuntimeMs: job.activeRuntimeMs,
+        activeRuntimeCheckpointAt: job.activeRuntimeCheckpointAt,
         totalTokens: job.totalTokens,
         tkTicket: job.tkTicket,
     });

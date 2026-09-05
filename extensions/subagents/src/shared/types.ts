@@ -628,6 +628,8 @@ export interface SingleResult {
   transcriptPath?: string;
   transcriptError?: string;
   activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   tkTicket?: TkTicketMetadata;
   children?: NestedRunSummary[];
 }
@@ -741,6 +743,9 @@ export interface NestedStepSummary {
   toolCount?: number;
   startedAt?: number;
   endedAt?: number;
+  activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   error?: string;
   timedOut?: boolean;
   toolBudget?: ToolBudgetState;
@@ -783,6 +788,9 @@ export interface NestedRunSummary extends NestedRunAddress {
   startedAt?: number;
   endedAt?: number;
   lastUpdate?: number;
+  activeRuntimeMs?: number;
+  /** Last authoritative active-runtime checkpoint written for this run. */
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
@@ -857,6 +865,9 @@ export interface AsyncStatus {
   startedAt: number;
   endedAt?: number;
   lastUpdate?: number;
+  activeRuntimeMs?: number;
+  /** Last authoritative active-runtime checkpoint written for this run. */
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
@@ -897,6 +908,8 @@ export interface AsyncStatus {
     endedAt?: number;
     durationMs?: number;
     activeRuntimeMs?: number;
+    /** Timestamp of the last authoritative active-runtime checkpoint. */
+    activeRuntimeCheckpointAt?: number;
     timeoutMs?: number;
     deadlineAt?: number;
     exitCode?: number | null;
@@ -990,6 +1003,8 @@ export interface AsyncResultArtifactResultItem {
   acceptance?: AcceptanceLedger;
   pause?: AsyncPauseMetadata;
   activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
 }
 
 /**
@@ -1017,6 +1032,10 @@ export interface AsyncResultArtifact {
   toolBudgetBlocked?: boolean;
   timedOut?: boolean;
   pause?: AsyncPauseMetadata;
+  /** Aggregate logical runtime across the run's child steps. */
+  activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   results: AsyncResultArtifactResultItem[];
   exitCode: number;
   timestamp: number;
@@ -1063,6 +1082,9 @@ export interface AsyncJobState {
   completedSteps?: number;
   startedAt?: number;
   updatedAt?: number;
+  activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
@@ -1108,6 +1130,8 @@ export interface ForegroundResumeChild {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
+  /** Timestamp of the last authoritative active-runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
   updatedAt?: number;
 }
 
@@ -1210,7 +1234,10 @@ export interface RunSyncOptions {
   cwd?: string;
   signal?: AbortSignal;
   interruptSignal?: AbortSignal;
+  /** Internal resolved allowance used by the process/deadline transport. */
   timeoutMs?: number;
+  /** Internal diagnostic selected by the execution boundary that owns the deadline. */
+  timeoutMessage?: string;
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
   pauseBlockingSupervisor?: boolean;
@@ -1270,6 +1297,8 @@ export interface ExtensionConfig {
   parallel?: TopLevelParallelConfig;
   heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
   artifacts?: ExtensionArtifactConfig;
+  /** External execution settings remain unknown until the policy boundary validates them. */
+  execution?: unknown;
   /** Unknown settings remain tolerated and are preserved by the boundary reader. */
   [key: string]: unknown;
 }

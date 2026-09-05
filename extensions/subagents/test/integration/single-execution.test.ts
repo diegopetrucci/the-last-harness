@@ -28,6 +28,7 @@ import {
 } from "../support/helpers.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type {
+  AsyncStatus,
   ChildProcessCleanupResult,
   ContextUsageDiagnostics,
   SingleResult,
@@ -291,6 +292,16 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function readPersistedStatus(statusPath: string): AsyncStatus {
+  const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(`Expected persisted status object at ${statusPath}`);
+  const record = parsed as Record<string, unknown>;
+  assert.equal(typeof record.runId, "string");
+  assert.equal(typeof record.state, "string");
+  return parsed as AsyncStatus;
+}
+
 function writePackageSkill(packageRoot: string, skillName: string): void {
   const skillDir = path.join(packageRoot, "skills", skillName);
   fs.mkdirSync(skillDir, { recursive: true });
@@ -367,6 +378,7 @@ describe(
         foregroundControls: new Map(),
         lastForegroundControlId: null,
       },
+      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
     ) {
       return createSubagentExecutor!({
         pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -376,6 +388,7 @@ describe(
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
+        runSync: runSyncOverride,
       });
     }
 
@@ -2944,67 +2957,109 @@ describe(
     );
 
     it(
-      "rejects invalid foreground timeout values before spawning",
+      "uses the human-owned run ceiling for foreground execution",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
+          { execution: { maxRunTimeMs: 1_234 } },
+          undefined,
+          wrappedRunSync,
+        );
 
         const result = await executor.execute(
-          "timeout-validation",
-          { agent: "echo", task: "Task", timeoutMs: 0 },
+          "timeout-policy-default",
+          { agent: "echo", task: "Task" },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
         );
 
-        assert.equal(result.isError, true);
-        assert.match(result.content[0]?.text ?? "", /timeoutMs must be a positive integer/);
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [1_234]);
+      },
+    );
+
+    it(
+      "keeps role ceilings active when the human run policy is explicitly false",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "role policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 600 })],
+          { execution: { maxRunTimeMs: false } },
+          undefined,
+          wrappedRunSync,
+        );
+
+        const result = await executor.execute(
+          "timeout-policy-role",
+          { agent: "echo", task: "Task" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [600]);
+      },
+    );
+
+    it(
+      "rejects own retired timeout fields before foreground or async launch",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const executor = makeExecutor();
+        const cases = [
+          { agent: "echo", task: "Task", timeoutMs: 1 },
+          { agent: "echo", task: "Task", async: true, timeoutMs: 1 },
+          { tasks: [{ agent: "echo", task: "Task", timeoutMs: 1 }] },
+          { action: "resume", id: "legacy-run", message: "Continue", timeoutMs: 1 },
+        ];
+
+        for (const [index, params] of cases.entries()) {
+          const result = await executor.execute(
+            `timeout-retired-${index}`,
+            params as any,
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /timeoutMs is no longer supported/);
+          assert.match(result.content[0]?.text ?? "", /execution\.maxRunTimeMs/);
+          assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
+        }
         assert.equal(mockPi.callCount(), 0);
-      },
-    );
-
-    it(
-      "allows timeout settings for async runs before spawning",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const executor = makeExecutor();
-
-        const result = await executor.execute(
-          "timeout-async-validation",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.match(result.content[0]?.text ?? "", /Async:/);
-        assert.equal(result.details?.timeoutMs, 1_000);
-      },
-    );
-
-    it(
-      "clamps async timeout requests to the agent execution ceiling",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs: 600 })]);
-
-        const result = await executor.execute(
-          "timeout-async-clamped",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.equal(result.details?.timeoutMs, 600);
       },
     );
 
@@ -3064,7 +3119,7 @@ describe(
         );
         const result = await executor.execute(
           "resume-timeout-forwarding",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 10_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3073,6 +3128,185 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
         assert.ok(result.details?.deadlineAt !== undefined);
+      },
+    );
+
+    it(
+      "persists supervisor-pause runtime for a fresh-process resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        let statusPath: string | undefined;
+        const maxExecutionTimeMs = 5_000;
+        let pausingStatus: AsyncStatus | undefined;
+
+        mockPi.onCall({
+          ignoreSigint: true,
+          ignoreSigterm: true,
+          spawnStubbornDescendants: true,
+          steps: [
+            {
+              delay: 150,
+              jsonl: [
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need a decision before continuing",
+                }),
+              ],
+            },
+            { delay: 10_000, jsonl: [events.assistantMessage("must not complete before pause")] },
+          ],
+        });
+
+        const observedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          const callback =
+            typeof options.onSupervisorPauseTransition === "function"
+              ? (options.onSupervisorPauseTransition as (transition: unknown) => void)
+              : undefined;
+          return runSync!(runtimeCwd, agents, agentName, task, {
+            ...options,
+            onSupervisorPauseTransition: (transition: unknown) => {
+              callback?.(transition);
+              const stage =
+                transition && typeof transition === "object" && "stage" in transition
+                  ? transition.stage
+                  : undefined;
+              if (stage === "pausing") {
+                for (const entry of fs.readdirSync(ASYNC_DIR, { withFileTypes: true })) {
+                  if (!entry.isDirectory()) continue;
+                  const candidatePath = path.join(ASYNC_DIR, entry.name, "status.json");
+                  try {
+                    const candidate = readPersistedStatus(candidatePath);
+                    if (candidate.state === "pausing" && candidate.cwd === tempDir) {
+                      statusPath = candidatePath;
+                      pausingStatus = candidate;
+                      break;
+                    }
+                  } catch {
+                    // Ignore unrelated or transient status files while locating this run.
+                  }
+                }
+              }
+            },
+          });
+        };
+
+        const initialState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          initialState,
+          observedRunSync,
+        );
+        const paused = await initialExecutor.execute(
+          "supervisor-runtime-pause",
+          { agent: "echo", task: "Pause while waiting for a supervisor decision" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(paused.isError, undefined);
+        assert.ok(statusPath, "expected persisted status path before child cleanup");
+        assert.ok(pausingStatus, "expected persisted pausing status before child cleanup");
+        const pausingStep = pausingStatus.steps?.[0];
+        const runId = pausingStatus.runId;
+        assert.equal(pausingStatus.state, "pausing");
+        assert.equal(pausingStep?.status, "pausing");
+        assert.ok(
+          typeof pausingStatus.activeRuntimeMs === "number" && pausingStatus.activeRuntimeMs > 0,
+        );
+        assert.equal(pausingStatus.activeRuntimeMs, pausingStep?.activeRuntimeMs);
+        assert.ok(typeof pausingStatus.activeRuntimeCheckpointAt === "number");
+        assert.equal(
+          pausingStatus.activeRuntimeCheckpointAt,
+          pausingStep?.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausingStatus.activeRuntimeCheckpointAt ?? 0) >= (pausingStatus.pause?.requestedAt ?? 0),
+        );
+
+        const pausedStatus = readPersistedStatus(statusPath);
+        assert.equal(pausedStatus.runId, runId);
+        const pausedStep = pausedStatus.steps?.[0];
+        assert.equal(pausedStatus.state, "paused");
+        assert.equal(pausedStep?.status, "paused");
+        assert.equal(pausedStatus.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(pausedStep?.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(
+          pausedStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.equal(
+          pausedStep?.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) >= (pausedStatus.activeRuntimeCheckpointAt ?? 0),
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) - (pausedStatus.activeRuntimeCheckpointAt ?? 0) >=
+            100,
+          "expected stubborn cleanup time after the runtime checkpoint",
+        );
+
+        const activeRuntimeMs = pausingStatus.activeRuntimeMs!;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const offlineStatus = readPersistedStatus(statusPath);
+        assert.equal(offlineStatus.activeRuntimeMs, activeRuntimeMs);
+        assert.equal(
+          offlineStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+
+        mockPi.onCall({ output: "resumed after restart" });
+        const restartedState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const resumed = await makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          restartedState,
+        ).execute(
+          "supervisor-runtime-resume",
+          { action: "resume", id: runId, message: "Continue after the supervisor responds." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(restartedState.foregroundRuns.size, 0);
+        assert.equal(resumed.isError, undefined);
+        assert.equal(resumed.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
+        const resumedId = resumed.details?.asyncId;
+        assert.ok(resumedId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumedId), "utf-8"),
+        ) as unknown;
+        assert.ok(
+          resumedPayload && typeof resumedPayload === "object" && !Array.isArray(resumedPayload),
+        );
+        assert.equal((resumedPayload as Record<string, unknown>).state, "complete");
+        assert.equal((resumedPayload as Record<string, unknown>).success, true);
       },
     );
 
@@ -3165,8 +3399,10 @@ describe(
       },
       async () => {
         // The run phase and the resume phase deliberately use different ceilings.
-        // A generous run ceiling means the child completes on its own instead of
-        // racing a kill, so activeRuntimeMs is a real duration (>= runDelayMs).
+        // A generous run ceiling means the child reaches a terminal failure on its
+        // own instead of racing a kill, so activeRuntimeMs is a real duration
+        // (>= runDelayMs). Non-success terminal runs retain that budget; a
+        // successful completion would intentionally reset it before revival.
         // The resume ceiling is far below that duration, so
         // remainingExecutionTimeMs(resumeCeilingMs, activeRuntimeMs) is 0 and the
         // pre-spawn guard rejects the resume. CPU contention only makes
@@ -3175,7 +3411,11 @@ describe(
         const runDelayMs = 150;
         const runCeilingMs = 10_000;
         const resumeCeilingMs = 50;
-        mockPi.onCall({ delay: runDelayMs, output: "finished under the generous ceiling" });
+        mockPi.onCall({
+          delay: runDelayMs,
+          output: "finished under the generous ceiling",
+          exitCode: 1,
+        });
         const state = {
           baseCwd: tempDir,
           currentSessionId: null,
@@ -3196,10 +3436,8 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.ok(
-          !completed.isError,
-          "producer run should complete successfully under the generous ceiling",
-        );
+        assert.equal(completed.isError, true);
+        assert.match(completed.content[0]?.text ?? "", /Child process exited with code 1/);
 
         const remembered = [...state.foregroundRuns.values()][0];
         const activeRuntimeMs = remembered?.children[0]?.activeRuntimeMs;
@@ -3213,7 +3451,7 @@ describe(
         );
         const result = await resumeExecutor.execute(
           "resume-ceiling-exhausted",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 1_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3225,6 +3463,83 @@ describe(
           new RegExp(`exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms`),
         );
         assert.equal(mockPi.callCount(), 1);
+      },
+    );
+
+    it(
+      "resets the logical runtime budget after successful completion before resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const resumeCeilingMs = 10_000;
+        const consumedSourceRuntimeMs = resumeCeilingMs + 1_000;
+        mockPi.onCall({ output: "completed successfully" });
+        mockPi.onCall({ delay: 250, output: "fresh follow-up" });
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 10_000 })],
+          {},
+          state,
+        );
+        const completed = await initialExecutor.execute(
+          "producer-successful-run",
+          { agent: "echo", task: "Complete successfully before resuming" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(completed.isError, undefined);
+
+        const remembered = [...state.foregroundRuns.values()][0];
+        assert.ok(remembered, "expected the successful source to be remembered");
+        const source = remembered.children[0];
+        assert.ok(source, "expected the successful source child to be remembered");
+        assert.equal(source.status, "completed");
+        source.activeRuntimeMs = consumedSourceRuntimeMs;
+        assert.equal(source.activeRuntimeMs, consumedSourceRuntimeMs);
+        assert.ok(
+          source.activeRuntimeMs > resumeCeilingMs,
+          `expected injected source runtime to exceed the ${resumeCeilingMs}ms resume ceiling`,
+        );
+
+        const resumeExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
+          {},
+          state,
+        );
+        const resumed = await resumeExecutor.execute(
+          "resume-after-success",
+          { action: "resume", id: remembered!.runId, message: "Continue with a fresh budget." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resumed.isError, undefined);
+        assert.ok(resumed.details?.asyncId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumed.details.asyncId!), "utf-8"),
+        ) as {
+          state?: string;
+          success?: boolean;
+          error?: string;
+          results?: Array<{ output?: string; error?: string }>;
+        };
+        assert.equal(
+          resumedPayload.state,
+          "complete",
+          `successful completion reset should allow resume: state=${resumedPayload.state}, error=${resumedPayload.error ?? resumedPayload.results?.[0]?.error ?? "none"}`,
+        );
+        assert.equal(resumedPayload.success, true);
+        assert.match(resumedPayload.results?.[0]?.output ?? "", /fresh follow-up/);
+        assert.equal(mockPi.callCount(), 2);
       },
     );
 

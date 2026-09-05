@@ -25,8 +25,6 @@ import {
   EMBEDDED_SUBAGENTS_FEATURE,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
-const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
-
 test("enabled primary mode allows approved delegation targets and forces safe top-level defaults", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const event = {
@@ -73,7 +71,7 @@ test("enabled primary mode allows final-validation delegation to test-runner", a
   assert.equal(Object.hasOwn(event.input, "context"), false);
 });
 
-test("tool_call caps targeted scout execution timeouts without affecting stricter or non-target calls", async () => {
+test("tool_call leaves caller execution timeouts unchanged for scouts and mixed batches", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const ctx = createToolCallContext([
     {
@@ -89,7 +87,7 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
         toolName: "subagent",
         input: { agent: "librarian", task: "Research upstream docs" },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: undefined,
     },
     {
       name: "missing timeout for web-scout",
@@ -97,12 +95,12 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
         toolName: "subagent",
         input: { agent: "web-scout", task: "Research upstream docs" },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: undefined,
     },
     {
       name: "missing timeout for repo-scout",
       event: { toolName: "subagent", input: { agent: "repo-scout", task: "Map the repo" } },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: undefined,
     },
     {
       name: "missing timeout for diff-summarizer",
@@ -110,15 +108,15 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
         toolName: "subagent",
         input: { agent: "diff-summarizer", task: "Summarize the diff" },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: undefined,
     },
     {
-      name: "overly long timeout is capped",
+      name: "long timeout is preserved",
       event: {
         toolName: "subagent",
         input: { agent: "librarian", task: "Research upstream docs", timeoutMs: 420_000 },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: 420_000,
     },
     {
       name: "stricter timeout is preserved",
@@ -129,15 +127,15 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
       expectedTimeoutMs: 120_000,
     },
     {
-      name: "async execution is capped",
+      name: "async execution timeout is unchanged",
       event: {
         toolName: "subagent",
         input: { agent: "web-scout", task: "Research upstream docs", async: true },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: undefined,
     },
     {
-      name: "mixed batch uses run-level cap when any targeted scout is present",
+      name: "mixed batch keeps its run-level timeout",
       event: {
         toolName: "subagent",
         input: {
@@ -148,7 +146,7 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
           timeoutMs: 420_000,
         },
       },
-      expectedTimeoutMs: SCOUT_RUN_MAX_TIMEOUT_MS,
+      expectedTimeoutMs: 420_000,
     },
     {
       name: "non-target execution is unchanged",
@@ -435,7 +433,7 @@ test("disabled primary mode enforces architect-equivalent subagent safety and sc
     assert.equal(await toolCall(allowedEvent, ctx), undefined);
     assert.equal(allowedEvent.input.agentScope, "user");
     assert.equal(Object.hasOwn(allowedEvent.input, "context"), false);
-    assert.equal(allowedEvent.input.timeoutMs, SCOUT_RUN_MAX_TIMEOUT_MS);
+    assert.equal(allowedEvent.input.timeoutMs, undefined);
 
     const blockedTargetEvent = {
       toolName: "subagent",

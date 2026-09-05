@@ -5,6 +5,7 @@ import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagen
 import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../shared/nested-events.js";
 import { scanAsyncRunsForRestore } from "./async-status.js";
 import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
@@ -130,6 +131,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             completedSteps: visibleSteps.filter((step) => step.status === "complete" || step.status === "completed" || step.status === "continued").length,
             startedAt: run.startedAt,
             updatedAt: run.lastUpdate ?? run.startedAt,
+            activeRuntimeMs: run.activeRuntimeMs,
+            activeRuntimeCheckpointAt: run.activeRuntimeCheckpointAt,
             timeoutMs: run.timeoutMs,
             deadlineAt: run.deadlineAt,
             timedOut: run.timedOut,
@@ -436,6 +439,16 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.mode = normalizeSubagentRunMode(status.mode);
                         job.currentStep = status.currentStep ?? job.currentStep;
                         job.startedAt = status.startedAt ?? job.startedAt;
+                        const persistedRuntime = normalizeActiveRuntimeMs(status.activeRuntimeMs);
+                        const observedRuntime = normalizeActiveRuntimeMs(job.activeRuntimeMs);
+                        if (persistedRuntime !== undefined || observedRuntime !== undefined) {
+                            job.activeRuntimeMs = Math.max(persistedRuntime ?? 0, observedRuntime ?? 0);
+                        }
+                        const persistedCheckpoint = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
+                        const observedCheckpoint = normalizeActiveRuntimeCheckpointAt(job.activeRuntimeCheckpointAt);
+                        if (persistedCheckpoint !== undefined || observedCheckpoint !== undefined) {
+                            job.activeRuntimeCheckpointAt = Math.max(persistedCheckpoint ?? 0, observedCheckpoint ?? 0);
+                        }
                         if (status.lastUpdate !== undefined)
                             job.updatedAt = status.lastUpdate;
                         if (job.status !== "complete" &&

@@ -209,6 +209,19 @@ describe("trusted project-agent loader", () => {
     assert.equal(entry.agent.inheritProjectContext, true);
   });
 
+  it("uses the bounded fallback for custom agents without shadowing explicit frontmatter", () => {
+    const project = tempProject();
+    const fallbackPath = writeDefinition(project, "FALLBACK.md");
+    const fallback = parseProjectAgentDefinition(fallbackPath, fs.readFileSync(fallbackPath));
+    assert.equal(fallback.agent.maxExecutionTimeMs, 14_400_000);
+
+    const explicitPath = writeDefinition(project, "EXPLICIT.md", {
+      extraFrontmatter: "maxExecutionTimeMs: 1234",
+    });
+    const explicit = parseProjectAgentDefinition(explicitPath, fs.readFileSync(explicitPath));
+    assert.equal(explicit.agent.maxExecutionTimeMs, 1234);
+  });
+
   it("enforces filename, frontmatter, package, tools, and extension agreement", () => {
     const project = tempProject();
     const cases = [

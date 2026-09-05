@@ -665,7 +665,7 @@ describe("nested run control behavior", () => {
     }
   });
 
-  it("clamps terminal nested resume to persisted index-0 active runtime", async () => {
+  it("resets terminal successful nested resume runtime before continuation", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-runtime-"));
     const runId = "nested-terminal-runtime";
     const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
@@ -692,14 +692,14 @@ describe("nested run control behavior", () => {
         { name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
       ]).execute(
         "resume",
-        { action: "resume", id: runId, message: "continue", timeoutMs: 1_000 },
+        { action: "resume", id: runId, message: "continue" },
         new AbortController().signal,
         undefined,
         ctx(root, parentSessionFile),
       );
 
       assert.equal(result.isError, undefined, text(result));
-      assert.equal(result.details?.timeoutMs, 25);
+      assert.equal(result.details?.timeoutMs, 100);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
@@ -811,7 +811,7 @@ describe("nested run control behavior", () => {
         { name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
       ]).execute(
         "resume",
-        { action: "resume", id: runId, message: "continue", timeoutMs: 1_000 },
+        { action: "resume", id: runId, message: "continue" },
         new AbortController().signal,
         undefined,
         ctx(root, parentSessionFile),

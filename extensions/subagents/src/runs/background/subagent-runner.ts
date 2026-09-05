@@ -163,11 +163,19 @@ import {
 } from "../shared/process-group-cleanup.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import {
+  ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS,
   TERMINAL_RUN_STATES,
+  applyActiveRuntimeCheckpoint,
   boundSupervisorSummary,
+  boundedActiveRuntimeMs,
+  createActiveRuntimeTracker,
   finalizeLifecycleContinuationLaunch,
   lifecycleGeneration,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   mergeAndWriteSourceRunnerStatus,
+  type ActiveRuntimeCheckpointUpdate,
+  type ActiveRuntimeTracker,
   transitionLifecycleStatus,
   writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
@@ -227,6 +235,7 @@ interface StepResult {
   acceptance?: import("../../shared/types.ts").AcceptanceLedger;
   pause?: AsyncStatus["pause"];
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
 }
 
 const ASYNC_INTERRUPT_SIGNAL: NodeJS.Signals =
@@ -1172,6 +1181,8 @@ interface SingleStepContext {
   onChildEvent?: (event: ChildEvent) => void;
   onChildProtocolOutputLimit?: (limit: ProtocolOutputLimit) => void;
   skipAcceptance?: () => boolean;
+  /** Shared runner-owned tracker used by checkpoints and final settlement. */
+  runtimeTracker?: ActiveRuntimeTracker;
 }
 
 /**
@@ -1229,6 +1240,7 @@ type SingleStepResultValue = {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
 };
 
 type SingleStepAcceptance = import("../../shared/types.ts").AcceptanceLedger;
@@ -1254,8 +1266,7 @@ interface SingleStepExecutionState {
 }
 
 interface SingleStepSetup {
-  segmentStartedAt: number;
-  priorActiveRuntimeMs: number;
+  runtimeTracker: ActiveRuntimeTracker;
   stepTimeoutTimer?: DeadlineTimer;
   inheritedTimeoutSignal?: AbortSignal;
   relayInheritedTimeout: () => void;
@@ -1274,20 +1285,43 @@ interface SingleStepSetup {
 }
 
 function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): SingleStepSetup {
-  const segmentStartedAt = ctx.startedAt ?? Date.now();
-  const priorActiveRuntimeMs = Math.max(0, step.activeRuntimeMs ?? 0);
+  const segmentStartedAt = normalizeActiveRuntimeCheckpointAt(ctx.startedAt) ?? Date.now();
+  const priorActiveRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
+  const runtimeTracker =
+    ctx.runtimeTracker ??
+    createActiveRuntimeTracker({
+      priorActiveRuntimeMs,
+      segmentStartedAt,
+    });
   const stepTimeoutController = new AbortController();
   let activeTimeoutInterrupt: (() => void) | undefined;
   const inheritedTimeoutSignal = ctx.timeoutSignal;
   const relayInheritedTimeout = () => stepTimeoutController.abort();
   if (inheritedTimeoutSignal?.aborted) relayInheritedTimeout();
   else inheritedTimeoutSignal?.addEventListener("abort", relayInheritedTimeout, { once: true });
-  const childDeadlineAt =
-    ctx.deadlineAt ??
-    (step.timeoutMs !== undefined ? segmentStartedAt + step.timeoutMs : undefined);
-  const stepTimeoutTimer =
+  const stepDeadlineAt =
     step.timeoutMs !== undefined
-      ? scheduleDeadline(childDeadlineAt ?? segmentStartedAt, () => {
+      ? saturatingStepDeadlineAt(segmentStartedAt, step.timeoutMs)
+      : undefined;
+  const childDeadlineAt =
+    ctx.deadlineAt === undefined
+      ? stepDeadlineAt
+      : stepDeadlineAt === undefined
+        ? ctx.deadlineAt
+        : Math.min(ctx.deadlineAt, stepDeadlineAt);
+  const stepOwnsDeadline =
+    (step.timeoutOwner === "role" && step.timeoutMs !== undefined) ||
+    (step.timeoutOwner !== "run" &&
+      stepDeadlineAt !== undefined &&
+      (ctx.deadlineAt === undefined || stepDeadlineAt <= ctx.deadlineAt));
+  const stepTimeoutTimer =
+    childDeadlineAt !== undefined
+      ? scheduleDeadline(childDeadlineAt, () => {
+          // A step-owned deadline ends the active segment before signaling or
+          // reaping the child. This prevents the timeout/cleanup grace window
+          // from being carried into a later continuation budget. The parent
+          // runner owns the equivalent freeze for a run-level deadline.
+          runtimeTracker.freeze(Date.now());
           stepTimeoutController.abort();
           activeTimeoutInterrupt?.();
         })
@@ -1296,10 +1330,9 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   const stepContext: SingleStepContext = {
     ...ctx,
     timeoutSignal: stepTimeoutController.signal,
-    timeoutMessage:
-      step.timeoutMs !== undefined
-        ? `Subagent timed out after ${step.timeoutMs}ms.`
-        : ctx.timeoutMessage,
+    timeoutMessage: stepOwnsDeadline
+      ? `Subagent timed out after ${step.timeoutMs}ms.`
+      : ctx.timeoutMessage,
     registerTimeout: (interrupt) => {
       activeTimeoutInterrupt = interrupt;
       parentRegisterTimeout?.(interrupt);
@@ -1363,8 +1396,7 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
       }
     : undefined;
   return {
-    segmentStartedAt,
-    priorActiveRuntimeMs,
+    runtimeTracker,
     stepTimeoutTimer,
     inheritedTimeoutSignal,
     relayInheritedTimeout,
@@ -1933,8 +1965,7 @@ function finalizeSingleStepArtifacts(input: {
   transcriptWriter?: ChildTranscriptWriter;
   childDeadlineAt?: number;
   task: string;
-  priorActiveRuntimeMs: number;
-  segmentStartedAt: number;
+  activeRuntimeMs: number;
 }): void {
   const {
     step,
@@ -1946,8 +1977,7 @@ function finalizeSingleStepArtifacts(input: {
     transcriptWriter,
     childDeadlineAt,
     task,
-    priorActiveRuntimeMs,
-    segmentStartedAt,
+    activeRuntimeMs,
   } = input;
   const { finalResult } = state;
   if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
@@ -2002,7 +2032,7 @@ function finalizeSingleStepArtifacts(input: {
             ...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
             transcriptError: transcriptWriter?.getError(),
             skills: step.skills,
-            activeRuntimeMs: priorActiveRuntimeMs + (Date.now() - segmentStartedAt),
+            activeRuntimeMs,
             timeoutMs: ctx.timeoutMs ?? step.timeoutMs,
             deadlineAt: childDeadlineAt,
             timestamp: Date.now(),
@@ -2029,8 +2059,9 @@ function buildSingleStepResult(input: {
   setup: SingleStepSetup;
   output: SingleStepOutputFinalization;
   outcome: SingleStepOutcome;
+  activeRuntimeMs: number;
 }): SingleStepResultValue {
-  const { step, state, setup, output, outcome } = input;
+  const { step, state, setup, output, outcome, activeRuntimeMs } = input;
   const finalResult = state.finalResult;
   return {
     agent: step.agent,
@@ -2064,7 +2095,7 @@ function buildSingleStepResult(input: {
     toolBudgetBlocked: state.toolBudgetBlocked || undefined,
     completionGuardTriggered: state.completionGuardTriggeredFinal,
     acceptance: outcome.effectiveAcceptance,
-    activeRuntimeMs: setup.priorActiveRuntimeMs + (Date.now() - setup.segmentStartedAt),
+    activeRuntimeMs,
   };
 }
 
@@ -2182,6 +2213,10 @@ async function runSingleStep(
     acceptance,
     acceptanceWasInterrupted: output.acceptanceWasInterrupted,
   });
+  // Finalize the same tracker used for accounting checkpoints. Since each
+  // checkpoint advances its segment origin, this adds only the uncheckpointed
+  // tail and cannot double-count a previously persisted interval.
+  const activeRuntimeMs = setup.runtimeTracker.finalize();
   finalizeSingleStepArtifacts({
     step,
     ctx: stepCtx,
@@ -2192,11 +2227,18 @@ async function runSingleStep(
     transcriptWriter: setup.transcriptWriter,
     childDeadlineAt: setup.childDeadlineAt,
     task: setup.task,
-    priorActiveRuntimeMs: setup.priorActiveRuntimeMs,
-    segmentStartedAt: setup.segmentStartedAt,
+    activeRuntimeMs,
   });
   cleanupSingleStepSetup(setup);
-  return buildSingleStepResult({ step, ctx: stepCtx, state, setup, output, outcome });
+  return buildSingleStepResult({
+    step,
+    ctx: stepCtx,
+    state,
+    setup,
+    output,
+    outcome,
+    activeRuntimeMs,
+  });
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2258,11 +2300,20 @@ function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {
 const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
 const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR =
   "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
+const ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR =
+  "Async runner config contains retired timeoutMs execution control. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct single or parallel run after removing timeoutMs.";
 const ASYNC_RUNNER_INVALID_CONFIG_ERROR = "Async runner config is malformed.";
 
-type RunnerConfigEnvelope = Omit<SubagentRunConfig, "plan" | "artifactConfig"> & {
+type RunnerConfigEnvelope = Omit<SubagentRunConfig, "plan" | "artifactConfig" | "deadlineAt"> & {
   plan?: unknown;
   artifactConfig?: unknown;
+  deadlineAt?: unknown;
+  /** Legacy boundary-only field; rejected before an executable plan launches. */
+  timeoutMs?: unknown;
+};
+
+type ValidRunnerConfigEnvelope = Omit<RunnerConfigEnvelope, "deadlineAt"> & {
+  deadlineAt?: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2276,8 +2327,41 @@ function hasRetiredStructuredOutputProperty(value: unknown): boolean {
   );
 }
 
+function hasRetiredTimeoutProperty(value: unknown): boolean {
+  return isRecord(value) && Object.hasOwn(value, "timeoutMs");
+}
+
+function hasRetiredRunTimeoutProperty(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return hasRetiredTimeoutProperty(value) || hasRetiredTimeoutProperty(value.plan);
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function isRunnerSubagentStepValue(value: unknown): value is SubagentStep {
   if (!isRecord(value) || hasRetiredStructuredOutputProperty(value)) return false;
+  const hasTimeoutMs = Object.hasOwn(value, "timeoutMs");
+  if (hasTimeoutMs && !isPositiveSafeInteger(value.timeoutMs)) return false;
+  if (
+    Object.hasOwn(value, "activeRuntimeMs") &&
+    normalizeActiveRuntimeMs(value.activeRuntimeMs) === undefined
+  )
+    return false;
+  if (
+    Object.hasOwn(value, "activeRuntimeCheckpointAt") &&
+    !isNonNegativeSafeInteger(value.activeRuntimeCheckpointAt)
+  )
+    return false;
+  if (Object.hasOwn(value, "timeoutOwner")) {
+    if (value.timeoutOwner !== "role" && value.timeoutOwner !== "run") return false;
+    if (!hasTimeoutMs || !isPositiveSafeInteger(value.timeoutMs)) return false;
+  }
   return typeof value.agent === "string" && typeof value.task === "string";
 }
 
@@ -2294,6 +2378,7 @@ function isDirectRunPlanValue(value: unknown): value is SubagentRunPlan {
 
 function directRunPlanValidationError(value: unknown): string {
   if (isRecord(value)) {
+    if (hasRetiredTimeoutProperty(value)) return ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR;
     if (value.kind === "single" && hasRetiredStructuredOutputProperty(value.task)) {
       return ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR;
     }
@@ -2325,9 +2410,42 @@ function isRunnerConfigEnvelope(value: unknown): value is RunnerConfigEnvelope {
   );
 }
 
+function hasValidRunnerDeadlineAt(value: RunnerConfigEnvelope): value is ValidRunnerConfigEnvelope {
+  return !Object.hasOwn(value, "deadlineAt") || isPositiveSafeInteger(value.deadlineAt);
+}
+
 function parseRunnerConfig(value: unknown): RunnerConfigEnvelope {
   if (!isRunnerConfigEnvelope(value)) throw new Error(ASYNC_RUNNER_INVALID_CONFIG_ERROR);
   return value;
+}
+
+function resolveRunnerTimeoutMessage(plan: SubagentRunPlan): string {
+  if (
+    plan.kind === "single" &&
+    plan.task.timeoutOwner === "role" &&
+    plan.task.timeoutMs !== undefined
+  ) {
+    return `Subagent timed out after ${plan.task.timeoutMs}ms.`;
+  }
+  return "Subagent exceeded the configured maximum execution time.";
+}
+
+function saturatingStepDeadlineAt(stepStartedAt: number, stepTimeoutMs: number): number {
+  return Math.min(Number.MAX_SAFE_INTEGER, stepStartedAt + stepTimeoutMs);
+}
+
+function resolveStepDeadlineAt(
+  stepStartedAt: number,
+  stepTimeoutMs: number | undefined,
+  runDeadlineAt: number | undefined,
+): number | undefined {
+  const stepDeadlineAt =
+    stepTimeoutMs !== undefined
+      ? saturatingStepDeadlineAt(stepStartedAt, stepTimeoutMs)
+      : undefined;
+  if (stepDeadlineAt === undefined) return runDeadlineAt;
+  if (runDeadlineAt === undefined) return stepDeadlineAt;
+  return Math.min(stepDeadlineAt, runDeadlineAt);
 }
 
 function persistMissingRunPlanFailure(
@@ -2336,6 +2454,7 @@ function persistMissingRunPlanFailure(
 ): void {
   const timestamp = Date.now();
   const mode = rejectedPlanMode(config.plan);
+  const deadlineAt = isPositiveSafeInteger(config.deadlineAt) ? config.deadlineAt : undefined;
   const status: AsyncStatus = {
     lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
     runId: config.id,
@@ -2346,8 +2465,7 @@ function persistMissingRunPlanFailure(
     startedAt: timestamp,
     endedAt: timestamp,
     lastUpdate: timestamp,
-    ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
-    ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+    ...(deadlineAt !== undefined ? { deadlineAt } : {}),
     ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
     cwd: config.cwd,
     currentStep: 0,
@@ -2384,6 +2502,14 @@ function persistMissingRunPlanFailure(
 }
 
 async function runSubagent(config: RunnerConfigEnvelope): Promise<void> {
+  if (hasRetiredRunTimeoutProperty(config)) {
+    persistMissingRunPlanFailure(config, ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR);
+    throw new Error(ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR);
+  }
+  if (!hasValidRunnerDeadlineAt(config)) {
+    persistMissingRunPlanFailure(config, ASYNC_RUNNER_INVALID_CONFIG_ERROR);
+    throw new Error(ASYNC_RUNNER_INVALID_CONFIG_ERROR);
+  }
   const plan = isDirectRunPlanValue(config.plan) ? config.plan : undefined;
   if (!plan) {
     const error = directRunPlanValidationError(config.plan);
@@ -2391,7 +2517,22 @@ async function runSubagent(config: RunnerConfigEnvelope): Promise<void> {
     throw new Error(error);
   }
   const artifactConfig = resolveArtifactConfig(config.artifactConfig, { legacy: true });
-  return runSubagentWithInput({ ...config, plan, artifactConfig }, plan);
+  const {
+    timeoutMs: _legacyTimeoutMs,
+    plan: _unvalidatedPlan,
+    artifactConfig: _rawArtifactConfig,
+    deadlineAt: _unvalidatedDeadlineAt,
+    ...currentConfig
+  } = config;
+  return runSubagentWithInput(
+    {
+      ...currentConfig,
+      ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+      plan,
+      artifactConfig,
+    },
+    plan,
+  );
 }
 
 async function runSubagentWithInput(
@@ -2424,10 +2565,11 @@ async function runSubagentWithInput(
   const terminalReason: ChildTerminalReasonLatch = {};
   let currentActivityState: ActivityState | undefined;
   let activityTimer: NodeJS.Timeout | undefined;
+  let activeRuntimeCheckpointTimer: NodeJS.Timeout | undefined;
   let timeoutTimer: DeadlineTimer | undefined;
   let timedOut = false;
   const timeoutMessage =
-    config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
+    config.deadlineAt !== undefined ? resolveRunnerTimeoutMessage(plan) : undefined;
   const timeoutAbortController = new AbortController();
   const interruptAbortController = new AbortController();
   let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
@@ -2460,10 +2602,17 @@ async function runSubagentWithInput(
         ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
         status: "pending",
         ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
-        ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
-          ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
+        ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
+        ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
+          ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
           : {}),
-        ...(task.activeRuntimeMs !== undefined ? { activeRuntimeMs: task.activeRuntimeMs } : {}),
+        ...(normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt) !== undefined
+          ? {
+              activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+                task.activeRuntimeCheckpointAt,
+              ),
+            }
+          : {}),
         ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
         ...(transcriptPath ? { transcriptPath } : {}),
         skills: task.skills,
@@ -2491,6 +2640,20 @@ async function runSubagentWithInput(
       Boolean(config.sessionDir) ||
       shareEnabled ||
       flatSteps.some((step) => Boolean(step.sessionFile));
+    const initialActiveRuntimeValues = initialStatusSteps
+      .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
+      .filter((value): value is number => value !== undefined);
+    const initialActiveRuntimeMs = initialActiveRuntimeValues.reduce(
+      (total, value) => total + value,
+      0,
+    );
+    const initialActiveRuntimeCheckpointValues = initialStatusSteps
+      .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
+      .filter((value): value is number => value !== undefined);
+    const initialActiveRuntimeCheckpointAt =
+      initialActiveRuntimeCheckpointValues.length > 0
+        ? Math.max(...initialActiveRuntimeCheckpointValues)
+        : undefined;
     const statusPayload: RunnerStatusPayload = {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       runId: id,
@@ -2500,7 +2663,10 @@ async function runSubagentWithInput(
       lastActivityAt: overallStartTime,
       startedAt: overallStartTime,
       lastUpdate: overallStartTime,
-      ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+      ...(initialActiveRuntimeValues.length > 0 ? { activeRuntimeMs: initialActiveRuntimeMs } : {}),
+      ...(initialActiveRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: initialActiveRuntimeCheckpointAt }
+        : {}),
       ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
       ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
       pid: process.pid,
@@ -2519,6 +2685,10 @@ async function runSubagentWithInput(
     return { flatSteps, initialStatusSteps, sessionEnabled, statusPayload };
   };
   const { flatSteps, initialStatusSteps, sessionEnabled, statusPayload } = initializeRun();
+  // One tracker belongs to each live step. It is intentionally independent of
+  // activity/heartbeat state: accounting checkpoints measure execution time,
+  // while activity projections describe user-visible liveness.
+  const activeRuntimeTrackers = new Map<number, ActiveRuntimeTracker>();
   if (config.continuationSource) {
     const gate = finalizeLifecycleContinuationLaunch(
       config.continuationSource.asyncDir,
@@ -2694,7 +2864,9 @@ async function runSubagentWithInput(
     if (current) return current;
     return refreshTrackedSessionFile(flatIndex);
   };
-  const writeStatusPayload = (): void => {
+  const writeStatusPayload = (
+    options: { projectNested?: boolean; lifecycleLocked?: boolean } = {},
+  ): void => {
     if (statusPayload.currentStep !== undefined)
       refreshTrackedSessionFile(statusPayload.currentStep);
     // Once ANY concurrent lifecycle state has been adopted from disk, every
@@ -2731,7 +2903,11 @@ async function runSubagentWithInput(
     // state only (refreshTrackedSessionFile / pauseMetadataForIndex /
     // pausedAcceptanceLedger), and adoptConcurrentTerminalStatus() is invoked only
     // AFTER mergeAndWriteSourceRunnerStatus has returned and released the lock.
-    if (concurrentTerminalStatusAdopted || (interrupted && pausedCheckpointCommitted)) {
+    if (
+      options.lifecycleLocked === true ||
+      concurrentTerminalStatusAdopted ||
+      (interrupted && pausedCheckpointCommitted)
+    ) {
       // Post-interrupt writes that follow a durable paused checkpoint go through
       // the lifecycle lock and merge against the currently persisted status so
       // that a concurrent continuation reservation (committed by the resuming
@@ -2768,15 +2944,83 @@ async function runSubagentWithInput(
         adoptConcurrentTerminalStatus();
       } else {
         statusPayload.lifecycle = merged.lifecycle;
+        // A concurrent checkpoint may be ahead of this runner's in-memory
+        // projection. Keep the higher evidence locally so a later settlement
+        // write cannot lower it.
+        for (let index = 0; index < (merged.steps?.length ?? 0); index++) {
+          const mergedStep = merged.steps?.[index];
+          const localStep = statusPayload.steps[index];
+          if (!mergedStep || !localStep) continue;
+          const mergedRuntime = normalizeActiveRuntimeMs(mergedStep.activeRuntimeMs);
+          const localRuntime = normalizeActiveRuntimeMs(localStep.activeRuntimeMs);
+          if (
+            mergedRuntime !== undefined &&
+            (localRuntime === undefined || mergedRuntime > localRuntime)
+          )
+            localStep.activeRuntimeMs = mergedRuntime;
+          const mergedCheckpoint = normalizeActiveRuntimeCheckpointAt(
+            mergedStep.activeRuntimeCheckpointAt,
+          );
+          const localCheckpoint = normalizeActiveRuntimeCheckpointAt(
+            localStep.activeRuntimeCheckpointAt,
+          );
+          if (
+            mergedCheckpoint !== undefined &&
+            (localCheckpoint === undefined || mergedCheckpoint > localCheckpoint)
+          )
+            localStep.activeRuntimeCheckpointAt = mergedCheckpoint;
+        }
       }
     } else {
       writeNormalizedLifecycleStatus(asyncDir, statusPayload);
     }
-    emitNestedSelfEvent(
-      statusPayload.state === "running" || statusPayload.state === "queued"
-        ? "subagent.nested.updated"
-        : "subagent.nested.completed",
-    );
+    if (options.projectNested !== false) {
+      emitNestedSelfEvent(
+        statusPayload.state === "running" || statusPayload.state === "queued"
+          ? "subagent.nested.updated"
+          : "subagent.nested.completed",
+      );
+    }
+  };
+  const checkpointActiveRuntime = (now = Date.now(), freeze = false): boolean => {
+    const candidates = [...activeRuntimeTrackers].flatMap(([index, tracker]) => {
+      const step = statusPayload.steps[index];
+      if (!step || step.status !== "running") return [];
+      return [
+        {
+          tracker,
+          previousActiveRuntimeMs: step.activeRuntimeMs,
+          previousActiveRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
+          apply: ({
+            activeRuntimeMs,
+            activeRuntimeCheckpointAt,
+          }: ActiveRuntimeCheckpointUpdate) => {
+            step.activeRuntimeMs = activeRuntimeMs;
+            step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
+          },
+        },
+      ];
+    });
+    return applyActiveRuntimeCheckpoint(candidates, {
+      now,
+      freeze,
+      persist: () => {
+        const aggregateRuntime = statusPayload.steps.reduce(
+          (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+          0,
+        );
+        const previousAggregateRuntime = normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs);
+        statusPayload.activeRuntimeMs = Math.max(previousAggregateRuntime ?? 0, aggregateRuntime);
+        statusPayload.activeRuntimeCheckpointAt = Math.max(
+          normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
+          normalizeActiveRuntimeCheckpointAt(now) ?? 0,
+        );
+        statusPayload.lastUpdate = now;
+        // Checkpoints are authoritative internal status evidence. They must not
+        // publish nested projections or heartbeat/control notifications.
+        writeStatusPayload({ projectNested: false, lifecycleLocked: true });
+      },
+    });
   };
   const onChildProtocolOutputLimit = (limit: ProtocolOutputLimit): void => {
     if (
@@ -2788,6 +3032,9 @@ async function runSubagentWithInput(
       return;
     if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
     const now = Date.now();
+    // Output limits are terminal for this segment. Freeze before publishing the
+    // failure so child teardown time cannot enter the continuation budget.
+    checkpointActiveRuntime(now, true);
     const message = boundChildError(formatProtocolOutputLimit(limit));
     statusPayload.state = "failed";
     statusPayload.activityState = undefined;
@@ -3023,7 +3270,77 @@ async function runSubagentWithInput(
     const persisted = readStatus(asyncDir) as RunnerStatusPayload | null;
     if (!persisted || persisted.state === "running" || persisted.state === "pausing")
       return undefined;
-    Object.assign(statusPayload, persisted);
+    // A concurrent terminal lifecycle owner has ended the live segment. Freeze
+    // local trackers before adopting its status so late child teardown cannot
+    // inflate the runtime returned by this process. Merge the frozen local
+    // evidence into the adopted record before replacing lifecycle fields: the
+    // terminal winner is authoritative for lifecycle state, but runtime evidence
+    // remains monotonic when this process observed a later child boundary.
+    const adoptedAt = Date.now();
+    const localRuntimeByIndex = new Map<number, number>();
+    for (const [index, tracker] of activeRuntimeTrackers) {
+      localRuntimeByIndex.set(index, tracker.freeze(adoptedAt));
+    }
+    const adoptedSteps = persisted.steps?.map((step, index) => {
+      const localStep = statusPayload.steps[index];
+      const localRuntime =
+        localRuntimeByIndex.get(index) ?? normalizeActiveRuntimeMs(localStep?.activeRuntimeMs);
+      const persistedRuntime = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+      const localCheckpoint = normalizeActiveRuntimeCheckpointAt(
+        localStep?.activeRuntimeCheckpointAt,
+      );
+      const persistedCheckpoint = normalizeActiveRuntimeCheckpointAt(
+        step.activeRuntimeCheckpointAt,
+      );
+      return {
+        ...step,
+        ...(localRuntime !== undefined || persistedRuntime !== undefined
+          ? { activeRuntimeMs: Math.max(localRuntime ?? 0, persistedRuntime ?? 0) }
+          : {}),
+        ...(localCheckpoint !== undefined || persistedCheckpoint !== undefined
+          ? { activeRuntimeCheckpointAt: Math.max(localCheckpoint ?? 0, persistedCheckpoint ?? 0) }
+          : {}),
+      };
+    });
+    const localAggregateRuntime = statusPayload.steps.reduce(
+      (total, step, index) =>
+        total +
+        (localRuntimeByIndex.get(index) ?? normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+      0,
+    );
+    const persistedAggregateRuntime = persisted.steps?.reduce(
+      (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+      0,
+    );
+    const adoptedStatus: RunnerStatusPayload = {
+      ...persisted,
+      ...(adoptedSteps ? { steps: adoptedSteps } : {}),
+      ...(localAggregateRuntime > 0 ||
+      persistedAggregateRuntime !== undefined ||
+      persisted.activeRuntimeMs !== undefined
+        ? {
+            activeRuntimeMs: Math.max(
+              normalizeActiveRuntimeMs(persisted.activeRuntimeMs) ?? 0,
+              persistedAggregateRuntime ?? 0,
+              localAggregateRuntime,
+            ),
+          }
+        : {}),
+      ...(localRuntimeByIndex.size > 0 || persisted.activeRuntimeCheckpointAt !== undefined
+        ? {
+            activeRuntimeCheckpointAt: Math.max(
+              normalizeActiveRuntimeCheckpointAt(persisted.activeRuntimeCheckpointAt) ?? 0,
+              ...[...localRuntimeByIndex.keys()].map(
+                (index) =>
+                  normalizeActiveRuntimeCheckpointAt(
+                    statusPayload.steps[index]?.activeRuntimeCheckpointAt,
+                  ) ?? adoptedAt,
+              ),
+            ),
+          }
+        : {}),
+    };
+    Object.assign(statusPayload, adoptedStatus);
     // INVARIANT — once a concurrent terminal state has been adopted, this run is
     // over and disk is authoritative:
     //
@@ -3047,6 +3364,12 @@ async function runSubagentWithInput(
     // Every subsequent writeStatusPayload call must now route through the locked
     // merge so the persisted record wins by construction. See writeStatusPayload.
     concurrentTerminalStatusAdopted = true;
+    // A checkpoint can discover a terminal winner while an owned child is still
+    // live. Adoption stops this runner's loop, but it must also terminate the
+    // child; otherwise the external terminal transition would leave work running
+    // outside the lifecycle record until the child happened to exit on its own.
+    interruptNestedAsyncDescendants();
+    interruptActiveChildren();
     return persisted;
   };
   const requestSupervisorPause = (
@@ -3062,6 +3385,19 @@ async function runSubagentWithInput(
       requestedAt: pause.requestedAt ?? Date.now(),
     };
     const now = Date.now();
+    // Freeze each live segment before publishing the pausing lifecycle state.
+    // The transition below must copy this checkpoint, not add another wall-time
+    // interval to it.
+    checkpointActiveRuntime(now, true);
+    // The final checkpoint may discover that another lifecycle owner already
+    // committed a terminal state. Do not issue the pause transition afterward:
+    // it would use the adopted generation and accidentally downgrade that
+    // authoritative terminal record back to `pausing`.
+    if (concurrentTerminalStatusAdopted) {
+      interrupted = true;
+      interruptAbortController.abort();
+      return;
+    }
     const requesterSessionFile = refreshTrackedSessionFile(requesterIndex);
     try {
       const transition = transitionLifecycleStatus({
@@ -3082,13 +3418,12 @@ async function runSubagentWithInput(
           steps: status.steps?.map((step, index) => {
             if (step.status !== "running") return step;
             const stepSessionFile = refreshTrackedSessionFile(index);
-            const activeRuntimeMs =
-              (step.activeRuntimeMs ?? 0) +
-              (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0);
+            const activeRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
             return {
               ...step,
               status: "pausing",
               activeRuntimeMs,
+              activeRuntimeCheckpointAt: now,
               activityState: undefined,
               interruptRequestedAt: now,
               ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
@@ -3679,6 +4014,11 @@ async function runSubagentWithInput(
     }, 1000);
     activityTimer.unref?.();
   }
+  activeRuntimeCheckpointTimer = setInterval(() => {
+    if (statusPayload.state !== "running") return;
+    checkpointActiveRuntime(Date.now());
+  }, ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS);
+  activeRuntimeCheckpointTimer.unref?.();
 
   interruptRunner = () => {
     consumeInterruptRequest(asyncDir);
@@ -3686,6 +4026,9 @@ async function runSubagentWithInput(
     if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
     interrupted = true;
     const now = Date.now();
+    // Persist the active segment before changing lifecycle state. Paused wall
+    // time is excluded because no tracker remains live after this checkpoint.
+    checkpointActiveRuntime(now, true);
     statusPayload.state = "paused";
     currentActivityState = undefined;
     statusPayload.activityState = undefined;
@@ -3731,6 +4074,7 @@ async function runSubagentWithInput(
     if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
     timedOut = true;
     const now = Date.now();
+    checkpointActiveRuntime(now, true);
     const message = timeoutMessage ?? "Subagent timed out.";
     statusPayload.state = "failed";
     statusPayload.timedOut = true;
@@ -3757,7 +4101,6 @@ async function runSubagentWithInput(
         type: "subagent.run.timed_out",
         ts: now,
         runId: id,
-        timeoutMs: config.timeoutMs,
         deadlineAt: config.deadlineAt,
         message,
       }),
@@ -3876,6 +4219,7 @@ async function runSubagentWithInput(
           ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
           : undefined,
         activeRuntimeMs: pr.activeRuntimeMs,
+        activeRuntimeCheckpointAt: pr.activeRuntimeCheckpointAt,
       });
     }
   };
@@ -3957,6 +4301,18 @@ async function runSubagentWithInput(
     }
 
     const stepEndTime = Date.now();
+    const trackedRuntime = activeRuntimeTrackers.get(flatIndex)?.finalize(stepEndTime);
+    activeRuntimeTrackers.delete(flatIndex);
+    const settledActiveRuntimeMs = Math.max(
+      normalizeActiveRuntimeMs(singleResult.activeRuntimeMs) ?? 0,
+      trackedRuntime ?? 0,
+    );
+    singleResult.activeRuntimeMs = settledActiveRuntimeMs;
+    const settledResult = results.at(-1);
+    if (settledResult) {
+      settledResult.activeRuntimeMs = settledActiveRuntimeMs;
+      settledResult.activeRuntimeCheckpointAt = stepEndTime;
+    }
     const childInterrupted = singleResult.interrupted === true;
     if (childInterrupted) interrupted = true;
     const priorStepStatus = statusPayload.steps[flatIndex].status;
@@ -3970,7 +4326,10 @@ async function runSubagentWithInput(
           : "failed";
     statusPayload.steps[flatIndex].endedAt = stepEndTime;
     statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
-    statusPayload.steps[flatIndex].activeRuntimeMs = singleResult.activeRuntimeMs;
+    statusPayload.steps[flatIndex].activeRuntimeMs = normalizeActiveRuntimeMs(
+      singleResult.activeRuntimeMs,
+    );
+    statusPayload.steps[flatIndex].activeRuntimeCheckpointAt = stepEndTime;
     statusPayload.steps[flatIndex].exitCode = timedOut
       ? 1
       : childInterrupted
@@ -4019,6 +4378,18 @@ async function runSubagentWithInput(
       statusPayload.steps[flatIndex].tokens = stepTokens;
       statusPayload.totalTokens = { ...previousCumulativeTokens };
     }
+    const sequentialAggregateRuntime = statusPayload.steps.reduce(
+      (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+      0,
+    );
+    statusPayload.activeRuntimeMs = Math.max(
+      normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0,
+      sequentialAggregateRuntime,
+    );
+    statusPayload.activeRuntimeCheckpointAt = Math.max(
+      normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
+      normalizeActiveRuntimeCheckpointAt(stepEndTime) ?? 0,
+    );
     statusPayload.lastUpdate = stepEndTime;
     writeStatusPayload();
 
@@ -4081,8 +4452,11 @@ async function runSubagentWithInput(
             ? path.join(config.sessionDir, `parallel-${taskIdx}`)
             : undefined;
           const taskStartTime = Date.now();
-          const taskDeadlineAt =
-            task.timeoutMs !== undefined ? taskStartTime + task.timeoutMs : config.deadlineAt;
+          const taskDeadlineAt = resolveStepDeadlineAt(
+            taskStartTime,
+            task.timeoutMs,
+            config.deadlineAt,
+          );
           beginTrackedSessionStep(
             fi,
             task.sessionFile ? path.dirname(task.sessionFile) : taskSessionDir,
@@ -4094,7 +4468,17 @@ async function runSubagentWithInput(
           statusPayload.steps[fi].activityState = undefined;
           resetStepLiveDetail(statusPayload.steps[fi]);
           statusPayload.steps[fi].startedAt = taskStartTime;
-          statusPayload.steps[fi].timeoutMs = task.timeoutMs ?? config.timeoutMs;
+          statusPayload.steps[fi].activeRuntimeMs = boundedActiveRuntimeMs(
+            statusPayload.steps[fi].activeRuntimeMs,
+          );
+          activeRuntimeTrackers.set(
+            fi,
+            createActiveRuntimeTracker({
+              priorActiveRuntimeMs: statusPayload.steps[fi].activeRuntimeMs,
+              segmentStartedAt: taskStartTime,
+            }),
+          );
+          statusPayload.steps[fi].timeoutMs = task.timeoutMs;
           statusPayload.steps[fi].deadlineAt = taskDeadlineAt;
           statusPayload.steps[fi].endedAt = undefined;
           statusPayload.steps[fi].durationMs = undefined;
@@ -4138,13 +4522,14 @@ async function runSubagentWithInput(
             interruptMessage: "Interrupted. Waiting for explicit next action.",
             timeoutSignal: timeoutAbortController.signal,
             timeoutMessage,
-            timeoutMs: task.timeoutMs ?? config.timeoutMs,
+            timeoutMs: task.timeoutMs,
             deadlineAt: taskDeadlineAt,
             startedAt: taskStartTime,
             onAttemptStart: (attempt) => updateStepModel(fi, attempt),
             onChildEvent: (event) => updateStepFromChildEvent(fi, event),
             onChildProtocolOutputLimit,
             skipAcceptance: () => timedOut,
+            runtimeTracker: activeRuntimeTrackers.get(fi),
           });
           if (task.sessionFile) {
             latestSessionFile = task.sessionFile;
@@ -4152,6 +4537,13 @@ async function runSubagentWithInput(
 
           const taskEndTime = Date.now();
           const taskDuration = taskEndTime - taskStartTime;
+          const trackedRuntime = activeRuntimeTrackers.get(fi)?.finalize(taskEndTime);
+          activeRuntimeTrackers.delete(fi);
+          const settledActiveRuntimeMs = Math.max(
+            normalizeActiveRuntimeMs(singleResult.activeRuntimeMs) ?? 0,
+            trackedRuntime ?? 0,
+          );
+          singleResult.activeRuntimeMs = settledActiveRuntimeMs;
           const childInterrupted = singleResult.interrupted === true;
           if (childInterrupted) interrupted = true;
           const priorStepStatus = statusPayload.steps[fi].status;
@@ -4165,7 +4557,11 @@ async function runSubagentWithInput(
                 : "failed";
           statusPayload.steps[fi].endedAt = taskEndTime;
           statusPayload.steps[fi].durationMs = taskDuration;
-          statusPayload.steps[fi].activeRuntimeMs = singleResult.activeRuntimeMs;
+          statusPayload.steps[fi].activeRuntimeMs = normalizeActiveRuntimeMs(
+            singleResult.activeRuntimeMs,
+          );
+          statusPayload.steps[fi].activeRuntimeCheckpointAt = taskEndTime;
+          singleResult.activeRuntimeCheckpointAt = taskEndTime;
           statusPayload.steps[fi].exitCode = timedOut
             ? 1
             : childInterrupted
@@ -4210,6 +4606,18 @@ async function runSubagentWithInput(
           statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
           statusPayload.steps[fi].acceptance = singleResult.acceptance;
           if (pausedStep) applyPausedStepMetadata(fi, taskEndTime);
+          const parallelAggregateRuntime = statusPayload.steps.reduce(
+            (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
+            0,
+          );
+          statusPayload.activeRuntimeMs = Math.max(
+            normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0,
+            parallelAggregateRuntime,
+          );
+          statusPayload.activeRuntimeCheckpointAt = Math.max(
+            normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
+            normalizeActiveRuntimeCheckpointAt(taskEndTime) ?? 0,
+          );
           statusPayload.lastUpdate = taskEndTime;
           writeStatusPayload();
 
@@ -4265,8 +4673,11 @@ async function runSubagentWithInput(
     } else {
       const seqStep = step.task;
       const stepStartTime = Date.now();
-      const stepDeadlineAt =
-        seqStep.timeoutMs !== undefined ? stepStartTime + seqStep.timeoutMs : config.deadlineAt;
+      const stepDeadlineAt = resolveStepDeadlineAt(
+        stepStartTime,
+        seqStep.timeoutMs,
+        config.deadlineAt,
+      );
       beginTrackedSessionStep(
         flatIndex,
         seqStep.sessionFile ? path.dirname(seqStep.sessionFile) : config.sessionDir,
@@ -4279,7 +4690,17 @@ async function runSubagentWithInput(
       resetStepLiveDetail(statusPayload.steps[flatIndex]);
       statusPayload.steps[flatIndex].skills = seqStep.skills;
       statusPayload.steps[flatIndex].startedAt = stepStartTime;
-      statusPayload.steps[flatIndex].timeoutMs = seqStep.timeoutMs ?? config.timeoutMs;
+      statusPayload.steps[flatIndex].activeRuntimeMs = boundedActiveRuntimeMs(
+        statusPayload.steps[flatIndex].activeRuntimeMs,
+      );
+      activeRuntimeTrackers.set(
+        flatIndex,
+        createActiveRuntimeTracker({
+          priorActiveRuntimeMs: statusPayload.steps[flatIndex].activeRuntimeMs,
+          segmentStartedAt: stepStartTime,
+        }),
+      );
+      statusPayload.steps[flatIndex].timeoutMs = seqStep.timeoutMs;
       statusPayload.steps[flatIndex].deadlineAt = stepDeadlineAt;
       statusPayload.steps[flatIndex].lastActivityAt = stepStartTime;
       statusPayload.lastActivityAt = stepStartTime;
@@ -4320,13 +4741,14 @@ async function runSubagentWithInput(
         interruptMessage: "Interrupted. Waiting for explicit next action.",
         timeoutSignal: timeoutAbortController.signal,
         timeoutMessage,
-        timeoutMs: seqStep.timeoutMs ?? config.timeoutMs,
+        timeoutMs: seqStep.timeoutMs,
         deadlineAt: stepDeadlineAt,
         startedAt: stepStartTime,
         onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt),
         onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
         onChildProtocolOutputLimit,
         skipAcceptance: () => timedOut,
+        runtimeTracker: activeRuntimeTrackers.get(flatIndex),
       });
       settleSingleStep(seqStep, stepStartTime, singleResult);
 
@@ -4398,6 +4820,7 @@ async function runSubagentWithInput(
   }
 
   if (activityTimer) clearInterval(activityTimer);
+  if (activeRuntimeCheckpointTimer) clearInterval(activeRuntimeCheckpointTimer);
   if (timeoutTimer) timeoutTimer.cancel();
   disposeControlInbox();
   const effectiveSessionFile = sessionFile ?? latestSessionFile;
@@ -4685,7 +5108,6 @@ async function runSubagentWithInput(
         success: resultSuccess,
         state: resultState,
         summary: resultSummary,
-        ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
         ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
         ...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
         ...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
@@ -4695,6 +5117,17 @@ async function runSubagentWithInput(
             ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
             : {}),
         ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
+        ...(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) !== undefined
+          ? { activeRuntimeMs: normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) }
+          : {}),
+        ...(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) !==
+        undefined
+          ? {
+              activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+                statusPayload.activeRuntimeCheckpointAt,
+              ),
+            }
+          : {}),
         results: results.map((r) => ({
           agent: r.agent,
           ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
@@ -4731,6 +5164,7 @@ async function runSubagentWithInput(
           acceptance: r.acceptance,
           pause: r.pause,
           activeRuntimeMs: r.activeRuntimeMs,
+          activeRuntimeCheckpointAt: r.activeRuntimeCheckpointAt,
         })),
         exitCode: resultState === "failed" ? 1 : 0,
         timestamp: runEndedAt,

@@ -13,6 +13,7 @@ import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/li
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -105,7 +106,27 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
             }
         }
     }
+    const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
+    if (activeRuntimeMs === undefined)
+        status.activeRuntimeMs = undefined;
+    else
+        status.activeRuntimeMs = activeRuntimeMs;
+    if (activeRuntimeCheckpointAt === undefined)
+        status.activeRuntimeCheckpointAt = undefined;
+    else
+        status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
     for (const step of status.steps ?? []) {
+        const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+        const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+        if (activeRuntimeMs === undefined)
+            step.activeRuntimeMs = undefined;
+        else
+            step.activeRuntimeMs = activeRuntimeMs;
+        if (activeRuntimeCheckpointAt === undefined)
+            step.activeRuntimeCheckpointAt = undefined;
+        else
+            step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
         if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
             throw createAsyncStatusValidationError({
                 asyncDir,
@@ -135,6 +156,8 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const summarizedSteps = steps.map((step, index) => {
         const stepActivityState = step.activityState;
         const stepLastActivityAt = step.lastActivityAt;
+        const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+        const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
         return {
             index,
             agent: step.agent,
@@ -156,7 +179,8 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.steerCount !== undefined ? { steerCount: step.steerCount } : {}),
             ...(step.lastSteerAt !== undefined ? { lastSteerAt: step.lastSteerAt } : {}),
             ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-            ...(step.activeRuntimeMs !== undefined ? { activeRuntimeMs: step.activeRuntimeMs } : {}),
+            ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
             ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
             ...(step.deadlineAt !== undefined ? { deadlineAt: step.deadlineAt } : {}),
             ...(step.tokens ? { tokens: step.tokens } : {}),
@@ -202,6 +226,14 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         startedAt: status.startedAt,
         lastUpdate: status.lastUpdate,
         endedAt: status.endedAt,
+        ...(normalizeActiveRuntimeMs(status.activeRuntimeMs) !== undefined
+            ? { activeRuntimeMs: normalizeActiveRuntimeMs(status.activeRuntimeMs) }
+            : {}),
+        ...(normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) !== undefined
+            ? {
+                activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
+            }
+            : {}),
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),

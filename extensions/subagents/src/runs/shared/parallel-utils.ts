@@ -62,8 +62,12 @@ export interface RunnerSubagentStep {
   toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
   /** Remaining active execution allowance for this child segment. */
   timeoutMs?: number;
+  /** Trusted internal owner of a folded async-single deadline. */
+  timeoutOwner?: "role" | "run";
   /** Active child runtime accumulated before this segment. */
   activeRuntimeMs?: number;
+  /** Timestamp of the latest authoritative runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
 }
 
 /**
@@ -116,7 +120,6 @@ export interface SubagentRunConfig {
   tkTicket?: TkTicketMetadata;
   /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentRunCapture[];
-  timeoutMs?: number;
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
 }

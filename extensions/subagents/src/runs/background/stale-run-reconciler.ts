@@ -25,6 +25,8 @@ import {
 } from "../shared/nested-events.ts";
 import {
   checkPidLiveness,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   normalizeAsyncLifecycleStatus,
   recoverStoppedLifecycleOwnership,
 } from "../shared/lifecycle-state.ts";
@@ -165,11 +167,14 @@ interface ResultChildOutcome {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }
 
 interface ResultRepairData {
   state: "complete" | "failed" | "paused" | "cancelled" | "continued" | "pausing";
+  activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
   results?: ResultChildOutcome[];
   projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
 }
@@ -181,8 +186,14 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
     modelIdentity: _modelIdentity,
     modelResolution: _modelResolution,
     thinking: _thinking,
+    activeRuntimeMs: _activeRuntimeMs,
+    activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt,
     ...rest
   } = step;
+  const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    step.activeRuntimeCheckpointAt,
+  );
   const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
   const modelResolution = sanitizeSubagentModelResolution(step.modelResolution);
   const thinking = parseThinkingLevel(step.thinking);
@@ -191,6 +202,8 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
     ...(modelIdentity ? { modelIdentity } : {}),
     ...(modelResolution ? { modelResolution } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
   };
 }
 
@@ -230,6 +243,10 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
               Boolean(capture),
           )
       : undefined;
+    const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+      data.activeRuntimeCheckpointAt,
+    );
     const results = Array.isArray(data.results)
       ? data.results.map((entry): ResultChildOutcome => {
           if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
@@ -246,12 +263,10 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
           const attemptedModels = Array.isArray(child.attemptedModels)
             ? child.attemptedModels.filter((value): value is string => typeof value === "string")
             : undefined;
-          const activeRuntimeMs =
-            typeof child.activeRuntimeMs === "number" &&
-            Number.isFinite(child.activeRuntimeMs) &&
-            child.activeRuntimeMs >= 0
-              ? child.activeRuntimeMs
-              : undefined;
+          const activeRuntimeMs = normalizeActiveRuntimeMs(child.activeRuntimeMs);
+          const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+            child.activeRuntimeCheckpointAt,
+          );
           return {
             ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
             ...(projectAgent ? { projectAgent } : {}),
@@ -267,11 +282,14 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
             ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
             ...(terminationReason ? { terminationReason } : {}),
             ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
           };
         })
       : undefined;
     return {
       state,
+      ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+      ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       ...(results ? { results } : {}),
       ...(projectAgents ? { projectAgents } : projectMarkerPresent ? { projectAgents: [] } : {}),
     };
@@ -301,8 +319,34 @@ function terminalStatusFromResult(
   if (!repair) return undefined;
   const steps = (status.steps ?? []).map((step, index) => {
     const sanitizedStep = sanitizeStatusStep(step);
-    if (step.status !== "running" && step.status !== "pending") return sanitizedStep;
     const child = repair.results?.[index];
+    const persistedActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
+    const persistedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+      step.activeRuntimeCheckpointAt,
+    );
+    const childActiveRuntimeMs = normalizeActiveRuntimeMs(child?.activeRuntimeMs);
+    const childActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+      child?.activeRuntimeCheckpointAt,
+    );
+    if (step.status !== "running" && step.status !== "pending") {
+      return {
+        ...sanitizedStep,
+        ...(persistedActiveRuntimeMs !== undefined || childActiveRuntimeMs !== undefined
+          ? {
+              activeRuntimeMs: Math.max(persistedActiveRuntimeMs ?? 0, childActiveRuntimeMs ?? 0),
+            }
+          : {}),
+        ...(persistedActiveRuntimeCheckpointAt !== undefined ||
+        childActiveRuntimeCheckpointAt !== undefined
+          ? {
+              activeRuntimeCheckpointAt: Math.max(
+                persistedActiveRuntimeCheckpointAt ?? 0,
+                childActiveRuntimeCheckpointAt ?? 0,
+              ),
+            }
+          : {}),
+      };
+    }
     const state = childState(repair.state, child);
     return {
       ...sanitizedStep,
@@ -319,10 +363,20 @@ function terminalStatusFromResult(
         step.startedAt !== undefined && step.durationMs === undefined
           ? Math.max(0, now - step.startedAt)
           : step.durationMs,
+      // A terminal child result or the latest checkpoint is authoritative.
+      // Never charge the interval while this detached process was offline:
+      // that gap may include an arbitrarily long paused/sleeping period.
       activeRuntimeMs:
-        child?.activeRuntimeMs ??
-        (step.activeRuntimeMs ?? 0) +
-          (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
+        [persistedActiveRuntimeMs, childActiveRuntimeMs].filter(
+          (value): value is number => value !== undefined,
+        ).length > 0
+          ? Math.max(persistedActiveRuntimeMs ?? 0, childActiveRuntimeMs ?? 0)
+          : undefined,
+      activeRuntimeCheckpointAt:
+        childActiveRuntimeMs !== undefined
+          ? Math.max(persistedActiveRuntimeCheckpointAt ?? 0, childActiveRuntimeCheckpointAt ?? now)
+          : (persistedActiveRuntimeCheckpointAt ??
+            normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt)),
       exitCode: step.exitCode ?? (state === "complete" || state === "paused" ? 0 : 1),
       error: state === "failed" ? (step.error ?? child?.error) : step.error,
       sessionFile: step.sessionFile ?? child?.sessionFile,
@@ -344,6 +398,26 @@ function terminalStatusFromResult(
         : {}),
     };
   });
+  const stepActiveRuntimeMs = steps
+    .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
+    .filter((value): value is number => value !== undefined);
+  const reconciledActiveRuntimeMs = [
+    normalizeActiveRuntimeMs(status.activeRuntimeMs),
+    repair.activeRuntimeMs,
+    ...(stepActiveRuntimeMs.length > 0
+      ? [stepActiveRuntimeMs.reduce((sum, value) => sum + value, 0)]
+      : []),
+  ].filter((value): value is number => value !== undefined);
+  const stepActiveRuntimeCheckpointAt = steps
+    .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
+    .filter((value): value is number => value !== undefined);
+  const reconciledActiveRuntimeCheckpointAt = [
+    normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
+    repair.activeRuntimeCheckpointAt,
+    ...(stepActiveRuntimeCheckpointAt.length > 0
+      ? [Math.max(...stepActiveRuntimeCheckpointAt)]
+      : []),
+  ].filter((value): value is number => value !== undefined);
   return {
     ...status,
     state: repair.state,
@@ -352,6 +426,12 @@ function terminalStatusFromResult(
     endedAt: status.endedAt ?? now,
     steps,
     ...(repair.projectAgents ? { projectAgents: repair.projectAgents } : {}),
+    ...(reconciledActiveRuntimeMs.length > 0
+      ? { activeRuntimeMs: Math.max(...reconciledActiveRuntimeMs) }
+      : {}),
+    ...(reconciledActiveRuntimeCheckpointAt.length > 0
+      ? { activeRuntimeCheckpointAt: Math.max(...reconciledActiveRuntimeCheckpointAt) }
+      : {}),
   };
 }
 
@@ -411,11 +491,18 @@ function buildFailedRepair(
               step.startedAt !== undefined && step.durationMs === undefined
                 ? Math.max(0, now - step.startedAt)
                 : step.durationMs,
-            activeRuntimeMs:
-              step.status === "pausing" && step.activeRuntimeMs !== undefined
-                ? step.activeRuntimeMs
-                : (step.activeRuntimeMs ?? 0) +
-                  (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
+            // Legacy records without a checkpoint intentionally retain only
+            // their persisted evidence; the offline wall-clock gap is unknown.
+            ...(normalizeActiveRuntimeMs(step.activeRuntimeMs) !== undefined
+              ? { activeRuntimeMs: normalizeActiveRuntimeMs(step.activeRuntimeMs) }
+              : {}),
+            ...(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) !== undefined
+              ? {
+                  activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+                    step.activeRuntimeCheckpointAt,
+                  ),
+                }
+              : {}),
             exitCode: step.exitCode ?? 1,
             error: step.error ?? message,
             terminationReason: step.terminationReason ?? "process_exit",
@@ -427,6 +514,22 @@ function buildFailedRepair(
         ? { ...step, terminationReason: "process_exit" as const }
         : step,
     );
+  const repairedRuntimeValues = repairedSteps
+    .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
+    .filter((value): value is number => value !== undefined);
+  const repairedCheckpointValues = repairedSteps
+    .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
+    .filter((value): value is number => value !== undefined);
+  const repairedActiveRuntimeMs = [
+    normalizeActiveRuntimeMs(status.activeRuntimeMs),
+    ...(repairedRuntimeValues.length > 0
+      ? [repairedRuntimeValues.reduce((sum, value) => sum + value, 0)]
+      : []),
+  ].filter((value): value is number => value !== undefined);
+  const repairedActiveRuntimeCheckpointAt = [
+    normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
+    ...(repairedCheckpointValues.length > 0 ? [Math.max(...repairedCheckpointValues)] : []),
+  ].filter((value): value is number => value !== undefined);
   const repairedStatus: AsyncStatus = {
     ...status,
     state: "failed",
@@ -434,6 +537,12 @@ function buildFailedRepair(
     lastUpdate: now,
     endedAt: now,
     steps: repairedSteps,
+    ...(repairedActiveRuntimeMs.length > 0
+      ? { activeRuntimeMs: Math.max(...repairedActiveRuntimeMs) }
+      : {}),
+    ...(repairedActiveRuntimeCheckpointAt.length > 0
+      ? { activeRuntimeCheckpointAt: Math.max(...repairedActiveRuntimeCheckpointAt) }
+      : {}),
   };
   const resultAgent =
     repairedSteps[status.currentStep ?? 0]?.agent ?? repairedSteps[0]?.agent ?? "subagent";
@@ -471,10 +580,17 @@ function buildFailedRepair(
             : {}),
         sessionFile: step.sessionFile,
         activeRuntimeMs: step.activeRuntimeMs,
+        activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
       })),
       exitCode: 1,
       timestamp: now,
       durationMs: Math.max(0, now - status.startedAt),
+      ...(repairedStatus.activeRuntimeMs !== undefined
+        ? { activeRuntimeMs: repairedStatus.activeRuntimeMs }
+        : {}),
+      ...(repairedStatus.activeRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: repairedStatus.activeRuntimeCheckpointAt }
+        : {}),
       asyncDir,
       sessionId: status.sessionId,
       ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),

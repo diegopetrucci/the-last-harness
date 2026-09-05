@@ -552,6 +552,8 @@ export function widgetRenderKey(job: AsyncJobState): string {
     completedSteps: job.completedSteps,
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
+    activeRuntimeMs: job.activeRuntimeMs,
+    activeRuntimeCheckpointAt: job.activeRuntimeCheckpointAt,
     totalTokens: job.totalTokens,
     tkTicket: job.tkTicket,
   });

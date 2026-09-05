@@ -24,7 +24,7 @@ function readConfigForUpdate(configPath = getConfigPath()) {
     }
     const config = {};
     for (const [key, value] of Object.entries(parsed)) {
-        if (key !== "artifacts")
+        if (key !== "artifacts" && key !== "execution")
             defineOwnProperty(config, key, value);
     }
     if (Object.hasOwn(parsed, "artifacts")) {
@@ -39,6 +39,19 @@ function readConfigForUpdate(configPath = getConfigPath()) {
             defineOwnProperty(artifacts, "mode", rawArtifacts);
         }
         defineOwnProperty(config, "artifacts", artifacts);
+    }
+    if (Object.hasOwn(parsed, "execution")) {
+        const rawExecution = parsed.execution;
+        if (isConfigObject(rawExecution)) {
+            const execution = {};
+            for (const [key, value] of Object.entries(rawExecution)) {
+                defineOwnProperty(execution, key, value);
+            }
+            defineOwnProperty(config, "execution", execution);
+        }
+        else {
+            defineOwnProperty(config, "execution", rawExecution);
+        }
     }
     return config;
 }

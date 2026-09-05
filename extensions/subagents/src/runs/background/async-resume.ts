@@ -8,6 +8,8 @@ import {
 } from "../../shared/types.ts";
 import {
   lifecycleContinuationForIndex,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
 import {
@@ -164,6 +166,9 @@ type AsyncResumeTarget = {
   claimed?: boolean;
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
+  /** Selected-child success, independent of the aggregate async lifecycle state. */
+  successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
   /** Present only when the persisted run carried a run-level project inventory. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -388,6 +393,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
           `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
         );
       }
+      // Checkpoint timestamps are optional diagnostics. Invalid external values
+      // are unknown and must not affect continuation selection.
+      const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+        child.activeRuntimeCheckpointAt,
+      );
       // Acceptance is accepted opaquely — the caller validates contract fields.
       const acceptance =
         child.acceptance !== undefined &&
@@ -414,6 +424,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
         ...(terminationReason ? { terminationReason } : {}),
         ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(acceptance ? { acceptance } : {}),
         ...(projectAgent ? { projectAgent } : {}),
       };
@@ -435,6 +446,10 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
     )
     .filter((capture): capture is ProjectAgentRunCapture => Boolean(capture));
+  const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    data.activeRuntimeCheckpointAt,
+  );
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -465,6 +480,8 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         }
       : {}),
     ...(typeof success === "boolean" ? { success } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
@@ -822,6 +839,50 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
   }
 }
 
+/**
+ * Fail-closed pre-normalization check for steps[].activeRuntimeMs in a raw
+ * status file. normalizeAsyncLifecycleStatus silently drops invalid values
+ * before validateStatusForResume runs, so we must validate the raw JSON here
+ * to mirror the result-path strict rejection at lines 385-393.
+ *
+ * activeRuntimeCheckpointAt is deliberately NOT checked; it cannot widen a
+ * budget and is only normalized (never strictly validated) on all paths.
+ */
+function validateRawStatusStepsForResume(statusPath: string): void {
+  let content: string;
+  try {
+    content = fs.readFileSync(statusPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    // JSON parse errors are reported later by the reconciler/readStatus path.
+    return;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  const steps = (raw as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return;
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const activeRuntimeMs = (step as Record<string, unknown>).activeRuntimeMs;
+    if (
+      activeRuntimeMs !== undefined &&
+      (typeof activeRuntimeMs !== "number" ||
+        !Number.isFinite(activeRuntimeMs) ||
+        activeRuntimeMs < 0)
+    ) {
+      throw new Error(
+        `Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`,
+      );
+    }
+  }
+}
+
 function validateResumeSessionFile(
   runId: string,
   sessionFile: string,
@@ -999,6 +1060,31 @@ function resolveLiveAsyncResumeTarget(
   return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
 
+function selectedChildSuccessfulCompletion(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): boolean {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  if (
+    statusStep?.terminationReason === "interrupted" ||
+    resultStep?.interrupted === true ||
+    resultStep?.terminationReason === "interrupted"
+  ) {
+    return false;
+  }
+  const status = statusStep?.status;
+  if (status !== undefined) {
+    return status === "complete" || status === "completed";
+  }
+  const resultSuccess = resultStep?.success;
+  if (typeof resultSuccess === "boolean") return resultSuccess;
+  // Older single-child artifacts did not always persist per-child evidence.
+  // Preserve their aggregate completion fallback without letting a failed
+  // parallel cohort reset an unrelated child's runtime ledger.
+  return context.stepCount === 1 && context.state === "complete";
+}
+
 function resolveTerminalAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
 ): AsyncResumeTarget {
@@ -1148,6 +1234,17 @@ function resolveTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const successfulCompletion = selectedChildSuccessfulCompletion(context, index);
+  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(selectedStatusStep?.activeRuntimeMs);
+  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(
+    context.resultSteps[index]?.activeRuntimeMs,
+  );
+  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    selectedStatusStep?.activeRuntimeCheckpointAt,
+  );
+  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    context.resultSteps[index]?.activeRuntimeCheckpointAt,
+  );
   return {
     ...targetWithModelMetadata,
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
@@ -1160,11 +1257,17 @@ function resolveTerminalAsyncResumeTarget(
     ...(diagnosticMetadata.terminationReason
       ? { terminationReason: diagnosticMetadata.terminationReason }
       : {}),
-    ...(selectedStatusStep?.activeRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
-      : context.resultSteps[index]?.activeRuntimeMs !== undefined
-        ? { activeRuntimeMs: context.resultSteps[index]!.activeRuntimeMs }
+    ...(selectedActiveRuntimeMs !== undefined
+      ? { activeRuntimeMs: selectedActiveRuntimeMs }
+      : resultActiveRuntimeMs !== undefined
+        ? { activeRuntimeMs: resultActiveRuntimeMs }
         : {}),
+    ...(selectedActiveRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
+      : resultActiveRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
+        : {}),
+    successfulCompletion,
   };
 }
 
@@ -1179,6 +1282,13 @@ export function resolveAsyncResumeTarget(
   const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
   if (!location.asyncDir && !location.resultPath) {
     throw new Error("Async run not found. Provide id or dir.");
+  }
+
+  // Validate raw status JSON before normalization strips malformed budget fields.
+  // normalizeAsyncLifecycleStatus silently drops invalid steps[].activeRuntimeMs;
+  // fail-closed here mirrors the result-path strict rejection (lines 385-393).
+  if (location.asyncDir) {
+    validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
   }
 
   const reconciliation =
