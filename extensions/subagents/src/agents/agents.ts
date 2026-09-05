@@ -167,7 +167,9 @@ interface SubagentSettings {
   modelScope?: ModelScopeConfig;
 }
 
-const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
+const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = {
+  overrides: Object.create(null) as Record<string, BuiltinAgentOverrideConfig>,
+};
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
 
 class AgentDefinitionValidationError extends Error {
@@ -336,7 +338,7 @@ function parseBuiltinOverrideEntry(
   name: string,
   value: unknown,
   filePath: string,
-): BuiltinAgentOverrideConfig | undefined {
+): BuiltinAgentOverrideConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Builtin override '${name}' in '${filePath}' must be an object.`);
   }
@@ -344,7 +346,7 @@ function parseBuiltinOverrideEntry(
   const input = value as Record<string, unknown>;
   const override: BuiltinAgentOverrideConfig = {};
 
-  if ("model" in input) {
+  if (Object.hasOwn(input, "model")) {
     if (typeof input.model === "string" || input.model === false) override.model = input.model;
     else
       throw new Error(
@@ -352,7 +354,7 @@ function parseBuiltinOverrideEntry(
       );
   }
 
-  if ("thinking" in input) {
+  if (Object.hasOwn(input, "thinking")) {
     if (typeof input.thinking === "string" || input.thinking === false)
       override.thinking = input.thinking;
     else
@@ -361,7 +363,7 @@ function parseBuiltinOverrideEntry(
       );
   }
 
-  if ("systemPromptMode" in input) {
+  if (Object.hasOwn(input, "systemPromptMode")) {
     if (input.systemPromptMode === "append" || input.systemPromptMode === "replace") {
       override.systemPromptMode = input.systemPromptMode;
     } else {
@@ -371,7 +373,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("inheritProjectContext" in input) {
+  if (Object.hasOwn(input, "inheritProjectContext")) {
     if (typeof input.inheritProjectContext === "boolean") {
       override.inheritProjectContext = input.inheritProjectContext;
     } else {
@@ -381,7 +383,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("inheritSkills" in input) {
+  if (Object.hasOwn(input, "inheritSkills")) {
     if (typeof input.inheritSkills === "boolean") {
       override.inheritSkills = input.inheritSkills;
     } else {
@@ -391,7 +393,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("acceptanceRole" in input) {
+  if (Object.hasOwn(input, "acceptanceRole")) {
     if (
       input.acceptanceRole === "read-only" ||
       input.acceptanceRole === "writer" ||
@@ -405,7 +407,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("disabled" in input) {
+  if (Object.hasOwn(input, "disabled")) {
     if (typeof input.disabled === "boolean") {
       override.disabled = input.disabled;
     } else {
@@ -415,7 +417,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("completionGuard" in input) {
+  if (Object.hasOwn(input, "completionGuard")) {
     if (typeof input.completionGuard === "boolean") {
       override.completionGuard = input.completionGuard;
     } else {
@@ -425,7 +427,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("supervisorBridge" in input) {
+  if (Object.hasOwn(input, "supervisorBridge")) {
     if (typeof input.supervisorBridge === "boolean") {
       override.supervisorBridge = input.supervisorBridge;
     } else {
@@ -435,7 +437,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("toolBudget" in input) {
+  if (Object.hasOwn(input, "toolBudget")) {
     if (input.toolBudget === false) {
       override.toolBudget = false;
     } else if (
@@ -451,7 +453,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("maxExecutionTimeMs" in input) {
+  if (Object.hasOwn(input, "maxExecutionTimeMs")) {
     if (input.maxExecutionTimeMs === false) {
       override.maxExecutionTimeMs = false;
     } else {
@@ -464,7 +466,7 @@ function parseBuiltinOverrideEntry(
     }
   }
 
-  if ("systemPrompt" in input) {
+  if (Object.hasOwn(input, "systemPrompt")) {
     if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
     else
       throw new Error(
@@ -472,40 +474,52 @@ function parseBuiltinOverrideEntry(
       );
   }
 
-  const fallbackModels = parseOverrideStringArrayOrFalse(input.fallbackModels, {
-    filePath,
-    name,
-    field: "fallbackModels",
-  });
+  const fallbackModels = parseOverrideStringArrayOrFalse(
+    Object.hasOwn(input, "fallbackModels") ? input.fallbackModels : undefined,
+    {
+      filePath,
+      name,
+      field: "fallbackModels",
+    },
+  );
   if (fallbackModels !== undefined) override.fallbackModels = fallbackModels;
 
-  const skills = parseOverrideStringArrayOrFalse(input.skills, { filePath, name, field: "skills" });
+  const skills = parseOverrideStringArrayOrFalse(
+    Object.hasOwn(input, "skills") ? input.skills : undefined,
+    { filePath, name, field: "skills" },
+  );
   if (skills !== undefined) override.skills = skills;
 
-  const tools = parseOverrideStringArrayOrFalse(input.tools, { filePath, name, field: "tools" });
+  const tools = parseOverrideStringArrayOrFalse(
+    Object.hasOwn(input, "tools") ? input.tools : undefined,
+    { filePath, name, field: "tools" },
+  );
   if (tools !== undefined) override.tools = tools;
 
-  const subagentOnlyExtensions = parseOverrideStringArrayOrFalse(input.subagentOnlyExtensions, {
-    filePath,
-    name,
-    field: "subagentOnlyExtensions",
-  });
+  const subagentOnlyExtensions = parseOverrideStringArrayOrFalse(
+    Object.hasOwn(input, "subagentOnlyExtensions") ? input.subagentOnlyExtensions : undefined,
+    {
+      filePath,
+      name,
+      field: "subagentOnlyExtensions",
+    },
+  );
   if (subagentOnlyExtensions !== undefined)
     override.subagentOnlyExtensions = subagentOnlyExtensions;
 
-  return Object.keys(override).length > 0 ? override : undefined;
+  return override;
 }
 
 function readSubagentSettings(filePath: string | null): SubagentSettings {
   if (!filePath) return EMPTY_SUBAGENT_SETTINGS;
   const settings = readSettingsFileStrict(filePath);
-  const subagents = settings.subagents;
+  const subagents = Object.hasOwn(settings, "subagents") ? settings.subagents : undefined;
   if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
     return EMPTY_SUBAGENT_SETTINGS;
 
   const subagentsObject = subagents as Record<string, unknown>;
   let defaultModel: string | undefined;
-  if ("defaultModel" in subagentsObject) {
+  if (Object.hasOwn(subagentsObject, "defaultModel")) {
     if (typeof subagentsObject.defaultModel === "string" && subagentsObject.defaultModel.trim()) {
       defaultModel = subagentsObject.defaultModel.trim();
     } else {
@@ -514,16 +528,20 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
       );
     }
   }
-  const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
+  const modelScope = parseModelScopeConfig(
+    Object.hasOwn(subagentsObject, "modelScope") ? subagentsObject.modelScope : undefined,
+    { filePath },
+  );
 
-  const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
-  const agentOverrides = subagentsObject.agentOverrides;
+  const parsed = Object.create(null) as Record<string, BuiltinAgentOverrideConfig>;
+  const agentOverrides = Object.hasOwn(subagentsObject, "agentOverrides")
+    ? subagentsObject.agentOverrides
+    : undefined;
   if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
     return { overrides: parsed, defaultModel, modelScope };
   }
   for (const [name, value] of Object.entries(agentOverrides)) {
-    const override = parseBuiltinOverrideEntry(name, value, filePath);
-    if (override) parsed[name] = override;
+    parsed[name] = parseBuiltinOverrideEntry(name, value, filePath);
   }
   return { overrides: parsed, defaultModel, modelScope };
 }
@@ -685,17 +703,15 @@ function applyCustomAgentOverrides(
   projectSettingsPath: string | null,
 ): AgentConfig[] {
   return agents.map((agent) => {
-    const projectOverride = projectSettings.overrides[agent.name];
-    if (projectOverride && projectSettingsPath) {
-      return applyCustomAgentOverride(agent, projectOverride, {
+    if (projectSettingsPath && Object.hasOwn(projectSettings.overrides, agent.name)) {
+      return applyCustomAgentOverride(agent, projectSettings.overrides[agent.name]!, {
         scope: "project",
         path: projectSettingsPath,
       });
     }
 
-    const userOverride = userSettings.overrides[agent.name];
-    if (userOverride) {
-      return applyCustomAgentOverride(agent, userOverride, {
+    if (Object.hasOwn(userSettings.overrides, agent.name)) {
+      return applyCustomAgentOverride(agent, userSettings.overrides[agent.name]!, {
         scope: "user",
         path: userSettingsPath,
       });
@@ -1065,7 +1081,11 @@ export function discoverAgentsWithProjectSnapshot(
   // setting that may affect one is an explicit deny; model, effort, prompt,
   // tool, and default fields never modify or replace the captured agent.
   const disabledNames = manifest.entries
-    .filter((entry) => userSettings.overrides[entry.agent.name]?.disabled === true)
+    .filter(
+      (entry) =>
+        Object.hasOwn(userSettings.overrides, entry.agent.name) &&
+        userSettings.overrides[entry.agent.name]?.disabled === true,
+    )
     .map((entry) => entry.agent.name);
   const disabledNameSet = new Set(disabledNames);
   const activeEntries = manifest.entries.filter((entry) => !disabledNameSet.has(entry.agent.name));

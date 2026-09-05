@@ -28,6 +28,7 @@ import {
 } from "../support/helpers.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type {
+  AsyncStatus,
   ChildProcessCleanupResult,
   ContextUsageDiagnostics,
   SingleResult,
@@ -289,6 +290,16 @@ const createSubagentExecutor = executorMod?.createSubagentExecutor;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readPersistedStatus(statusPath: string): AsyncStatus {
+  const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(`Expected persisted status object at ${statusPath}`);
+  const record = parsed as Record<string, unknown>;
+  assert.equal(typeof record.runId, "string");
+  assert.equal(typeof record.state, "string");
+  return parsed as AsyncStatus;
 }
 
 function writePackageSkill(packageRoot: string, skillName: string): void {
@@ -3121,6 +3132,185 @@ describe(
     );
 
     it(
+      "persists supervisor-pause runtime for a fresh-process resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        let statusPath: string | undefined;
+        const maxExecutionTimeMs = 5_000;
+        let pausingStatus: AsyncStatus | undefined;
+
+        mockPi.onCall({
+          ignoreSigint: true,
+          ignoreSigterm: true,
+          spawnStubbornDescendants: true,
+          steps: [
+            {
+              delay: 150,
+              jsonl: [
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need a decision before continuing",
+                }),
+              ],
+            },
+            { delay: 10_000, jsonl: [events.assistantMessage("must not complete before pause")] },
+          ],
+        });
+
+        const observedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          const callback =
+            typeof options.onSupervisorPauseTransition === "function"
+              ? (options.onSupervisorPauseTransition as (transition: unknown) => void)
+              : undefined;
+          return runSync!(runtimeCwd, agents, agentName, task, {
+            ...options,
+            onSupervisorPauseTransition: (transition: unknown) => {
+              callback?.(transition);
+              const stage =
+                transition && typeof transition === "object" && "stage" in transition
+                  ? transition.stage
+                  : undefined;
+              if (stage === "pausing") {
+                for (const entry of fs.readdirSync(ASYNC_DIR, { withFileTypes: true })) {
+                  if (!entry.isDirectory()) continue;
+                  const candidatePath = path.join(ASYNC_DIR, entry.name, "status.json");
+                  try {
+                    const candidate = readPersistedStatus(candidatePath);
+                    if (candidate.state === "pausing" && candidate.cwd === tempDir) {
+                      statusPath = candidatePath;
+                      pausingStatus = candidate;
+                      break;
+                    }
+                  } catch {
+                    // Ignore unrelated or transient status files while locating this run.
+                  }
+                }
+              }
+            },
+          });
+        };
+
+        const initialState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          initialState,
+          observedRunSync,
+        );
+        const paused = await initialExecutor.execute(
+          "supervisor-runtime-pause",
+          { agent: "echo", task: "Pause while waiting for a supervisor decision" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(paused.isError, undefined);
+        assert.ok(statusPath, "expected persisted status path before child cleanup");
+        assert.ok(pausingStatus, "expected persisted pausing status before child cleanup");
+        const pausingStep = pausingStatus.steps?.[0];
+        const runId = pausingStatus.runId;
+        assert.equal(pausingStatus.state, "pausing");
+        assert.equal(pausingStep?.status, "pausing");
+        assert.ok(
+          typeof pausingStatus.activeRuntimeMs === "number" && pausingStatus.activeRuntimeMs > 0,
+        );
+        assert.equal(pausingStatus.activeRuntimeMs, pausingStep?.activeRuntimeMs);
+        assert.ok(typeof pausingStatus.activeRuntimeCheckpointAt === "number");
+        assert.equal(
+          pausingStatus.activeRuntimeCheckpointAt,
+          pausingStep?.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausingStatus.activeRuntimeCheckpointAt ?? 0) >= (pausingStatus.pause?.requestedAt ?? 0),
+        );
+
+        const pausedStatus = readPersistedStatus(statusPath);
+        assert.equal(pausedStatus.runId, runId);
+        const pausedStep = pausedStatus.steps?.[0];
+        assert.equal(pausedStatus.state, "paused");
+        assert.equal(pausedStep?.status, "paused");
+        assert.equal(pausedStatus.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(pausedStep?.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(
+          pausedStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.equal(
+          pausedStep?.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) >= (pausedStatus.activeRuntimeCheckpointAt ?? 0),
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) - (pausedStatus.activeRuntimeCheckpointAt ?? 0) >=
+            100,
+          "expected stubborn cleanup time after the runtime checkpoint",
+        );
+
+        const activeRuntimeMs = pausingStatus.activeRuntimeMs!;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const offlineStatus = readPersistedStatus(statusPath);
+        assert.equal(offlineStatus.activeRuntimeMs, activeRuntimeMs);
+        assert.equal(
+          offlineStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+
+        mockPi.onCall({ output: "resumed after restart" });
+        const restartedState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const resumed = await makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          restartedState,
+        ).execute(
+          "supervisor-runtime-resume",
+          { action: "resume", id: runId, message: "Continue after the supervisor responds." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(restartedState.foregroundRuns.size, 0);
+        assert.equal(resumed.isError, undefined);
+        assert.equal(resumed.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
+        const resumedId = resumed.details?.asyncId;
+        assert.ok(resumedId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumedId), "utf-8"),
+        ) as unknown;
+        assert.ok(
+          resumedPayload && typeof resumedPayload === "object" && !Array.isArray(resumedPayload),
+        );
+        assert.equal((resumedPayload as Record<string, unknown>).state, "complete");
+        assert.equal((resumedPayload as Record<string, unknown>).success, true);
+      },
+    );
+
+    it(
       "blocks unsafe foreground durable resume at the atomic claim boundary without spawning",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
@@ -3282,13 +3472,10 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const completedDelayMs = 750;
-        const resumeCeilingMs = 500;
-        mockPi.onCall({
-          delay: completedDelayMs,
-          output: "completed successfully",
-        });
-        mockPi.onCall({ output: "fresh follow-up" });
+        const resumeCeilingMs = 10_000;
+        const consumedSourceRuntimeMs = resumeCeilingMs + 1_000;
+        mockPi.onCall({ output: "completed successfully" });
+        mockPi.onCall({ delay: 250, output: "fresh follow-up" });
         const state = {
           baseCwd: tempDir,
           currentSessionId: null,
@@ -3312,12 +3499,16 @@ describe(
         assert.equal(completed.isError, undefined);
 
         const remembered = [...state.foregroundRuns.values()][0];
-        const activeRuntimeMs = remembered?.children[0]?.activeRuntimeMs;
+        assert.ok(remembered, "expected the successful source to be remembered");
+        const source = remembered.children[0];
+        assert.ok(source, "expected the successful source child to be remembered");
+        assert.equal(source.status, "completed");
+        source.activeRuntimeMs = consumedSourceRuntimeMs;
+        assert.equal(source.activeRuntimeMs, consumedSourceRuntimeMs);
         assert.ok(
-          typeof activeRuntimeMs === "number" && activeRuntimeMs >= resumeCeilingMs,
-          `expected the successful source to consume at least ${resumeCeilingMs}ms, got ${activeRuntimeMs}ms`,
+          source.activeRuntimeMs > resumeCeilingMs,
+          `expected injected source runtime to exceed the ${resumeCeilingMs}ms resume ceiling`,
         );
-        assert.equal(remembered?.children[0]?.status, "completed");
 
         const resumeExecutor = makeExecutor(
           [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],

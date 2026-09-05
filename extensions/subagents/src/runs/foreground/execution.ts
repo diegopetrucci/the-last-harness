@@ -123,6 +123,7 @@ import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.t
 import {
   boundSupervisorSummary,
   createActiveRuntimeTracker,
+  normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
   type ActiveRuntimeTracker,
 } from "../shared/lifecycle-state.ts";
@@ -1287,7 +1288,10 @@ async function runSingleAttempt(
     const pauseForSupervisor = (pause: NonNullable<SingleResult["pause"]>) => {
       if (supervisorPauseRequested || processClosed || settled) return;
       if (!claimChildTerminalReason(terminalReason, "paused")) return;
-      shared.runtimeTracker.freeze(Date.now());
+      const checkpointAt = Date.now();
+      const activeRuntimeMs = shared.runtimeTracker.freeze(checkpointAt);
+      result.activeRuntimeMs = activeRuntimeMs;
+      result.activeRuntimeCheckpointAt = checkpointAt;
       const ownerPid = processGroupId;
       result.pause = {
         ...pause,
@@ -2194,7 +2198,8 @@ export async function runSync(
       },
     );
     result.activeRuntimeMs = runtimeTracker.finalize();
-    result.activeRuntimeCheckpointAt = Date.now();
+    result.activeRuntimeCheckpointAt =
+      normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) ?? Date.now();
     lastResult = result;
     contextPressure = result.contextPressure ?? contextPressure;
     finalAttemptContextUsage = result.contextUsage;

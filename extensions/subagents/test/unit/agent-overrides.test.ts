@@ -229,6 +229,39 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(reviewer.override?.path, path.join(tempProject, ".pi", "settings.json"));
   });
 
+  it("uses an explicit empty project override without falling back to profile fields", () => {
+    fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: {
+          developer: { model: "profile/developer", maxExecutionTimeMs: false },
+          "code-reviewer": { model: "profile/reviewer", maxExecutionTimeMs: false },
+        },
+      },
+    });
+    writeJson(path.join(tempProject, ".pi", "settings.json"), {
+      subagents: { agentOverrides: { developer: {} } },
+    });
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nImplement the change.\n",
+    );
+    writeCanonicalAgent(
+      "code-reviewer",
+      "---\nname: code-reviewer\ndescription: Review code\n---\n\nReview the code.\n",
+    );
+
+    const developer = findAgent("developer");
+    assert.equal(developer.model, undefined);
+    assert.equal(developer.maxExecutionTimeMs, 7_200_000);
+    assert.equal(developer.override, undefined);
+
+    const reviewer = findAgent("code-reviewer");
+    assert.equal(reviewer.model, "profile/reviewer");
+    assert.equal(reviewer.maxExecutionTimeMs, undefined);
+    assert.equal(reviewer.override?.scope, "user");
+  });
+
   it("applies acceptance role precedence and false clearing to canonical roles", () => {
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
       subagents: {

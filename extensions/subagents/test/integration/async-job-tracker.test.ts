@@ -380,7 +380,10 @@ describe(
           "higher runtime evidence poll",
         );
         writeStatus(250, 2_500);
-        await new Promise((resolve) => setTimeout(resolve, 40));
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.updatedAt === 2_500,
+          "regressed status write poll",
+        );
         assert.equal(state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs, 600);
         assert.equal(
           state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeCheckpointAt,

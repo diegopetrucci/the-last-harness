@@ -21,7 +21,7 @@ import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
-import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
+import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
 import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-channel.js";
 import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
@@ -893,7 +893,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 return;
             if (!claimChildTerminalReason(terminalReason, "paused"))
                 return;
-            shared.runtimeTracker.freeze(Date.now());
+            const checkpointAt = Date.now();
+            const activeRuntimeMs = shared.runtimeTracker.freeze(checkpointAt);
+            result.activeRuntimeMs = activeRuntimeMs;
+            result.activeRuntimeCheckpointAt = checkpointAt;
             const ownerPid = processGroupId;
             result.pause = {
                 ...pause,
@@ -1675,7 +1678,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             runtimeTracker,
         });
         result.activeRuntimeMs = runtimeTracker.finalize();
-        result.activeRuntimeCheckpointAt = Date.now();
+        result.activeRuntimeCheckpointAt =
+            normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) ?? Date.now();
         lastResult = result;
         contextPressure = result.contextPressure ?? contextPressure;
         finalAttemptContextUsage = result.contextUsage;

@@ -2651,6 +2651,10 @@ function enrichPersistedPausedForegroundSingleRun(input: {
   result: SingleResult;
 }): void {
   const asyncDir = pausedForegroundStatusPath(input.runId);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(input.result.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    input.result.activeRuntimeCheckpointAt,
+  );
   const current = readStatus(asyncDir);
   if (
     current?.pause?.kind === "awaiting_supervisor" &&
@@ -2662,6 +2666,22 @@ function enrichPersistedPausedForegroundSingleRun(input: {
       mutate: (status) => ({
         ...status,
         lastUpdate: Date.now(),
+        ...(activeRuntimeMs !== undefined
+          ? {
+              activeRuntimeMs: Math.max(
+                normalizeActiveRuntimeMs(status.activeRuntimeMs) ?? 0,
+                activeRuntimeMs,
+              ),
+            }
+          : {}),
+        ...(activeRuntimeCheckpointAt !== undefined
+          ? {
+              activeRuntimeCheckpointAt: Math.max(
+                normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) ?? 0,
+                activeRuntimeCheckpointAt,
+              ),
+            }
+          : {}),
         sessionFile: input.result.sessionFile ?? status.sessionFile,
         steps: status.steps?.map((step, index) =>
           index === 0
@@ -2684,6 +2704,22 @@ function enrichPersistedPausedForegroundSingleRun(input: {
                     }
                   : {}),
                 ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                ...(activeRuntimeMs !== undefined
+                  ? {
+                      activeRuntimeMs: Math.max(
+                        normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0,
+                        activeRuntimeMs,
+                      ),
+                    }
+                  : {}),
+                ...(activeRuntimeCheckpointAt !== undefined
+                  ? {
+                      activeRuntimeCheckpointAt: Math.max(
+                        normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0,
+                        activeRuntimeCheckpointAt,
+                      ),
+                    }
+                  : {}),
               }
             : step,
         ),

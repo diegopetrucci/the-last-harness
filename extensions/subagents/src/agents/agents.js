@@ -47,7 +47,9 @@ const KNOWN_FIELDS = new Set([
     "supervisorBridge",
     "toolBudget",
 ]);
-const EMPTY_SUBAGENT_SETTINGS = { overrides: {} };
+const EMPTY_SUBAGENT_SETTINGS = {
+    overrides: Object.create(null),
+};
 const agentFrontmatterFields = new WeakMap();
 class AgentDefinitionValidationError extends Error {
     constructor(message) {
@@ -178,19 +180,19 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
     }
     const input = value;
     const override = {};
-    if ("model" in input) {
+    if (Object.hasOwn(input, "model")) {
         if (typeof input.model === "string" || input.model === false)
             override.model = input.model;
         else
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'model'; expected a string or false.`);
     }
-    if ("thinking" in input) {
+    if (Object.hasOwn(input, "thinking")) {
         if (typeof input.thinking === "string" || input.thinking === false)
             override.thinking = input.thinking;
         else
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'thinking'; expected a string or false.`);
     }
-    if ("systemPromptMode" in input) {
+    if (Object.hasOwn(input, "systemPromptMode")) {
         if (input.systemPromptMode === "append" || input.systemPromptMode === "replace") {
             override.systemPromptMode = input.systemPromptMode;
         }
@@ -198,7 +200,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPromptMode'; expected 'append' or 'replace'.`);
         }
     }
-    if ("inheritProjectContext" in input) {
+    if (Object.hasOwn(input, "inheritProjectContext")) {
         if (typeof input.inheritProjectContext === "boolean") {
             override.inheritProjectContext = input.inheritProjectContext;
         }
@@ -206,7 +208,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritProjectContext'; expected a boolean.`);
         }
     }
-    if ("inheritSkills" in input) {
+    if (Object.hasOwn(input, "inheritSkills")) {
         if (typeof input.inheritSkills === "boolean") {
             override.inheritSkills = input.inheritSkills;
         }
@@ -214,7 +216,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritSkills'; expected a boolean.`);
         }
     }
-    if ("acceptanceRole" in input) {
+    if (Object.hasOwn(input, "acceptanceRole")) {
         if (input.acceptanceRole === "read-only" ||
             input.acceptanceRole === "writer" ||
             input.acceptanceRole === false) {
@@ -224,7 +226,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'acceptanceRole'; expected 'read-only', 'writer', or false.`);
         }
     }
-    if ("disabled" in input) {
+    if (Object.hasOwn(input, "disabled")) {
         if (typeof input.disabled === "boolean") {
             override.disabled = input.disabled;
         }
@@ -232,7 +234,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'disabled'; expected a boolean.`);
         }
     }
-    if ("completionGuard" in input) {
+    if (Object.hasOwn(input, "completionGuard")) {
         if (typeof input.completionGuard === "boolean") {
             override.completionGuard = input.completionGuard;
         }
@@ -240,7 +242,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'completionGuard'; expected a boolean.`);
         }
     }
-    if ("supervisorBridge" in input) {
+    if (Object.hasOwn(input, "supervisorBridge")) {
         if (typeof input.supervisorBridge === "boolean") {
             override.supervisorBridge = input.supervisorBridge;
         }
@@ -248,7 +250,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'supervisorBridge'; expected a boolean.`);
         }
     }
-    if ("toolBudget" in input) {
+    if (Object.hasOwn(input, "toolBudget")) {
         if (input.toolBudget === false) {
             override.toolBudget = false;
         }
@@ -261,7 +263,7 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`);
         }
     }
-    if ("maxExecutionTimeMs" in input) {
+    if (Object.hasOwn(input, "maxExecutionTimeMs")) {
         if (input.maxExecutionTimeMs === false) {
             override.maxExecutionTimeMs = false;
         }
@@ -272,44 +274,44 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             override.maxExecutionTimeMs = parsed;
         }
     }
-    if ("systemPrompt" in input) {
+    if (Object.hasOwn(input, "systemPrompt")) {
         if (typeof input.systemPrompt === "string")
             override.systemPrompt = input.systemPrompt;
         else
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
     }
-    const fallbackModels = parseOverrideStringArrayOrFalse(input.fallbackModels, {
+    const fallbackModels = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "fallbackModels") ? input.fallbackModels : undefined, {
         filePath,
         name,
         field: "fallbackModels",
     });
     if (fallbackModels !== undefined)
         override.fallbackModels = fallbackModels;
-    const skills = parseOverrideStringArrayOrFalse(input.skills, { filePath, name, field: "skills" });
+    const skills = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "skills") ? input.skills : undefined, { filePath, name, field: "skills" });
     if (skills !== undefined)
         override.skills = skills;
-    const tools = parseOverrideStringArrayOrFalse(input.tools, { filePath, name, field: "tools" });
+    const tools = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "tools") ? input.tools : undefined, { filePath, name, field: "tools" });
     if (tools !== undefined)
         override.tools = tools;
-    const subagentOnlyExtensions = parseOverrideStringArrayOrFalse(input.subagentOnlyExtensions, {
+    const subagentOnlyExtensions = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "subagentOnlyExtensions") ? input.subagentOnlyExtensions : undefined, {
         filePath,
         name,
         field: "subagentOnlyExtensions",
     });
     if (subagentOnlyExtensions !== undefined)
         override.subagentOnlyExtensions = subagentOnlyExtensions;
-    return Object.keys(override).length > 0 ? override : undefined;
+    return override;
 }
 function readSubagentSettings(filePath) {
     if (!filePath)
         return EMPTY_SUBAGENT_SETTINGS;
     const settings = readSettingsFileStrict(filePath);
-    const subagents = settings.subagents;
+    const subagents = Object.hasOwn(settings, "subagents") ? settings.subagents : undefined;
     if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
         return EMPTY_SUBAGENT_SETTINGS;
     const subagentsObject = subagents;
     let defaultModel;
-    if ("defaultModel" in subagentsObject) {
+    if (Object.hasOwn(subagentsObject, "defaultModel")) {
         if (typeof subagentsObject.defaultModel === "string" && subagentsObject.defaultModel.trim()) {
             defaultModel = subagentsObject.defaultModel.trim();
         }
@@ -317,16 +319,16 @@ function readSubagentSettings(filePath) {
             throw new Error(`Subagent settings in '${filePath}' have invalid 'defaultModel'; expected a non-empty string.`);
         }
     }
-    const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
-    const parsed = {};
-    const agentOverrides = subagentsObject.agentOverrides;
+    const modelScope = parseModelScopeConfig(Object.hasOwn(subagentsObject, "modelScope") ? subagentsObject.modelScope : undefined, { filePath });
+    const parsed = Object.create(null);
+    const agentOverrides = Object.hasOwn(subagentsObject, "agentOverrides")
+        ? subagentsObject.agentOverrides
+        : undefined;
     if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
         return { overrides: parsed, defaultModel, modelScope };
     }
     for (const [name, value] of Object.entries(agentOverrides)) {
-        const override = parseBuiltinOverrideEntry(name, value, filePath);
-        if (override)
-            parsed[name] = override;
+        parsed[name] = parseBuiltinOverrideEntry(name, value, filePath);
     }
     return { overrides: parsed, defaultModel, modelScope };
 }
@@ -439,16 +441,14 @@ function applyCustomAgentOverride(agent, override, meta) {
 }
 function applyCustomAgentOverrides(agents, userSettings, projectSettings, userSettingsPath, projectSettingsPath) {
     return agents.map((agent) => {
-        const projectOverride = projectSettings.overrides[agent.name];
-        if (projectOverride && projectSettingsPath) {
-            return applyCustomAgentOverride(agent, projectOverride, {
+        if (projectSettingsPath && Object.hasOwn(projectSettings.overrides, agent.name)) {
+            return applyCustomAgentOverride(agent, projectSettings.overrides[agent.name], {
                 scope: "project",
                 path: projectSettingsPath,
             });
         }
-        const userOverride = userSettings.overrides[agent.name];
-        if (userOverride) {
-            return applyCustomAgentOverride(agent, userOverride, {
+        if (Object.hasOwn(userSettings.overrides, agent.name)) {
+            return applyCustomAgentOverride(agent, userSettings.overrides[agent.name], {
                 scope: "user",
                 path: userSettingsPath,
             });
@@ -726,7 +726,8 @@ export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
         agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
     }
     const disabledNames = manifest.entries
-        .filter((entry) => userSettings.overrides[entry.agent.name]?.disabled === true)
+        .filter((entry) => Object.hasOwn(userSettings.overrides, entry.agent.name) &&
+        userSettings.overrides[entry.agent.name]?.disabled === true)
         .map((entry) => entry.agent.name);
     const disabledNameSet = new Set(disabledNames);
     const activeEntries = manifest.entries.filter((entry) => !disabledNameSet.has(entry.agent.name));
