@@ -4421,6 +4421,16 @@ async function resolveResumeActionTarget(input: {
   return target;
 }
 
+function resolveSuccessfulResumeCompletion(target: {
+  state: AsyncStatus["state"];
+  successfulCompletion?: boolean;
+}): boolean {
+  return (
+    ("successfulCompletion" in target ? target.successfulCompletion : undefined) ??
+    target.state === "complete"
+  );
+}
+
 async function resumeAsyncRun(input: {
   params: SubagentParamsLike;
   requestCwd: string;
@@ -4562,12 +4572,15 @@ async function resumeAsyncRun(input: {
 
   const runTimeoutMs =
     input.executionPolicy.maxRunTimeMs === false ? undefined : input.executionPolicy.maxRunTimeMs;
-  // A successful completed source is the sole reset boundary. Every other
+  // A successful selected child is the sole reset boundary. Every other
   // resumable outcome carries only validated logical runtime evidence; paused
-  // wall time never enters the continuation budget.
+  // wall time never enters the continuation budget. The aggregate lifecycle
+  // state remains independent because a parallel cohort may have failed after
+  // this selected child completed successfully.
+  const successfulCompletion = resolveSuccessfulResumeCompletion(target);
   const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
   if (
-    target.state !== "complete" &&
+    !successfulCompletion &&
     target.activeRuntimeMs !== undefined &&
     normalizedTargetActiveRuntimeMs === undefined
   ) {
@@ -4583,7 +4596,7 @@ async function resumeAsyncRun(input: {
     target.activeRuntimeCheckpointAt,
   );
   if (
-    target.state !== "complete" &&
+    !successfulCompletion &&
     target.activeRuntimeCheckpointAt !== undefined &&
     activeRuntimeCheckpointAt === undefined
   ) {
@@ -4595,7 +4608,7 @@ async function resumeAsyncRun(input: {
       details: { mode: "management", results: [] },
     };
   }
-  const activeRuntimeMs = target.state === "complete" ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
+  const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
   const remainingAgentTimeMs = remainingExecutionTimeMs(
     agentConfig.maxExecutionTimeMs,
     activeRuntimeMs,
@@ -4753,7 +4766,7 @@ async function resumeAsyncRun(input: {
       acceptance: input.params.acceptance,
       continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
       activeRuntimeMs,
-      ...(target.state !== "complete" && activeRuntimeCheckpointAt !== undefined
+      ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
         ? { activeRuntimeCheckpointAt }
         : {}),
       timeoutMs: runTimeoutMs,

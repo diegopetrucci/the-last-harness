@@ -167,6 +167,8 @@ type AsyncResumeTarget = {
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  /** Selected-child success, independent of the aggregate async lifecycle state. */
+  successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
   /** Present only when the persisted run carried a run-level project inventory. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -1014,6 +1016,31 @@ function resolveLiveAsyncResumeTarget(
   return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
 
+function selectedChildSuccessfulCompletion(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): boolean {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  if (
+    statusStep?.terminationReason === "interrupted" ||
+    resultStep?.interrupted === true ||
+    resultStep?.terminationReason === "interrupted"
+  ) {
+    return false;
+  }
+  const status = statusStep?.status;
+  if (status !== undefined) {
+    return status === "complete" || status === "completed";
+  }
+  const resultSuccess = resultStep?.success;
+  if (typeof resultSuccess === "boolean") return resultSuccess;
+  // Older single-child artifacts did not always persist per-child evidence.
+  // Preserve their aggregate completion fallback without letting a failed
+  // parallel cohort reset an unrelated child's runtime ledger.
+  return context.stepCount === 1 && context.state === "complete";
+}
+
 function resolveTerminalAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
 ): AsyncResumeTarget {
@@ -1163,6 +1190,7 @@ function resolveTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const successfulCompletion = selectedChildSuccessfulCompletion(context, index);
   const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(selectedStatusStep?.activeRuntimeMs);
   const resultActiveRuntimeMs = normalizeActiveRuntimeMs(
     context.resultSteps[index]?.activeRuntimeMs,
@@ -1195,6 +1223,7 @@ function resolveTerminalAsyncResumeTarget(
       : resultActiveRuntimeCheckpointAt !== undefined
         ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
         : {}),
+    successfulCompletion,
   };
 }
 

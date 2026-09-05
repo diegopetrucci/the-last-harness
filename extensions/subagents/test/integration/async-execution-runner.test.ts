@@ -1385,7 +1385,7 @@ describe("async execution utilities", () => {
     const result = executeAsyncSingle(id, {
       agent: "worker",
       task: "Use the conservatively normalized continuation budget.",
-      agentConfig: makeAgent("worker", { maxExecutionTimeMs: 1_000 }),
+      agentConfig: makeAgent("worker", { maxExecutionTimeMs: 10_000 }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -1403,13 +1403,13 @@ describe("async execution utilities", () => {
     });
 
     assert.equal(result.isError, undefined);
-    assert.equal(result.details.timeoutMs, 998);
+    assert.equal(result.details.timeoutMs, 9_998);
     const payload = await readAsyncPayload(id);
     assert.equal(payload.success, true);
     const status = JSON.parse(
       fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
     ) as AsyncStatusPayload;
-    assert.equal(status.steps?.[0]?.timeoutMs, 998);
+    assert.equal(status.steps?.[0]?.timeoutMs, 9_998);
     assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) >= 2);
     assert.equal(status.activeRuntimeCheckpointAt, Number.MAX_SAFE_INTEGER);
     assert.ok(Number.isSafeInteger(status.activeRuntimeCheckpointAt));

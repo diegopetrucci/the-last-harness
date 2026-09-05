@@ -600,6 +600,23 @@ function resolveLiveAsyncResumeTarget(context) {
         throw new Error(`Async run '${context.runId}' has ${running.length} running children. Provide index to choose one.`);
     return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
+function selectedChildSuccessfulCompletion(context, index) {
+    const statusStep = context.statusSteps[index];
+    const resultStep = context.resultSteps[index];
+    if (statusStep?.terminationReason === "interrupted" ||
+        resultStep?.interrupted === true ||
+        resultStep?.terminationReason === "interrupted") {
+        return false;
+    }
+    const status = statusStep?.status;
+    if (status !== undefined) {
+        return status === "complete" || status === "completed";
+    }
+    const resultSuccess = resultStep?.success;
+    if (typeof resultSuccess === "boolean")
+        return resultSuccess;
+    return context.stepCount === 1 && context.state === "complete";
+}
 function resolveTerminalAsyncResumeTarget(context) {
     const requestedIndex = context.requestedIndex;
     if (context.stepCount > 1 && requestedIndex === undefined) {
@@ -702,6 +719,7 @@ function resolveTerminalAsyncResumeTarget(context) {
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const successfulCompletion = selectedChildSuccessfulCompletion(context, index);
     const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(selectedStatusStep?.activeRuntimeMs);
     const resultActiveRuntimeMs = normalizeActiveRuntimeMs(context.resultSteps[index]?.activeRuntimeMs);
     const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(selectedStatusStep?.activeRuntimeCheckpointAt);
@@ -728,6 +746,7 @@ function resolveTerminalAsyncResumeTarget(context) {
             : resultActiveRuntimeCheckpointAt !== undefined
                 ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
                 : {}),
+        successfulCompletion,
     };
 }
 export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {

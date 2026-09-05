@@ -3243,6 +3243,10 @@ async function resolveResumeActionTarget(input) {
     }
     return target;
 }
+function resolveSuccessfulResumeCompletion(target) {
+    return (("successfulCompletion" in target ? target.successfulCompletion : undefined) ??
+        target.state === "complete");
+}
 async function resumeAsyncRun(input) {
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
     input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -3362,8 +3366,9 @@ async function resumeAsyncRun(input) {
         };
     }
     const runTimeoutMs = input.executionPolicy.maxRunTimeMs === false ? undefined : input.executionPolicy.maxRunTimeMs;
+    const successfulCompletion = resolveSuccessfulResumeCompletion(target);
     const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
-    if (target.state !== "complete" &&
+    if (!successfulCompletion &&
         target.activeRuntimeMs !== undefined &&
         normalizedTargetActiveRuntimeMs === undefined) {
         return {
@@ -3375,7 +3380,7 @@ async function resumeAsyncRun(input) {
         };
     }
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(target.activeRuntimeCheckpointAt);
-    if (target.state !== "complete" &&
+    if (!successfulCompletion &&
         target.activeRuntimeCheckpointAt !== undefined &&
         activeRuntimeCheckpointAt === undefined) {
         return {
@@ -3386,7 +3391,7 @@ async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const activeRuntimeMs = target.state === "complete" ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
+    const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
     const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
     if (remainingAgentTimeMs === 0) {
         return {
@@ -3525,7 +3530,7 @@ async function resumeAsyncRun(input) {
             acceptance: input.params.acceptance,
             continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
             activeRuntimeMs,
-            ...(target.state !== "complete" && activeRuntimeCheckpointAt !== undefined
+            ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
                 ? { activeRuntimeCheckpointAt }
                 : {}),
             timeoutMs: runTimeoutMs,

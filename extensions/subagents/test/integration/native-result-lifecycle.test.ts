@@ -1164,6 +1164,124 @@ describe(
       }
     });
 
+    it("resets runtime only for a successful selected child in a failed parallel revival", async () => {
+      mockPi.onCall({ output: "revived successful child" });
+      const runId = `resume-revive-mixed-results-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const sourceResultPath = path.join(RESULTS_DIR, `${runId}.json`);
+      const firstSession = path.join(tempDir, "child-a.jsonl");
+      const secondSession = path.join(tempDir, "child-b.jsonl");
+      let revivedId: string | undefined;
+      try {
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(firstSession, "", "utf-8");
+        fs.writeFileSync(secondSession, "", "utf-8");
+        fs.writeFileSync(
+          path.join(asyncDir, "status.json"),
+          JSON.stringify(
+            {
+              runId,
+              mode: "parallel",
+              state: "failed",
+              startedAt: 100,
+              endedAt: 200,
+              lastUpdate: 200,
+              cwd: tempDir,
+              steps: [
+                {
+                  agent: "a",
+                  status: "complete",
+                  sessionFile: firstSession,
+                  activeRuntimeMs: 6_000,
+                },
+                {
+                  agent: "b",
+                  status: "failed",
+                  sessionFile: secondSession,
+                  activeRuntimeMs: 6_000,
+                },
+              ],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        fs.writeFileSync(
+          sourceResultPath,
+          JSON.stringify(
+            {
+              id: runId,
+              agent: "a",
+              mode: "parallel",
+              state: "failed",
+              success: false,
+              cwd: tempDir,
+              results: [
+                { agent: "a", success: true, sessionFile: firstSession, activeRuntimeMs: 6_000 },
+                { agent: "b", success: false, sessionFile: secondSession, activeRuntimeMs: 6_000 },
+              ],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        const { executor } = makeExecutor({
+          agents: [
+            makeAgent("a", { maxExecutionTimeMs: 5_000 }),
+            makeAgent("b", { maxExecutionTimeMs: 5_000 }),
+          ],
+        });
+
+        const successfulChild = await executor.execute(
+          "resume-revive-mixed-success",
+          { action: "resume", id: runId, index: 0, message: "Continue successful child a." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(successfulChild.isError, undefined, successfulChild.content[0]?.text ?? "");
+        assert.equal(
+          successfulChild.details?.asyncId ? typeof successfulChild.details.asyncId : undefined,
+          "string",
+        );
+        revivedId = await waitForRevivedAsyncResult(successfulChild);
+        const revivedStatus = readAsyncStatusJson<{
+          steps?: Array<{ timeoutMs?: number }>;
+        }>(revivedId);
+        assert.equal(revivedStatus.steps?.[0]?.timeoutMs, 5_000);
+        assert.equal(mockPi.callCount(), 1, "the successful selected child should launch");
+        const revivedArgs = await readMockCallArgs(0);
+        assert.equal(revivedArgs[revivedArgs.indexOf("--session") + 1], firstSession);
+
+        const failedChild = await executor.execute(
+          "resume-revive-mixed-failure",
+          { action: "resume", id: runId, index: 1, message: "Continue failed child b." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(failedChild.isError, true);
+        assert.match(
+          failedChild.content[0]?.text ?? "",
+          /Agent 'b' has exhausted its maxExecutionTimeMs ceiling after 6000ms of active runtime\./,
+        );
+        assert.equal(
+          mockPi.callCount(),
+          1,
+          "the failed selected child should retain consumed runtime",
+        );
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(sourceResultPath, { force: true });
+        if (revivedId) {
+          fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+          fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
+        }
+      }
+    });
+
     it("resume action revives paused async acceptance with paused-ledger provenance and monotonic overrides", async () => {
       mockPi.onCall({ delay: 10_000, output: "paused before acceptance" });
       mockPi.onCall({
