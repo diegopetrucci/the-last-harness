@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
@@ -42,6 +43,25 @@ const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
 );
 
+// Pi 0.85.1 moved keybinding initialisation to interactive app startup; tests
+// must seed the global keybindings so that model-picker handleInput and rendered
+// hints (e.g. app.models.save / Ctrl+S) behave correctly without a live TUI
+// session.  Use file-URL dynamic imports to reach pi-coding-agent's internal
+// deep paths (not in the package exports map) and pi-coding-agent's own nested
+// pi-tui instance (which has a separate module singleton from the repo-level one).
+{
+  const piPkg = getPackageDir();
+  const piKeybindingsUrl = pathToFileURL(join(piPkg, "dist", "core", "keybindings.js")).href;
+  const piTuiKeybindingsUrl = pathToFileURL(
+    join(piPkg, "node_modules", "@earendil-works", "pi-tui", "dist", "keybindings.js"),
+  ).href;
+  const { KeybindingsManager: PiKeybindingsManager } = await import(piKeybindingsUrl);
+  const { setKeybindings: setPiKeybindings } = await import(piTuiKeybindingsUrl);
+  // PiKeybindingsManager bakes KEYBINDINGS (all pi-coding-agent bindings) into
+  // its constructor via super(); call it with no args to get the full defaults.
+  setPiKeybindings(new PiKeybindingsManager());
+}
+
 function readSettings(agent) {
   try {
     return JSON.parse(readFileSync(join(agent, "settings.json"), "utf8"));
@@ -66,6 +86,14 @@ function copyPublishedPiPackage(t, suffix) {
   const packageDir = mkdtempSync(join(tmpdir(), `tlh-pi-private-${suffix}-`));
   cpSync(join(getPackageDir(), "package.json"), join(packageDir, "package.json"));
   cpSync(join(getPackageDir(), "dist"), join(packageDir, "dist"), { recursive: true });
+  // Pi 0.85.1 introduced @earendil-works/chord as a runtime bundle dependency.
+  // Copy it into the temp package's node_modules so the isolated dist/bundle
+  // chunks can resolve it without access to the repo-level node_modules.
+  cpSync(
+    join(getPackageDir(), "node_modules", "@earendil-works", "chord"),
+    join(packageDir, "node_modules", "@earendil-works", "chord"),
+    { recursive: true },
+  );
   t.after(() => rmSync(packageDir, { recursive: true, force: true }));
   return packageDir;
 }
@@ -230,7 +258,7 @@ test("native model selection has no TLH model-scope prompt and the selector prot
     );
     assert.match(
       nativeSelector.render(120).join("\n"),
-      /Enter to select · Ctrl\+S to set as default · Esc to cancel/,
+      /Enter to select · Ctrl\+S to set as default · Escape\/Ctrl\+C to cancel/,
     );
     nativeSelector.dispose();
 
@@ -937,7 +965,7 @@ test("bundled Node and modular AgentSession constructors share one exact public 
     assert.notEqual(
       ModularAgentSession,
       BundledAgentSession,
-      "Pi 0.84.4 must expose distinct modular and bundled AgentSession constructors",
+      "Pi 0.85.1 must expose distinct modular and bundled AgentSession constructors",
     );
 
     // The extension loader resolves this module through the normal package root,

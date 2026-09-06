@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens the native selector; Enter is session-only and Ctrl+S saves the default; see [model selection](models.md#model-selection)) |
+| `/model` | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model selection](models.md#model-selection)) |
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
@@ -65,7 +65,7 @@ These commands are registered by the TLH extension bundled with this profile.
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
-`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.84.4's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
+`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.85.1's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
 
 With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
 

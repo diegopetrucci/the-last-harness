@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { getPackageDir, initTheme } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
@@ -11,6 +12,21 @@ const jiti = createJiti(import.meta.url);
 const { registerEffortCommand } = await jiti.import("../extensions/the-last-harness/effort.ts");
 
 initTheme("dark", false);
+
+// Pi 0.85.1 moved keybinding initialisation to interactive app startup; seed
+// the global keybindings (pi-coding-agent's nested pi-tui instance) so that
+// ThinkingSelectorComponent hints (e.g. app.thinking.save / Ctrl+S) render
+// correctly in tests without a live TUI session.
+{
+  const piPkg = getPackageDir();
+  const piKeybindingsUrl = pathToFileURL(join(piPkg, "dist", "core", "keybindings.js")).href;
+  const piTuiKeybindingsUrl = pathToFileURL(
+    join(piPkg, "node_modules", "@earendil-works", "pi-tui", "dist", "keybindings.js"),
+  ).href;
+  const { KeybindingsManager: PiKeybindingsManager } = await import(piKeybindingsUrl);
+  const { setKeybindings: setPiKeybindings } = await import(piTuiKeybindingsUrl);
+  setPiKeybindings(new PiKeybindingsManager());
+}
 
 // ---------------------------------------------------------------------------
 // Minimal harness and helpers
@@ -361,7 +377,7 @@ test("effort opens the native picker whose Enter action is session-only", async 
     assert.ok(interactive.picker, "the public picker should be shown");
     assert.match(
       interactive.picker.render(120).join("\n"),
-      /Enter to select · Ctrl\+S to set as default · Esc to cancel/,
+      /Enter to select · Ctrl\+S to set as default · Escape\/Ctrl\+C to cancel/,
     );
     interactive.picker.getSelectList().setSelectedIndex(4);
     interactive.picker.handleInput("\r");

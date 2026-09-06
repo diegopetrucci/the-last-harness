@@ -115,10 +115,12 @@ export async function handleThinkingLevelCommand(
     return;
   }
 
-  // `ThinkingSelectorComponent` is a public Pi 0.84.4 component. It owns the
-  // one picker and visibly documents Enter (session), Ctrl+S (default), and
-  // Esc (cancel). TLH deliberately keeps the persistence callback separate so
-  // Pi's ExtensionAPI setter can never write an unguarded default.
+  // `ThinkingSelectorComponent` is a public Pi component. It owns the picker
+  // and visibly documents Enter (session), the `app.thinking.save` keybinding
+  // (Ctrl+S by default, configurable since 0.85.1) to set as default, and
+  // `tui.select.cancel` (Escape/Ctrl+C) to cancel. TLH deliberately keeps the
+  // persistence callback separate so Pi's ExtensionAPI setter can never write
+  // an unguarded default.
   if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.custom !== "function") {
     ctx.ui.notify(
       `Available thinking levels: ${pickerLevels.join(", ")}. Current: ${currentLevel}.`,
