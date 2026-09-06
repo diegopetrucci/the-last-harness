@@ -15,6 +15,10 @@ All notable changes to The Last Harness will be documented in this file.
 - Rush, Product, Bug-hunter, and Architect thinking levels are now completely unlocked. Run `/reconcile` to use TLH's defaults.
 - More primary/sub agents cruft has been removed, and they're even more reliable.
 
+### Misc
+
+- Bumped TLH's Pi to 0.85.1. You should now be able to fully use Astra and Fable 5.1.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added
