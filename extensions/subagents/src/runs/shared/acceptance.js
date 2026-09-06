@@ -203,6 +203,25 @@ function explicitAcceptanceCanDisable(explicit) {
         typeof explicit.reason === "string" &&
         explicit.reason.trim().length > 0);
 }
+function validateAcceptanceReview(reviewInput, pathLabel, errors) {
+    if (reviewInput === undefined || reviewInput === false)
+        return;
+    if (!reviewInput || typeof reviewInput !== "object" || Array.isArray(reviewInput)) {
+        errors.push(`${pathLabel}.review must be false or an object.`);
+        return;
+    }
+    const review = reviewInput;
+    for (const key of Object.keys(review)) {
+        if (!ACCEPTANCE_REVIEW_KEYS.has(key))
+            errors.push(`${pathLabel}.review.${key} is not supported.`);
+    }
+    if (review.agent !== undefined && typeof review.agent !== "string")
+        errors.push(`${pathLabel}.review.agent must be a string.`);
+    if (review.focus !== undefined && typeof review.focus !== "string")
+        errors.push(`${pathLabel}.review.focus must be a string.`);
+    if (review.required !== undefined && typeof review.required !== "boolean")
+        errors.push(`${pathLabel}.review.required must be a boolean.`);
+}
 export function validateAcceptanceInput(input, pathLabel = "acceptance") {
     const errors = [];
     if (input === undefined)
@@ -317,24 +336,7 @@ export function validateAcceptanceInput(input, pathLabel = "acceptance") {
             }
         }
     }
-    if (value.review !== undefined && value.review !== false) {
-        if (!value.review || typeof value.review !== "object" || Array.isArray(value.review)) {
-            errors.push(`${pathLabel}.review must be false or an object.`);
-        }
-        else {
-            const review = value.review;
-            for (const key of Object.keys(review)) {
-                if (!ACCEPTANCE_REVIEW_KEYS.has(key))
-                    errors.push(`${pathLabel}.review.${key} is not supported.`);
-            }
-            if (review.agent !== undefined && typeof review.agent !== "string")
-                errors.push(`${pathLabel}.review.agent must be a string.`);
-            if (review.focus !== undefined && typeof review.focus !== "string")
-                errors.push(`${pathLabel}.review.focus must be a string.`);
-            if (review.required !== undefined && typeof review.required !== "boolean")
-                errors.push(`${pathLabel}.review.required must be a boolean.`);
-        }
-    }
+    validateAcceptanceReview(value.review, pathLabel, errors);
     if (value.stopRules !== undefined && !Array.isArray(value.stopRules))
         errors.push(`${pathLabel}.stopRules must be an array.`);
     if (Array.isArray(value.stopRules)) {

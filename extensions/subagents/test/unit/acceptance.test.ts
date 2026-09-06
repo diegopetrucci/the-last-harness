@@ -920,6 +920,39 @@ describe("acceptance gates", () => {
     }
   });
 
+  it("preserves exact validation error order across malformed nested sections", () => {
+    assert.deepEqual(
+      validateAcceptanceInput(
+        {
+          verify: [{ unsupported: true }],
+          review: {
+            zeta: true,
+            alpha: true,
+            agent: 42,
+            focus: 42,
+            required: "yes",
+          },
+          stopRules: [123],
+        },
+        "custom.acceptance",
+      ),
+      [
+        "custom.acceptance.verify[0].unsupported is not supported.",
+        "custom.acceptance.verify[0].id is required.",
+        "custom.acceptance.verify[0].command is required.",
+        "custom.acceptance.review.zeta is not supported.",
+        "custom.acceptance.review.alpha is not supported.",
+        "custom.acceptance.review.agent must be a string.",
+        "custom.acceptance.review.focus must be a string.",
+        "custom.acceptance.review.required must be a boolean.",
+        "custom.acceptance.stopRules[0] must be a string.",
+      ],
+    );
+    assert.deepEqual(validateAcceptanceInput({ review: true }, "custom.acceptance"), [
+      "custom.acceptance.review must be false or an object.",
+    ]);
+  });
+
   it("validates invalid disable and verify shapes", () => {
     assert.deepEqual(validateAcceptanceInput({ level: "none" }), [
       "acceptance.reason is required when level is none.",
