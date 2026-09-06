@@ -232,6 +232,11 @@ type AsyncResumeDiagnosticMetadata = Pick<
   "contextUsage" | "contextPressure" | "contextPressureCrossedThresholds" | "terminationReason"
 >;
 
+type AsyncResumeRuntimeMetadata = Pick<
+  AsyncResumeTarget,
+  "activeRuntimeMs" | "activeRuntimeCheckpointAt" | "successfulCompletion"
+>;
+
 interface AsyncResumeResolutionContext {
   asyncDirRoot: string;
   resultsDir: string;
@@ -1085,6 +1090,35 @@ function selectedChildSuccessfulCompletion(
   return context.stepCount === 1 && context.state === "complete";
 }
 
+function resolveSelectedChildRuntimeMetadata(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): AsyncResumeRuntimeMetadata {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs);
+  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs);
+  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    statusStep?.activeRuntimeCheckpointAt,
+  );
+  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    resultStep?.activeRuntimeCheckpointAt,
+  );
+  return {
+    ...(selectedActiveRuntimeMs !== undefined
+      ? { activeRuntimeMs: selectedActiveRuntimeMs }
+      : resultActiveRuntimeMs !== undefined
+        ? { activeRuntimeMs: resultActiveRuntimeMs }
+        : {}),
+    ...(selectedActiveRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
+      : resultActiveRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
+        : {}),
+    successfulCompletion: selectedChildSuccessfulCompletion(context, index),
+  };
+}
+
 function resolveTerminalAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
 ): AsyncResumeTarget {
@@ -1234,17 +1268,7 @@ function resolveTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
-  const successfulCompletion = selectedChildSuccessfulCompletion(context, index);
-  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(selectedStatusStep?.activeRuntimeMs);
-  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(
-    context.resultSteps[index]?.activeRuntimeMs,
-  );
-  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    selectedStatusStep?.activeRuntimeCheckpointAt,
-  );
-  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    context.resultSteps[index]?.activeRuntimeCheckpointAt,
-  );
+  const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
   return {
     ...targetWithModelMetadata,
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
@@ -1257,17 +1281,7 @@ function resolveTerminalAsyncResumeTarget(
     ...(diagnosticMetadata.terminationReason
       ? { terminationReason: diagnosticMetadata.terminationReason }
       : {}),
-    ...(selectedActiveRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedActiveRuntimeMs }
-      : resultActiveRuntimeMs !== undefined
-        ? { activeRuntimeMs: resultActiveRuntimeMs }
-        : {}),
-    ...(selectedActiveRuntimeCheckpointAt !== undefined
-      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
-      : resultActiveRuntimeCheckpointAt !== undefined
-        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
-        : {}),
-    successfulCompletion,
+    ...runtimeMetadata,
   };
 }
 
