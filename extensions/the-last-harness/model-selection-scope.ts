@@ -71,7 +71,7 @@ type PatchedAgentSessionPrototype = AgentSessionPrototype & {
 
 const TLH_MODEL_SELECTION_PERSISTENCE_PATCH = Symbol.for("tlh.modelSelectionPersistencePatch");
 const BUNDLED_NODE_ENTRYPOINT_RE = /(?:^|[/\\])dist[/\\]bundle[/\\]cli\.js$/;
-const PINNED_PI_VERSION = "0.84.4";
+const PINNED_PI_VERSION = "0.85.1";
 const tlhRequire = createRequire(import.meta.url);
 
 type BundledPackageResolution =
@@ -487,7 +487,7 @@ function createModelSelectionPersistencePatch(): TlhModelSelectionPersistencePat
 }
 
 /**
- * Install TLH's narrow model provenance wrapper. Pi 0.84.4 owns model
+ * Install TLH's narrow model provenance wrapper. Pi 0.85.1 owns model
  * persistence and dispatches model_select from AgentSession.setModel; the
  * public method's awaited call boundary is the only place where `persist` is
  * available throughout the complete extension dispatch.

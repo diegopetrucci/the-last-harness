@@ -6,9 +6,9 @@ The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-
 
 ## Direct dependency pin decisions
 
-Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.84.4`, Oxlint `1.78.0`, `@oxlint/plugins` `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current.
+Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.85.1`, Oxlint `1.78.0`, `@oxlint/plugins` `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current. Pi `0.85.1` removed `bundleDependencies`; `pi-ai`, `pi-tui`, and `pi-agent-core` moved from bundled to ordinary runtime dependencies, `@earendil-works/chord` is a new ordinary runtime dependency, `pi-client`, `pi-protocol`, and `pi-server` are devDependencies of 0.85.1 and absent from the installed dependency tree, and `pi-telemetry` appears transitively; these changes account for the ~1200-line growth in `package-lock.json` relative to `0.84.4`.
 
-Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.84.4` declares that exact transitive pin, and `typescript` stays at `6.0.3` because registry latest `7.0.2` does not export `typescript/bin/tsc`, which TLH's runtime TypeScript freshness check resolves, and also removes the `ts.ScriptTarget.Latest` API used by the extension static tests. Both holds are therefore compatibility requirements, not stale version metadata.
+Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.85.1` declares that exact transitive pin, and `typescript` stays at `6.0.3` because registry latest `7.0.2` does not export `typescript/bin/tsc`, which TLH's runtime TypeScript freshness check resolves, and also removes the `ts.ScriptTarget.Latest` API used by the extension static tests. Both holds are therefore compatibility requirements, not stale version metadata.
 
 ## Package compatibility boundary
 
@@ -161,6 +161,8 @@ TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
   --bin-dir "$tmp/bin"
 "$tmp/bin/tlh"
 ```
+
+**File-source keybinding caveat (`/effort` picker, Ctrl+S):** under the `file:<checkout>` layout only, the `/effort` picker renders an empty key where `Ctrl+S` should appear, and pressing Ctrl+S does nothing—the picker stays open and no default is saved. Enter and Escape/Ctrl+C still work. This is not a TLH bug. Cause: Pi 0.85.1 renders selector hints from the global pi-tui keybindings registry via `keyDisplayText`/`getKeybindings`, and when TLH is installed from a checkout the checkout's own `node_modules/@earendil-works/pi-coding-agent` supplies a second `pi-coding-agent` (and nested `pi-tui`) module instance whose global keybindings registry is never initialised by the interactive app, so `app.*` binding ids resolve to no keys while `tui.*` ids still resolve from built-in defaults. The unpacked-package layout contains no `node_modules`, so a packaged install has a single module instance and behaves correctly. To verify Ctrl+S persistence, use the unpacked-package layout (npm pack, unpack, then `TLH_PACKAGE_SOURCE=file:<unpacked-package>`).
 
 You can also test any pushed TLH branch through GitHub. Fetch that branch's installer and pass the same branch name as `--ref`:
 
