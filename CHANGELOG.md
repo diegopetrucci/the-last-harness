@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.40.0] - 2026-09-06
+
 ### Added
 
 - Added trusted, append-only project prompt appends for all thirteen packaged TLH roles through exact `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` files. Nearest-upward worktree discovery, outside-Git cwd-only behavior, persisted trust, snapshots, reload timing, and 64 KiB/symlink safety rules are documented in [Per-agent project guidance](README.md#per-agent-project-guidance).
