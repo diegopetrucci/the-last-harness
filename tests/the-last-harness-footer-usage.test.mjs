@@ -1139,6 +1139,40 @@ test("footer dims both the main subject separator and subject without changing m
   );
 });
 
+test("footer strips ESC from a persisted main commit subject", () => {
+  const ctx = createCtx({ entries: [] });
+  const notice = makeInstallNotice("ref", "main", "Add the \u001bmain footer subject");
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    notice,
+  );
+
+  assert.equal(footer.render(WIDTH).at(-1), "TLH main • Add the main footer subject");
+});
+
+test("footer strips C1 controls from a persisted main commit subject", () => {
+  const ctx = createCtx({ entries: [] });
+  const notice = makeInstallNotice("ref", "main", "Add the \u009bmain footer subject");
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    notice,
+  );
+
+  assert.equal(footer.render(WIDTH).at(-1), "TLH main • Add the main footer subject");
+});
+
 test("footer omits the subject for legacy, invalid, and non-main install notices", () => {
   const cases = [
     [makeInstallNotice("ref", "main"), "TLH main"],

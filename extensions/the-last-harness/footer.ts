@@ -262,11 +262,19 @@ export function formatReauthWarningLine(
   return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
 }
 
+function sanitizeCommitSubject(text: string): string {
+  return sanitizeStatusText(
+    text.replace(/\p{Cc}/gu, (character) =>
+      character === "\r" || character === "\n" || character === "\t" ? " " : "",
+    ),
+  );
+}
+
 function formatTlhInstallNoticeLine(notice: TlhInstallNotice, width: number, theme: Theme): string {
   const label = formatTlhInstallNoticeTrackLabel(notice);
   const commitSubject =
     notice.kind === "ref" && label === "main" && typeof notice.commitSubject === "string"
-      ? sanitizeStatusText(notice.commitSubject)
+      ? sanitizeCommitSubject(notice.commitSubject)
       : "";
   const commitSubjectSuffix = commitSubject
     ? `${theme.fg("dim", " • ")}${theme.fg("dim", commitSubject)}`
