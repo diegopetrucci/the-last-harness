@@ -71,6 +71,14 @@ test("tlh-install-state dry-run reports the write without creating install-state
   assert.equal(existsSync(fixture.statePath), false);
 });
 
+test("tlh-install-state accepts a hyphen-leading installed commit subject", () => {
+  const fixture = tempFixture();
+
+  runInstallState(fixture, ["--commit-subject=-Record the installed commit subject"]);
+
+  assert.equal(readJson(fixture.statePath).commitSubject, "-Record the installed commit subject");
+});
+
 test("tlh-install-state preserves install-state file mode when overwriting", () => {
   const fixture = tempFixture();
   mkdirSync(join(fixture.agentDir, "tlh"), { recursive: true });

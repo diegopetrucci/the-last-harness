@@ -989,8 +989,13 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 // NEW: install notice warning line (last line of footer)
 // ---------------------------------------------------------------------------
 
-function makeInstallNotice(kind, detail) {
-  return { kind, summary: "TLH install notice", detail };
+function makeInstallNotice(kind, detail, commitSubject) {
+  return {
+    kind,
+    summary: "TLH install notice",
+    detail,
+    ...(commitSubject !== undefined ? { commitSubject } : {}),
+  };
 }
 
 test("footer appends no warning line when no install notice is provided", () => {
@@ -1096,6 +1101,69 @@ test("footer install notice line uses dim for 'TLH ' prefix and warning color fo
   const lastLine = lines.at(-1) ?? "";
   assert.match(lastLine, /<dim>TLH <\/dim>/);
   assert.match(lastLine, /<warning>main<\/warning>/);
+});
+
+test("footer appends a persisted subject to the main ref label with a dim suffix", () => {
+  const ctx = createCtx({ entries: [] });
+  const notice = makeInstallNotice("ref", "main", "Add the main footer subject");
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    notice,
+  );
+  assert.equal(footer.render(WIDTH).at(-1), "TLH main • Add the main footer subject");
+});
+
+test("footer dims both the main subject separator and subject without changing main styling", () => {
+  const ctx = createCtx({ entries: [] });
+  const notice = makeInstallNotice("ref", "main", "Add the main footer subject");
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    colorTheme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    notice,
+  );
+  const lastLine = footer.render(COLOR_WIDTH).at(-1) ?? "";
+  assert.equal(
+    lastLine,
+    "<dim>TLH </dim><warning>main</warning><dim> • </dim><dim>Add the main footer subject</dim>",
+  );
+});
+
+test("footer omits the subject for legacy, invalid, and non-main install notices", () => {
+  const cases = [
+    [makeInstallNotice("ref", "main"), "TLH main"],
+    [makeInstallNotice("ref", "main", "   "), "TLH main"],
+    [makeInstallNotice("ref", "main", 42), "TLH main"],
+    [makeInstallNotice("ref", "feature/footer", "Feature commit subject"), "TLH feature/footer"],
+    [makeInstallNotice("pinned-tag", "main", "Pinned commit subject"), "TLH main"],
+    [makeInstallNotice("custom-track", "custom", "Custom commit subject"), "TLH custom"],
+    [makeInstallNotice("unknown", undefined, "Unknown commit subject"), "TLH unknown"],
+  ];
+
+  for (const [notice, expected] of cases) {
+    const ctx = createCtx({ entries: [] });
+    const footer = createTlhFooter(
+      pi,
+      ctx,
+      theme,
+      () => "architect",
+      createFooterData(),
+      {},
+      null,
+      notice,
+    );
+    assert.equal(footer.render(WIDTH).at(-1), expected);
+  }
 });
 
 test("footer warning line stays within narrow widths", () => {

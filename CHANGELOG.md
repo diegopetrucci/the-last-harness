@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Main-ref installs now persist the installed commit subject and display `TLH main • <commit subject>` in the footer, with the bullet-and-subject suffix dimmed; legacy main state without metadata remains `TLH main`.
+
 ## [0.40.0] - 2026-09-06
 
 ### Built-in, and custom, agents
