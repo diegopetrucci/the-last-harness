@@ -42,6 +42,7 @@ export function classifyTlhInstallState(state) {
     const ref = normalizedString(state?.ref);
     const packageSource = normalizedString(state?.packageSource);
     const defaultPackageSource = isDefaultPackageSource(state);
+    const mainCommitSubject = track === "ref" && ref === "main" ? normalizedString(state?.commitSubject) : undefined;
     if (!repo ||
         !track ||
         !VALID_TRACKS.has(track) ||
@@ -77,6 +78,7 @@ export function classifyTlhInstallState(state) {
             kind: "ref",
             summary: "TLH follows a non-stable git ref.",
             detail: ref,
+            ...(mainCommitSubject ? { commitSubject: mainCommitSubject } : {}),
         };
     }
     if (defaultPackageSource === false) {
@@ -101,6 +103,7 @@ export function classifyTlhInstallState(state) {
             kind: "ref",
             summary: "TLH follows a non-stable git ref.",
             detail: ref,
+            ...(mainCommitSubject ? { commitSubject: mainCommitSubject } : {}),
         };
     }
     return {

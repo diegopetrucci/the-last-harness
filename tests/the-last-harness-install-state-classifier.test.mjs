@@ -99,6 +99,51 @@ test("formats ref install notices with the ref label", () => {
   assertNoticeLabel(notice, "main");
 });
 
+test("preserves a valid installed subject only for the main ref label", () => {
+  const mainNotice = classifyTlhInstallState({
+    ...OFFICIAL_LATEST_STABLE,
+    track: "ref",
+    ref: "main",
+    packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+    commitSubject: "  Add the main footer subject  ",
+  });
+  assert.deepEqual(mainNotice, {
+    kind: "ref",
+    summary: "TLH follows a non-stable git ref.",
+    detail: "main",
+    commitSubject: "Add the main footer subject",
+  });
+  assertNoticeLabel(mainNotice, "main");
+
+  const otherRefNotice = classifyTlhInstallState({
+    ...OFFICIAL_LATEST_STABLE,
+    track: "ref",
+    ref: "feature/footer",
+    packageSource: "git:github.com/diegopetrucci/the-last-harness@feature/footer",
+    commitSubject: "Feature commit subject",
+  });
+  assert.deepEqual(otherRefNotice, {
+    kind: "ref",
+    summary: "TLH follows a non-stable git ref.",
+    detail: "feature/footer",
+  });
+
+  for (const commitSubject of [undefined, "   ", 42]) {
+    const notice = classifyTlhInstallState({
+      ...OFFICIAL_LATEST_STABLE,
+      track: "ref",
+      ref: "main",
+      packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+      commitSubject,
+    });
+    assert.deepEqual(notice, {
+      kind: "ref",
+      summary: "TLH follows a non-stable git ref.",
+      detail: "main",
+    });
+  }
+});
+
 test("prefers the ref label over a custom package-source label", () => {
   const notice = classifyTlhInstallState({
     ...OFFICIAL_LATEST_STABLE,

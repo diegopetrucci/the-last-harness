@@ -914,6 +914,19 @@ test("production footer wiring preserves every install-track label and keeps the
   }
 });
 
+test("production footer wiring appends the persisted subject for a main ref install", async () => {
+  const { footerLines } = await runSessionStart({
+    reason: "startup",
+    installState: {
+      ...REF_INSTALL_STATE,
+      commitSubject: "Add the main footer subject",
+    },
+  });
+
+  assert.ok(footerLines);
+  assert.equal(footerLines.at(-1), "TLH main • Add the main footer subject");
+});
+
 test("production footer wiring: footer remains visible on non-startup session reasons", async () => {
   const { footerLines, headerLines } = await runSessionStart({
     reason: "resume",
