@@ -20,6 +20,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled anthropic-auth default extension pin from `npm:@gotgenes/pi-anthropic-auth@2.0.3` to `npm:@gotgenes/pi-anthropic-auth@2.0.8`, picking up the appended-prompt preservation fix for preamble terminator drift and the updated overridable Claude Code version identifier (2.1.260).
 - Subagent run artifacts now use the compact profile by default: output, metadata, lifecycle data, and canonical child sessions remain available while task inputs, diagnostic child transcripts, and high-volume child-event projections are omitted. Set the human-owned `artifacts.mode` to `debug` in the isolated subagent config before reproducing a failure that needs exact child protocol or raw stderr; installs and updates preserve that setting.
 - Architect implementation tickets continue to route to `developer`, while a separate final-validation ticket with exact commands derived from `VALIDATING.md` or repository discovery routes to the command-only `test-runner`; ticket-local developer validation remains required and the final runner does not edit, install dependencies, fix failures, or change tickets.
 - TLH-primary project custom delegation follows the live OpenRouter session model when the caller omits `model`, overriding a root file's model; other providers keep the root file's model unless the caller explicitly overrides it.
