@@ -507,14 +507,21 @@ describe("async execution utilities", () => {
           : undefined,
     },
     async () => {
-      // The mock ignores the graceful timeout signal, so the runner must wait
-      // for hard cleanup. Logical runtime must stop at the step deadline rather
-      // than charging that cleanup grace period.
-      mockPi.onCall({ delay: 10_000, ignoreSigterm: true, output: "too late" });
+      // stepCeilingMs must scale with TLH_TEST_TIMEOUT_SCALE so that the child
+      // process is reliably spawned and recorded before the deadline fires on
+      // loaded CI runners (where TLH_TEST_TIMEOUT_SCALE=3). The mock delay
+      // stays well above stepCeilingMs at every scale so the child is still
+      // alive when the step deadline fires and ignoreSigterm exercises the
+      // hard-kill path. The bound below is relative to the ceiling:
+      //   pass case:  runtimeMs ≈ stepCeilingMs  (logical clock frozen at deadline)
+      //   fail case:  runtimeMs ≈ stepCeilingMs + CHILD_PROTOCOL_HARD_KILL_GRACE_MS (3000)
+      // A margin of 1500 ms sits clearly between 0 and 3000 at both scale 1 and scale 3.
+      const stepCeilingMs = scaleTestTimeout(1_000);
+      mockPi.onCall({ delay: scaleTestTimeout(10_000), ignoreSigterm: true, output: "too late" });
       const id = `async-step-timeout-runtime-${Date.now().toString(36)}`;
       executeAsyncParallel(id, {
         tasks: [{ agent: "worker", task: "Run until the step ceiling." }],
-        agents: [makeAgent("worker", { maxExecutionTimeMs: 100 })],
+        agents: [makeAgent("worker", { maxExecutionTimeMs: stepCeilingMs })],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
           enabled: false,
@@ -534,8 +541,8 @@ describe("async execution utilities", () => {
       assert.equal(payload.state, "failed");
       assert.equal(payload.results[0]?.timedOut, true);
       assert.ok(
-        runtimeMs < 2_000,
-        `timeout cleanup must not consume logical runtime; observed ${runtimeMs}ms`,
+        runtimeMs < stepCeilingMs + 1_500,
+        `timeout cleanup must not consume logical runtime; expected < ${stepCeilingMs + 1_500}ms (ceiling ${stepCeilingMs}ms + 1500ms margin), observed ${runtimeMs}ms`,
       );
     },
   );
