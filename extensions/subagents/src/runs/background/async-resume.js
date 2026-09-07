@@ -673,6 +673,54 @@ function resolveSelectedChildRuntimeMetadata(context, index) {
         successfulCompletion: selectedChildSuccessfulCompletion(context, index),
     };
 }
+function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile, continuationAcceptance) {
+    const target = {
+        kind: "revive",
+        runId: context.runId,
+        asyncDir: context.location.asyncDir ?? undefined,
+        state: context.state,
+        agent,
+        index,
+        cwd: context.status?.cwd ?? context.result?.cwd,
+        ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+    };
+    const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+    const targetWithModelMetadata = {
+        ...target,
+        ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+        ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+        ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
+        ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+        ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+        ...(selectedStatusStep?.pause?.kind
+            ? { pauseKind: selectedStatusStep.pause.kind }
+            : context.status?.pause?.kind
+                ? { pauseKind: context.status.pause.kind }
+                : {}),
+        ...(typeof selectedContinuation?.claimToken === "string" &&
+            selectedContinuation.claimToken.length > 0
+            ? { claimed: true }
+            : {}),
+        ...(continuationAcceptance ? { continuationAcceptance } : {}),
+    };
+    const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+    return {
+        ...targetWithModelMetadata,
+        ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
+        ...(diagnosticMetadata.contextPressure
+            ? { contextPressure: diagnosticMetadata.contextPressure }
+            : {}),
+        ...(diagnosticMetadata.contextPressureCrossedThresholds
+            ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
+            : {}),
+        ...(diagnosticMetadata.terminationReason
+            ? { terminationReason: diagnosticMetadata.terminationReason }
+            : {}),
+        ...runtimeMetadata,
+    };
+}
 function resolveTerminalAsyncResumeTarget(context) {
     const requestedIndex = context.requestedIndex;
     if (context.stepCount > 1 && requestedIndex === undefined) {
@@ -744,52 +792,7 @@ function resolveTerminalAsyncResumeTarget(context) {
     const continuationAcceptance = selectedChildPaused
         ? resolvePausedContinuationAcceptance(context.runId, pausedStepAcceptance)
         : undefined;
-    const target = {
-        kind: "revive",
-        runId: context.runId,
-        asyncDir: context.location.asyncDir ?? undefined,
-        state: context.state,
-        agent,
-        index,
-        cwd: context.status?.cwd ?? context.result?.cwd,
-        ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-    };
-    const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
-    const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
-    const targetWithModelMetadata = {
-        ...target,
-        ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
-        ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
-        ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
-        ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
-        ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
-        ...(selectedStatusStep?.pause?.kind
-            ? { pauseKind: selectedStatusStep.pause.kind }
-            : context.status?.pause?.kind
-                ? { pauseKind: context.status.pause.kind }
-                : {}),
-        ...(typeof selectedContinuation?.claimToken === "string" &&
-            selectedContinuation.claimToken.length > 0
-            ? { claimed: true }
-            : {}),
-        ...(continuationAcceptance ? { continuationAcceptance } : {}),
-    };
-    const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
-    const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
-    return {
-        ...targetWithModelMetadata,
-        ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
-        ...(diagnosticMetadata.contextPressure
-            ? { contextPressure: diagnosticMetadata.contextPressure }
-            : {}),
-        ...(diagnosticMetadata.contextPressureCrossedThresholds
-            ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
-            : {}),
-        ...(diagnosticMetadata.terminationReason
-            ? { terminationReason: diagnosticMetadata.terminationReason }
-            : {}),
-        ...runtimeMetadata,
-    };
+    return buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile, continuationAcceptance);
 }
 export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
