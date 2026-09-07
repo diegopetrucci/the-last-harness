@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -24,9 +24,8 @@ import {
   defaultTlhSettingsPath,
   expandHomePath,
   readJsonFile,
-  readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 
 interface CliArgs extends Record<string, unknown> {
   settingsPath?: string;
@@ -350,17 +349,6 @@ function assertNotNormalPiSettings(settingsPath: string): void {
   );
 }
 
-function writeExistingProfileBackup(settingsPath: string, backupPath: string): void {
-  const { content, mode } = readRegularFileForBackup(settingsPath, "TLH defaults settings");
-  writeSafeProfileFile(
-    { agentDir: dirname(settingsPath) },
-    basename(backupPath),
-    content,
-    "TLH defaults settings backup",
-    { mode },
-  );
-}
-
 function scrubRetiredTlhSettings(settings: Settings): boolean {
   if (!isPlainObject(settings.tlh)) return false;
   if (!Object.hasOwn(settings.tlh, "rtk")) return false;
@@ -377,19 +365,13 @@ function writeSettings(
   const formatted = `${JSON.stringify(value, null, 2)}\n`;
   if (formatted === previousRaw) return undefined;
 
-  let backupPath: string | undefined;
-  if (existsSync(settingsPath)) {
-    backupPath = backupPathFor(settingsPath);
-    writeExistingProfileBackup(settingsPath, backupPath);
-  }
-
-  writeSafeProfileFile(
-    { agentDir: dirname(settingsPath) },
-    basename(settingsPath),
-    formatted,
-    "TLH defaults settings",
-  );
-  return backupPath;
+  const backupPath = existsSync(settingsPath) ? backupPathFor(settingsPath) : undefined;
+  return writeProfileFileWithBackup(settingsPath, formatted, {
+    targetLabel: "TLH defaults settings",
+    sourceLabel: "TLH defaults settings",
+    backupLabel: "TLH defaults settings backup",
+    backupPath,
+  });
 }
 
 function loadSettings(settingsPath: string): { settings: unknown; previousRaw: string } {

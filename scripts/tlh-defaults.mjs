@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
-import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const RETIRED_DEFAULT_PACKAGE_IDENTITIES = new Set(RETIRED_TLH_DEFAULT_PACKAGE_SOURCES.map(packageIdentity).filter((value) => Boolean(value)));
@@ -248,10 +248,6 @@ function backupPathFor(settingsPath) {
 function assertNotNormalPiSettings(settingsPath) {
     assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
 }
-function writeExistingProfileBackup(settingsPath, backupPath) {
-    const { content, mode } = readRegularFileForBackup(settingsPath, "TLH defaults settings");
-    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(backupPath), content, "TLH defaults settings backup", { mode });
-}
 function scrubRetiredTlhSettings(settings) {
     if (!isPlainObject(settings.tlh))
         return false;
@@ -265,13 +261,13 @@ function writeSettings(settingsPath, value, previousRaw) {
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (formatted === previousRaw)
         return undefined;
-    let backupPath;
-    if (existsSync(settingsPath)) {
-        backupPath = backupPathFor(settingsPath);
-        writeExistingProfileBackup(settingsPath, backupPath);
-    }
-    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "TLH defaults settings");
-    return backupPath;
+    const backupPath = existsSync(settingsPath) ? backupPathFor(settingsPath) : undefined;
+    return writeProfileFileWithBackup(settingsPath, formatted, {
+        targetLabel: "TLH defaults settings",
+        sourceLabel: "TLH defaults settings",
+        backupLabel: "TLH defaults settings backup",
+        backupPath,
+    });
 }
 function loadSettings(settingsPath) {
     const previousRaw = existsSync(settingsPath)

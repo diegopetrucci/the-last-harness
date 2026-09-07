@@ -20,6 +20,7 @@ import {
   validateProfileRelativePath,
   isSymlink,
 } from "./tlh-install-paths.mjs";
+import { readRegularFileForBackup } from "./tlh-install-utils.mjs";
 
 type ProfileWriteContent = string | NodeJS.ArrayBufferView;
 
@@ -311,4 +312,28 @@ export function writeSafeProfileFile(
   }
 
   return target;
+}
+
+export function writeProfileFileWithBackup(
+  profilePath: string,
+  content: ProfileWriteContent,
+  {
+    targetLabel,
+    sourceLabel,
+    backupLabel,
+    backupPath,
+  }: {
+    targetLabel: string;
+    sourceLabel: string;
+    backupLabel: string;
+    backupPath?: string;
+  },
+): string | undefined {
+  const config = { agentDir: dirname(profilePath) };
+  if (backupPath) {
+    const { content: previousContent, mode } = readRegularFileForBackup(profilePath, sourceLabel);
+    writeSafeProfileFile(config, basename(backupPath), previousContent, backupLabel, { mode });
+  }
+  writeSafeProfileFile(config, basename(profilePath), content, targetLabel);
+  return backupPath;
 }
