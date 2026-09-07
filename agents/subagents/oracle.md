@@ -7,8 +7,8 @@ tlhModelDefaults:
     models: [gpt-5.6-sol]
     effort: high
   - provider: anthropic
-    models: [claude-opus-5]
-    effort: high
+    models: [claude-fable-5-1]
+    effort: medium
   - provider: openrouter
     effort: high
 preferOppositeProvider: true

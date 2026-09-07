@@ -8,7 +8,7 @@ tlhModelDefaults:
     effort: high
   - provider: anthropic
     models: [claude-opus-5]
-    effort: high
+    effort: max
   - provider: openrouter
     effort: high
 preferOppositeProvider: true
