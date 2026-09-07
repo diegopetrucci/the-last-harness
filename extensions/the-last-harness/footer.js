@@ -190,6 +190,20 @@ export function formatReauthWarningLine(providers, width, theme) {
     const countStyled = theme.fg("warning", countText);
     return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
 }
+function sanitizeCommitSubject(text) {
+    return sanitizeStatusText(text.replace(/\p{Cc}/gu, (character) => character === "\r" || character === "\n" || character === "\t" ? " " : ""));
+}
+function formatTlhInstallNoticeLine(notice, width, theme) {
+    const label = formatTlhInstallNoticeTrackLabel(notice);
+    const commitSubject = notice.kind === "ref" && label === "main" && typeof notice.commitSubject === "string"
+        ? sanitizeCommitSubject(notice.commitSubject)
+        : "";
+    const commitSubjectSuffix = commitSubject
+        ? `${theme.fg("dim", " • ")}${theme.fg("dim", commitSubject)}`
+        : "";
+    const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix;
+    return truncateToWidth(warningStr, width, theme.fg("dim", "..."));
+}
 export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth) {
     let mcpContextEstimateCache;
     return {
@@ -295,9 +309,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 }
             }
             if (installNotice) {
-                const label = formatTlhInstallNoticeTrackLabel(installNotice);
-                const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}`;
-                lines.push(truncateToWidth(warningStr, width, theme.fg("dim", "...")));
+                lines.push(formatTlhInstallNoticeLine(installNotice, width, theme));
             }
             return lines;
         },
