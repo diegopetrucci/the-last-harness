@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync, } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { assertProfilePathWithinAgent, ensureSafeProfileDir, realpathForCompare, validateProfileRelativePath, isSymlink, } from "./tlh-install-paths.mjs";
+import { readRegularFileForBackup } from "./tlh-install-utils.mjs";
 function isErrnoException(error) {
     return typeof error === "object" && error !== null && "code" in error;
 }
@@ -209,4 +210,13 @@ export function writeSafeProfileFile(config, relativePath, content, label = "TLH
         cleanupTempDir(tempDir, expectedTempDirIdentity, tempTarget, expectedTempTargetIdentity, committed, cleanupAncestry);
     }
     return target;
+}
+export function writeProfileFileWithBackup(profilePath, content, { targetLabel, sourceLabel, backupLabel, backupPath, }) {
+    const config = { agentDir: dirname(profilePath) };
+    if (backupPath) {
+        const { content: previousContent, mode } = readRegularFileForBackup(profilePath, sourceLabel);
+        writeSafeProfileFile(config, basename(backupPath), previousContent, backupLabel, { mode });
+    }
+    writeSafeProfileFile(config, basename(profilePath), content, targetLabel);
+    return backupPath;
 }
