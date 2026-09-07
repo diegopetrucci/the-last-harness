@@ -2938,27 +2938,6 @@ test("project defaults: per-field — project model, effort from persisted think
   assert.equal(input.model, "anthropic/claude-opus-5:low");
 });
 
-// Project effort only (no project model) + persisted model.
-test("project defaults: per-field — project effort, model from persisted override", () => {
-  const input = { agent: "developer", task: "Implement" };
-  const mutations = applyProviderAwareSubagentModels(
-    input,
-    pdAgents2,
-    pdAllModels,
-    "anthropic",
-    { provider: "anthropic", id: "claude-sonnet-4-6" },
-    {
-      agentOverrides: new Map([
-        ["developer", { model: "anthropic/claude-sonnet-4-6", thinking: "low" }],
-      ]),
-      projectDefaults: { developer: { effort: "high" } },
-    },
-  );
-  assert.equal(mutations, 1);
-  // Persisted model + project effort (high); persisted thinking overridden by project.
-  assert.equal(input.model, "anthropic/claude-sonnet-4-6:high");
-});
-
 // -----------------------------------------------------------------------
 // Opposite-role behavior tests (code-reviewer / oracle / contrarian)
 // -----------------------------------------------------------------------

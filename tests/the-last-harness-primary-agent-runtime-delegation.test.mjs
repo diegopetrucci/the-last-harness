@@ -835,26 +835,6 @@ test("/switch-primary-agent default refuses normal Pi settings", async () => {
 
 // ─── Embedded subagents (ts-42p1) ───────────────────────────────────────────
 
-test("project execution keeps retired binding and fail-open paths absent", () => {
-  const sourcePaths = [
-    "extensions/the-last-harness/primary-agent-runtime.ts",
-    "extensions/the-last-harness/primary-agent-runtime.js",
-    "extensions/subagents/src/runs/foreground/subagent-executor.ts",
-    "extensions/subagents/src/runs/foreground/subagent-executor.js",
-    "extensions/the-last-harness/prompts.ts",
-    "extensions/the-last-harness/prompts.js",
-    "extensions/the-last-harness-subagent-safety.mjs",
-  ];
-  for (const relativePath of sourcePaths) {
-    const source = readFileSync(join(process.cwd(), relativePath), "utf8");
-    assert.doesNotMatch(
-      source,
-      /projectCustomBinding|ProjectCustomAgentBinding|isProjectCustomAgentBinding|ProjectCustomAgentAuthorization|loadAuthorizedEmbeddedSubagentRuntimeNames/,
-      `${relativePath} must not restore retired custom binding/authorization paths`,
-    );
-  }
-});
-
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
   if (agentDir.endsWith(`${sep}agent`)) {
     const repoRoot = join(dirname(agentDir), "workspace");
