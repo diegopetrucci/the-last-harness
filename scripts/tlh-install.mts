@@ -154,11 +154,20 @@ interface ParsedArgs extends Record<string, unknown> {
   piInstalledByTlhOverride: boolean | undefined;
 }
 
+interface CleanupMetadata {
+  isSymbolicLink(): boolean;
+  isFile(): boolean;
+}
+
+type CleanupMetadataReader = (path: string) => CleanupMetadata | undefined;
+
 interface ProfileCleanupConfig {
   agentDir: string;
   dryRun: boolean;
   quiet: boolean;
   verbose: boolean;
+  /** Narrow seam for deterministic metadata-failure tests; production uses lstatSync. */
+  cleanupMetadata?: CleanupMetadataReader;
 }
 
 interface InstallConfig extends ParsedArgs {
@@ -1273,6 +1282,31 @@ export function cleanupRetiredProfileDirectories(config: ProfileCleanupConfig): 
   cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES);
 }
 
+function isMissingCleanupMetadataError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function readCleanupMetadata(
+  config: ProfileCleanupConfig,
+  target: string,
+  label: string,
+): CleanupMetadata | undefined {
+  try {
+    return config.cleanupMetadata ? config.cleanupMetadata(target) : lstatSync(target);
+  } catch (error) {
+    if (isMissingCleanupMetadataError(error)) return undefined;
+    warn(
+      `Skipping ${label}: cannot inspect ${target}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
 function cleanupRelativeProfileFiles(
   config: ProfileCleanupConfig,
   relativePaths: readonly string[],
@@ -1301,9 +1335,8 @@ function cleanupRelativeProfileFiles(
       continue;
     }
 
-    if (isSymlink(target)) continue;
-    if (!existsSync(target)) continue;
-    if (!lstatSync(target).isFile()) continue;
+    const metadata = readCleanupMetadata(config, target, "retired profile file cleanup");
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isFile()) continue;
     if (config.dryRun) {
       log(config, `Would remove retired profile file: ${target}`);
       continue;
@@ -1434,9 +1467,8 @@ export function cleanupOldSettingsBackups(config: InstallConfig): void {
       continue;
     }
 
-    if (isSymlink(target)) continue; // Conservative: never remove or follow symlinks
-    if (!existsSync(target)) continue; // Idempotent: absent is fine
-    if (!lstatSync(target).isFile()) continue; // Conservative: only regular files
+    const metadata = readCleanupMetadata(config, target, "stale settings backup");
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isFile()) continue;
 
     if (config.dryRun) {
       log(config, `Would remove stale settings backup: ${target}`);
