@@ -9,8 +9,8 @@ import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-  SUBAGENT_ORCHESTRATOR_TARGET_ENV,
   SUBAGENT_RUN_ID_ENV,
+  SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../runs/shared/pi-args.ts";
 import { POLL_INTERVAL_MS, TEMP_ROOT_DIR, type SubagentState } from "../shared/types.ts";
@@ -18,7 +18,9 @@ import { writeAtomicJson } from "../shared/atomic-json.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
+// Retain cleanup compatibility for channels created before reply transport was removed.
 const LEGACY_REPLIES_DIR = "replies";
+const SUPERVISOR_ASK_TIMEOUT_ENV = "PI_SUBAGENT_SUPERVISOR_ASK_TIMEOUT_MS";
 export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -36,12 +38,10 @@ interface SupervisorRequest {
   reason: SupervisorReason;
   message: string;
   expectsReply: boolean;
-  orchestratorTarget?: string;
   orchestratorSessionId?: string;
   runId: string;
   agent: string;
   childIndex: number;
-  childTarget?: string;
   interview?: unknown;
 }
 
@@ -138,9 +138,7 @@ function readChildMetadata():
       runId: string;
       agent: string;
       childIndex: number;
-      orchestratorTarget?: string;
       orchestratorSessionId?: string;
-      childTarget?: string;
     }
   | undefined {
   const channelDir = readTextEnv(SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV);
@@ -162,9 +160,7 @@ function readChildMetadata():
     runId,
     agent,
     childIndex: Number(rawIndex),
-    orchestratorTarget: readTextEnv(SUBAGENT_ORCHESTRATOR_TARGET_ENV),
     orchestratorSessionId,
-    childTarget: readTextEnv("PI_SUBAGENT_INTERCOM_SESSION_NAME"),
   };
 }
 
@@ -181,7 +177,6 @@ function formatChildMessage(input: {
   runId: string;
   agent: string;
   childIndex: number;
-  childTarget?: string;
 }): string {
   const lines = [
     reasonHeading(input.reason),
@@ -189,14 +184,12 @@ function formatChildMessage(input: {
     `Agent: ${input.agent}`,
     `Child index: ${input.childIndex}`,
   ];
-  if (input.childTarget) lines.push(`Child intercom target: ${input.childTarget}`);
   lines.push("");
   if (input.message?.trim()) lines.push(input.message.trim());
   if (input.reason === "interview_request") {
     lines.push(
       "",
       `Structured interview response requested. Once the child is durably paused, resume it with JSON guidance matching the requested interview shape via subagent({ action: "resume", id: "${input.runId}", index: ${input.childIndex}, message: "<JSON>" }).`,
-      "Do not send an in-band reply or write a `replies/` file.",
     );
     if (input.interview !== undefined) lines.push(JSON.stringify(input.interview, null, "\t"));
   }
@@ -204,7 +197,7 @@ function formatChildMessage(input: {
 }
 
 function askTimeoutMs(): number {
-  const parsed = Number(process.env.PI_INTERCOM_ASK_TIMEOUT_MS);
+  const parsed = Number(process.env[SUPERVISOR_ASK_TIMEOUT_ENV]);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ASK_TIMEOUT_MS;
 }
 
@@ -281,14 +274,12 @@ async function sendSupervisorRequest(
     reason: params.reason,
     message,
     expectsReply,
-    ...(metadata.orchestratorTarget ? { orchestratorTarget: metadata.orchestratorTarget } : {}),
     ...(metadata.orchestratorSessionId
       ? { orchestratorSessionId: metadata.orchestratorSessionId }
       : {}),
     runId: metadata.runId,
     agent: metadata.agent,
     childIndex: metadata.childIndex,
-    ...(metadata.childTarget ? { childTarget: metadata.childTarget } : {}),
     ...(params.interview !== undefined ? { interview: params.interview } : {}),
   };
   const serialized = JSON.stringify(request, null, "\t");
@@ -318,6 +309,7 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 }
 
 export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
+  if (process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] === "0") return;
   if (!readChildMetadata()) return;
   if (!hasTool(pi, CONTACT_SUPERVISOR_TOOL_NAME)) {
     pi.registerTool({

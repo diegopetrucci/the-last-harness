@@ -65,8 +65,6 @@ function formatAgentDetail(agent) {
     lines.push(`System prompt mode: ${agent.systemPromptMode}`);
     lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
     lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
-    if (agent.defaultContext)
-        lines.push(`Default context: ${agent.defaultContext}`);
     if (agent.acceptanceRole)
         lines.push(`Acceptance role: ${agent.acceptanceRole}`);
     if (agent.source === "builtin")
@@ -111,7 +109,7 @@ export function handleList(params, ctx) {
     const lines = [
         "Executable agents:",
         ...(agents.length
-            ? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}): ${a.description}`)
+            ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`)
             : ["- (none)"]),
     ];
     const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isSourceVisibleInScope(diagnostic.source, scope));

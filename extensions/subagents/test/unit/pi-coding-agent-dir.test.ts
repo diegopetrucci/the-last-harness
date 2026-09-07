@@ -12,11 +12,8 @@ import {
   resolveSkillPath,
 } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
-import {
-  diagnoseIntercomBridge,
-  resolveIntercomBridge,
-} from "../../src/intercom/intercom-bridge.ts";
-import { cleanupAllArtifactDirs } from "../../src/shared/artifacts.ts";
+import { resolveExecutionPolicy } from "../../src/agents/execution-ceiling.ts";
+import { cleanupAllArtifactDirs, resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
   getConfigDirName,
   getProjectConfigDir,
@@ -36,6 +33,10 @@ let oldUserProfile: string | undefined;
 function writeFile(filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, "utf-8");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readInstalledRuntimeConfigDirName(): string {
@@ -96,6 +97,59 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(config.maxSubagentDepth, 3);
   });
 
+  it("copies open config keys safely and restricts consumed nested settings", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    writeFile(
+      configPath,
+      '{"__proto__":{"polluted":true},"futureSetting":{"enabled":true},"execution":{"maxRunTimeMs":1234,"futureExecution":{"enabled":true},"__proto__":{"polluted":true}},"artifacts":{"mode":"debug","includeInput":true,"includeJsonl":true}}',
+    );
+
+    const config = loadConfig();
+    assert.equal((Object.prototype as { polluted?: boolean }).polluted, undefined);
+    assert.equal(Object.prototype.hasOwnProperty.call(config, "__proto__"), true);
+    assert.deepEqual(config["__proto__"], { polluted: true });
+    assert.deepEqual(config.futureSetting, { enabled: true });
+    assert.ok(isRecord(config.execution));
+    assert.equal(config.execution.maxRunTimeMs, 1234);
+    assert.deepEqual(config.execution.futureExecution, { enabled: true });
+    assert.equal(Object.hasOwn(config.execution, "__proto__"), true);
+    assert.deepEqual(config.execution["__proto__"], { polluted: true });
+    assert.deepEqual(config.artifacts, { mode: "debug" });
+  });
+
+  it("rejects non-object execution blocks through the real config boundary", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    for (const invalidExecution of [false, 900_000]) {
+      writeFile(configPath, JSON.stringify({ execution: invalidExecution }));
+      const config = loadConfig();
+      const policy = resolveExecutionPolicy(config.execution);
+      assert.equal(policy.maxRunTimeMs, 14_400_000);
+      assert.match(policy.diagnostic ?? "", /Invalid execution\.maxRunTimeMs/);
+      assert.match(policy.diagnostic ?? "", /positive safe integer or false/);
+    }
+  });
+
+  it("routes malformed artifact settings through compact fallback without dropping open keys", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    writeFile(
+      configPath,
+      JSON.stringify({
+        futureSetting: { enabled: true },
+        artifacts: { mode: { unexpected: true }, includeTranscript: true },
+      }),
+    );
+
+    const config = loadConfig();
+    assert.deepEqual(config.futureSetting, { enabled: true });
+    assert.deepEqual(config.artifacts, { mode: { unexpected: true } });
+    assert.equal(resolveArtifactConfig(config.artifacts).mode, "compact");
+
+    writeFile(configPath, JSON.stringify({ artifacts: null }));
+    const nullConfig = loadConfig();
+    assert.deepEqual(nullConfig.artifacts, { mode: null });
+    assert.equal(resolveArtifactConfig(nullConfig.artifacts).mode, "compact");
+  });
+
   it("prefers the active runtime package config-dir over the import-resolved package", () => {
     const runtimeRoot = path.join(tempDir, "runtime-package");
     const importResolvedRoot = path.join(tempDir, "import-resolved-package");
@@ -141,7 +195,7 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(getProjectConfigDir(cwd), path.join(cwd, runtimeConfigDirName));
   });
 
-  it("discovers canonical packaged agents and settings while preserving chain paths", () => {
+  it("discovers canonical packaged agents and settings while ignoring legacy chain paths", () => {
     const settingsPath = path.join(agentDir, "settings.json");
     writeFile(
       path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
@@ -182,9 +236,7 @@ Inspect env.
 
     const discovered = discoverAgentsAll(cwd);
     assert.equal(discovered.userDir, path.join(agentDir, "agents"));
-    assert.equal(discovered.userChainDir, path.join(agentDir, "chains"));
     assert.equal(discovered.userSettingsPath, settingsPath);
-    assert.deepEqual(discovered.chains, []);
 
     const developer = discovered.user.find(
       (agent) =>
@@ -359,27 +411,5 @@ Package skill content.
 
     cleanupAllArtifactDirs(0);
     assert.equal(fs.existsSync(artifactPath), false);
-  });
-
-  it("uses the configured agent dir for subagent bridge instruction files", () => {
-    const instructionPath = path.join(agentDir, "extensions", "subagent", "bridge.md");
-    writeFile(instructionPath, "Native bridge for {orchestratorTarget}");
-
-    const diagnostic = diagnoseIntercomBridge({
-      config: { mode: "always" },
-      context: "fresh",
-      orchestratorTarget: "main",
-    });
-    assert.equal(diagnostic.active, true);
-    assert.equal(diagnostic.extensionDir, "native:pi-subagents-supervisor-channel");
-
-    const bridge = resolveIntercomBridge({
-      config: { mode: "always", instructionFile: "bridge.md" },
-      context: "fresh",
-      orchestratorTarget: "main",
-    });
-    assert.equal(bridge.active, true);
-    assert.equal(bridge.extensionDir, "native:pi-subagents-supervisor-channel");
-    assert.match(bridge.instruction, /Native bridge for main/);
   });
 });

@@ -83,7 +83,7 @@ function createNotifyHarness(): {
 }
 
 describe("result watcher to native notify", () => {
-  it("delivers terminal result types only to the exact owner without result intercom", async () => {
+  it("does not register or emit the retired result event while notifying the exact owner", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-notify-"));
     const listeners = new Map<string, Set<(payload: unknown) => void>>();
     const emitted: Array<{ event: string; data: unknown }> = [];
@@ -166,7 +166,7 @@ describe("result watcher to native notify", () => {
       });
       writeResult("03-paused.json", {
         id: "paused",
-        agent: "chain:a+b",
+        agent: "parallel:a+b",
         success: false,
         state: "paused",
         summary: "Paused after interrupt.",
@@ -256,7 +256,7 @@ describe("result watcher to native notify", () => {
     assert.equal(
       contents.some(
         (content) =>
-          content.startsWith("Background task paused: **chain:a+b**") &&
+          content.startsWith("Background task paused: **parallel:a+b**") &&
           /Async id: paused/.test(content) &&
           /Revive child: subagent\({ action: "resume", id: "paused", index: 4, message: "\.\.\." }\)/.test(
             content,
@@ -401,10 +401,6 @@ describe("result watcher to native notify", () => {
       assert.match(
         sent[0]!.message.content ?? "",
         /Cancel: subagent\(\{ action: "interrupt", id: "paused-awaiting-supervisor" \}\)/,
-      );
-      assert.doesNotMatch(
-        sent[0]!.message.content ?? "",
-        /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
       );
       assert.doesNotMatch(
         sent[0]!.message.content ?? "",

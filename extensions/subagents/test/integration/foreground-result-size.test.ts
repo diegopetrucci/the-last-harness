@@ -28,6 +28,7 @@ interface ExecutorResult {
   details?: {
     mode?: string;
     results?: SingleResultLike[];
+    progress?: unknown;
   };
 }
 
@@ -181,7 +182,7 @@ describe(
       const executor = makeExecutor(tempDir);
       const result = await executor.execute(
         "id",
-        { agent: "tester", task: "Run the full noisy test sweep", includeProgress: false },
+        { agent: "tester", task: "Run the full noisy test sweep" },
         new AbortController().signal,
         undefined,
         makeCtx(tempDir),
@@ -190,6 +191,11 @@ describe(
       assert.equal(result.isError, undefined);
       assert.equal(result.details?.mode, "single");
       assert.equal(result.details?.results?.length, 1);
+      assert.equal(
+        result.details?.progress,
+        undefined,
+        "terminal foreground details should keep the concise default and omit aggregate progress",
+      );
 
       const displayText = result.content[0]?.text ?? "";
       assert.ok(

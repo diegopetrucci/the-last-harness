@@ -209,6 +209,19 @@ describe("trusted project-agent loader", () => {
     assert.equal(entry.agent.inheritProjectContext, true);
   });
 
+  it("uses the bounded fallback for custom agents without shadowing explicit frontmatter", () => {
+    const project = tempProject();
+    const fallbackPath = writeDefinition(project, "FALLBACK.md");
+    const fallback = parseProjectAgentDefinition(fallbackPath, fs.readFileSync(fallbackPath));
+    assert.equal(fallback.agent.maxExecutionTimeMs, 14_400_000);
+
+    const explicitPath = writeDefinition(project, "EXPLICIT.md", {
+      extraFrontmatter: "maxExecutionTimeMs: 1234",
+    });
+    const explicit = parseProjectAgentDefinition(explicitPath, fs.readFileSync(explicitPath));
+    assert.equal(explicit.agent.maxExecutionTimeMs, 1234);
+  });
+
   it("enforces filename, frontmatter, package, tools, and extension agreement", () => {
     const project = tempProject();
     const cases = [
@@ -236,6 +249,11 @@ describe("trusted project-agent loader", () => {
         "INVALID-SUPERVISOR-BRIDGE.md",
         { extraFrontmatter: "supervisorBridge: maybe" },
         /supervisorBridge must be true or false/,
+      ],
+      [
+        "LEGACY-CONTEXT.md",
+        { extraFrontmatter: "defaultContext: fork" },
+        /defaultContext is no longer supported.*starts child sessions fresh/,
       ],
     ] as const;
 
@@ -365,29 +383,6 @@ describe("trusted project-agent loader", () => {
       reads.some(({ kind, path: readPath }) => kind === "definition" || readPath === definition),
       false,
     );
-  });
-
-  it("keeps the execution-plane trust resolver persisted-only in both source artifacts", () => {
-    for (const sourceName of ["project-agent-loader.ts", "project-agent-loader.js"]) {
-      const source = fs.readFileSync(
-        new URL(`../../src/agents/${sourceName}`, import.meta.url),
-        "utf8",
-      );
-      for (const forbidden of [
-        "SESSION_TRUST_DECISIONS",
-        "defaultProjectTrust",
-        "isProjectTrusted",
-        "options.confirm",
-        "options.ui",
-        "hasUI",
-      ]) {
-        assert.equal(
-          source.includes(forbidden),
-          false,
-          `${sourceName} must not contain non-persisted trust input ${forbidden}`,
-        );
-      }
-    }
   });
 
   it("requires a persisted containing trust entry and ignores transient or upstream approval", async () => {

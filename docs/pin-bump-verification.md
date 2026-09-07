@@ -42,6 +42,35 @@ rm -rf "$root"
 
 These are offline interaction checks; no credentialed provider turn or release-tier live check was performed. A fake provider key was tried separately and returned HTTP 401, so that result is not evidence of a successful live check. The valid candidate-layout startup observation was a **636.1 ms warm first-header mean**. A later direct custom-command candidate-layout run using `--budget-ms 3000 -- --approve` measured **798.7 ms** warm first-header mean; these numbers are environment-sensitive and are not a regression claim. `scripts/check-startup-performance.mjs` measures the launched command and its temporary profile clone, not the working tree by itself. Earlier PATH-discovered installed-wrapper runs reported 1104.0 ms and 1683.3 ms but were inconclusive old-profile observations, not candidate startup measurements.
 
+## Pi 0.85.1 isolated verification record
+
+The 0.85.1 runtime structure and effort-picker seams were smoke-tested without a home-directory install on macOS (Mac16,10-class, tmux 3.7c). Both runs used isolated `HOME`, `XDG_CONFIG_HOME`, agent, and wrapper-bin directories under `mktemp` and a tmux PTY; `~/.pi/agent` was confirmed unmodified with zero files changed in the last 60 minutes.
+
+- **File-source layout:** install with `TLH_PACKAGE_SOURCE=file:<checkout>`. The installer completed and startup rendered the TLH profile. A keybinding caveat specific to this layout was discovered: the `/effort` picker renders an empty key where `Ctrl+S` should appear, and pressing Ctrl+S does nothing. This is documented in [local-development.md](local-development.md) and does not affect packaged installs.
+- **Unpacked-package layout (the layout that matches a real user install):** create an `npm pack` tarball, unpack it into an isolated directory, and install with `TLH_PACKAGE_SOURCE=file:<unpacked-package>`. The following was verified:
+  - Installed runtime reports `0.85.1`; the runtime prefix top level is exactly `bin` and `lib`, and `lib/node_modules/@earendil-works` contains only `pi-coding-agent`, so `uninstall.sh`'s `RUNTIME_OWNED_TOPLEVEL` advisory tripwire still holds.
+  - Startup renders the TLH profile with no provider configured.
+  - The `/effort` picker renders `Enter to select | Ctrl+S to set as default | Escape/Ctrl+C to cancel`. The cancel hint is 0.85.1 configurable-binding text; on 0.84.4 the same hint read `Esc to cancel`.
+  - Enter selects for the session only: notification `Thinking level set to off for this session.`
+  - Ctrl+S saves a future-session default: a notification confirming the save, `settings.json` gains `defaultThinkingLevel`, and a timestamped `settings.json.bak-*` backup is written.
+  - Escape cancels and closes the picker with no notification and no settings change.
+  - Pi's native model picker renders `Enter to select | Ctrl+S to set as default | Escape/Ctrl+C to cancel`.
+  - Only the `off` thinking level was available because no provider was configured.
+
+The isolation method is the same as the 0.84.4 record:
+
+```sh
+root="$(mktemp -d)"
+mkdir -p "$root/home" "$root/xdg" "$root/agent" "$root/bin"
+TLH_PACKAGE_SOURCE="file:<checkout-or-unpacked-package>" \
+  HOME="$root/home" XDG_CONFIG_HOME="$root/xdg" \
+  bash install.sh --agent-dir "$root/agent" --bin-dir "$root/bin"
+# Drive "$root/bin/tlh" (or the ref-derived wrapper name) through a PTY with --approve and assert the outcomes above.
+rm -rf "$root"
+```
+
+These are offline interaction checks. No credentialed provider turn, no model-catalogue persistence check with real models, and no max-thinking-badge check were performed. Only the `off` thinking level was available in the picker because no provider was configured.
+
 ## Current sources
 
 - [subagents.md](subagents.md) for user-visible runtime, migration, diagnostics, and undo behavior;

@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, parseGitSource, } from "./lib/tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, realpathForCompare, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, disabledDefaultExtensionIds, packageIdentity, packageSourceOf, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, readJsonFile, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
@@ -17,7 +17,7 @@ import { formatSupportFileManifest, installableSupportFiles, supportFileManifest
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.84.4";
+const PINNED_PI_VERSION = "0.85.1";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -41,8 +41,8 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"];
 //                  | "migrated" (provenance-gated: piInstalledByTlh=true in install-state)
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
-// npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.84.4.  Mirrors the advisory exclusivity
+// npm 11.x --prefix layout; empirically confirmed: npm 11.19.0 +
+// @earendil-works/pi-coding-agent@0.85.1.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -476,6 +476,28 @@ function spawnCapture(config, commandArgs, { cwd, env = {}, allowFailure = false
     }
     return result;
 }
+function readInstalledCommitSubject(config) {
+    if (config.dryRun)
+        return undefined;
+    const topLevelResult = spawnCapture(config, ["git", "-C", config.packageRoot, "rev-parse", "--show-toplevel"], { allowFailure: true });
+    if (topLevelResult.error || topLevelResult.status !== 0)
+        return undefined;
+    const topLevel = topLevelResult.stdout.trim();
+    if (!topLevel)
+        return undefined;
+    try {
+        if (realpathForCompare(topLevel) !== realpathForCompare(config.packageRoot))
+            return undefined;
+    }
+    catch {
+        return undefined;
+    }
+    const result = spawnCapture(config, ["git", "-C", config.packageRoot, "log", "-1", "--format=%s"], { allowFailure: true });
+    if (result.error || result.status !== 0)
+        return undefined;
+    const subject = result.stdout.trim();
+    return subject || undefined;
+}
 function runNodeScript(config, scriptPath, args, { captureStdout = false } = {}) {
     const commandArgs = [process.execPath, scriptPath, ...args];
     const result = spawnSync(process.execPath, [scriptPath, ...args], {
@@ -638,7 +660,7 @@ function writeRuntimeMarker(config, prefix, origin) {
     }
 }
 function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription = "existing pi on PATH", versionCommandDisplay = "pi --version", } = {}) {
-    // `pi --version` prints a bare semver (e.g. "0.84.4") on stdout. Older builds may
+    // `pi --version` prints a bare semver (e.g. "0.85.1") on stdout. Older builds may
     // differ, so we extract the first semver-shaped substring rather than match strictly.
     const result = spawnCapture(config, [piCommand, "--version"], {
         allowFailure: true,
@@ -1277,6 +1299,9 @@ async function writeInstallState(config) {
         "--wrapper-name",
         config.wrapperName,
     ];
+    const commitSubject = readInstalledCommitSubject(config);
+    if (commitSubject)
+        args.push(`--commit-subject=${commitSubject}`);
     const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
     const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true
         ? true

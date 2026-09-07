@@ -74,7 +74,7 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
           fs.mkdirSync(path.dirname(developerPath), { recursive: true });
           fs.writeFileSync(
             developerPath,
-            "---\nname: developer\ndescription: Canonical developer subagent\ntools: read\ndefaultContext: fresh\n---\n\nReturn the task result.\n",
+            "---\nname: developer\ndescription: Canonical developer subagent\ntools: read\n---\n\nReturn the task result.\n",
             "utf-8",
           );
         },
@@ -83,7 +83,6 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
           subagentArgs: {
             agent: "developer",
             task: "Return the marker from the faux child provider.",
-            context: "fresh",
             agentScope: "user",
           },
         }),

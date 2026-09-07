@@ -2,17 +2,11 @@ import { controlNotificationKey, formatControlNoticeMessage, } from "../runs/sha
 import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.js";
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
-function controlNoticeTarget(details) {
-    return details.childIntercomTarget;
-}
 export function formatSubagentControlNotice(details, content) {
-    return (details.noticeText ??
-        content ??
-        formatControlNoticeMessage(details.event, controlNoticeTarget(details)));
+    return details.noticeText ?? content ?? formatControlNoticeMessage(details.event);
 }
 function noticeTimerKey(details) {
-    const childIntercomTarget = controlNoticeTarget(details);
-    return `${details.event.runId}:${controlNotificationKey(details.event, childIntercomTarget)}`;
+    return `${details.event.runId}:${controlNotificationKey(details.event)}`;
 }
 export function clearPendingForegroundControlNotices(state, runId) {
     const pending = state.pendingForegroundControlNotices;
@@ -28,18 +22,16 @@ export function clearPendingForegroundControlNotices(state, runId) {
 function deliverControlNotice(input) {
     if (input.details.event.reason === "completion_guard")
         return;
-    const childIntercomTarget = controlNoticeTarget(input.details);
-    const key = controlNotificationKey(input.details.event, childIntercomTarget);
+    const key = controlNotificationKey(input.details.event);
     if (input.visibleControlNotices.has(key))
         return;
     input.visibleControlNotices.add(key);
-    const noticeText = input.details.noticeText ??
-        formatControlNoticeMessage(input.details.event, childIntercomTarget);
+    const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event);
     input.pi.sendMessage({
         customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
         content: noticeText,
         display: true,
-        details: { ...input.details, childIntercomTarget, noticeText },
+        details: { ...input.details, noticeText },
     });
     if (input.details.source !== "foreground" && (input.isIdle?.() ?? true)) {
         input.pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });

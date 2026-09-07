@@ -6,7 +6,7 @@ import { AgentSession, getPackageDir, VERSION, } from "@earendil-works/pi-coding
 import { safeTlhProfileFilePath } from "./profile-state.js";
 const TLH_MODEL_SELECTION_PERSISTENCE_PATCH = Symbol.for("tlh.modelSelectionPersistencePatch");
 const BUNDLED_NODE_ENTRYPOINT_RE = /(?:^|[/\\])dist[/\\]bundle[/\\]cli\.js$/;
-const PINNED_PI_VERSION = "0.84.4";
+const PINNED_PI_VERSION = "0.85.1";
 const tlhRequire = createRequire(import.meta.url);
 const bundledAgentSessionConstructors = new Map();
 let bundledAgentSessionResolution;

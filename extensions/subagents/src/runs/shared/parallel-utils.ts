@@ -1,13 +1,10 @@
 import type {
-  ArtifactConfig,
   MaxOutputConfig,
+  ResolvedArtifactConfig,
   NestedRouteInfo,
   ResolvedControlConfig,
   ResolvedToolBudget,
-  ResolvedTurnBudget,
-  SubagentRunMode,
   TkTicketMetadata,
-  WorkflowGraphSnapshot,
 } from "../../shared/types.ts";
 import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 
@@ -20,10 +17,6 @@ export interface RunnerSubagentStep {
   /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
   task: string;
-  phase?: string;
-  label?: string;
-  outputName?: string;
-  structured?: boolean;
   cwd?: string;
   model?: string;
   thinking?: string;
@@ -63,42 +56,46 @@ export interface RunnerSubagentStep {
   outputMode?: "inline" | "file-only";
   sessionFile?: string;
   maxSubagentDepth?: number;
-  structuredOutput?: {
-    schema: import("../../shared/types.ts").JsonSchemaObject;
-    schemaPath: string;
-    outputPath: string;
-  };
-  structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
   effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
   acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
   toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
   /** Remaining active execution allowance for this child segment. */
   timeoutMs?: number;
+  /** Trusted internal owner of a folded async-single deadline. */
+  timeoutOwner?: "role" | "run";
   /** Active child runtime accumulated before this segment. */
   activeRuntimeMs?: number;
+  /** Timestamp of the latest authoritative runtime checkpoint. */
+  activeRuntimeCheckpointAt?: number;
 }
 
-export interface ParallelStepGroup {
-  parallel: RunnerSubagentStep[];
-  concurrency?: number;
-  failFast?: boolean;
-}
-
-export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
+/**
+ * The direct execution contract used by supported single and parallel runs.
+ * A plan is intentionally one batch: sequencing is not part of the detached
+ * runner's active contract.
+ */
+export type SubagentRunPlan =
+  | { kind: "single"; task: RunnerSubagentStep }
+  | {
+      kind: "parallel";
+      tasks: RunnerSubagentStep[];
+      concurrency?: number;
+    };
 
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
-  steps: RunnerStep[];
+  /** Canonical direct single/parallel execution plan. */
+  plan: SubagentRunPlan;
   resultPath: string;
   cwd: string;
-  placeholder: string;
   taskIndex?: number;
   totalTasks?: number;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
-  artifactConfig?: Partial<ArtifactConfig>;
+  /** Resolved once before persistence; historical readers resolve missing values at the boundary. */
+  artifactConfig: ResolvedArtifactConfig;
   share?: boolean;
   sessionDir?: string;
   asyncDir: string;
@@ -113,10 +110,6 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  controlIntercomTarget?: string;
-  childIntercomTargets?: Array<string | undefined>;
-  resultMode?: SubagentRunMode;
-  workflowGraph?: WorkflowGraphSnapshot;
   nestedRoute?: NestedRouteInfo;
   nestedSelf?: {
     parentRunId: string;
@@ -125,28 +118,10 @@ export interface SubagentRunConfig {
     path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
   };
   tkTicket?: TkTicketMetadata;
-  /** Safe per-child captures mirrored from steps for artifact inspection. */
+  /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentRunCapture[];
-  timeoutMs?: number;
   deadlineAt?: number;
-  turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
-}
-
-export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
-  return "parallel" in step && Array.isArray(step.parallel);
-}
-
-export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
-  const flat: RunnerSubagentStep[] = [];
-  for (const step of steps) {
-    if (isParallelGroup(step)) {
-      for (const task of step.parallel) flat.push(task);
-    } else {
-      flat.push(step);
-    }
-  }
-  return flat;
 }
 
 export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;

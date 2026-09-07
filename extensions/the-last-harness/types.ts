@@ -193,6 +193,7 @@ export type TlhInstallState = {
   track?: string;
   packageSource?: string;
   packageSourceIsDefault?: boolean;
+  commitSubject?: string;
   rawBase?: string;
   agentDir?: string;
   binDir?: string;
@@ -212,6 +213,8 @@ export type TlhInstallNotice = {
   kind: TlhInstallNoticeKind;
   summary: string;
   detail?: string;
+  /** Persisted checkout subject for the displayed `main` ref track, when available. */
+  commitSubject?: string;
 };
 
 export type TlhTelemetryState = {

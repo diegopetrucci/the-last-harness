@@ -2,16 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  STRUCTURED_OUTPUT_CAPTURE_ENV,
-  STRUCTURED_OUTPUT_SCHEMA_ENV,
-  STRUCTURED_OUTPUT_TOOL_NAME,
-} from "./structured-output.ts";
-import {
-  TEMP_ROOT_DIR,
-  type JsonSchemaObject,
-  type ResolvedToolBudget,
-} from "../../shared/types.ts";
+import { TEMP_ROOT_DIR, type ResolvedToolBudget } from "../../shared/types.ts";
 import {
   findModelInfo,
   getSupportedThinkingLevels,
@@ -31,8 +22,9 @@ const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
   `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`,
 );
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
-export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
 export const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
+/** Child-runtime sentinel controlling native supervisor guidance and tool registration. */
+export const SUBAGENT_SUPERVISOR_BRIDGE_ENV = "PI_SUBAGENT_SUPERVISOR_BRIDGE";
 export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR";
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
@@ -73,24 +65,17 @@ interface BuildPiArgsInput {
   tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
-  /** Explicit agent capability; omitted preserves the historical bridge behavior. */
+  /** Explicit agent capability; false opts out of native supervisor coordination. */
   supervisorBridge?: boolean;
   systemPrompt?: string | null;
   cwd?: string;
   promptFileStem?: string;
-  intercomSessionName?: string;
-  orchestratorIntercomTarget?: string;
   runId?: string;
   childAgentName?: string;
   /** True only when the parent selected the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
   childIndex?: number;
   steerInboxDir?: string;
-  structuredOutput?: {
-    schema: JsonSchemaObject;
-    schemaPath: string;
-    outputPath: string;
-  };
   toolBudget?: ResolvedToolBudget;
 }
 
@@ -251,10 +236,8 @@ function buildPiArgsInternal(
     args.push("--model", modelArg);
   }
 
-  const hasStructuredOutput = Boolean(input.structuredOutput);
   const contactSupervisorDisallowed = input.supervisorBridge === false;
-  const requiresContactSupervisor =
-    Boolean(input.orchestratorIntercomTarget?.trim()) && !contactSupervisorDisallowed;
+  const requiresContactSupervisor = !contactSupervisorDisallowed;
   const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
   const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
   if (toolPolicy.error) throw new Error(toolPolicy.error);
@@ -263,7 +246,7 @@ function buildPiArgsInternal(
   if (input.tools !== undefined) {
     if (hasOnlyExtensionPaths) {
       // Pi's --no-builtin-tools suppresses only its default builtins. Unlike --no-tools, it
-      // leaves extension/custom tools (including the runtime structured_output tool) active.
+      // leaves extension/custom tools active.
       args.push("--no-builtin-tools");
     } else {
       const allowedToolNames = [...namedToolNames];
@@ -272,9 +255,6 @@ function buildPiArgsInternal(
       }
       if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
         allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
-      }
-      if (hasStructuredOutput && !allowedToolNames.includes(STRUCTURED_OUTPUT_TOOL_NAME)) {
-        allowedToolNames.push(STRUCTURED_OUTPUT_TOOL_NAME);
       }
       if (allowedToolNames.length > 0) {
         args.push("--tools", allowedToolNames.join(","));
@@ -345,17 +325,14 @@ function buildPiArgsInternal(
   // Always write the provenance sentinel. An inherited "1" must never opt a
   // same-name custom agent into project guidance.
   env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
-  if (input.intercomSessionName) {
-    env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
-  }
-  if (input.orchestratorIntercomTarget) {
-    env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
-  }
+  // Omitted supervisorBridge preserves native supervision; false must suppress
+  // both prompt guidance and runtime tool registration in the child.
+  env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";
   if (input.parentSessionId) {
     env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
   }
   if (
-    input.orchestratorIntercomTarget &&
+    !contactSupervisorDisallowed &&
     input.parentSessionId &&
     input.runId &&
     input.childAgentName
@@ -379,10 +356,6 @@ function buildPiArgsInternal(
   // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
   // widen every child subagent's tool surface. This assignment must not be removed.
   env.MCP_DIRECT_TOOLS = "__none__";
-  if (input.structuredOutput) {
-    env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
-    env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
-  }
   if (input.steerInboxDir) {
     env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
   }

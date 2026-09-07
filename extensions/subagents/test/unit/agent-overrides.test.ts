@@ -125,6 +125,44 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(findAgent("repo-scout").model, "deepseek-v4-flash");
   });
 
+  it("applies code-owned max execution defaults before human overrides", () => {
+    const expected = {
+      developer: 7_200_000,
+      "code-reviewer": 1_800_000,
+      "test-runner": 3_600_000,
+      librarian: 14_400_000,
+      oracle: 2_700_000,
+      contrarian: 1_800_000,
+      "repo-scout": 600_000,
+      "web-scout": 300_000,
+      "diff-summarizer": 300_000,
+    };
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: {
+          developer: { maxExecutionTimeMs: false },
+          librarian: { maxExecutionTimeMs: 1_234 },
+        },
+      },
+    });
+    for (const name of Object.keys(expected)) {
+      writeCanonicalAgent(
+        name,
+        `---\nname: ${name}\ndescription: ${name} agent\n---\n\n${name}.\n`,
+      );
+    }
+
+    const agents = discoverAgents(tempProject, "both").agents;
+    assert.deepEqual(
+      Object.fromEntries(agents.map((agent) => [agent.name, agent.maxExecutionTimeMs])),
+      {
+        ...expected,
+        developer: undefined,
+        librarian: 1_234,
+      },
+    );
+  });
+
   it("applies max execution time overrides to canonical roles", () => {
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
       subagents: {
@@ -189,6 +227,39 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(reviewer.thinking, "high");
     assert.equal(reviewer.override?.scope, "project");
     assert.equal(reviewer.override?.path, path.join(tempProject, ".pi", "settings.json"));
+  });
+
+  it("uses an explicit empty project override without falling back to profile fields", () => {
+    fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: {
+          developer: { model: "profile/developer", maxExecutionTimeMs: false },
+          "code-reviewer": { model: "profile/reviewer", maxExecutionTimeMs: false },
+        },
+      },
+    });
+    writeJson(path.join(tempProject, ".pi", "settings.json"), {
+      subagents: { agentOverrides: { developer: {} } },
+    });
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nImplement the change.\n",
+    );
+    writeCanonicalAgent(
+      "code-reviewer",
+      "---\nname: code-reviewer\ndescription: Review code\n---\n\nReview the code.\n",
+    );
+
+    const developer = findAgent("developer");
+    assert.equal(developer.model, undefined);
+    assert.equal(developer.maxExecutionTimeMs, 7_200_000);
+    assert.equal(developer.override, undefined);
+
+    const reviewer = findAgent("code-reviewer");
+    assert.equal(reviewer.model, "profile/reviewer");
+    assert.equal(reviewer.maxExecutionTimeMs, undefined);
+    assert.equal(reviewer.override?.scope, "user");
   });
 
   it("applies acceptance role precedence and false clearing to canonical roles", () => {
@@ -302,7 +373,6 @@ describe("canonical packaged agent overrides", () => {
             systemPromptMode: "append",
             inheritProjectContext: true,
             inheritSkills: true,
-            defaultContext: "fork",
             acceptanceRole: "writer",
             tools: ["bash", "mcp:xcodebuild_list_sims"],
             skills: ["tdd"],
@@ -326,7 +396,6 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.systemPromptMode, "append");
     assert.equal(developer.inheritProjectContext, true);
     assert.equal(developer.inheritSkills, true);
-    assert.equal(developer.defaultContext, "fork");
     assert.equal(developer.acceptanceRole, "writer");
     assert.deepEqual(developer.tools, ["bash"]);
     assert.deepEqual(developer.skills, ["tdd"]);
@@ -395,7 +464,6 @@ describe("canonical packaged agent overrides", () => {
             tools: ["bash"],
             skills: ["override-skill"],
             inheritProjectContext: true,
-            defaultContext: "fork",
             acceptanceRole: "writer",
             completionGuard: true,
             supervisorBridge: true,
@@ -405,7 +473,7 @@ describe("canonical packaged agent overrides", () => {
     });
     writeCanonicalAgent(
       "developer",
-      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
+      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
     );
 
     const developer = findAgent("developer");
@@ -414,7 +482,6 @@ describe("canonical packaged agent overrides", () => {
     assert.deepEqual(developer.tools, ["read"]);
     assert.deepEqual(developer.skills, ["agent-skill"]);
     assert.equal(developer.inheritProjectContext, false);
-    assert.equal(developer.defaultContext, "fresh");
     assert.equal(developer.acceptanceRole, "read-only");
     assert.equal(developer.completionGuard, false);
     assert.equal(developer.supervisorBridge, false);

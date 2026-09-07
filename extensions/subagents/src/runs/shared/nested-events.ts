@@ -10,11 +10,11 @@ import {
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
   type NestedRouteInfo,
-  type TurnBudgetState,
   type NestedRunSummary,
   type NestedRunState,
   type NestedStepSummary,
   type SubagentRunMode,
+  normalizeSubagentRunMode,
   type SubagentTerminationReason,
   type SubagentState,
 } from "../../shared/types.ts";
@@ -45,6 +45,7 @@ import {
   parseContextUsageDiagnostics,
   parseSubagentTerminationReason,
 } from "../../shared/context-diagnostics.ts";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./lifecycle-state.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -260,34 +261,6 @@ function sanitizeCost(value: unknown): NestedRunSummary["totalCost"] | undefined
     : undefined;
 }
 
-function sanitizeTurnBudget(value: unknown): TurnBudgetState | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  const maxTurns = clampNumber(raw.maxTurns);
-  const graceTurns = clampNumber(raw.graceTurns);
-  const turnCount = clampNumber(raw.turnCount);
-  const outcome =
-    raw.outcome === "within-budget" ||
-    raw.outcome === "wrap-up-requested" ||
-    raw.outcome === "exceeded"
-      ? raw.outcome
-      : undefined;
-  if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome)
-    return undefined;
-  return {
-    maxTurns,
-    graceTurns,
-    turnCount,
-    outcome,
-    ...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined
-      ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) }
-      : {}),
-    ...(clampNumber(raw.exceededAtTurn) !== undefined
-      ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) }
-      : {}),
-  };
-}
-
 function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState {
   return value === "queued" ||
     value === "running" ||
@@ -336,6 +309,10 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
       ? raw.status
       : "pending";
   const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    raw.activeRuntimeCheckpointAt,
+  );
   const projectAgent = projectAgentProjection(raw);
   return {
     agent,
@@ -365,13 +342,10 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
     ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
     ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
     ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
     ...(raw.timedOut === true ? { timedOut: true } : {}),
-    ...(sanitizeTurnBudget(raw.turnBudget)
-      ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-      : {}),
-    ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-    ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
     ...(parseContextUsageDiagnostics(raw.contextUsage)
       ? { contextUsage: parseContextUsageDiagnostics(raw.contextUsage) as ContextUsageDiagnostics }
       : {}),
@@ -413,6 +387,10 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     : undefined;
   const totalTokens = sanitizeTokenUsage(raw.totalTokens);
   const totalCost = sanitizeCost(raw.totalCost);
+  const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    raw.activeRuntimeCheckpointAt,
+  );
   const projectAgent = projectAgentProjection(raw);
   return {
     id: raw.id,
@@ -437,15 +415,6 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
       : {}),
     ...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
     ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-    ...(stringValue(raw.intercomTarget, 256)
-      ? { intercomTarget: stringValue(raw.intercomTarget, 256) }
-      : {}),
-    ...(stringValue(raw.ownerIntercomTarget, 256)
-      ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
-      : {}),
-    ...(stringValue(raw.leafIntercomTarget, 256)
-      ? { leafIntercomTarget: stringValue(raw.leafIntercomTarget, 256) }
-      : {}),
     ...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
       ? { ownerState: raw.ownerState }
       : {}),
@@ -455,9 +424,13 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     ...(stringValue(raw.capabilityToken, 128)
       ? { capabilityToken: stringValue(raw.capabilityToken, 128) }
       : {}),
-    ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain"
+    ...(raw.mode === "single" || raw.mode === "parallel"
       ? { mode: raw.mode }
-      : {}),
+      : // Historical nested artifacts may contain the retired mode; project it
+        // as a supported single run without rewriting the artifact.
+        raw.mode === "chain"
+        ? { mode: "single" as const }
+        : {}),
     ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
     ...(Array.isArray(raw.agents)
       ? {
@@ -469,9 +442,6 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
       : {}),
     ...(clampNumber(raw.currentStep) !== undefined
       ? { currentStep: clampNumber(raw.currentStep) }
-      : {}),
-    ...(clampNumber(raw.chainStepCount) !== undefined
-      ? { chainStepCount: clampNumber(raw.chainStepCount) }
       : {}),
     ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
       ? { activityState: raw.activityState }
@@ -497,16 +467,13 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     ...(clampNumber(raw.lastUpdate) !== undefined
       ? { lastUpdate: clampNumber(raw.lastUpdate) }
       : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
     ...(clampNumber(raw.deadlineAt) !== undefined
       ? { deadlineAt: clampNumber(raw.deadlineAt) }
       : {}),
     ...(raw.timedOut === true ? { timedOut: true } : {}),
-    ...(sanitizeTurnBudget(raw.turnBudget)
-      ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-      : {}),
-    ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-    ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
     ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
     ...(steps && steps.length > 0 ? { steps } : {}),
     ...(depth < MAX_DEPTH && Array.isArray(raw.children)
@@ -1072,10 +1039,9 @@ export function nestedSummaryFromAsyncStatus(
     asyncDir,
     ...(status.pid ? { pid: status.pid } : {}),
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
-    mode: status.mode ?? fallback.mode,
+    mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
     state: nestedStateFromAsyncState(status.state),
     ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-    ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
     ...(status.activityState ? { activityState: status.activityState } : {}),
     ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
     ...(status.currentTool ? { currentTool: status.currentTool } : {}),
@@ -1086,14 +1052,13 @@ export function nestedSummaryFromAsyncStatus(
     ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
     ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
     ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+    ...(status.activeRuntimeMs !== undefined ? { activeRuntimeMs: status.activeRuntimeMs } : {}),
+    ...(status.activeRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: status.activeRuntimeCheckpointAt }
+      : {}),
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
-    ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-    ...(status.turnBudgetExceeded !== undefined
-      ? { turnBudgetExceeded: status.turnBudgetExceeded }
-      : {}),
-    ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
     ...(status.error ? { error: status.error } : {}),
     ...(status.startedAt !== undefined
       ? { startedAt: status.startedAt }
@@ -1127,16 +1092,15 @@ export function nestedSummaryFromAsyncStatus(
                 ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
                 ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
                 ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                ...(step.activeRuntimeMs !== undefined
+                  ? { activeRuntimeMs: step.activeRuntimeMs }
+                  : {}),
+                ...(step.activeRuntimeCheckpointAt !== undefined
+                  ? { activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt }
+                  : {}),
                 ...(step.error ? { error: step.error } : {}),
                 ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                 ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
-                ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-                ...(step.turnBudgetExceeded !== undefined
-                  ? { turnBudgetExceeded: step.turnBudgetExceeded }
-                  : {}),
-                ...(step.wrapUpRequested !== undefined
-                  ? { wrapUpRequested: step.wrapUpRequested }
-                  : {}),
                 ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
                 ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
                 ...(step.contextPressureCrossedThresholds

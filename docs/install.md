@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.84.4 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.85.1 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -31,7 +31,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.39.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.40.0/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.39.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.40.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; older main-track state without that metadata continues to show `TLH main`.
 
 ## Installer options
 
@@ -79,14 +79,14 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.39.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.40.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.84.4 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.85.1 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -217,11 +217,27 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 ## First-party subagent configuration
 
-The installer provisions the first-party runtime's isolated config at `~/.the-last-harness/agent/extensions/subagent/config.json` with the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30). The runtime always registers the compact parent-facing subagent tool description. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. To override the notice checkpoint, edit the config file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores the runtime's four-minute baseline and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration. See [subagents.md](subagents.md) for dispatch, control, artifact, and acceptance semantics.
+The installer provisions the first-party runtime's isolated config at `<agent-dir>/extensions/subagent/config.json` (the default release path is `~/.the-last-harness/agent/extensions/subagent/config.json`) with the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30). The `artifacts` block and its human-owned `mode` are preserved by install/update; absent mode is compact, while `"mode": "debug"` is an explicit diagnostic opt-in. Install/update never rewrite or remove that value or unrelated config keys. The runtime always registers the compact parent-facing subagent tool description. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. To override the notice checkpoint, edit the config file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores the runtime's four-minute baseline and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. Changes apply only to the isolated TLH profile and never the normal `~/.pi/agent` configuration. See [subagents.md](subagents.md) for dispatch, control, artifact, acceptance, and timeout-ownership semantics, including the reload/restart and undo steps for artifact profiles.
 
-### Scout run timeout cap
+### Execution limits and migration
 
-TLH caps new execution-bearing `librarian`, `web-scout`, `repo-scout`, and `diff-summarizer` runs at six minutes (`360000` ms) unless the caller already set a stricter timeout. `resume` timeouts are left unchanged.
+Execution deadlines are human-owned, not model- or caller-owned. Set the shared run policy in the same isolated config file:
+
+```json
+{
+  "execution": {
+    "maxRunTimeMs": 14400000
+  }
+}
+```
+
+An absent `execution.maxRunTimeMs` is the bounded **14400000 ms (4h)** default. The only valid values are a positive safe integer or explicit `false`; invalid values warn and use the bounded default. `false` removes only the shared run-level ceiling, so a canonical role ceiling, custom definition ceiling, provider/network or control limit, external supervisor, or acceptance verification can still stop work. Install/update preserve this human-owned block and its surrounding keys.
+
+Canonical minor roles have code-owned `maxExecutionTimeMs` ceilings. TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry in `.pi/settings.json` when present, otherwise the profile entry in `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. A selected human override accepts a positive safe integer or `false`. A custom project agent instead owns its positive-safe-integer `maxExecutionTimeMs` in frontmatter; omission uses the **14400000 ms (4h)** custom fallback, and profile/project settings do not override that definition. See [subagents.md](subagents.md#timeout-ownership-and-execution-ceilings) for the exact nine-role values and precedence details.
+
+A direct single run has one shared deadline. A parallel batch has one shared deadline covering queue/concurrency wait, child startup, fallback/retry work, and the rest of the batch in both foreground and async modes; it is not a per-task pool. Models/callers must not send model-facing root `timeoutMs` or public `tasks[].timeoutMs`. Separately, an executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, fails closed before child launch with migration guidance: remove only that retired envelope/plan-root field and restart as a new direct single or parallel run. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Existing historical records remain readable and are not rewritten. The former six-minute scout exception tracked by issue #420 is retired and is not current behavior.
+
+To undo a persistent change, remove `execution.maxRunTimeMs` and reload/restart to restore the bounded default, or replace `false` with a positive value. Remove a canonical role's settings override to restore its code-owned ceiling, and remove a custom agent's frontmatter field to restore its 4-hour fallback. Preserve a backup and unknown keys, and never edit normal `~/.pi/agent` configuration. There is no compatibility switch for retired caller timeouts; rolling back the package version is the only way to restore that old public behavior. Other timeout fields—such as `heartbeat.maxDurationMs`, provider/network/control timeouts, acceptance `verify[].timeoutMs`, and historical status/reader metadata—remain separate and are not migrated into this policy.
 
 ## gh CLI prerequisite (for librarian)
 

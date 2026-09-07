@@ -262,6 +262,28 @@ export function formatReauthWarningLine(
   return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
 }
 
+function sanitizeCommitSubject(text: string): string {
+  return sanitizeStatusText(
+    text.replace(/\p{Cc}/gu, (character) =>
+      character === "\r" || character === "\n" || character === "\t" ? " " : "",
+    ),
+  );
+}
+
+function formatTlhInstallNoticeLine(notice: TlhInstallNotice, width: number, theme: Theme): string {
+  const label = formatTlhInstallNoticeTrackLabel(notice);
+  const commitSubject =
+    notice.kind === "ref" && label === "main" && typeof notice.commitSubject === "string"
+      ? sanitizeCommitSubject(notice.commitSubject)
+      : "";
+  const commitSubjectSuffix = commitSubject
+    ? `${theme.fg("dim", " • ")}${theme.fg("dim", commitSubject)}`
+    : "";
+  const warningStr =
+    `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix;
+  return truncateToWidth(warningStr, width, theme.fg("dim", "..."));
+}
+
 export function createTlhFooter(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -431,9 +453,7 @@ export function createTlhFooter(
       // Install notice line (last line): shown when running from a non-release track.
       // render() uses the value captured at session start — no file I/O.
       if (installNotice) {
-        const label = formatTlhInstallNoticeTrackLabel(installNotice);
-        const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}`;
-        lines.push(truncateToWidth(warningStr, width, theme.fg("dim", "...")));
+        lines.push(formatTlhInstallNoticeLine(installNotice, width, theme));
       }
 
       return lines;

@@ -12,7 +12,7 @@ import type {
   SubagentState,
 } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
-import type { buildAsyncRunnerSteps } from "../../src/runs/background/async-execution.ts";
+import type { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import {
   ModelRegistry,
   ModelRuntime,
@@ -315,15 +315,15 @@ export function makeModel(
 }
 
 /**
- * Creates a minimal AsyncExecutionContext for tests of buildAsyncRunnerSteps,
- * executeAsyncChain, and executeAsyncSingle. The `pi` field receives a fresh,
+ * Creates a minimal AsyncExecutionContext for tests of buildAsyncRunnerPlan
+ * and executeAsyncSingle. The `pi` field receives a fresh,
  * isolated functional EventBus from makeExtensionAPI(); the tested code paths
  * only access pi.events.emit() and only after precondition guards that fire before pi is used.
  *
- * Typed from buildAsyncRunnerSteps' parameter context (AsyncExecutionContext) so that
+ * Typed from buildAsyncRunnerPlan's parameter context (AsyncExecutionContext) so that
  * newly required fields surface here rather than at each call site.
  */
-type AsyncExecutionContext = Parameters<typeof buildAsyncRunnerSteps>[1]["ctx"];
+type AsyncExecutionContext = Parameters<typeof buildAsyncRunnerPlan>[1]["ctx"];
 
 export function makeAsyncCtx(
   cwd: string,

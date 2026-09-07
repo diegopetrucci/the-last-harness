@@ -169,7 +169,7 @@ export function parseChildProtocolLine(line) {
     return parsed.kind === "event" ? parsed.event : undefined;
 }
 export function formatProtocolOutputLimit(limit) {
-    return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline).`;
+    return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline); the line is not retained in full: a bounded prefix and tail remain in the protocol_output_limit record, and subsequent input on that stream is dropped. Inspect the bounded result/session diagnostics, and set artifacts.mode to "debug" before reproducing if the surrounding child protocol is required.`;
 }
 function sliceUtf8Prefix(value, maxBytes) {
     if (maxBytes <= 0)
@@ -421,8 +421,8 @@ export function formatBoundedRawStdout(prefix) {
     return `${text}${text.endsWith("\n") ? "" : "\n"}${RAW_STDOUT_TRUNCATION_MARKER}`;
 }
 export function formatStderrTailOverflow(tail) {
-    return `stderr truncated: child output exceeded ${tail.maxBytes()} bytes; retained the bounded tail in this result (and the transcript artifact when enabled).`;
+    return `stderr truncated: child output exceeded ${tail.maxBytes()} bytes; the bounded tail remains available in this result. Inspect the existing async output-N.log for the raw stderr stream. Set artifacts.mode to "debug" before reproducing only if the diagnostic child transcript or surrounding child protocol is needed.`;
 }
 export function formatStderrLineOverflow(limit) {
-    return `stderr overflow: a child stderr line exceeded ${limit.limitBytes} bytes; stderr events after that line may be omitted while the bounded tail remains available.`;
+    return `stderr overflow: a child stderr line exceeded ${limit.limitBytes} bytes; this line and later per-line stderr events are omitted from events.jsonl while the bounded tail remains available. Inspect the existing async output-N.log for the raw stderr stream. Set artifacts.mode to "debug" before reproducing only if the diagnostic child transcript or surrounding child protocol is needed.`;
 }

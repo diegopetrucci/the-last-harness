@@ -20,6 +20,7 @@ import {
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName } from "./identity.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.ts";
 import type { AgentConfig } from "./agents.ts";
 
 /** The only project-owned directory considered by the TLH project-agent loader. */
@@ -55,7 +56,6 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
   "systemPromptMode",
   "inheritProjectContext",
   "inheritSkills",
-  "defaultContext",
   "acceptanceRole",
   "skill",
   "skills",
@@ -1116,9 +1116,11 @@ function parseProjectAgentDefinitionFromText(
       "systemPromptMode must be 'append' or 'replace'",
     );
   }
-  const defaultContext = frontmatter.defaultContext;
-  if (defaultContext !== undefined && defaultContext !== "fresh" && defaultContext !== "fork") {
-    throw new ProjectAgentDefinitionError(filePath, "defaultContext must be 'fresh' or 'fork'");
+  if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+    throw new ProjectAgentDefinitionError(
+      filePath,
+      "defaultContext is no longer supported; remove it because TLH always starts child sessions fresh",
+    );
   }
 
   let acceptanceRole: AcceptanceRole | undefined;
@@ -1137,10 +1139,8 @@ function parseProjectAgentDefinitionFromText(
     "maxSubagentDepth",
     filePath,
   );
-  const maxExecutionTimeMs = parseStrictPositiveInteger(
-    frontmatter,
-    "maxExecutionTimeMs",
-    filePath,
+  const maxExecutionTimeMs = resolveCustomAgentMaxExecutionTimeMs(
+    parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath),
   );
   const toolBudget = parseToolBudget(frontmatter.toolBudget, filePath);
   const completionGuard =
@@ -1185,7 +1185,6 @@ function parseProjectAgentDefinitionFromText(
             : "replace",
     inheritProjectContext,
     inheritSkills,
-    defaultContext,
     acceptanceRole,
     systemPrompt: body,
     source: "project",

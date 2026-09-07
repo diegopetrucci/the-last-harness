@@ -21,8 +21,6 @@ interface MockPiResponse {
   writeMarker?: string;
   /** Wait for a marker file at this path before any delay or jsonl output. */
   waitForMarker?: string;
-  /** Structured output to capture at PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE. */
-  structuredOutput?: unknown;
   steps?: Array<{
     delay?: number;
     jsonl?: unknown[];

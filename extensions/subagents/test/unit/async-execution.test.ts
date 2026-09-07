@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  buildAsyncRunnerSteps,
+  buildAsyncRunnerPlan,
   resolveAsyncRunnerLogPaths,
 } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
@@ -15,6 +15,7 @@ import {
   revokeProjectAgentSnapshot,
 } from "../../src/agents/project-agent-snapshot.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
+import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
 import { makeAsyncCtx } from "../support/helpers.ts";
 
 const agent = (
@@ -69,16 +70,17 @@ describe("async runner execution", () => {
       getProjectAgentSnapshotProvenance(capability),
     );
     const capture = createProjectAgentRunCapture(manifest, selected);
-    const result = buildAsyncRunnerSteps("run-project-config", {
-      chain: [{ agent: selected.name, task: "use captured config" }],
+    const result = buildAsyncRunnerPlan("run-project-config", {
+      tasks: [{ agent: selected.name, task: "use captured config" }],
       agents: [selected],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join("tmp", "async-project-config"),
       maxSubagentDepth: 2,
       projectAgentCaptures: [capture],
     });
-    assert.ok("steps" in result, "expected successful step build");
-    const step = result.steps[0] as RunnerSubagentStep;
+    assert.ok("plan" in result, "expected successful plan build");
+    if ("error" in result) return;
+    const step = result.plan.tasks[0] as RunnerSubagentStep;
     assert.deepEqual(step.projectAgent?.provenance, capture.provenance);
     assert.deepEqual(step.projectAgent?.config, capture.config);
     assert.equal(step.supervisorBridge, false);
@@ -86,43 +88,41 @@ describe("async runner execution", () => {
     revokeProjectAgentSnapshot(capability);
   });
 
-  it("resolves async step tool budgets with step over run over agent precedence", () => {
-    const result = buildAsyncRunnerSteps("run-1", {
-      chain: [
+  it("resolves async task tool budgets with task over run over agent precedence", () => {
+    const result = buildAsyncRunnerPlan("run-1", {
+      tasks: [
         { agent: "worker", task: "run beats agent" },
-        { agent: "worker", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
+        { agent: "worker", task: "task beats run", toolBudget: { hard: 2, block: ["grep"] } },
       ],
       agents: [agent("worker", { hard: 4, block: ["read"] })],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
       toolBudget: { hard: 3, block: ["find"] },
     });
 
-    assert.ok("steps" in result, "expected successful step build");
-    // Sequential chains only produce RunnerSubagentStep entries (no parallel groups).
-    assert.deepEqual((result.steps[0] as RunnerSubagentStep)?.toolBudget, {
+    assert.ok("plan" in result, "expected successful plan build");
+    assert.deepEqual((result.plan.tasks[0] as RunnerSubagentStep)?.toolBudget, {
       hard: 3,
       block: ["find"],
     });
-    assert.deepEqual((result.steps[1] as RunnerSubagentStep)?.toolBudget, {
+    assert.deepEqual((result.plan.tasks[1] as RunnerSubagentStep)?.toolBudget, {
       hard: 2,
       block: ["grep"],
     });
   });
 
-  it("uses agent tool budget when no step or run override exists", () => {
-    const result = buildAsyncRunnerSteps("run-2", {
-      chain: [{ agent: "worker", task: "agent budget applies" }],
+  it("uses agent tool budget when no task or run override exists", () => {
+    const result = buildAsyncRunnerPlan("run-2", {
+      tasks: [{ agent: "worker", task: "agent budget applies" }],
       agents: [agent("worker", { hard: 4, block: ["read"] })],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
     });
 
-    assert.ok("steps" in result, "expected successful step build");
-    // Sequential chains only produce RunnerSubagentStep entries (no parallel groups).
-    assert.deepEqual((result.steps[0] as RunnerSubagentStep)?.toolBudget, {
+    assert.ok("plan" in result, "expected successful plan build");
+    assert.deepEqual((result.plan.tasks[0] as RunnerSubagentStep)?.toolBudget, {
       hard: 4,
       block: ["read"],
     });
@@ -134,19 +134,19 @@ describe("async runner execution", () => {
       ...agent(`tool-policy-${index}`),
       tools,
     }));
-    const result = buildAsyncRunnerSteps("run-tool-policies", {
-      chain: policies.map((_tools, index) => ({
+    const result = buildAsyncRunnerPlan("run-tool-policies", {
+      tasks: policies.map((_tools, index) => ({
         agent: `tool-policy-${index}`,
         task: "Inspect the task",
       })),
       agents,
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
     });
 
-    assert.ok("steps" in result, "expected successful step build");
-    const steps = result.steps as RunnerSubagentStep[];
+    assert.ok("plan" in result, "expected successful plan build");
+    const steps = result.plan.tasks as RunnerSubagentStep[];
     assert.deepEqual(
       steps.map((step) => step.tools),
       policies,
@@ -168,47 +168,40 @@ describe("async runner execution", () => {
     assert.deepEqual(restoredPolicies, policies);
   });
 
-  it("preserves independent agent ceilings while a shorter caller timeout remains global", () => {
-    const result = buildAsyncRunnerSteps("run-mixed-ceilings", {
-      chain: [
-        {
-          parallel: [
-            { agent: "fast", task: "short ceiling" },
-            { agent: "slow", task: "long ceiling" },
-            { agent: "caller-bound", task: "caller bound" },
-          ],
-        },
+  it("persists independent agent ceilings under one run policy", () => {
+    const result = buildAsyncRunnerPlan("run-mixed-ceilings", {
+      tasks: [
+        { agent: "fast", task: "short ceiling" },
+        { agent: "slow", task: "long ceiling" },
+        { agent: "caller-bound", task: "caller bound" },
       ],
       agents: [
         agent("fast", undefined, 100),
         agent("slow", undefined, 300),
         agent("caller-bound", undefined, 900),
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
-      timeoutMs: 250,
     });
 
-    assert.ok("steps" in result, "expected successful step build");
-    const parallel = result.steps[0];
-    assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
+    assert.ok("plan" in result, "expected successful plan build");
     assert.deepEqual(
-      parallel.parallel.map((step) => step.timeoutMs),
-      [100, undefined, undefined],
+      result.plan.tasks.map((step) => step.timeoutMs),
+      [100, 300, 900],
     );
   });
 
   it("returns an actionable preflight error for extension-only tools with lazy skills", () => {
-    const result = buildAsyncRunnerSteps("run-invalid-tool-policy", {
-      chain: [{ agent: "worker", task: "Inspect the task" }],
+    const result = buildAsyncRunnerPlan("run-invalid-tool-policy", {
+      tasks: [{ agent: "worker", task: "Inspect the task" }],
       agents: [agent("worker")].map((value) => ({
         ...value,
         tools: ["./custom-tool.ts"],
         skills: ["tmux"],
       })),
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
     });
 
@@ -218,8 +211,8 @@ describe("async runner execution", () => {
   });
 
   it("returns an actionable preflight error for extension-only tools with inherited skills", () => {
-    const result = buildAsyncRunnerSteps("run-invalid-inherited-tool-policy", {
-      chain: [{ agent: "worker", task: "Inspect the task" }],
+    const result = buildAsyncRunnerPlan("run-invalid-inherited-tool-policy", {
+      tasks: [{ agent: "worker", task: "Inspect the task" }],
       agents: [
         {
           ...agent("worker"),
@@ -227,8 +220,8 @@ describe("async runner execution", () => {
           tools: ["./custom-tool.ts"],
         },
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
-      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
       maxSubagentDepth: 2,
     });
 

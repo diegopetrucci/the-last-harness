@@ -30,6 +30,12 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze([
 ]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
+// Provider-aware model policy attaches generated fallback candidates to an
+// in-process dispatch object without exposing them as caller-facing tool
+// parameters. Symbols are ignored by JSON/schema traversal while surviving the
+// shallow target copies used by the dispatch path.
+export const PROVIDER_AWARE_FALLBACK_MODELS = Symbol.for("tlh.providerAwareFallbackModels");
+
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
 const ALLOWED_SUBAGENTS_BY_ID = new Map(
   ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]),
@@ -45,6 +51,21 @@ const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Read provider-aware fallback candidates attached to an in-process dispatch
+ * target. Symbols are deliberately outside ordinary tool input so this reader
+ * can consume model-default mutations without exposing a caller-facing field.
+ */
+export function getProviderAwareFallbackModels(target) {
+  if (!isRecord(target)) return undefined;
+  const candidates = target[PROVIDER_AWARE_FALLBACK_MODELS];
+  if (!Array.isArray(candidates)) return undefined;
+  const normalized = candidates.filter(
+    (candidate) => typeof candidate === "string" && candidate.trim() !== "",
+  );
+  return normalized.length > 0 ? [...normalized] : undefined;
 }
 
 function stringField(value) {
@@ -165,58 +186,12 @@ function forceExecutionAgentScope(input) {
   return undefined;
 }
 
-function forceFreshSubagentContext(input, mode = "execution") {
-  const rawContext = input.context;
-  if (rawContext !== undefined) {
-    if (typeof rawContext !== "string") {
-      return `TLH primary-agent subagent ${mode} must use context: "fresh" or omit context.`;
-    }
-    const context = rawContext.trim();
-    if (context && context !== "fresh") {
-      return `TLH primary-agent subagent ${mode} may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
-    }
-  }
-
-  input.context = "fresh";
-  return undefined;
-}
-
-function validateNestedFreshContext(owner, path) {
-  if (!isRecord(owner) || owner.context === undefined) {
-    return undefined;
-  }
-  if (typeof owner.context !== "string") {
-    return `TLH primary-agent subagent execution nested ${path} must use context: "fresh" or omit context.`;
-  }
-  const context = owner.context.trim();
-  if (context !== "fresh") {
-    return `TLH primary-agent subagent execution nested ${path} may not use context: "${context}". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.`;
-  }
-  return undefined;
-}
-
-function validateNestedFreshSubagentContexts(input) {
-  if (Array.isArray(input.tasks)) {
-    for (let index = 0; index < input.tasks.length; index += 1) {
-      const reason = validateNestedFreshContext(input.tasks[index], `tasks[${index}].context`);
-      if (reason) return reason;
-    }
-  }
-
-  return undefined;
-}
-
 function validateExecutionBearingTargets(
   input,
   allowedSubagents,
   allowedSubagentSet,
   allowEmbeddedTargets,
 ) {
-  const nestedContextReason = validateNestedFreshSubagentContexts(input);
-  if (nestedContextReason) {
-    return nestedContextReason;
-  }
-
   const embeddedSuffix = allowEmbeddedTargets ? ", or embedded.<slug>" : "";
   const targets = collectSubagentTargets(input);
   if (targets.length === 0) {
@@ -234,7 +209,7 @@ function validateExecutionBearingTargets(
   return undefined;
 }
 
-const STEER_EXECUTION_FIELDS = ["agent", "tasks", "chain", "context", "agentScope"];
+const STEER_EXECUTION_FIELDS = ["agent", "tasks", "chain", "agentScope"];
 
 function validateSteerAction(input) {
   const id = stringField(input.id);
@@ -243,7 +218,7 @@ function validateSteerAction(input) {
   }
   const message = stringField(input.message);
   if (!message) {
-    return "TLH primary agents may not call steer without a non-empty string message. Steer intent must be explicit; the fork's task-as-message fallback is not allowed.";
+    return "TLH primary agents may not call steer without a non-empty string message. Steer intent must be explicit; a task-as-message fallback is not allowed.";
   }
   for (const field of STEER_EXECUTION_FIELDS) {
     if (input[field] !== undefined) {
@@ -279,10 +254,6 @@ export function validateSubagentToolInput(input, options = {}) {
       if (scopeReason) {
         return scopeReason;
       }
-      const contextReason = forceFreshSubagentContext(input, action);
-      if (contextReason) {
-        return contextReason;
-      }
       return undefined;
     }
     if (action === "steer") {
@@ -294,11 +265,6 @@ export function validateSubagentToolInput(input, options = {}) {
   const scopeReason = forceExecutionAgentScope(input);
   if (scopeReason) {
     return scopeReason;
-  }
-
-  const contextReason = forceFreshSubagentContext(input);
-  if (contextReason) {
-    return contextReason;
   }
 
   return validateExecutionBearingTargets(

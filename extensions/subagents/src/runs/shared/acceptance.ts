@@ -297,6 +297,25 @@ function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
   );
 }
 
+function validateAcceptanceReview(reviewInput: unknown, pathLabel: string, errors: string[]): void {
+  if (reviewInput === undefined || reviewInput === false) return;
+  if (!reviewInput || typeof reviewInput !== "object" || Array.isArray(reviewInput)) {
+    errors.push(`${pathLabel}.review must be false or an object.`);
+    return;
+  }
+  const review = reviewInput as Record<string, unknown>;
+  for (const key of Object.keys(review)) {
+    if (!ACCEPTANCE_REVIEW_KEYS.has(key))
+      errors.push(`${pathLabel}.review.${key} is not supported.`);
+  }
+  if (review.agent !== undefined && typeof review.agent !== "string")
+    errors.push(`${pathLabel}.review.agent must be a string.`);
+  if (review.focus !== undefined && typeof review.focus !== "string")
+    errors.push(`${pathLabel}.review.focus must be a string.`);
+  if (review.required !== undefined && typeof review.required !== "boolean")
+    errors.push(`${pathLabel}.review.required must be a boolean.`);
+}
+
 export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"): string[] {
   const errors: string[] = [];
   if (input === undefined) return errors;
@@ -415,23 +434,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
       }
     }
   }
-  if (value.review !== undefined && value.review !== false) {
-    if (!value.review || typeof value.review !== "object" || Array.isArray(value.review)) {
-      errors.push(`${pathLabel}.review must be false or an object.`);
-    } else {
-      const review = value.review as Record<string, unknown>;
-      for (const key of Object.keys(review)) {
-        if (!ACCEPTANCE_REVIEW_KEYS.has(key))
-          errors.push(`${pathLabel}.review.${key} is not supported.`);
-      }
-      if (review.agent !== undefined && typeof review.agent !== "string")
-        errors.push(`${pathLabel}.review.agent must be a string.`);
-      if (review.focus !== undefined && typeof review.focus !== "string")
-        errors.push(`${pathLabel}.review.focus must be a string.`);
-      if (review.required !== undefined && typeof review.required !== "boolean")
-        errors.push(`${pathLabel}.review.required must be a boolean.`);
-    }
-  }
+  validateAcceptanceReview(value.review, pathLabel, errors);
   if (value.stopRules !== undefined && !Array.isArray(value.stopRules))
     errors.push(`${pathLabel}.stopRules must be an array.`);
   if (Array.isArray(value.stopRules)) {
@@ -1038,7 +1041,7 @@ export function buildAcceptanceReportDigest(report: AcceptanceReport): string {
  * Join an already-stripped output with its acceptance-report digest.
  *
  * Only ever applied to supervisor-facing artifact content, never to the semantic
- * output value (finalOutput / persisted output files / chain output references).
+ * output value (finalOutput / persisted output files / output references).
  * Pure remove-nothing/append-only string function.
  */
 export function appendAcceptanceReportDigest(output: string, report: AcceptanceReport): string {

@@ -8,7 +8,7 @@ Most users should delegate in natural language to the active primary agent. The 
 
 The managed wrapper sets `PI_CODING_AGENT_DIR` to the isolated TLH profile before the upstream Pi runtime starts. Subagent settings, copied agent definitions, child sessions, and runtime state therefore stay under that active profile instead of normal `~/.pi/agent`. Child processes resolve the same private Pi runtime as their parent; an unusable resolved runtime fails clearly instead of silently falling back to an ambient global `pi`.
 
-TLH copies its nine canonical minor-agent definitions to `<agent-dir>/tlh/agents/subagents/<role>.md` and loads them through that installer-managed path. No `subagents.agentDirs` default is installed or required for these first-party roles. For primary-agent delegation, TLH forces canonical minor agents to the isolated user scope and a fresh context, except that a mixed dispatch containing an embedded target is resolved in project scope. This prevents unrelated project, package, legacy-profile, or extra-directory definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child. The underlying runtime retains generic project-scope and fork-context support for compatible non-primary entrypoints, but those are not the bundled TLH delegation policy.
+TLH copies its nine canonical minor-agent definitions to `<agent-dir>/tlh/agents/subagents/<role>.md` and loads them through that installer-managed path. No `subagents.agentDirs` default is installed or required for these first-party roles. For primary-agent delegation, TLH forces canonical minor agents to the isolated user scope, except that a mixed dispatch containing an embedded target is resolved in project scope. Every child starts a fresh session and never inherits the primary session transcript. This prevents unrelated project, package, legacy-profile, or extra-directory definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child.
 
 The canonical packaged TLH roles are thirteen roles: the four primaries `architect`, `rush`, `product`, and `bug-hunter`, plus nine bundled minors — `developer` for implementation, `test-runner` for exact final-validation commands, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright. Stable, always-available project custom `embedded.<slug>` agents are a separate exact-root contract available to the architect or disabled primary mode; see [custom-subagents.md](custom-subagents.md).
 
@@ -20,33 +20,81 @@ A malformed custom markdown definition is isolated during discovery instead of a
 
 Project custom embedded agents are discovered only as direct files at `<validated-git-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md`. The uppercase filename stem is authoritative and must map to the exact lowercase frontmatter `name`; `package: embedded` and a non-empty `description` are required. Persisted project trust must cover the Git root. No recursion, case-variant path, symlink, non-regular file, or definition larger than 64 KiB is accepted, and `extensions`/`subagentOnlyExtensions` are rejected. An explicit usable `tools` list is required; entries—including `bash`, `write`, and `edit`—remain supported. Settings/default model and agent overrides do not complete or replace this self-contained file; the only profile exception is an exact `disabled: true` entry for the `embedded.<slug>` target, which adds a deny-only tombstone (see [custom-subagents.md](custom-subagents.md)). A TLH-primary OpenRouter dispatch injects the live session model when the caller omits `model` (see [custom-subagents.md](custom-subagents.md)). TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, and installed-package/extra-directory definitions; those definitions no longer appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot authorize an `embedded.<slug>` target. Settings/default overrides cannot create or authorize a custom target.
 
-Only `architect` and `disabled` may initiate a custom embedded run. Such a call is forced to project scope and fresh context; a mixed call keeps canonical bundled roles available while every embedded target uses the same validated Git-root snapshot, and cwd overrides cannot leave it. The canonical installer-managed packaged TLH roles remain available from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths, outside generic discovery or `subagents.agentDirs`. A live child keeps its initial configuration; a new-process resume/revival revalidates and rereads the current root file. See [custom-subagents.md](custom-subagents.md) for the full primary restrictions, migration, and undo procedure.
+Only `architect` and `disabled` may initiate a custom embedded run. Such a call is forced to project scope; every child starts a fresh session. A mixed call keeps canonical bundled roles available while every embedded target uses the same validated Git-root snapshot, and cwd overrides cannot leave it. The canonical installer-managed packaged TLH roles remain available from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths, outside generic discovery or `subagents.agentDirs`. A live child keeps its initial configuration; a new-process resume/revival revalidates and rereads the current root file. See [custom-subagents.md](custom-subagents.md) for the full primary restrictions, migration, and undo procedure.
 
 ## Dispatch and tool surface
 
 The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 
 - **Single:** one `agent` and optional `task`.
-- **Parallel:** a `tasks` array, with optional `concurrency`. Each task names an `agent` and `task` and may override output, reads, progress, or model behavior.
+- **Parallel:** a `tasks` array. Each task accepts `agent`, `task`, optional `cwd`, `count`, `output`, `outputMode`, and `model`; parallel limits are configured in `<agent-dir>/extensions/subagent/config.json`.
 - **Synchronous by default:** the tool waits for the child result.
-- **Asynchronous when requested:** `async: true` starts detached work and returns an ID and runtime directory so the parent can continue useful work.
-- **Execution controls:** `context`, `timeoutMs`, `cwd`, `artifacts`, and `includeProgress`; single runs also accept `output`, `outputMode`, `model`, and `fallbackModels`. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
+- **Asynchronous when requested:** `async: true` starts TLH-tracked background work in a detached OS child process managed by TLH and returns an ID and runtime directory so the parent can continue useful work.
+- **Execution controls:** `cwd` and `artifacts`; single runs also accept `output`, `outputMode`, and `model`. Agent definitions own `defaultReads`, `defaultProgress`, and `fallbackModels`; every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted. Execution deadlines are human-owned: models and callers cannot provide a model-facing root `timeoutMs` or public `tasks[].timeoutMs`.
 
-The runtime capability gate drops a thinking level only when positive registry metadata rules it out: `reasoning: false`, a `null` level mapping, or a present map that omits `xhigh` or `max`. Missing capability metadata and unknown or unresolvable models fail open and still receive the suffix. Already-suffixed model arguments short-circuit before capability checks, and an explicit caller `thinkingOverride` is exempt from the gate. Each drop emits a note naming the level and model.
+`single` and `parallel` are the only execution forms; each is available in the foreground or as a TLH-tracked async run. This is a fresh-only contract: `context` is not an execution input, `defaultContext` is not a supported definition or settings field, and no parent transcript is inherited. A child receives its task and explicitly configured definition; project-instruction and skill settings remain explicit child configuration, not transcript inheritance. Persisted direct plans containing the retired `structuredOutput` or `structuredOutputSchema` task properties fail closed before a child launches; remove those properties and start a new direct single or parallel run. An executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, also fails closed before launch. By contrast, TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values are trusted role-ceiling metadata and remain valid; do not remove them. Historical records remain readable and are not rewritten. `async: true` is TLH's internal tracked background runner, using the detached OS child process described above; it is not the removed external pi-intercom detach request/result/control integration or a separate control-channel API.
+
+`toolBudget` is a separate per-child tool-call limit whose `hard` threshold is required and whose `soft` threshold and block list are optional. An agent's `maxExecutionTimeMs` is a hard per-child upper bound; the human-owned run-level policy and role ceiling are enforced together. There is no `turnBudget` or turn-count control in the reduced contract.
+
+### Timeout ownership and execution ceilings
+
+Execution time has two human-visible layers, and neither is a model-facing tool parameter. The shared run-level policy is stored in the human-owned config file `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`):
+
+```json
+{
+  "execution": {
+    "maxRunTimeMs": 14400000
+  }
+}
+```
+
+An absent `execution.maxRunTimeMs` uses the bounded default of **14400000 ms (4h)**. It must be a positive safe integer or the explicit boolean `false`. An invalid value is warned about and safely falls back to 14400000 ms. Install and update preserve this human-owned block and unrelated config keys. The execution policy is resolved when the subagent extension loads (normally at session start), not at each dispatch; reload the extension or restart `tlh` after editing the file. A run already underway retains the policy it resolved at startup.
+
+The code-owned ceilings for the nine canonical minor roles are:
+
+| Role | `maxExecutionTimeMs` |
+| --- | ---: |
+| `developer` | 7200000 ms (2h) |
+| `code-reviewer` | 1800000 ms (30m) |
+| `test-runner` | 3600000 ms (1h) |
+| `librarian` | 14400000 ms (4h) |
+| `oracle` | 2700000 ms (45m) |
+| `contrarian` | 1800000 ms (30m) |
+| `repo-scout` | 600000 ms (10m) |
+| `web-scout` | 300000 ms (5m) |
+| `diff-summarizer` | 300000 ms (5m) |
+
+TLH applies those code-owned role defaults before resolving human overrides. For a canonical role whose definition does not explicitly declare the field, TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry when present, otherwise the active isolated profile's entry from `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. The selected human override accepts a positive safe integer or `false`. An explicit `maxExecutionTimeMs` in a packaged role's frontmatter is definition-owned and remains authoritative for that field. A trusted project custom agent may set a positive safe integer in its own frontmatter; if it omits the field, its custom-agent fallback is **14400000 ms (4h)**. Project custom agents are self-contained and are not completed or overridden by profile/project `subagents.agentOverrides` settings.
+
+`false` has deliberately narrow scope. Setting `execution.maxRunTimeMs` to `false` removes only the shared run-level ceiling; setting `subagents.agentOverrides.<role>.maxExecutionTimeMs` to `false` clears only that canonical role's ceiling. A custom-agent frontmatter value of `false` is invalid; omit the field for the 4-hour custom fallback. In every case, another applicable run or role bound may still constrain execution, including a definition-owned role ceiling, provider/network or control handling, an external supervisor, or acceptance verification.
+
+A direct single run has one shared run deadline. A parallel batch has one shared overall deadline, not one budget per task: it covers queueing and concurrency wait, child startup, fallback/retry work, and the rest of that direct batch in both foreground and async modes. Role ceilings remain independent per child and are not divided among siblings. The old caller-selected six-minute scout exception tracked by issue #420 is retired; the role values above are the current policy.
+
+The cumulative active-runtime ledger belongs to an unfinished logical child/job and its role ceiling. The same job accumulates active time across foreground, async, fallback, retry, pause, and resume continuations. Durable paused/offline wall time, when no child process is running, is excluded. Only successful completion resets the ledger; every other resumable outcome carries its consumed time forward, and an exhausted continuation fails before launching a child. Detached runners persist checkpoints at roughly 30-second intervals, so hard-kill recovery can conservatively undercount active time by up to one interval. The shared `maxRunTimeMs` setting remains the current direct-batch deadline; it is distinct from this cumulative per-role ledger.
+
+This policy covers execution ownership only. Do not migrate unrelated timeout fields into it: provider/network timeouts, control and supervisor limits, heartbeat `maxDurationMs`, acceptance-command fields such as `verify[].timeoutMs`, and timeout metadata used by status, artifacts, or historical readers remain separate. Historical files are readable as-is and are not rewritten.
+
+### Migration and rollback
+
+A direct caller that sends model-facing root `timeoutMs` or public `tasks[].timeoutMs` is rejected before launch with migration guidance. Separately, an executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, fails closed before child launch; remove only that retired envelope/plan-root field and restart as a new direct single or parallel run. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Historical records remain readable and are not rewritten. There is no compatibility switch that restores the retired public caller behavior; rolling back the package version is the only way to do that, subject to the normal isolated-profile safety guidance.
+
+To restore the bounded shared default, remove `execution.maxRunTimeMs` from the isolated extension config and reload/restart. To undo an explicit unbounded choice, replace `false` with a positive value or remove the key. To restore a canonical role's code-owned ceiling, remove its `maxExecutionTimeMs` entry from the applicable `subagents.agentOverrides.<role>` object; removing a custom agent's frontmatter field restores its 14400000 ms fallback. Preserve a backup before editing, keep unknown settings keys, and never edit the normal `~/.pi/agent` profile.
+
+The runtime capability gate drops a thinking level only when positive registry metadata rules it out: `reasoning: false`, a `null` level mapping, or a present map that omits `xhigh` or `max`. Missing capability metadata and unknown or unresolvable models fail open and still receive the suffix. Already-suffixed model arguments short-circuit before capability checks. Each drop emits a note naming the level and model.
 
 ### Child tool-policy translation
 
 The optional `tools` declaration has three distinct states, and the child CLI is enforced accordingly:
 
 - **Omitted:** no tool restriction flag is passed, so Pi's existing builtin and extension defaults remain available.
-- **Explicit empty or MCP-only:** all tools are disabled with `--no-tools`, except that runtime-required tools are added to an exact allowlist: `read` for lazy skills, `contact_supervisor` for an active supervisor bridge, and `structured_output` when structured output is requested. Entries are deduplicated in stable order.
+- **Explicit empty or MCP-only:** all tools are disabled with `--no-tools`, except that runtime-required tools are added to an exact allowlist: `read` for lazy skills and `contact_supervisor` for an active supervisor bridge. Entries are deduplicated in stable order.
 - **Named tools:** named entries become an exact `--tools` allowlist; extension paths are registered separately. A declaration containing only extension paths uses `--no-builtin-tools`, leaving those custom tools and runtime extension tools available.
 
-An agent may declare `supervisorBridge: false` to opt out of generic supervisor-bridge prompt injection and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
+An agent may declare `supervisorBridge: false` to opt out of generic native-supervisor prompt guidance and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
 
 A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
 
-The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
+The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. TLH does not execute, rewrite, or delete saved-chain artifacts; existing `.chain.md` and `.chain.json` files are left untouched. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
@@ -216,15 +264,25 @@ Control signals distinguish `active_long_running` from `needs_attention`. A chil
 
 Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's effective acceptance contract and provenance, and a resume-time override may only strengthen it. A later follow-up from a completed or failed run does not inherit the old contract.
 
+### Migration caveat
+
+Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, turn-budget behavior, or a retired execution timeout at an async-runner envelope/config root or plan root cannot be resumed under the reduced runtime. Remove only that retired envelope/plan-root timeout field and start a new direct single or parallel run instead. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Normal direct-plan durable pause/resume remains supported when the plan uses the current contract.
+
+### Context diagnostics are not inheritance
+
+Persisted `contextUsage`, `contextPressure`, and `contextPressureCrossedThresholds` are measured diagnostics for status, pressure notifications, and durable-resume safety. They are not caller-supplied context, do not carry a parent transcript into a child, and do not change fresh-child startup. `contextUsage.contextTokens` records the latest valid per-response measurement; `peakTokens` and `restoredTokens` are diagnostic history rather than inherited input.
+
+The fixed pressure bands (hardcoded, not configurable) are a warning at **80%** and critical at **95%** of the measured context window. A durable resume is blocked when the latest measured usage is at least 80%, and the guidance recommends a fresh narrowly scoped dispatch instead. Missing measurements are left missing rather than replaced with a guessed total.
+
 ### Native supervisor coordination
 
-A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. The native child runtime does not register or advertise an `intercom` fallback, and the parent supervisor tool has no legacy list/send/ask/reply actions. Separately installed external intercom tools remain user-owned and are not overridden when TLH primary-agent filtering is disabled.
+A child that needs a decision, structured interview, or meaningful progress update uses native `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. Custom/project agents with an active supervisor bridge receive neutral generic guidance; canonical packaged minor prompts already carry role-specific guidance and do not receive a duplicate block. This native supervisor channel and TLH's own status/lifecycle controls are the supported coordination surfaces; the removed external pi-intercom detach request/result/control integration is not supported. Separately installed user extensions remain untouched when TLH primary-agent filtering is disabled.
 
 ### Child protocol and display boundaries
 
-Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
+Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state. The optional debug artifact profile retains those protocol observations in the diagnostic child transcript for investigation. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail. Foreground compact failures retain only that tail; async runs always stream raw stderr to `output-N.log` regardless of artifact profile, and debug mode additionally records it in the diagnostic child transcript. An oversized stderr line is diagnostic overflow, not a second control protocol.
 
-Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
+Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
 
 ## Prompt-cache heartbeat
 
@@ -264,7 +322,7 @@ Install and update do **not** provision `heartbeat` keys. A `heartbeat` block ad
 
 ### Cost model
 
-Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and are not recorded as `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded attempts can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
+Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and recorded as `generation_cutoff`, not `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded generation cutoffs can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
 
 A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
 
@@ -299,7 +357,8 @@ Outcome values:
 |---|---|
 | `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
 | `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
-| `error` | Stream/auth error or generation cutoff before usable cache usage. Three consecutive errors disable heartbeat for the session. |
+| `error` | Genuine stream or auth/provider failure. Three consecutive `error` or `generation_cutoff` outcomes disable heartbeat for the session. |
+| `generation_cutoff` | Generation began before usable cache-usage evidence was observed, so the beat was aborted without waiting for later usage. It is distinct from a genuine provider/stream error but counts toward the same three-failure session breaker. |
 | `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
 | `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
 | `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |
@@ -329,7 +388,7 @@ Verdict meanings:
 
 Two automatic circuit breakers limit runaway spending:
 
-1. **Error breaker**: Three consecutive `error` outcomes permanently disable heartbeat for the session (`disabled` state). The error count resets on any successful `cache_read`.
+1. **Failure breaker**: Three consecutive `error` or `generation_cutoff` outcomes permanently disable heartbeat for the session (`disabled` state). The failure count resets on any successful `cache_read`. Once disabled, later async starts and idle rearms do not open new gaps or write zero-beat summaries; `/subagents-doctor` continues to report the enabled trial and `breakerDisabled` state.
 2. **Mismatch breaker**: A single `cache_write_mismatch` outcome (more than 256 cache-write tokens) closes the current gap to avoid further beat spend when the replay is causing a cache rewrite rather than the expected cache read. The session continues and the next gap (if one opens) starts fresh; this is the safeguard for the trial's unverified aborted-request TTL-refresh assumption.
 
 ### Doctor output
@@ -369,7 +428,31 @@ Fallbacks are filtered conservatively: a fallback is removed only when a complet
 
 A fallback retry occurs only for classified provider or transient failures, such as rate/usage limits, network or timeout errors, and the specific `stream ended without finish_reason` condition. Deterministic child-tool failures (for example, a command failing with an exit code) are not retried under another model.
 
-Debug artifacts are enabled by default. Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference. Inspect artifacts before retrying a failed or interrupted run; remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
+### Artifact profiles and recovery
+
+Per-child run artifacts are written by default using the **compact** profile. The caller-facing `artifacts` Boolean only controls whether those run artifacts are written; it does not choose diagnostic detail. Compact is intentionally the normal retention level:
+
+- **Retained:** supervisor-facing output (`*_output.md` when run artifacts are requested, and async `output-N.log`, whose raw stderr is retained in every profile), metadata (`*_meta.json`) when run artifacts are requested (compact metadata omits the full `task` text; debug and historical mode-less detached metadata retain it), plus lifecycle/status data and the canonical child session (`session.jsonl`) used for ordinary recovery.
+- **Omitted:** task input (`*_input.md`), the diagnostic child transcript (`*_transcript.jsonl`), and high-volume child-event projections. Compact `events.jsonl` can still contain bounded runner diagnostics such as stderr truncation/overflow notices or protocol-limit records, but it omits ordinary per-line stderr events; its existence is not a promise that a full child transcript was retained.
+- **Foreground failures:** only the bounded stderr tail is retained in result/status diagnostics. Compact foreground mode does not retain exact child protocol or raw stderr in the diagnostic transcript. Async `output-N.log` retains raw stderr for every profile; debug additionally provides the diagnostic child transcript.
+
+`subagent({ action: "status", id: "...", view: "transcript" })` is a **status transcript view**, not a read of the optional `_transcript.jsonl` diagnostic artifact. It renders retained output, recent status output, or the canonical session tail. The view can remain useful when compact mode has no diagnostic transcript. The canonical child session is the ordinary recovery record; use the status/session pointers to inspect or resume a paused or failed run.
+
+For a failure that requires the diagnostic child transcript or surrounding child protocol, set the human-owned profile before reproducing it. Compact foreground results retain only a bounded stderr tail; async `output-N.log` already retains raw stderr regardless of profile.
+
+```json
+{
+  "artifacts": {
+    "mode": "debug"
+  }
+}
+```
+
+Merge this block into the existing config; do not replace the file or remove existing `control`, `heartbeat`, or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update add only missing TLH defaults and preserve this human-owned value and other unrelated config keys.
+
+After editing `<agent-dir>/extensions/subagent/config.json`, reload the extension with `/reload` or stop and restart the `tlh` process before starting a new run. A run already underway retains its resolved policy. To undo the opt-in, remove the `artifacts` block (compact is the absent-key default) or set `"mode": "compact"`, then reload or restart. Existing files are not deleted by this change; inspect them first and remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
+
+Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference.
 
 ## Configuration and diagnostics
 
@@ -379,7 +462,9 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30); the parent-facing subagent tool description is always compact. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Existing values and unrelated keys survive. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The human-owned `execution.maxRunTimeMs` block in this file controls the shared run deadline; its default, valid values, precedence, and rollback are described in [Timeout ownership and execution ceilings](#timeout-ownership-and-execution-ceilings). The `artifacts` block in this file is also human-owned: its optional `mode` is `compact` by default and may be set to `debug` for a diagnostic reproduction. The model-facing `artifacts` parameter remains only the run-artifact switch; it cannot select this profile. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30), preserve `execution.maxRunTimeMs`, `artifacts.mode`, and unrelated values and keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+
+Parallel limits are configured here: `parallel.maxTasks` caps tasks per call (default `8`), and `parallel.concurrency` caps simultaneously running children (default `4`).
 
 Useful diagnostics:
 
@@ -387,6 +472,7 @@ Useful diagnostics:
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics.
 - `subagent({ action: "status", view: "fleet" })` reports active runs and transcript commands.
+- When parallel work is rejected or queued, inspect `parallel.maxTasks` and `parallel.concurrency` in the active config.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.
 
@@ -405,6 +491,8 @@ Credential failures are detected at dispatch time and also from completed runs, 
 Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
 
 ## Updating, migrating, and removing
+
+See the [migration caveat](#migration-caveat) for historical artifacts and paused runs, and [custom-agent/settings migration](custom-subagents.md#migrate-from-an-older-profile-definition) for cleanup steps.
 
 `tlh update` updates the first-party runtime together with the rest of TLH. It does not download or publish a standalone subagent package. On legacy profiles, install/update removes a retired external subagent package only when TLH can establish that it managed that package. Profiles with provenance preserve a matching manually owned entry; pre-provenance profiles treat the old default identities as TLH-managed for the one-time migration.
 

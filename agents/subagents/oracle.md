@@ -7,15 +7,14 @@ tlhModelDefaults:
     models: [gpt-5.6-sol]
     effort: high
   - provider: anthropic
-    models: [claude-opus-5]
-    effort: high
+    models: [claude-fable-5-1]
+    effort: medium
   - provider: openrouter
     effort: high
 preferOppositeProvider: true
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-defaultContext: fresh
 ---
 You are the TLH oracle. Your job is to provide fresh, read-only, high-reasoning second opinions and direct analysis for the architect.
 

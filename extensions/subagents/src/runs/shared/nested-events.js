@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
+import { RESULTS_DIR, TEMP_ROOT_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./lifecycle-state.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
 const REGISTRY_FILE = "registry.json";
@@ -157,33 +158,6 @@ function sanitizeCost(value) {
         ? { inputTokens, outputTokens, costUsd }
         : undefined;
 }
-function sanitizeTurnBudget(value) {
-    if (!value || typeof value !== "object")
-        return undefined;
-    const raw = value;
-    const maxTurns = clampNumber(raw.maxTurns);
-    const graceTurns = clampNumber(raw.graceTurns);
-    const turnCount = clampNumber(raw.turnCount);
-    const outcome = raw.outcome === "within-budget" ||
-        raw.outcome === "wrap-up-requested" ||
-        raw.outcome === "exceeded"
-        ? raw.outcome
-        : undefined;
-    if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome)
-        return undefined;
-    return {
-        maxTurns,
-        graceTurns,
-        turnCount,
-        outcome,
-        ...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined
-            ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) }
-            : {}),
-        ...(clampNumber(raw.exceededAtTurn) !== undefined
-            ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) }
-            : {}),
-    };
-}
 function sanitizeState(value, fallback) {
     return value === "queued" ||
         value === "running" ||
@@ -221,6 +195,8 @@ function sanitizeStep(input, depth) {
         ? raw.status
         : "pending";
     const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     return {
         agent,
@@ -250,13 +226,10 @@ function sanitizeStep(input, depth) {
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget)
-            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-            : {}),
-        ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-        ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(parseContextUsageDiagnostics(raw.contextUsage)
             ? { contextUsage: parseContextUsageDiagnostics(raw.contextUsage) }
             : {}),
@@ -295,6 +268,8 @@ export function sanitizeSummary(input, depth = 0) {
         : undefined;
     const totalTokens = sanitizeTokenUsage(raw.totalTokens);
     const totalCost = sanitizeCost(raw.totalCost);
+    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     return {
         id: raw.id,
@@ -319,15 +294,6 @@ export function sanitizeSummary(input, depth = 0) {
             : {}),
         ...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
         ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-        ...(stringValue(raw.intercomTarget, 256)
-            ? { intercomTarget: stringValue(raw.intercomTarget, 256) }
-            : {}),
-        ...(stringValue(raw.ownerIntercomTarget, 256)
-            ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
-            : {}),
-        ...(stringValue(raw.leafIntercomTarget, 256)
-            ? { leafIntercomTarget: stringValue(raw.leafIntercomTarget, 256) }
-            : {}),
         ...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
             ? { ownerState: raw.ownerState }
             : {}),
@@ -337,9 +303,12 @@ export function sanitizeSummary(input, depth = 0) {
         ...(stringValue(raw.capabilityToken, 128)
             ? { capabilityToken: stringValue(raw.capabilityToken, 128) }
             : {}),
-        ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain"
+        ...(raw.mode === "single" || raw.mode === "parallel"
             ? { mode: raw.mode }
-            : {}),
+            :
+                raw.mode === "chain"
+                    ? { mode: "single" }
+                    : {}),
         ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
         ...(Array.isArray(raw.agents)
             ? {
@@ -351,9 +320,6 @@ export function sanitizeSummary(input, depth = 0) {
             : {}),
         ...(clampNumber(raw.currentStep) !== undefined
             ? { currentStep: clampNumber(raw.currentStep) }
-            : {}),
-        ...(clampNumber(raw.chainStepCount) !== undefined
-            ? { chainStepCount: clampNumber(raw.chainStepCount) }
             : {}),
         ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
             ? { activityState: raw.activityState }
@@ -379,16 +345,13 @@ export function sanitizeSummary(input, depth = 0) {
         ...(clampNumber(raw.lastUpdate) !== undefined
             ? { lastUpdate: clampNumber(raw.lastUpdate) }
             : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
         ...(clampNumber(raw.deadlineAt) !== undefined
             ? { deadlineAt: clampNumber(raw.deadlineAt) }
             : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget)
-            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-            : {}),
-        ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-        ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(steps && steps.length > 0 ? { steps } : {}),
         ...(depth < MAX_DEPTH && Array.isArray(raw.children)
@@ -889,10 +852,9 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         asyncDir,
         ...(status.pid ? { pid: status.pid } : {}),
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
-        mode: status.mode ?? fallback.mode,
+        mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
         state: nestedStateFromAsyncState(status.state),
         ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-        ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
         ...(status.activityState ? { activityState: status.activityState } : {}),
         ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
         ...(status.currentTool ? { currentTool: status.currentTool } : {}),
@@ -903,14 +865,13 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
         ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
         ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
+        ...(status.activeRuntimeMs !== undefined ? { activeRuntimeMs: status.activeRuntimeMs } : {}),
+        ...(status.activeRuntimeCheckpointAt !== undefined
+            ? { activeRuntimeCheckpointAt: status.activeRuntimeCheckpointAt }
+            : {}),
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
-        ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-        ...(status.turnBudgetExceeded !== undefined
-            ? { turnBudgetExceeded: status.turnBudgetExceeded }
-            : {}),
-        ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
         ...(status.error ? { error: status.error } : {}),
         ...(status.startedAt !== undefined
             ? { startedAt: status.startedAt }
@@ -944,16 +905,15 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                         ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
                         ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
                         ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                        ...(step.activeRuntimeMs !== undefined
+                            ? { activeRuntimeMs: step.activeRuntimeMs }
+                            : {}),
+                        ...(step.activeRuntimeCheckpointAt !== undefined
+                            ? { activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt }
+                            : {}),
                         ...(step.error ? { error: step.error } : {}),
                         ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                         ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
-                        ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-                        ...(step.turnBudgetExceeded !== undefined
-                            ? { turnBudgetExceeded: step.turnBudgetExceeded }
-                            : {}),
-                        ...(step.wrapUpRequested !== undefined
-                            ? { wrapUpRequested: step.wrapUpRequested }
-                            : {}),
                         ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
                         ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
                         ...(step.contextPressureCrossedThresholds

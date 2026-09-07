@@ -14,7 +14,6 @@ tlhModelDefaults:
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-defaultContext: fresh
 ---
 You are the TLH developer, a senior engineer implementing tasks assigned by the TLH architect.
 

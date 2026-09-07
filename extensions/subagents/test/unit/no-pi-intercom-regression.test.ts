@@ -1,14 +1,4 @@
-/**
- * Regression guard: native supervisor channel and control-notice delivery
- * must work without pi-intercom installed.
- *
- * TLH is retiring pi-intercom; this file asserts:
- *   (a) contact_supervisor reaches the parent pending/status surface
- *       when no external 'intercom' tool is present.
- *   (b) needs_attention notices delivered via handleSubagentControlNotice
- *       do NOT emit subagent:control-intercom or subagent:result-intercom
- *       events on the pi event bus.
- */
+/** Regression guards for native supervisor and control-notice delivery. */
 
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -22,7 +12,7 @@ import {
   ensureSupervisorChannelDir,
   registerNativeSupervisorClient,
   resolveSupervisorChannelDir,
-} from "../../src/intercom/native-supervisor-channel.ts";
+} from "../../src/supervisor/native-supervisor-channel.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
@@ -31,11 +21,6 @@ import {
   SUBAGENT_RUN_ID_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { SUBAGENT_CONTROL_INTERCOM_EVENT } from "../../src/shared/types.ts";
-// Legacy event name kept as a test-local literal for the no-emission regression guard.
-// Do not re-add this constant to production types or result-intercom — the delivery/receipt
-// pipeline it belonged to has been permanently removed.
-const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
@@ -221,7 +206,7 @@ describe("no-pi-intercom regression guard", () => {
       process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = orchestratorSessionId;
       process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 
-      // Child side: mock pi with NO 'intercom' tool pre-installed
+      // Child side starts without any pre-installed tools.
       const childTools = new Map<
         string,
         {
@@ -248,15 +233,13 @@ describe("no-pi-intercom regression guard", () => {
         getSessionName: () => "child-session",
       };
 
-      // Register native supervisor client — no intercom tool present
+      // Register the native supervisor client.
       registerNativeSupervisorClient(childPi as never);
 
       assert.deepEqual([...childTools.keys()], ["contact_supervisor"]);
 
-      // Parent side: real native supervisor channel scoped to the SAME
-      // orchestrator session id the child env points at. No intercom tool
-      // pre-installed here either; sendMessage is a recorder no-op for the
-      // proactive parent notice channel.start()/polling may deliver.
+      // Parent side: native supervisor channel scoped to the same orchestrator
+      // session id the child env points at.
       const parentTools = new Map<
         string,
         {
@@ -370,15 +353,12 @@ describe("no-pi-intercom regression guard", () => {
     });
   });
 
-  // ── (b) needs_attention notice emits no intercom events ──────────────────
+  // ── (b) needs_attention notice delivery ──────────────────────────────────
 
-  describe("needs_attention notice intercom-independence", () => {
-    it("delivers notice via pi.sendMessage without emitting any *-intercom events on the event bus", () => {
+  describe("needs_attention notice delivery", () => {
+    it("delivers notices via pi.sendMessage", () => {
       const state = makeControlState();
 
-      // Event bus that records emitted events
-      const emittedEvents: Array<{ event: string; data: unknown }> = [];
-      const listeners = new Map<string, Set<(payload: unknown) => void>>();
       const sent: Array<{ message: unknown; options: unknown }> = [];
 
       const nudges: Array<{ text: string; options: unknown }> = [];
@@ -390,18 +370,6 @@ describe("no-pi-intercom regression guard", () => {
         sendUserMessage(text: string, options?: unknown) {
           nudges.push({ text, options });
         },
-        events: {
-          on(event: string, handler: (payload: unknown) => void) {
-            const handlers = listeners.get(event) ?? new Set();
-            handlers.add(handler);
-            listeners.set(event, handlers);
-            return () => handlers.delete(handler);
-          },
-          emit(event: string, data: unknown) {
-            emittedEvents.push({ event, data });
-            for (const handler of listeners.get(event) ?? []) handler(data);
-          },
-        },
       };
 
       handleSubagentControlNotice({
@@ -412,30 +380,10 @@ describe("no-pi-intercom regression guard", () => {
         foregroundDelayMs: 20,
       });
 
-      // The control notice must have been delivered via sendMessage…
       assert.equal(
         sent.length,
         1,
         `Expected exactly one delivered control notice; got ${sent.length}`,
-      );
-
-      // …but must NOT have produced any intercom event-bus emissions.
-      const controlIntercomEmissions = emittedEvents.filter(
-        (e) => e.event === SUBAGENT_CONTROL_INTERCOM_EVENT,
-      );
-      const resultIntercomEmissions = emittedEvents.filter(
-        (e) => e.event === LEGACY_RESULT_INTERCOM_EVENT,
-      );
-
-      assert.equal(
-        controlIntercomEmissions.length,
-        0,
-        `Expected zero ${SUBAGENT_CONTROL_INTERCOM_EVENT} emissions; got ${controlIntercomEmissions.length}`,
-      );
-      assert.equal(
-        resultIntercomEmissions.length,
-        0,
-        `Expected zero ${LEGACY_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
       );
     });
   });

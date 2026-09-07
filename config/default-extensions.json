@@ -9,7 +9,7 @@
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.3",
+    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.8",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {

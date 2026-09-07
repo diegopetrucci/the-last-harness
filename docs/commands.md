@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens the native selector; Enter is session-only and Ctrl+S saves the default; see [model selection](models.md#model-selection)) |
+| `/model` | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model selection](models.md#model-selection)) |
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
@@ -65,7 +65,7 @@ These commands are registered by the TLH extension bundled with this profile.
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
-`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.84.4's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
+`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.85.1's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
 
 With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
 
@@ -124,7 +124,7 @@ For each subagent dispatch, the effective choices are resolved from highest to l
 3. When the dispatch has no explicit model, stored `/subagent-settings` values are resolved before bundled defaults. An available stored model pin is used, and a stored effort is applied when supported. A stored `model: false` means inherit the current session model and then apply the stored effort. A stored effort without a model pin applies to the resolved role model.
 4. With no applicable stored override, TLH uses the bundled provider-aware role defaults. `code-reviewer`, `oracle`, and `contrarian` prefer an available opposite provider for independence; the other bundled roles generally follow the current session provider when TLH injects defaults.
 
-A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" for <role> is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime combines caller-supplied `fallbackModels` with fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
+A saved model pin that is no longer available is not silently replaced: TLH warns that `TLH saved minor-agent model override "<model>" for <role> is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set <role> model <provider/id> or clear it with /subagent-settings reset <role> model.` During dispatch, the subagents runtime uses fallback models from the role's saved `subagents.agentOverrides.<role>.fallbackModels` field or bundled agent frontmatter, together with TLH-generated provider-aware candidates. Caller-supplied `fallbackModels` are no longer accepted. Because TLH cannot observe every runtime fallback source, this warning does not claim that a dispatch will fail closed.
 
 Stored effort overrides are capability-checked on each dispatch. When a recognized stored value is unsupported, TLH neutralizes it with the provider-resolved bundled level when possible and warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using bundled defaults for this run.` If the bundled level is unavailable but `off` is supported, it warns `TLH stored minor-agent effort "<level>" is not supported by <provider/id>; using explicit off for this run.` A nonstandard stored value uses the same two outcomes: `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using bundled defaults for this run.` or `TLH ignored unsupported stored minor-agent effort "<value>" for <role>; using explicit off for this run.`
 
@@ -214,9 +214,9 @@ The report is built from sanitized session analysis only. It omits raw transcrip
 
 ## Model-facing subagent tools
 
-TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports only direct single or parallel execution, in the foreground by default or through TLH-tracked background mode with `async: true`, plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Each child starts a fresh session; caller `context`, agent `defaultContext`, and turn budgets are not supported. TLH-tracked async work uses a detached OS child process managed by TLH, not the removed external pi-intercom detach request/result/control integration. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
 
-The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-context/user/project-scope isolation, async control and durable resume behavior, acceptance, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
+The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-session/user/project-scope isolation, async control and durable resume behavior, native `contact_supervisor`, tool budgets, timeouts, diagnostics, acceptance, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
 
 ## Project custom subagents
 

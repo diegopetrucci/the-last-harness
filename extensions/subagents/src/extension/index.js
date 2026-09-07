@@ -5,9 +5,8 @@ import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-wo
 import { Text, isKeyRelease, matchesKey, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
 import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, resolveArtifactConfig, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
-import { cleanupOldChainDirs } from "../shared/settings.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
@@ -22,13 +21,14 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
+import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
 import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
+import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
-import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 export { loadConfig } from "./config.js";
 function isCurrentHeartbeatEvent(data, currentSessionId) {
@@ -221,16 +221,17 @@ export default function registerSubagentExtension(pi) {
     }
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
-    cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
+    const artifactConfig = resolveArtifactConfig(config.artifacts);
+    const executionPolicy = resolveExecutionPolicy(config.execution);
     const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
     let heartbeatSessionCtx = null;
     const hbWiring = createHeartbeatWiring(pi, config, {
         getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
     });
     const tempArtifactsDir = getArtifactsDir(null);
-    cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+    cleanupAllArtifactDirs(artifactConfig.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
     const state = {
         baseCwd: "",
@@ -305,6 +306,8 @@ export default function registerSubagentExtension(pi) {
         pi,
         state,
         config,
+        artifactConfig,
+        executionPolicy,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,
@@ -555,7 +558,7 @@ export default function registerSubagentExtension(pi) {
         try {
             const sessionFile = ctx.sessionManager.getSessionFile();
             if (sessionFile) {
-                cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+                cleanupOldArtifacts(getArtifactsDir(sessionFile), artifactConfig.cleanupDays);
             }
         }
         catch {

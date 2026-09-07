@@ -139,10 +139,6 @@ function validCapturedAgentConfig(value) {
         value.thinking !== false &&
         typeof value.thinking !== "string")
         return false;
-    if (value.defaultContext !== undefined &&
-        value.defaultContext !== "fresh" &&
-        value.defaultContext !== "fork")
-        return false;
     if (value.acceptanceRole !== undefined &&
         value.acceptanceRole !== "read-only" &&
         value.acceptanceRole !== "writer")

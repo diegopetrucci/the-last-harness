@@ -6,7 +6,7 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * Parse YAML frontmatter from agent/chain files.
+ * Parse YAML frontmatter from agent files.
  * Handles both flat (key: value) and nested block (key: \n  sub: val) values.
  * Block values are stored as single strings with embedded newlines.
  * The indentation of the block content is preserved relative to the key.

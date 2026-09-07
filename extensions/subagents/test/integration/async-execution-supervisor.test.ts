@@ -14,7 +14,6 @@ import {
   createTempDir,
   events,
   makeAgent,
-  makeAgentConfigs,
   makeMinimalCtx,
   removeTempDir,
 } from "../support/helpers.ts";
@@ -40,7 +39,7 @@ import {
   type AsyncStatusPayload,
   RESULTS_DIR,
   createSubagentExecutor,
-  executeAsyncChain,
+  executeAsyncParallel,
   executeAsyncSingle,
   readAsyncPayload,
   readMockPiArgs,
@@ -164,7 +163,6 @@ describe("async execution utilities", () => {
           : undefined,
     },
     async () => {
-      const resumeTimeoutMs = scaleTestTimeout(1_000);
       const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
       const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
       const originalGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
@@ -268,7 +266,6 @@ describe("async execution utilities", () => {
             action: "resume",
             id,
             message: "Supervisor replied: continue.",
-            timeoutMs: resumeTimeoutMs,
           },
           new AbortController().signal,
           undefined,
@@ -291,7 +288,7 @@ describe("async execution utilities", () => {
           [SUBAGENT_CHILD_AGENT_ENV]: "developer",
           [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
         });
-        assert.equal(continuationPayload.timeoutMs, resumeTimeoutMs);
+        assert.equal(continuationPayload.timeoutMs, undefined);
         assert.ok((continuationPayload.results[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         const continuationStatus = JSON.parse(
           fs.readFileSync(
@@ -303,7 +300,11 @@ describe("async execution utilities", () => {
             "utf-8",
           ),
         ) as AsyncStatusPayload;
-        assert.equal(continuationStatus.steps?.[0]?.timeoutMs, resumeTimeoutMs);
+        assert.ok(
+          typeof continuationStatus.steps?.[0]?.timeoutMs === "number" &&
+            continuationStatus.steps[0].timeoutMs > 0 &&
+            continuationStatus.steps[0].timeoutMs <= (canonicalDeveloper.maxExecutionTimeMs ?? 0),
+        );
         assert.ok((continuationStatus.steps?.[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         assert.notEqual(continuationPayload.results[0]?.acceptance?.status, "skipped");
         assert.equal(continuationPayload.results[0]?.acceptance?.status, "checked");
@@ -350,7 +351,10 @@ describe("async execution utilities", () => {
           steps: [
             {
               jsonl: [
-                events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need input",
+                }),
               ],
             },
           ],
@@ -358,7 +362,7 @@ describe("async execution utilities", () => {
         });
         executeAsyncSingle!(id, {
           agent: "worker",
-          task: "Ask on intercom and wait.",
+          task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: {
@@ -583,6 +587,15 @@ describe("async execution utilities", () => {
         await waitForAsyncState(asyncDir, "paused");
         const pausedPayload = await readAsyncPayload(id);
         assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
+        const resumeTarget = resolveAsyncResumeTarget({ id });
+        assert.equal(resumeTarget.kind, "revive");
+        assert.equal(resumeTarget.state, "paused");
+        assert.equal(resumeTarget.agent, "worker");
+        assert.equal(resumeTarget.index, 0);
+        assert.equal(resumeTarget.pauseKind, "awaiting_supervisor");
+        assert.equal(resumeTarget.successfulCompletion, false);
+        assert.ok(resumeTarget.activeRuntimeMs !== undefined);
+        assert.equal(resumeTarget.continuationAcceptance?.level, "checked");
         mockPi.onCall({ output: "resumed unchanged after reload" });
         const reloaded = makeAsyncExecutor([makeAgent("worker")]);
         const resumed = await reloaded.execute(
@@ -625,7 +638,10 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Need input",
+              }),
             ],
           },
         ],
@@ -633,7 +649,7 @@ describe("async execution utilities", () => {
       });
       executeAsyncSingle!(id, {
         agent: "worker",
-        task: "Ask on intercom and wait.",
+        task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -696,7 +712,10 @@ describe("async execution utilities", () => {
           steps: [
             {
               jsonl: [
-                events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need input",
+                }),
               ],
             },
           ],
@@ -704,7 +723,7 @@ describe("async execution utilities", () => {
         });
         executeAsyncSingle!(id, {
           agent: "worker",
-          task: "Ask on intercom and wait.",
+          task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: {
@@ -770,7 +789,10 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Need input",
+              }),
             ],
           },
         ],
@@ -778,7 +800,7 @@ describe("async execution utilities", () => {
       });
       executeAsyncSingle!(id, {
         agent: "worker",
-        task: "Ask on intercom and wait.",
+        task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -1332,16 +1354,16 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "send", to: "main", message: "FYI" }),
-              events.toolResult("intercom", "sent"),
-              events.toolEnd("intercom"),
+              events.toolStart("contact_supervisor", { reason: "progress_update", message: "FYI" }),
+              events.toolResult("contact_supervisor", "sent"),
+              events.toolEnd("contact_supervisor"),
             ],
           },
-          { jsonl: [events.assistantMessage("intercom update finished")] },
+          { jsonl: [events.assistantMessage("native update finished")] },
         ],
       });
-      const intercomId = `async-non-blocking-intercom-${Date.now().toString(36)}`;
-      executeAsyncSingle!(intercomId, {
+      const nativeUpdateId = `async-non-blocking-native-${Date.now().toString(36)}`;
+      executeAsyncSingle!(nativeUpdateId, {
         agent: "worker",
         task: "Provide a short non-blocking status update only. Do not edit files.",
         agentConfig: makeAgent("worker", { acceptanceRole: "read-only" }),
@@ -1358,14 +1380,24 @@ describe("async execution utilities", () => {
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
-      const intercomPayload = (await readAsyncPayload(intercomId)) as any;
-      assert.equal(intercomPayload.state, "complete");
-      assert.equal(intercomPayload.pause, undefined);
-      const existingPids = new Set(startedMockPiPids(mockPi));
+      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
+      assert.equal(nativeUpdatePayload.state, "complete");
+      assert.equal(nativeUpdatePayload.pause, undefined);
+    },
+  );
 
-      const cohortId = `async-supervisor-cohort-${Date.now().toString(36)}`;
+  it(
+    "pauses both children of a detached parallel cohort when one requests supervisor input",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process supervisor pause delivery unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const existingPids = new Set(startedMockPiPids(mockPi));
+      const cohortId = `async-supervisor-parallel-cohort-${Date.now().toString(36)}`;
       let runnerPid: number | undefined;
-      mockPi.onCall({ matchArgIncludes: "complete setup", output: "setup complete" });
       mockPi.onCall({
         matchArgIncludes: "ask supervisor",
         steps: [
@@ -1386,18 +1418,13 @@ describe("async execution utilities", () => {
         delay: 2_000,
         jsonl: [events.assistantMessage("parallel sibling should be interrupted")],
       });
-      const started = executeAsyncChain!(cohortId, {
-        chain: [
-          { agent: "a", task: "complete setup" },
-          {
-            parallel: [
-              { agent: "b", task: "ask supervisor" },
-              { agent: "c", task: "work in parallel" },
-            ],
-          },
-          { agent: "d", task: "must remain pending" },
+      const started = executeAsyncParallel!(cohortId, {
+        tasks: [
+          { agent: "requester", task: "ask supervisor" },
+          { agent: "sibling", task: "work in parallel" },
         ],
-        agents: makeAgentConfigs(["a", "b", "c", "d"]),
+        concurrency: 2,
+        agents: [makeAgent("requester"), makeAgent("sibling")],
         ctx: {
           pi: {
             events: {
@@ -1431,26 +1458,26 @@ describe("async execution utilities", () => {
       assert.equal(started.isError, undefined);
       const asyncDir = path.join(ASYNC_DIR, cohortId);
       assert.ok(runnerPid, "expected async runner pid from started event");
-      await waitForMockPiCall(mockPi, 4);
+      await waitForMockPiCall(mockPi, 1);
       const childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
-      assert.equal(childPids.length, 3);
+      assert.equal(childPids.length, 2);
       await waitForAsyncState(asyncDir, "paused");
       const status = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as any;
       assert.deepEqual(
         status.steps?.map((step: any) => step.status),
-        ["complete", "paused", "paused", "pending"],
+        ["paused", "paused"],
       );
       const requesterIndex =
         status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
       assert.ok(requesterIndex >= 0);
-      const cohortIndex =
+      const siblingIndex =
         status.steps?.findIndex(
           (step: any, index: number) =>
             index !== requesterIndex && step.pause?.kind === "cohort_pause",
         ) ?? -1;
-      assert.ok(cohortIndex >= 0);
+      assert.ok(siblingIndex >= 0);
       assert.equal(status.pid, undefined);
       await readAsyncPayload(cohortId);
       await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);

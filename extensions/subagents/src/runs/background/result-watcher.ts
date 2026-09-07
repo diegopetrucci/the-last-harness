@@ -4,17 +4,17 @@ import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
-  type IntercomEventBus,
+  type SubagentEventBus,
   type AsyncStatus,
   type NestedRunSummary,
-  type SubagentResultIntercomChild,
+  type SubagentResultChild,
   type SubagentState,
 } from "../../shared/types.ts";
 import {
   attachNestedChildrenToResultChildren,
   compactNestedResultChildren,
   resolveSubagentResultStatus,
-} from "../../intercom/result-intercom.ts";
+} from "../../shared/result-formatting.ts";
 import {
   lifecycleContinuationForIndex,
   withLifecycleStatusLock,
@@ -64,7 +64,6 @@ type ResultFileChild = {
   interrupted?: boolean;
   sessionFile?: string;
   artifactPaths?: { outputPath?: string };
-  intercomTarget?: string;
   children?: unknown;
 };
 
@@ -82,7 +81,6 @@ type ResultFileData = {
   cwd?: string;
   sessionFile?: string;
   asyncDir?: string;
-  intercomTarget?: string;
   lifecycleArtifactVersion?: number;
 };
 
@@ -253,7 +251,7 @@ function resolvePausedArtifactDecision(data: ResultFileData): PausedArtifactDeci
 }
 
 export function createResultWatcher(
-  pi: { events: IntercomEventBus },
+  pi: { events: SubagentEventBus },
   state: SubagentState,
   resultsDir: string,
   completionTtlMs: number,
@@ -357,7 +355,7 @@ export function createResultWatcher(
           ];
       const normalizedChildren = attachNestedChildrenToResultChildren(
         runId,
-        resultChildren.map((result = {}, arrayIndex): SubagentResultIntercomChild => {
+        resultChildren.map((result = {}, arrayIndex): SubagentResultChild => {
           const baseOutput = result.output ?? data.summary;
           const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
           const output = hasRealOutput ? baseOutput : "(no output)";
@@ -381,7 +379,6 @@ export function createResultWatcher(
             ...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath)
               ? { sessionPath }
               : {}),
-            ...(result.intercomTarget ? { intercomTarget: result.intercomTarget } : {}),
             ...(childNestedChildren ? { children: childNestedChildren } : {}),
           };
         }),

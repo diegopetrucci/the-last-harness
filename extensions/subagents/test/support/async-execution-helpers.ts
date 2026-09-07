@@ -64,7 +64,7 @@ export interface MockPiCallRecord {
 interface AsyncExecutionModule {
   isAsyncAvailable(): boolean;
   executeAsyncSingle(id: string, params: Record<string, unknown>): AsyncExecutionResult;
-  executeAsyncChain(id: string, params: Record<string, unknown>): AsyncExecutionResult;
+  executeAsyncParallel(id: string, params: Record<string, unknown>): AsyncExecutionResult;
 }
 
 interface UtilsModule {
@@ -108,7 +108,7 @@ const controlChannelMod = await tryImport<ControlChannelModule>(
 
 export const isAsyncAvailable = asyncMod.isAsyncAvailable;
 export const executeAsyncSingle = asyncMod.executeAsyncSingle;
-export const executeAsyncChain = asyncMod.executeAsyncChain;
+export const executeAsyncParallel = asyncMod.executeAsyncParallel;
 export const readStatus = utils.readStatus;
 export const ASYNC_DIR = typesMod.ASYNC_DIR;
 export const RESULTS_DIR = typesMod.RESULTS_DIR;

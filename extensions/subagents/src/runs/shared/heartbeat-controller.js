@@ -149,6 +149,7 @@ export function createHeartbeatController(config, deps = {}) {
         const beatIndex = capturedBeatIndex;
         const model = currentCapture.model;
         let outcome = "error";
+        let forcedOutcome;
         let classifyFromUsage = true;
         let usage;
         let estCostUsd;
@@ -242,7 +243,11 @@ export function createHeartbeatController(config, deps = {}) {
                     if (isUsageBearing(eventUsage)) {
                         usage = eventUsage;
                     }
-                    if (eventUsage.cacheWrite <= CACHE_WRITE_MISMATCH_THRESHOLD) {
+                    if (eventUsage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) {
+                        forcedOutcome = "cache_write_mismatch";
+                    }
+                    else {
+                        forcedOutcome = "generation_cutoff";
                         classifyFromUsage = false;
                     }
                     publishBeatAccounting();
@@ -260,7 +265,10 @@ export function createHeartbeatController(config, deps = {}) {
                     break;
                 }
             }
-            if (classifyFromUsage && usage) {
+            if (forcedOutcome) {
+                outcome = forcedOutcome;
+            }
+            else if (classifyFromUsage && usage) {
                 outcome = classifyObservedUsage(usage, classifyFromUsage);
             }
             try {
@@ -273,7 +281,7 @@ export function createHeartbeatController(config, deps = {}) {
             publishBeatAccounting();
         }
         catch {
-            outcome = "error";
+            outcome = forcedOutcome ?? "error";
         }
         finally {
             if (beatAbortController === abortCtrl) {
@@ -316,6 +324,19 @@ export function createHeartbeatController(config, deps = {}) {
         if (destroyed)
             return;
         if (state.gap?.gapId !== capturedGapId || gapGeneration !== capturedGeneration) {
+            if (state.gap === null &&
+                gapGeneration === capturedGeneration &&
+                (outcome === "cache_read" || outcome === "error" || outcome === "generation_cutoff")) {
+                completeBeat(state, outcome, now());
+                deps.onBeatResult?.({
+                    gapId,
+                    outcome,
+                    usage,
+                    estCostUsd,
+                    model,
+                    sessionDisabled: state.disabled,
+                });
+            }
             return;
         }
         const result = completeBeat(state, outcome, now());
@@ -332,7 +353,7 @@ export function createHeartbeatController(config, deps = {}) {
             cancelTimer();
             return;
         }
-        if (outcome === "error") {
+        if (outcome === "error" || outcome === "generation_cutoff") {
             rearmAfterSkip();
         }
         else {

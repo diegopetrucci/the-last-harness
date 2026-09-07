@@ -1,6 +1,6 @@
 /**
  * Integration tests for async execution – interrupt, timeout, hard-kill,
- * turn budget, drain/cleanup, and relocated supervisor lifecycle tests.
+ * drain/cleanup, and relocated supervisor lifecycle tests.
  *
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
@@ -32,9 +32,8 @@ import {
   type AsyncResultPayload,
   type AsyncStatusPayload,
   RESULTS_DIR,
-  executeAsyncChain,
+  executeAsyncParallel,
   executeAsyncSingle,
-  mockAssistantMessage,
   readAsyncPayload,
   removeLifecycleLock,
   requestAsyncInterrupt,
@@ -84,30 +83,25 @@ describe("async execution utilities", () => {
       mockPi.onCall({ delay: 5_000, output: "two done" });
       mockPi.onCall({ delay: 5_000, output: "three done" });
       const id = `async-interrupt-parallel-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
+      executeAsyncParallel(id, {
+        tasks: [
           {
-            parallel: [
-              {
-                agent: "one",
-                task: "Wait",
-                acceptance: { level: "checked", criteria: ["Complete one"] },
-              },
-              {
-                agent: "two",
-                task: "Wait",
-                acceptance: { level: "checked", criteria: ["Complete two"] },
-              },
-              {
-                agent: "three",
-                task: "Wait",
-                acceptance: { level: "checked", criteria: ["Complete three"] },
-              },
-            ],
-            concurrency: 3,
+            agent: "one",
+            task: "Wait",
+            acceptance: { level: "checked", criteria: ["Complete one"] },
+          },
+          {
+            agent: "two",
+            task: "Wait",
+            acceptance: { level: "checked", criteria: ["Complete two"] },
+          },
+          {
+            agent: "three",
+            task: "Wait",
+            acceptance: { level: "checked", criteria: ["Complete three"] },
           },
         ],
-        resultMode: "parallel",
+        concurrency: 3,
         agents: [makeAgent("one"), makeAgent("two"), makeAgent("three")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -185,25 +179,20 @@ describe("async execution utilities", () => {
         const sessionRoot = path.join(tempDir, "sessions");
         fs.mkdirSync(sessionRoot, { recursive: true });
         const id = `async-interrupt-parallel-session-${Date.now().toString(36)}`;
-        executeAsyncChain(id, {
-          chain: [
+        executeAsyncParallel(id, {
+          tasks: [
             {
-              parallel: [
-                {
-                  agent: "alpha",
-                  task: "Wait",
-                  acceptance: { level: "checked", criteria: ["Complete alpha"] },
-                },
-                {
-                  agent: "beta",
-                  task: "Wait",
-                  acceptance: { level: "checked", criteria: ["Complete beta"] },
-                },
-              ],
-              concurrency: 2,
+              agent: "alpha",
+              task: "Wait",
+              acceptance: { level: "checked", criteria: ["Complete alpha"] },
+            },
+            {
+              agent: "beta",
+              task: "Wait",
+              acceptance: { level: "checked", criteria: ["Complete beta"] },
             },
           ],
-          resultMode: "parallel",
+          concurrency: 2,
           agents: [makeAgent("alpha"), makeAgent("beta")],
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-f1f2" },
           artifactConfig: {
@@ -295,25 +284,20 @@ describe("async execution utilities", () => {
         const sessionRoot = path.join(tempDir, "sessions-f3");
         fs.mkdirSync(sessionRoot, { recursive: true });
         const id = `async-result-only-revival-${Date.now().toString(36)}`;
-        executeAsyncChain(id, {
-          chain: [
+        executeAsyncParallel(id, {
+          tasks: [
             {
-              parallel: [
-                {
-                  agent: "alpha",
-                  task: "Wait",
-                  acceptance: { level: "checked", criteria: ["Complete alpha"] },
-                },
-                {
-                  agent: "beta",
-                  task: "Wait",
-                  acceptance: { level: "checked", criteria: ["Complete beta"] },
-                },
-              ],
-              concurrency: 2,
+              agent: "alpha",
+              task: "Wait",
+              acceptance: { level: "checked", criteria: ["Complete alpha"] },
+            },
+            {
+              agent: "beta",
+              task: "Wait",
+              acceptance: { level: "checked", criteria: ["Complete beta"] },
             },
           ],
-          resultMode: "parallel",
+          concurrency: 2,
           agents: [makeAgent("alpha"), makeAgent("beta")],
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-f3" },
           artifactConfig: {
@@ -385,63 +369,6 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "marks interrupted async chain steps as paused with skipped acceptance",
-    {
-      skip:
-        process.platform === "win32"
-          ? "cross-process interrupt delivery unreliable on Windows CI"
-          : undefined,
-    },
-    async () => {
-      mockPi.onCall({ delay: 5_000, output: "chain done" });
-      const id = `async-interrupt-chain-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          {
-            agent: "worker",
-            task: "Wait",
-            acceptance: { level: "checked", criteria: ["Complete chain step"] },
-          },
-        ],
-        resultMode: "chain",
-        agents: [makeAgent("worker")],
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-      });
-
-      await waitForMockPiCall(mockPi, 0);
-      const asyncDir = path.join(ASYNC_DIR, id);
-      const statusPath = path.join(asyncDir, "status.json");
-      const statusBeforeInterrupt = JSON.parse(
-        fs.readFileSync(statusPath, "utf-8"),
-      ) as AsyncStatusPayload & {
-        pid?: number;
-      };
-      deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
-
-      // 30s base: chain step interrupt; extra headroom for slow runners.
-      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
-      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.results[0]?.acceptance?.status, "skipped");
-      assert.equal(status.steps?.[0]?.status, "paused");
-      assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
-      assert.match(eventLog, /"type":"subagent.step.paused"/);
-    },
-  );
-
-  it(
     "enforces mixed async child ceilings independently",
     {
       skip:
@@ -453,17 +380,12 @@ describe("async execution utilities", () => {
       mockPi.onCall({ matchArgIncludes: "Short async ceiling", delay: 5_000 });
       mockPi.onCall({ matchArgIncludes: "Long async ceiling", output: "long ceiling completed" });
       const id = `async-mixed-ceilings-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          {
-            parallel: [
-              { agent: "short", task: "Short async ceiling" },
-              { agent: "long", task: "Long async ceiling" },
-            ],
-            concurrency: 2,
-          },
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "short", task: "Short async ceiling" },
+          { agent: "long", task: "Long async ceiling" },
         ],
-        resultMode: "parallel",
+        concurrency: 2,
         agents: [
           makeAgent("short", { maxExecutionTimeMs: 100 }),
           makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
@@ -514,8 +436,70 @@ describe("async execution utilities", () => {
     },
   );
 
+  it("accumulates active runtime across async fallback attempts", async () => {
+    const firstAttemptDelayMs = 500;
+    mockPi.onCall({
+      matchArgIncludes: "openai/gpt-5-mini",
+      delay: firstAttemptDelayMs,
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "temporary provider failure" }],
+            model: "openai/gpt-5-mini",
+            errorMessage: "rate limit exceeded",
+            stopReason: "error",
+            usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+          },
+        },
+      ],
+      exitCode: 1,
+    });
+    mockPi.onCall({
+      matchArgIncludes: "anthropic/claude-sonnet-4",
+      output: "Recovered on fallback",
+    });
+    const id = `async-fallback-runtime-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Retry this task after a temporary provider failure.",
+      agentConfig: makeAgent("worker", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+        maxExecutionTimeMs: 5_000,
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+
+    const payload = await readAsyncPayload(id);
+    const result = payload.results[0];
+    assert.equal(payload.state, "complete");
+    assert.equal(result?.model, "anthropic/claude-sonnet-4");
+    assert.equal(result?.modelAttempts?.length, 2);
+    assert.equal(result?.modelAttempts?.[0]?.success, false);
+    assert.equal(result?.modelAttempts?.[1]?.success, true);
+    // A fallback must retain the first failed attempt's active segment rather
+    // than charging only the successful retry.
+    assert.ok(
+      (result?.activeRuntimeMs ?? 0) >= firstAttemptDelayMs - 50,
+      `expected fallback runtime to include the failed attempt, got ${result?.activeRuntimeMs}ms`,
+    );
+    assert.equal(mockPi.callCount(), 2);
+  });
+
   it(
-    "marks async parallel runs that exceed timeoutMs as timed out",
+    "freezes async step runtime before timeout cleanup",
     {
       skip:
         process.platform === "win32"
@@ -523,27 +507,71 @@ describe("async execution utilities", () => {
           : undefined,
     },
     async () => {
-      // Invariant: timeoutMs must stay strictly below childDelayMs (run times out
-      // before children finish), and both must scale together under
-      // TLH_TEST_TIMEOUT_SCALE so the ~30% ratio is preserved on loaded CI runners.
-      // This guarantees both children are spawned and recorded before the deadline
-      // fires, while still ensuring the run exceeds its own deadline.
+      // stepCeilingMs must scale with TLH_TEST_TIMEOUT_SCALE so that the child
+      // process is reliably spawned and recorded before the deadline fires on
+      // loaded CI runners (where TLH_TEST_TIMEOUT_SCALE=3). The mock delay
+      // stays well above stepCeilingMs at every scale so the child is still
+      // alive when the step deadline fires and ignoreSigterm exercises the
+      // hard-kill path. The bound below is relative to the ceiling:
+      //   pass case:  runtimeMs ≈ stepCeilingMs  (logical clock frozen at deadline)
+      //   fail case:  runtimeMs ≈ stepCeilingMs + CHILD_PROTOCOL_HARD_KILL_GRACE_MS (3000)
+      // A margin of 1500 ms sits clearly between 0 and 3000 at both scale 1 and scale 3.
+      const stepCeilingMs = scaleTestTimeout(1_000);
+      mockPi.onCall({ delay: scaleTestTimeout(10_000), ignoreSigterm: true, output: "too late" });
+      const id = `async-step-timeout-runtime-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [{ agent: "worker", task: "Run until the step ceiling." }],
+        agents: [makeAgent("worker", { maxExecutionTimeMs: stepCeilingMs })],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+      await waitForMockPiCall(mockPi, 0);
+
+      const payload = await readAsyncPayload(id);
+      const runtimeMs = payload.results[0]?.activeRuntimeMs ?? 0;
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.results[0]?.timedOut, true);
+      assert.ok(
+        runtimeMs < stepCeilingMs + 1_500,
+        `timeout cleanup must not consume logical runtime; expected < ${stepCeilingMs + 1_500}ms (ceiling ${stepCeilingMs}ms + 1500ms margin), observed ${runtimeMs}ms`,
+      );
+    },
+  );
+
+  it(
+    "marks async parallel runs that exceed the shared run deadline as timed out",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout signal delivery intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      // Invariant: the shared run deadline must stay strictly below childDelayMs
+      // (the run times out before children finish), and both must scale together
+      // under TLH_TEST_TIMEOUT_SCALE so the ~30% ratio is preserved on loaded CI
+      // runners. This guarantees both children are spawned and recorded before the
+      // deadline fires, while still ensuring the run exceeds its own deadline.
       const childDelayMs = scaleTestTimeout(5_000);
       const timeoutMs = scaleTestTimeout(1_500); // ≈30% of childDelayMs at all scales
       mockPi.onCall({ delay: childDelayMs, output: "one done" });
       mockPi.onCall({ delay: childDelayMs, output: "two done" });
       const id = `async-timeout-parallel-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          {
-            parallel: [
-              { agent: "one", task: "Wait" },
-              { agent: "two", task: "Wait" },
-            ],
-            concurrency: 2,
-          },
+      const launch = executeAsyncParallel(id, {
+        tasks: [
+          { agent: "one", task: "Wait" },
+          { agent: "two", task: "Wait" },
         ],
-        resultMode: "parallel",
+        concurrency: 2,
         agents: [makeAgent("one"), makeAgent("two")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -556,8 +584,13 @@ describe("async execution utilities", () => {
         },
         shareEnabled: false,
         maxSubagentDepth: 2,
+        // This is the internal run-deadline seam; public callers configure it
+        // through execution.maxRunTimeMs at the executor boundary.
         timeoutMs,
       });
+      assert.equal(launch.isError, undefined);
+      assert.equal(launch.details.timeoutMs, timeoutMs);
+      assert.ok(launch.details.deadlineAt !== undefined);
 
       await waitForMockPiCall(mockPi, 1);
       const resultPath = await waitForAsyncResultFile(id);
@@ -568,21 +601,19 @@ describe("async execution utilities", () => {
       assert.equal(payload.state, "failed");
       assert.equal(payload.success, false);
       assert.equal(payload.exitCode, 1);
-      assert.equal(payload.timeoutMs, timeoutMs);
+      const sharedDeadlineMessage = "Subagent exceeded the configured maximum execution time.";
+      // The resolved run timeout is represented by an absolute deadline in the
+      // executable runner config; the retired root timeoutMs field is not copied
+      // into the new durable status/result artifacts.
+      assert.equal(payload.timeoutMs, undefined);
+      assert.equal(payload.deadlineAt, launch.details.deadlineAt);
       assert.equal(payload.timedOut, true);
-      // Plain substring check: the template-literal `\.` loses its backslash, so
-      // a regex would match any character instead of a literal dot (CodeQL escape).
-      assert.ok(
-        (payload.summary ?? "").includes(`Subagent timed out after ${timeoutMs}ms.`),
-        `payload.summary must contain "Subagent timed out after ${timeoutMs}ms."`,
-      );
+      assert.ok((payload.summary ?? "").includes(sharedDeadlineMessage));
       assert.equal(status.state, "failed");
-      assert.equal(status.timeoutMs, timeoutMs);
+      assert.equal(status.timeoutMs, undefined);
+      assert.equal(status.deadlineAt, launch.details.deadlineAt);
       assert.equal(status.timedOut, true);
-      assert.ok(
-        (status.error ?? "").includes(`Subagent timed out after ${timeoutMs}ms.`),
-        `status.error must contain "Subagent timed out after ${timeoutMs}ms."`,
-      );
+      assert.ok((status.error ?? "").includes(sharedDeadlineMessage));
       assert.deepEqual(
         status.steps?.map((step) => step.status),
         ["failed", "failed"],
@@ -593,7 +624,7 @@ describe("async execution utilities", () => {
       );
       assert.deepEqual(
         status.steps?.map((step) => step.error),
-        [`Subagent timed out after ${timeoutMs}ms.`, `Subagent timed out after ${timeoutMs}ms.`],
+        [sharedDeadlineMessage, sharedDeadlineMessage],
       );
       assert.deepEqual(
         payload.results.map((result) => result.timedOut),
@@ -612,7 +643,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "preserves termination reasons for synthesized parallel result children",
+    "preserves termination reasons for direct parallel result children",
     {
       skip:
         process.platform === "win32"
@@ -623,11 +654,11 @@ describe("async execution utilities", () => {
       const launch = (
         id: string,
         tasks: Array<{ agent: string; task: string }>,
-        options: { failFast?: boolean; timeoutMs?: number } = {},
+        options: { timeoutMs?: number } = {},
       ) =>
-        executeAsyncChain(id, {
-          chain: [{ parallel: tasks, concurrency: 1, ...options }],
-          resultMode: "parallel",
+        executeAsyncParallel(id, {
+          tasks,
+          concurrency: 1,
           agents: tasks.map(({ agent }) => makeAgent(agent)),
           ctx: {
             pi: { events: { emit() {} } },
@@ -709,274 +740,8 @@ describe("async execution utilities", () => {
         timedOutPayload.results.map((result) => result.timedOut),
         [true, true],
       );
-
-      mockPi.reset();
-      mockPi.onCall({
-        matchArgIncludes: "Fail fast first",
-        output: "fail-fast child",
-        exitCode: 1,
-      });
-      const failFastId = `async-synthesized-fail-fast-${Date.now().toString(36)}`;
-      launch(
-        failFastId,
-        [
-          { agent: "fail-fast-one", task: "Fail fast first" },
-          { agent: "fail-fast-two", task: "Fail fast skipped" },
-        ],
-        { failFast: true },
-      );
-      const failFastResultPath = await waitForAsyncResultFile(failFastId, scaleTestTimeout(10_000));
-      const failFastPayload = JSON.parse(
-        fs.readFileSync(failFastResultPath, "utf-8"),
-      ) as AsyncResultPayload;
-      const failFastStatus = JSON.parse(
-        fs.readFileSync(path.join(ASYNC_DIR, failFastId, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      assert.equal(failFastPayload.state, "failed");
-      assert.equal(failFastPayload.success, false);
-      assert.deepEqual(
-        failFastPayload.results.map((result) => result.terminationReason),
-        ["process_exit", "process_exit"],
-      );
-      assert.match(failFastPayload.results[0]?.output ?? "", /fail-fast child/);
-      assert.equal(failFastPayload.results[0]?.timedOut, undefined);
-      assert.equal(failFastStatus.steps?.[0]?.terminationReason, "process_exit");
-      assert.equal(failFastStatus.steps?.[1]?.terminationReason, "process_exit");
     },
   );
-
-  it("characterizes concurrency-1 fail-fast parallel settlement", async () => {
-    mockPi.onCall({
-      matchArgIncludes: "Characterize fail-fast first",
-      output: "first child failed",
-      exitCode: 1,
-    });
-    mockPi.onCall({ matchArgIncludes: "Characterize fail-fast skipped", output: "must not run" });
-    const id = `async-characterize-fail-fast-${Date.now().toString(36)}`;
-    const launch = executeAsyncChain(id, {
-      chain: [
-        {
-          parallel: [
-            { agent: "fail-fast-one", task: "Characterize fail-fast first" },
-            { agent: "fail-fast-two", task: "Characterize fail-fast skipped" },
-          ],
-          concurrency: 1,
-          failFast: true,
-        },
-      ],
-      resultMode: "parallel",
-      agents: [makeAgent("fail-fast-one"), makeAgent("fail-fast-two")],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-characterize-fail-fast",
-      },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-    assert.equal(launch.isError, undefined);
-
-    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const status = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    const eventRecords = fs
-      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { type: string; stepIndex?: number });
-    const lifecycleEvents = eventRecords.filter((event) =>
-      [
-        "subagent.run.started",
-        "subagent.parallel.started",
-        "subagent.step.started",
-        "subagent.step.failed",
-        "subagent.parallel.completed",
-        "subagent.run.completed",
-      ].includes(event.type),
-    );
-
-    assert.equal(mockPi.callCount(), 1, "concurrency-1 fail-fast must not spawn the skipped child");
-    assert.equal(payload.state, "failed");
-    assert.equal(payload.success, false);
-    assert.deepEqual(
-      payload.results.map((result) => ({
-        agent: result.agent,
-        output: result.output,
-        success: result.success,
-        exitCode: result.exitCode,
-        skipped: result.skipped,
-        interrupted: result.interrupted,
-        timedOut: result.timedOut,
-        terminationReason: result.terminationReason,
-      })),
-      [
-        {
-          agent: "fail-fast-one",
-          output: "first child failed",
-          success: false,
-          exitCode: 1,
-          skipped: undefined,
-          interrupted: undefined,
-          timedOut: undefined,
-          terminationReason: "process_exit",
-        },
-        {
-          agent: "fail-fast-two",
-          output: "(skipped — fail-fast)",
-          success: false,
-          exitCode: -1,
-          skipped: true,
-          interrupted: undefined,
-          timedOut: undefined,
-          terminationReason: "process_exit",
-        },
-      ],
-    );
-    assert.deepEqual(
-      status.steps?.map((step) => step.status),
-      ["failed", "failed"],
-    );
-    assert.equal(status.steps?.[1]?.error, "Skipped due to fail-fast");
-    assert.equal(status.steps?.[1]?.startedAt, status.steps?.[1]?.endedAt);
-    assert.equal(status.steps?.[1]?.durationMs, 0);
-    assert.equal(status.steps?.[1]?.exitCode, -1);
-    assert.equal(status.steps?.[1]?.terminationReason, "process_exit");
-    assert.deepEqual(
-      lifecycleEvents.map((event) => event.type),
-      [
-        "subagent.run.started",
-        "subagent.parallel.started",
-        "subagent.step.started",
-        "subagent.step.failed",
-        "subagent.step.failed",
-        "subagent.parallel.completed",
-        "subagent.run.completed",
-      ],
-    );
-    assert.deepEqual(
-      eventRecords
-        .filter(
-          (event) =>
-            event.type === "subagent.step.started" || event.type === "subagent.step.failed",
-        )
-        .map((event) => event.stepIndex),
-      [0, 0, 1],
-    );
-  });
-
-  it("characterizes sequential first-step failure settlement", async () => {
-    mockPi.onCall({
-      matchArgIncludes: "Characterize sequential first failure",
-      output: "sequential first failed",
-      exitCode: 1,
-    });
-    mockPi.onCall({ matchArgIncludes: "Characterize sequential second", output: "must not run" });
-    const id = `async-characterize-sequential-failure-${Date.now().toString(36)}`;
-    const launch = executeAsyncChain(id, {
-      chain: [
-        { agent: "first-step", task: "Characterize sequential first failure" },
-        { agent: "second-step", task: "Characterize sequential second" },
-      ],
-      resultMode: "chain",
-      agents: [makeAgent("first-step"), makeAgent("second-step")],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-characterize-sequential-failure",
-      },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-    assert.equal(launch.isError, undefined);
-
-    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const status = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    const eventRecords = fs
-      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as { type: string; stepIndex?: number });
-    const lifecycleEvents = eventRecords.filter((event) =>
-      [
-        "subagent.run.started",
-        "subagent.step.started",
-        "subagent.step.failed",
-        "subagent.run.completed",
-      ].includes(event.type),
-    );
-
-    assert.equal(mockPi.callCount(), 1, "a sequential first failure must not spawn the next step");
-    assert.equal(payload.state, "failed");
-    assert.equal(payload.success, false);
-    assert.deepEqual(
-      payload.results.map((result) => ({
-        agent: result.agent,
-        output: result.output,
-        success: result.success,
-        exitCode: result.exitCode,
-        terminationReason: result.terminationReason,
-      })),
-      [
-        {
-          agent: "first-step",
-          output: "sequential first failed",
-          success: false,
-          exitCode: 1,
-          terminationReason: "process_exit",
-        },
-      ],
-    );
-    assert.deepEqual(
-      status.steps?.map((step) => step.status),
-      ["failed", "pending"],
-    );
-    assert.equal(status.steps?.[0]?.terminationReason, "process_exit");
-    assert.equal(status.steps?.[1]?.startedAt, undefined);
-    assert.equal(status.steps?.[1]?.endedAt, undefined);
-    assert.deepEqual(
-      lifecycleEvents.map((event) => event.type),
-      [
-        "subagent.run.started",
-        "subagent.step.started",
-        "subagent.step.failed",
-        "subagent.run.completed",
-      ],
-    );
-    assert.deepEqual(
-      eventRecords
-        .filter(
-          (event) =>
-            event.type === "subagent.step.started" || event.type === "subagent.step.failed",
-        )
-        .map((event) => event.stepIndex),
-      [0, 0],
-    );
-  });
 
   it("cancels async acceptance verification when the run times out", async () => {
     mockPi.onCall({ output: "implementation complete" });
@@ -1116,104 +881,6 @@ describe("async execution utilities", () => {
       );
     },
   );
-
-  it("async turn budget allows a terminal final grace turn", async () => {
-    mockPi.onCall({
-      jsonl: [
-        mockAssistantMessage("working before wrap-up", "tool_use"),
-        mockAssistantMessage("final wrapped output", "stop"),
-      ],
-    });
-    const id = `async-turn-budget-soft-${Date.now().toString(36)}`;
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Use the final grace turn to wrap up.",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      turnBudget: { maxTurns: 1, graceTurns: 1 },
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.success, true);
-    assert.equal(payload.state, "complete");
-    assert.equal(payload.turnBudgetExceeded, undefined);
-    assert.equal(payload.wrapUpRequested, true);
-    assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
-    assert.equal(payload.turnBudget?.turnCount, 2);
-    assert.equal(payload.results[0]?.wrapUpRequested, true);
-    assert.equal(payload.results[0]?.turnBudget?.turnCount, 2);
-    assert.match(
-      payload.results[0]?.output ?? "",
-      /Turn budget wrap-up was requested after 1 assistant turn/,
-    );
-    assert.match(payload.results[0]?.output ?? "", /final wrapped output/);
-    assert.equal(status.wrapUpRequested, true);
-    assert.equal(status.turnBudgetExceeded, undefined);
-    assert.equal(status.steps?.[0]?.wrapUpRequested, true);
-    assert.equal(status.steps?.[0]?.turnBudget?.turnCount, 2);
-  });
-
-  it("async turn budget hard-aborts a non-terminal final grace turn", async () => {
-    mockPi.onCall({
-      jsonl: [
-        mockAssistantMessage("working before wrap-up", "tool_use"),
-        mockAssistantMessage("still starting more tool work", "tool_use"),
-      ],
-    });
-    const id = `async-turn-budget-hard-${Date.now().toString(36)}`;
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Exceed the turn budget.",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      turnBudget: { maxTurns: 1, graceTurns: 1 },
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.success, false);
-    assert.equal(payload.state, "failed");
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.turnBudgetExceeded, true);
-    assert.equal(payload.wrapUpRequested, true);
-    assert.equal(payload.turnBudget?.outcome, "exceeded");
-    assert.equal(payload.turnBudget?.turnCount, 2);
-    assert.equal(payload.turnBudget?.exceededAtTurn, 2);
-    assert.equal(payload.results[0]?.turnBudgetExceeded, true);
-    assert.match(payload.results[0]?.output ?? "", /Partial output before turn-budget abort:/);
-    assert.match(payload.results[0]?.output ?? "", /still starting more tool work/);
-    assert.equal(status.state, "failed");
-    assert.equal(status.turnBudgetExceeded, true);
-    assert.equal(status.steps?.[0]?.turnBudgetExceeded, true);
-    assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
-  });
 
   it("background forced drain after final assistant output is cleanup success", async () => {
     // Ratio invariant: keepaliveMs sets the mock's natural exit boundary.
@@ -1906,7 +1573,6 @@ describe("async execution utilities", () => {
       // not deferred to a CAS block that only runs when supervisorPauseRequest
       // is set. Without the fix resultState falls through to `interrupted ? "paused"`
       // and the artifact says `state: "paused"`.
-      // FIX 11: the adopted terminal state also beats any stale turnBudgetExceeded
       // flag in resultState precedence (concurrentTerminalStatusAdopted wins).
       assert.equal(
         resultPayload.state,
@@ -1916,58 +1582,44 @@ describe("async execution utilities", () => {
     },
   );
 
-  // ── Regression test for Finding 1 (PR #503 review): concurrent non-pause terminal
-  // adoption must not allow a subsequent step to start ────────────────────────
-  //
-  // When adoptConcurrentTerminalStatus adopts a non-paused terminal state, it sets
-  // interrupted = false. Before the fix, the step-loop break condition only checked
-  // `interrupted || timedOut || turnBudgetExceeded`, so the loop would continue and
-  // the NEXT sequential step would start even though a concurrent actor already
-  // committed a terminal state to disk.
-  //
-  // This test uses a two-step SEQUENTIAL chain, so it exercises the OUTER LOOP
-  // GUARD at subagent-runner.ts (the `concurrentTerminalStatusAdopted` check in
-  // the while-loop break condition). It does NOT reach the parallel queued-task
-  // callback guard — see the parallel-group test below for that pin.
-  //
-  // Proof of non-vacuousness (pins the outer loop guard):
-  //   Revert ONLY the outer loop `|| concurrentTerminalStatusAdopted` check
-  //   (leave the parallel callback guard in place). This test then FAILS with:
-  //     "step 2 must not start after a concurrent terminal is adopted"
-  //     expected: 1   actual: 2   operator: strictEqual
-  //   i.e. the sequential step 2 really does execute after terminal adoption.
   it(
-    "concurrent terminal adoption: step does not start after non-paused terminal is adopted from disk (finding-1)",
+    "terminates a live child when a locked checkpoint adopts a concurrent terminal state",
     {
       skip:
         process.platform === "win32"
-          ? "cross-process interrupt delivery unreliable on Windows CI"
+          ? "cross-process lifecycle race unreliable on Windows CI"
           : undefined,
     },
     async () => {
-      const markerDir = path.join(tempDir, "finding1-markers");
+      const markerDir = path.join(tempDir, "async-terminal-adoption-markers");
       fs.mkdirSync(markerDir, { recursive: true });
       const readyMarker = path.join(markerDir, "child-ready");
       const releaseMarker = path.join(markerDir, "child-release");
-
-      // Step 1: write the ready marker, then block until the release marker appears.
-      // SIGINT and SIGTERM are ignored so the child stays alive until we control it.
       mockPi.onCall({
         ignoreSigint: true,
         ignoreSigterm: true,
-        steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
-        output: "step one done",
+        steps: [
+          { writeMarker: readyMarker },
+          { waitForMarker: releaseMarker },
+          {
+            jsonl: [
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Trigger terminal adoption",
+              }),
+            ],
+          },
+        ],
+        output: "terminal adoption child",
+        keepAliveAfterFinalMessageMs: 60_000,
       });
 
-      // 2-step sequential chain. Step 2 must NEVER start (we will assert callCount).
-      const id = `finding1-no-step-after-terminal-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          { agent: "worker", task: "Step one" },
-          { agent: "worker", task: "Step two" },
-        ],
-        agents: [makeAgent("worker")],
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-finding1" },
+      const id = `async-terminal-adoption-${Date.now().toString(36)}`;
+      executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Wait for concurrent terminal adoption.",
+        agentConfig: makeAgent("worker"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1981,48 +1633,31 @@ describe("async execution utilities", () => {
       });
 
       const asyncDir = path.join(ASYNC_DIR, id);
-
-      // ── Step 1: wait for child to signal it is blocking ─────────────────────
-      {
-        const deadline = Date.now() + scaleTestTimeout(20_000);
-        while (!fs.existsSync(readyMarker)) {
-          if (Date.now() > deadline)
-            assert.fail("Timed out waiting for mock child ready marker (finding-1)");
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+      const readyDeadline = Date.now() + scaleTestTimeout(20_000);
+      while (!fs.existsSync(readyMarker)) {
+        if (Date.now() > readyDeadline)
+          assert.fail("Timed out waiting for mock child ready marker");
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
+      await waitForMockPiCall(mockPi, 0);
+      const childPids = startedMockPiPids(mockPi);
+      assert.equal(childPids.length, 1);
 
-      // ── Step 2: ordinary interrupt so the source runner pauses ────────────
-      // This sets interrupted = true on the runner and writes a paused checkpoint,
-      // gating subsequent writeStatusPayload calls through the locked-merge path
-      // (the path that eventually calls adoptConcurrentTerminalStatus).
-      requestAsyncInterrupt(asyncDir, { source: "finding1-test" });
-
-      // ── Step 3: wait for the paused checkpoint ─────────────────────────
-      await waitForAsyncState(asyncDir, "paused");
-
-      const pausedStatusRaw = JSON.parse(
+      const runningStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      const pausedGen = lifecycleGeneration(
-        pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0],
+      const generation = lifecycleGeneration(
+        runningStatus as Parameters<typeof lifecycleGeneration>[0],
       );
-
-      // ── Step 4: inject concurrent CANCELLED state on top of the paused checkpoint ─
-      // This simulates a cancel actor committing a terminal state after the interrupt
-      // but before the source runner’s post-child write. The runner’s next
-      // writeStatusPayload call (after the child exits) will discover this cancelled
-      // state through mergeAndWriteSourceRunnerStatus and call adoptConcurrentTerminalStatus,
-      // which sets interrupted = false (the bug: the loop then continues to step 2).
       const cancelledAt = Date.now();
       transitionLifecycleStatus({
         asyncDir,
-        expectedGeneration: pausedGen,
+        expectedGeneration: generation,
         mutate: (status) => ({
           ...status,
           state: "cancelled" as const,
           pid: undefined,
-          cancel: { summary: "Test cancellation (finding-1)", cancelledAt },
+          cancel: { summary: "Concurrent terminal adoption", cancelledAt },
           endedAt: cancelledAt,
           lastUpdate: cancelledAt,
           steps: status.steps?.map((step) => ({
@@ -2030,52 +1665,20 @@ describe("async execution utilities", () => {
             status: "cancelled" as const,
             endedAt: cancelledAt,
             exitCode: 0,
-            pause: undefined,
-            cancel: { summary: "Test cancellation (finding-1)", cancelledAt },
+            cancel: { summary: "Concurrent terminal adoption", cancelledAt },
           })),
         }),
       });
-
-      // Sanity: cancelled is on disk before releasing the child.
-      const afterCancel = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      assert.equal(
-        afterCancel.state,
-        "cancelled",
-        "sanity: cancelled state must be on disk before releasing child",
-      );
-
-      // ── Step 5: release the blocking child ──────────────────────────────
-      // The child exits. The source runner calls writeStatusPayload() (interrupted=true,
-      // pausedCheckpointCommitted=true) — the locked merge finds the cancelled state
-      // and calls adoptConcurrentTerminalStatus(), setting interrupted = false.
-      // Pre-fix: the loop now sees interrupted=false and starts step 2.
-      // Post-fix: the loop sees concurrentTerminalStatusAdopted=true and breaks.
       fs.writeFileSync(releaseMarker, "", "utf-8");
 
-      // ── Step 6: wait for the result artifact ───────────────────────────
-      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
-
-      // ── Assertions ─────────────────────────────────────────────
+      const resultPath = await waitForAsyncResultFile(id);
+      await waitForPidsToExit(childPids, `terminal-adopted child ${id}`);
       const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-
-      // Step 2 must never have started: callCount() counts actual mock-pi invocations.
-      assert.equal(
-        mockPi.callCount(),
-        1,
-        "step 2 must not start after a concurrent terminal is adopted",
-      );
-      // The result must reflect the concurrent terminal winner.
-      assert.equal(
-        resultPayload.state,
-        "cancelled",
-        "result artifact must reflect the adopted cancelled state (finding-1)",
-      );
+      assert.equal(resultPayload.state, "cancelled");
     },
   );
 
-  // ── Finding 1 parallel-group pin: concurrent terminal adoption must prevent a
+  // ── Finding 1 parallel-batch pin: concurrent terminal adoption must prevent a
   // queued parallel task from starting ─────────────────────────────────────────
   //
   // This test pins the PARALLEL CALLBACK GUARD in subagent-runner.ts — the early
@@ -2085,9 +1688,8 @@ describe("async execution utilities", () => {
   // must observe concurrentTerminalStatusAdopted=true and return early without
   // launching a child process.
   //
-  // The sequential Finding 1 test above does NOT reach this guard because it uses
-  // a two-step sequential chain; the outer loop guard stops the loop before
-  // entering the parallel group. This test exercises the callback guard
+  // The single-run Finding 1 test above does NOT reach this guard because it
+  // stops before entering the parallel batch. This test exercises the callback guard
   // independently.
   //
   // Proof of non-vacuousness (pins the parallel callback guard):
@@ -2126,16 +1728,12 @@ describe("async execution utilities", () => {
 
       // Single parallel group with concurrency:1 so task 2 is queued while task 1 runs.
       const id = `finding1-parallel-no-task2-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          {
-            parallel: [
-              { agent: "worker", task: "Parallel task one" },
-              { agent: "worker", task: "Parallel task two" },
-            ],
-            concurrency: 1,
-          },
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "worker", task: "Parallel task one" },
+          { agent: "worker", task: "Parallel task two" },
         ],
+        concurrency: 1,
         agents: [makeAgent("worker")],
         ctx: {
           pi: { events: { emit() {} } },
@@ -2304,16 +1902,12 @@ describe("async execution utilities", () => {
       });
 
       const id = `invariant-pin-pause-cancel-${Date.now().toString(36)}`;
-      executeAsyncChain(id, {
-        chain: [
-          {
-            parallel: [
-              { agent: "worker", task: "Task A" },
-              { agent: "worker", task: "Task B" },
-            ],
-            concurrency: 2,
-          },
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "worker", task: "Task A" },
+          { agent: "worker", task: "Task B" },
         ],
+        concurrency: 2,
         agents: [makeAgent("worker")],
         ctx: {
           pi: { events: { emit() {} } },

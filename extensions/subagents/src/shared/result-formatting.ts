@@ -1,21 +1,20 @@
 import {
   type NestedRunSummary,
   type PublicNestedRunSummary,
-  type SubagentResultIntercomChild,
+  type SubagentResultChild,
   type SubagentResultStatus,
   type SubagentRunMode,
-} from "../shared/types.ts";
-import { truncateWithMarker } from "../shared/string-utils.ts";
-import { safeTerminalText } from "../shared/display-text.ts";
+  normalizeSubagentRunMode,
+} from "./types.ts";
+import { truncateWithMarker } from "./string-utils.ts";
+import { safeTerminalText } from "./display-text.ts";
 
 export function resolveSubagentResultStatus(input: {
   exitCode?: number;
   success?: boolean;
   state?: string;
   interrupted?: boolean;
-  detached?: boolean;
 }): SubagentResultStatus {
-  if (input.detached) return "detached";
   if (input.interrupted || input.state === "paused") return "paused";
   if (typeof input.success === "boolean") return input.success ? "completed" : "failed";
   if (input.state === "complete") return "completed";
@@ -24,14 +23,11 @@ export function resolveSubagentResultStatus(input: {
   return "failed";
 }
 
-function countStatuses(
-  children: SubagentResultIntercomChild[],
-): Record<SubagentResultStatus, number> {
+function countStatuses(children: SubagentResultChild[]): Record<SubagentResultStatus, number> {
   const counts: Record<SubagentResultStatus, number> = {
     completed: 0,
     failed: 0,
     paused: 0,
-    detached: 0,
   };
   for (const child of children) {
     counts[child.status] += 1;
@@ -44,17 +40,15 @@ function formatStatusCounts(counts: Record<SubagentResultStatus, number>): strin
     counts.completed ? `${counts.completed} completed` : undefined,
     counts.failed ? `${counts.failed} failed` : undefined,
     counts.paused ? `${counts.paused} paused` : undefined,
-    counts.detached ? `${counts.detached} detached` : undefined,
   ].filter((part): part is string => Boolean(part));
   return parts.length ? parts.join(", ") : "0 results";
 }
 
-function resolveGroupedStatus(children: SubagentResultIntercomChild[]): SubagentResultStatus {
+function resolveGroupedStatus(children: SubagentResultChild[]): SubagentResultStatus {
   const counts = countStatuses(children);
   if (counts.failed > 0) return "failed";
   if (counts.paused > 0) return "paused";
   if (counts.completed > 0) return "completed";
-  if (counts.detached > 0) return "detached";
   return "failed";
 }
 
@@ -76,17 +70,12 @@ function compactNestedRun(
     ...(run.asyncDir ? { asyncDir: run.asyncDir } : {}),
     ...(run.sessionId ? { sessionId: run.sessionId } : {}),
     ...(run.sessionFile ? { sessionFile: run.sessionFile } : {}),
-    ...(run.intercomTarget ? { intercomTarget: run.intercomTarget } : {}),
-    ...(run.ownerIntercomTarget ? { ownerIntercomTarget: run.ownerIntercomTarget } : {}),
-    ...(run.leafIntercomTarget ? { leafIntercomTarget: run.leafIntercomTarget } : {}),
     ...(run.ownerState ? { ownerState: run.ownerState } : {}),
     ...(run.mode ? { mode: run.mode } : {}),
     state: run.state,
     ...(run.agent ? { agent: run.agent } : {}),
     ...(run.agents?.length ? { agents: run.agents.slice(0, 12) } : {}),
     ...(run.currentStep !== undefined ? { currentStep: run.currentStep } : {}),
-    ...(run.chainStepCount !== undefined ? { chainStepCount: run.chainStepCount } : {}),
-    ...(run.parallelGroups?.length ? { parallelGroups: run.parallelGroups.slice(0, 8) } : {}),
     ...(run.activityState ? { activityState: run.activityState } : {}),
     ...(run.lastActivityAt !== undefined ? { lastActivityAt: run.lastActivityAt } : {}),
     ...(run.currentTool ? { currentTool: run.currentTool } : {}),
@@ -142,7 +131,7 @@ export function compactNestedResultChildren(
   return children.slice(0, 16).map((child) => compactNestedRun(child));
 }
 
-export function attachNestedChildrenToResultChildren<T extends SubagentResultIntercomChild>(
+export function attachNestedChildrenToResultChildren<T extends SubagentResultChild>(
   runId: string,
   children: T[],
   nestedChildren: NestedRunSummary[] | undefined,
@@ -218,10 +207,7 @@ function boundedNativeForegroundError(value: string): string {
  * Returns "" when the budget cannot hold a well-formed marker so that callers can suppress
  * the summary line entirely rather than emitting a sliced fragment.
  */
-function boundedNativeForegroundSummary(
-  child: SubagentResultIntercomChild,
-  maxChars: number,
-): string {
+function boundedNativeForegroundSummary(child: SubagentResultChild, maxChars: number): string {
   const raw = safeTerminalText(child.summary).trim() || "(no output)";
   if (raw.length <= maxChars) return raw;
   // Select the marker first, then suppress when the budget cannot hold it.
@@ -236,7 +222,7 @@ function boundedNativeForegroundSummary(
   return truncateWithMarker(raw, maxChars, marker);
 }
 
-interface NativeForegroundChild extends SubagentResultIntercomChild {
+interface NativeForegroundChild extends SubagentResultChild {
   displayIndex?: number;
   displayTotal?: number;
   nativeForegroundPriority?: number;
@@ -249,7 +235,6 @@ function prioritizedNativeForegroundChildren(
     ["failed", 0],
     ["paused", 1],
     ["completed", 2],
-    ["detached", 3],
   ]);
   return children
     .map((child, index) => ({ child, originalIndex: child.index ?? index, inputOrder: index }))
@@ -335,7 +320,6 @@ function formatForegroundNativeSubagentText(input: {
   mode: SubagentRunMode;
   status: SubagentResultStatus;
   children: NativeForegroundChild[];
-  chainSteps?: number;
   errorSummary?: string;
 }): string {
   const counts = countStatuses(input.children);
@@ -349,9 +333,6 @@ function formatForegroundNativeSubagentText(input: {
     `Status: ${boundedNativeForegroundLabel(input.status)}`,
     `Children: ${formatStatusCounts(counts)}`,
   ];
-  if (input.mode === "chain" && typeof input.chainSteps === "number") {
-    outerLines.push(`Chain steps: ${input.chainSteps}`);
-  }
   if (input.errorSummary) {
     outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
   }
@@ -472,7 +453,6 @@ interface GroupedNativeForegroundMessageInput {
   runId: string;
   mode: SubagentRunMode;
   children: NativeForegroundChild[];
-  chainSteps?: number;
   statusOverride?: SubagentResultStatus;
   errorSummary?: string;
 }
@@ -493,10 +473,9 @@ export function formatForegroundNativeSubagentResult(input: GroupedNativeForegro
     summary,
     text: formatForegroundNativeSubagentText({
       runId: input.runId,
-      mode: input.mode,
+      mode: normalizeSubagentRunMode(input.mode),
       status,
       children,
-      ...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
       ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
     }),
   };

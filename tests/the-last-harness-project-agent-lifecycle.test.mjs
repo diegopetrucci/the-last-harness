@@ -176,7 +176,7 @@ function createControlExecutor(root, state, snapshot, kill) {
       getSessionName: () => "lifecycle-parent",
     },
     state,
-    config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} },
+    config: { maxSubagentDepth: 2, control: {} },
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => root,
     expandTilde: (value) => value,
@@ -479,7 +479,7 @@ test("project-agent loading is one session-start snapshot and reload replaces th
   };
   assert.equal(await toolCall(naturalRequest, context), undefined);
   assert.equal(naturalRequest.input.agentScope, "project");
-  assert.equal(naturalRequest.input.context, "fresh");
+  assert.equal(Object.hasOwn(naturalRequest.input, "context"), false);
 
   await runtime.applySessionStart(context);
   assert.equal(calls.length, 2);
@@ -1555,7 +1555,7 @@ test("primary tool authorization permits disabled initiation, blocks non-archite
   );
   assert.equal(disabledResult, undefined, "disabled mode may initiate an explicit project run");
   assert.equal(disabledRequest.input.agentScope, "project");
-  assert.equal(disabledRequest.input.context, "fresh");
+  assert.equal(Object.hasOwn(disabledRequest.input, "context"), false);
 
   for (const selection of ["rush", "product", "bug-hunter"]) {
     const nonArchitectResult = await toolCall(

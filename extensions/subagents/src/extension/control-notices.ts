@@ -14,28 +14,18 @@ export interface SubagentControlMessageDetails {
   event: ControlEvent;
   source?: "foreground" | "async";
   asyncDir?: string;
-  childIntercomTarget?: string;
   noticeText?: string;
-}
-
-function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
-  return details.childIntercomTarget;
 }
 
 export function formatSubagentControlNotice(
   details: SubagentControlMessageDetails,
   content?: string,
 ): string {
-  return (
-    details.noticeText ??
-    content ??
-    formatControlNoticeMessage(details.event, controlNoticeTarget(details))
-  );
+  return details.noticeText ?? content ?? formatControlNoticeMessage(details.event);
 }
 
 function noticeTimerKey(details: SubagentControlMessageDetails): string {
-  const childIntercomTarget = controlNoticeTarget(details);
-  return `${details.event.runId}:${controlNotificationKey(details.event, childIntercomTarget)}`;
+  return `${details.event.runId}:${controlNotificationKey(details.event)}`;
 }
 
 export function clearPendingForegroundControlNotices(state: SubagentState, runId?: string): void {
@@ -55,18 +45,15 @@ function deliverControlNotice(input: {
   isIdle?: () => boolean;
 }): void {
   if (input.details.event.reason === "completion_guard") return;
-  const childIntercomTarget = controlNoticeTarget(input.details);
-  const key = controlNotificationKey(input.details.event, childIntercomTarget);
+  const key = controlNotificationKey(input.details.event);
   if (input.visibleControlNotices.has(key)) return;
   input.visibleControlNotices.add(key);
-  const noticeText =
-    input.details.noticeText ??
-    formatControlNoticeMessage(input.details.event, childIntercomTarget);
+  const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event);
   input.pi.sendMessage({
     customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
     content: noticeText,
     display: true,
-    details: { ...input.details, childIntercomTarget, noticeText },
+    details: { ...input.details, noticeText },
   });
   // When the session is idle and this is an async notice, wake the agent
   // through prompt() so before_agent_start fires and the TLH system prompt

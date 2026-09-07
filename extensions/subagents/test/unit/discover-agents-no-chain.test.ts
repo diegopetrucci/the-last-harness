@@ -72,9 +72,5 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
       discovered.project.some((agent) => agent.name === "embedded.project-agent"),
       false,
     );
-    assert.deepEqual(discovered.chains, []);
-    assert.deepEqual(discovered.chainDiagnostics, []);
-    assert.equal(discovered.userChainDir, path.join(tempDir, "agent-home", "chains"));
-    assert.equal(discovered.projectChainDir, path.join(tempDir, ".pi", "chains"));
   });
 });

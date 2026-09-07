@@ -1,8 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
-import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
+import { lifecycleContinuationForIndex, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
@@ -119,7 +118,6 @@ function validateResultFile(value, resultPath) {
             const child = ensureObject(entry, `${resultPath} results[${index}]`);
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
-            const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
             const thinking = parseThinkingLevel(child.thinking);
             const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
@@ -141,6 +139,7 @@ function validateResultFile(value, resultPath) {
                     activeRuntimeMs < 0)) {
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`);
             }
+            const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt);
             const acceptance = child.acceptance !== undefined &&
                 typeof child.acceptance === "object" &&
                 !Array.isArray(child.acceptance)
@@ -150,7 +149,6 @@ function validateResultFile(value, resultPath) {
             return {
                 agent,
                 sessionFile,
-                intercomTarget,
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(model ? { model } : {}),
@@ -162,6 +160,7 @@ function validateResultFile(value, resultPath) {
                 ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
                 ...(terminationReason ? { terminationReason } : {}),
                 ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+                ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 ...(acceptance ? { acceptance } : {}),
                 ...(projectAgent ? { projectAgent } : {}),
             };
@@ -180,6 +179,8 @@ function validateResultFile(value, resultPath) {
     const normalizedProjectAgents = projectAgents
         ?.map((capture, index) => parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`))
         .filter((capture) => Boolean(capture));
+    const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(data.activeRuntimeCheckpointAt);
     return {
         id: validateOptionalString(data, "id", resultPath),
         runId: validateOptionalString(data, "runId", resultPath),
@@ -204,6 +205,8 @@ function validateResultFile(value, resultPath) {
             }
             : {}),
         ...(typeof success === "boolean" ? { success } : {}),
+        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(results ? { results } : {}),
         ...(projectAgent ? { projectAgent } : {}),
         ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
@@ -472,6 +475,41 @@ function validateStatusForResume(status, source) {
         });
     }
 }
+function validateRawStatusStepsForResume(statusPath) {
+    let content;
+    try {
+        content = fs.readFileSync(statusPath, "utf-8");
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return;
+        throw error;
+    }
+    let raw;
+    try {
+        raw = JSON.parse(content);
+    }
+    catch {
+        return;
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        return;
+    const steps = raw.steps;
+    if (!Array.isArray(steps))
+        return;
+    for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step || typeof step !== "object" || Array.isArray(step))
+            continue;
+        const activeRuntimeMs = step.activeRuntimeMs;
+        if (activeRuntimeMs !== undefined &&
+            (typeof activeRuntimeMs !== "number" ||
+                !Number.isFinite(activeRuntimeMs) ||
+                activeRuntimeMs < 0)) {
+            throw new Error(`Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`);
+        }
+    }
+}
 function validateResumeSessionFile(runId, sessionFile, options = {}) {
     if (path.extname(sessionFile) !== ".jsonl")
         throw new Error(`Async run '${runId}' session file must be a .jsonl file: ${sessionFile}`);
@@ -561,7 +599,6 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         state: context.state,
         agent: statusStep.agent,
         index,
-        intercomTarget: resolveSubagentIntercomTarget(context.runId, statusStep.agent, index),
         cwd: context.status?.cwd ?? context.result?.cwd,
         sessionFile: statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
     };
@@ -597,6 +634,92 @@ function resolveLiveAsyncResumeTarget(context) {
     if (!selected)
         throw new Error(`Async run '${context.runId}' has ${running.length} running children. Provide index to choose one.`);
     return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
+}
+function selectedChildSuccessfulCompletion(context, index) {
+    const statusStep = context.statusSteps[index];
+    const resultStep = context.resultSteps[index];
+    if (statusStep?.terminationReason === "interrupted" ||
+        resultStep?.interrupted === true ||
+        resultStep?.terminationReason === "interrupted") {
+        return false;
+    }
+    const status = statusStep?.status;
+    if (status !== undefined) {
+        return status === "complete" || status === "completed";
+    }
+    const resultSuccess = resultStep?.success;
+    if (typeof resultSuccess === "boolean")
+        return resultSuccess;
+    return context.stepCount === 1 && context.state === "complete";
+}
+function resolveSelectedChildRuntimeMetadata(context, index) {
+    const statusStep = context.statusSteps[index];
+    const resultStep = context.resultSteps[index];
+    const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs);
+    const resultActiveRuntimeMs = normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs);
+    const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(statusStep?.activeRuntimeCheckpointAt);
+    const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(resultStep?.activeRuntimeCheckpointAt);
+    return {
+        ...(selectedActiveRuntimeMs !== undefined
+            ? { activeRuntimeMs: selectedActiveRuntimeMs }
+            : resultActiveRuntimeMs !== undefined
+                ? { activeRuntimeMs: resultActiveRuntimeMs }
+                : {}),
+        ...(selectedActiveRuntimeCheckpointAt !== undefined
+            ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
+            : resultActiveRuntimeCheckpointAt !== undefined
+                ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
+                : {}),
+        successfulCompletion: selectedChildSuccessfulCompletion(context, index),
+    };
+}
+function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile, continuationAcceptance) {
+    const target = {
+        kind: "revive",
+        runId: context.runId,
+        asyncDir: context.location.asyncDir ?? undefined,
+        state: context.state,
+        agent,
+        index,
+        cwd: context.status?.cwd ?? context.result?.cwd,
+        ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+    };
+    const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+    const targetWithModelMetadata = {
+        ...target,
+        ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+        ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+        ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
+        ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+        ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+        ...(selectedStatusStep?.pause?.kind
+            ? { pauseKind: selectedStatusStep.pause.kind }
+            : context.status?.pause?.kind
+                ? { pauseKind: context.status.pause.kind }
+                : {}),
+        ...(typeof selectedContinuation?.claimToken === "string" &&
+            selectedContinuation.claimToken.length > 0
+            ? { claimed: true }
+            : {}),
+        ...(continuationAcceptance ? { continuationAcceptance } : {}),
+    };
+    const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+    return {
+        ...targetWithModelMetadata,
+        ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
+        ...(diagnosticMetadata.contextPressure
+            ? { contextPressure: diagnosticMetadata.contextPressure }
+            : {}),
+        ...(diagnosticMetadata.contextPressureCrossedThresholds
+            ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
+            : {}),
+        ...(diagnosticMetadata.terminationReason
+            ? { terminationReason: diagnosticMetadata.terminationReason }
+            : {}),
+        ...runtimeMetadata,
+    };
 }
 function resolveTerminalAsyncResumeTarget(context) {
     const requestedIndex = context.requestedIndex;
@@ -669,56 +792,7 @@ function resolveTerminalAsyncResumeTarget(context) {
     const continuationAcceptance = selectedChildPaused
         ? resolvePausedContinuationAcceptance(context.runId, pausedStepAcceptance)
         : undefined;
-    const target = {
-        kind: "revive",
-        runId: context.runId,
-        asyncDir: context.location.asyncDir ?? undefined,
-        state: context.state,
-        agent,
-        index,
-        intercomTarget: resolveSubagentIntercomTarget(context.runId, agent, index),
-        cwd: context.status?.cwd ?? context.result?.cwd,
-        ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-    };
-    const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
-    const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
-    const targetWithModelMetadata = {
-        ...target,
-        ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
-        ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
-        ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
-        ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
-        ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
-        ...(selectedStatusStep?.pause?.kind
-            ? { pauseKind: selectedStatusStep.pause.kind }
-            : context.status?.pause?.kind
-                ? { pauseKind: context.status.pause.kind }
-                : {}),
-        ...(typeof selectedContinuation?.claimToken === "string" &&
-            selectedContinuation.claimToken.length > 0
-            ? { claimed: true }
-            : {}),
-        ...(continuationAcceptance ? { continuationAcceptance } : {}),
-    };
-    const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
-    return {
-        ...targetWithModelMetadata,
-        ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
-        ...(diagnosticMetadata.contextPressure
-            ? { contextPressure: diagnosticMetadata.contextPressure }
-            : {}),
-        ...(diagnosticMetadata.contextPressureCrossedThresholds
-            ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
-            : {}),
-        ...(diagnosticMetadata.terminationReason
-            ? { terminationReason: diagnosticMetadata.terminationReason }
-            : {}),
-        ...(selectedStatusStep?.activeRuntimeMs !== undefined
-            ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
-            : context.resultSteps[index]?.activeRuntimeMs !== undefined
-                ? { activeRuntimeMs: context.resultSteps[index].activeRuntimeMs }
-                : {}),
-    };
+    return buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, selectedContinuation, agent, resolvedSessionFile, continuationAcceptance);
 }
 export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
@@ -727,6 +801,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
     if (!location.asyncDir && !location.resultPath) {
         throw new Error("Async run not found. Provide id or dir.");
+    }
+    if (location.asyncDir) {
+        validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
     }
     const reconciliation = location.asyncDir && !options.readOnly
         ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })

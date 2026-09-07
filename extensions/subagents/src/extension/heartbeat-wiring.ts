@@ -95,7 +95,7 @@ export interface HeartbeatSessionSummary {
    * change, or compaction, and the closure cause is not recorded.
    */
   gapsUnneeded: number;
-  /** True when the session circuit-breaker has fired (≥3 consecutive errors). */
+  /** True when the session circuit-breaker has fired (≥3 consecutive failures). */
   breakerDisabled: boolean;
 }
 
@@ -237,7 +237,7 @@ export interface HeartbeatWiring {
   /**
    * Reset session-scoped state for a new session (session_start).
    *
-   * Clears the error-breaker, consecutive-error count, session totals, idle
+   * Clears the failure breaker, consecutive-failure count, session totals, idle
    * state, and any open gap state.  The controller also clears its captured
    * request and session identity.  Does NOT reset the resolved config.  Safe
    * to call when a gap is somehow still open — discards it without emitting a
@@ -431,11 +431,9 @@ export function createHeartbeatWiring(
   }
 
   function onBeatResult(result: BeatResult): void {
-    if (!currentGap || result.gapId !== currentGap.gapId) return;
-
-    // Usage/cost accounting happens in onBeatAccounting before iterator cleanup.
-    // This completion callback only propagates circuit-breaker state; keeping
-    // the paths separate makes normal completion explicitly idempotent.
+    // Propagate the controller's session breaker signal even if the active gap
+    // has been disarmed before the completion callback runs. This flag gates
+    // future starts/rearms while keeping the diagnostic summary available.
     if (result.sessionDisabled) {
       sessionBreakerDisabled = true;
     }
@@ -517,7 +515,7 @@ export function createHeartbeatWiring(
   // ---------------------------------------------------------------------------
 
   function openGapIfNeeded(sessionId: string | null): void {
-    if (currentGap) return; // gap already active
+    if (sessionBreakerDisabled || currentGap) return;
     const sid = sessionId ?? "";
     const gapId = `${sid}-${nowFn()}`;
     currentGap = createAccumulator(gapId, sid);
@@ -612,7 +610,7 @@ export function createHeartbeatWiring(
       sessionGapsLost = 0;
       sessionGapsUnneeded = 0;
       sessionBreakerDisabled = false;
-      // Reset controller state (disabled flag, consecutive errors, in-flight,
+      // Reset controller state (disabled flag, consecutive failures, in-flight,
       // open gap state) without emitting a log entry.
       controller.resetSession();
     },

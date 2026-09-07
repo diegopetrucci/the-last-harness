@@ -26,12 +26,9 @@ import {
   events,
   tryImport,
 } from "../support/helpers.ts";
-import {
-  ASYNC_DIR,
-  INTERCOM_DETACH_REQUEST_EVENT,
-  INTERCOM_DETACH_RESPONSE_EVENT,
-} from "../../src/shared/types.ts";
+import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type {
+  AsyncStatus,
   ChildProcessCleanupResult,
   ContextUsageDiagnostics,
   SingleResult,
@@ -126,18 +123,6 @@ interface RunSyncResult {
   finalOutput?: string;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: {
-    maxTurns: number;
-    graceTurns: number;
-    outcome: string;
-    turnCount: number;
-    wrapUpRequestedAtTurn?: number;
-    exceededAtTurn?: number;
-  };
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
-  detached?: boolean;
-  detachedReason?: string;
   pause?: {
     kind?: string;
     summary?: string;
@@ -294,6 +279,11 @@ interface ExecutorModule {
   };
 }
 
+type ExecuteAsyncSingleOverride = (
+  id: string,
+  params: Record<string, unknown>,
+) => ExecutorToolResult;
+
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
@@ -305,6 +295,16 @@ const createSubagentExecutor = executorMod?.createSubagentExecutor;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readPersistedStatus(statusPath: string): AsyncStatus {
+  const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(`Expected persisted status object at ${statusPath}`);
+  const record = parsed as Record<string, unknown>;
+  assert.equal(typeof record.runId, "string");
+  assert.equal(typeof record.state, "string");
+  return parsed as AsyncStatus;
 }
 
 function writePackageSkill(packageRoot: string, skillName: string): void {
@@ -383,6 +383,8 @@ describe(
         foregroundControls: new Map(),
         lastForegroundControlId: null,
       },
+      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
+      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
     ) {
       return createSubagentExecutor!({
         pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -392,6 +394,8 @@ describe(
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
+        runSync: runSyncOverride,
+        executeAsyncSingle: executeAsyncSingleOverride,
       });
     }
 
@@ -2028,7 +2032,7 @@ describe(
     });
 
     it(
-      "tries per-dispatch fallback models before agent fallback models and only shows notices after a retry",
+      "tries agent fallback models and only shows notices after a retry",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -2048,7 +2052,7 @@ describe(
           ],
           exitCode: 0,
         });
-        mockPi.onCall({ output: "Recovered on the dispatch fallback" });
+        mockPi.onCall({ output: "Recovered on the agent fallback" });
         const executor = makeExecutor([
           makeAgent("echo", {
             model: "openai/gpt-5-mini",
@@ -2057,17 +2061,15 @@ describe(
         ]);
         const ctx = makeMinimalCtx(tempDir);
         const primary = makeModel("gpt-5-mini", { provider: "openai" });
-        const dispatchFallback = makeModel("claude-sonnet-4", { provider: "anthropic" });
         const agentFallback = makeModel("gemini-2.5-pro", { provider: "google" });
-        ctx.modelRegistry.getAvailable = () => [primary, dispatchFallback];
-        ctx.modelRegistry.getAll = () => [primary, dispatchFallback, agentFallback];
+        ctx.modelRegistry.getAvailable = () => [primary, agentFallback];
+        ctx.modelRegistry.getAll = () => [primary, agentFallback];
 
         const result = await executor.execute(
-          "single-dispatch-fallback-order",
+          "single-agent-fallback-order",
           {
             agent: "echo",
             task: "Task",
-            fallbackModels: ["anthropic/claude-sonnet-4"],
             modelFallbackNotice: "Quota fallback engaged",
           },
           new AbortController().signal,
@@ -2078,19 +2080,15 @@ describe(
         assert.equal(result.isError, undefined);
         assert.match(
           result.content[0]?.text ?? "",
-          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the dispatch fallback/,
+          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the agent fallback/,
         );
         assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
           "openai/gpt-5-mini",
-          "anthropic/claude-sonnet-4",
+          "google/gemini-2.5-pro",
         ]);
         assert.match(
           result.details?.results?.[0]?.modelFallbackNotice ?? "",
           /Quota fallback engaged/,
-        );
-        assert.match(
-          result.details?.results?.[0]?.modelFallbackNotice ?? "",
-          /provider credentials|fallbackModels/,
         );
         assert.equal(mockPi.callCount(), 2);
       },
@@ -2966,67 +2964,351 @@ describe(
     );
 
     it(
-      "rejects invalid foreground timeout values before spawning",
+      "uses the human-owned run ceiling for foreground execution",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
+          { execution: { maxRunTimeMs: 1_234 } },
+          undefined,
+          wrappedRunSync,
+        );
 
         const result = await executor.execute(
-          "timeout-validation",
-          { agent: "echo", task: "Task", timeoutMs: 0 },
+          "timeout-policy-default",
+          { agent: "echo", task: "Task" },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
         );
 
-        assert.equal(result.isError, true);
-        assert.match(result.content[0]?.text ?? "", /timeoutMs must be a positive integer/);
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [1_234]);
+      },
+    );
+
+    it(
+      "keeps role ceilings active when the human run policy is explicitly false",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const observedTimeouts: Array<number | undefined> = [];
+        const wrappedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          observedTimeouts.push(options.timeoutMs as number | undefined);
+          return runSync!(runtimeCwd, agents, agentName, task, options);
+        };
+        mockPi.onCall({ output: "role policy" });
+        const executor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 600 })],
+          { execution: { maxRunTimeMs: false } },
+          undefined,
+          wrappedRunSync,
+        );
+
+        const result = await executor.execute(
+          "timeout-policy-role",
+          { agent: "echo", task: "Task" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(observedTimeouts, [600]);
+      },
+    );
+
+    it(
+      "rejects own retired timeout fields before foreground or async launch",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const executor = makeExecutor();
+        const cases = [
+          { agent: "echo", task: "Task", timeoutMs: 1 },
+          { agent: "echo", task: "Task", async: true, timeoutMs: 1 },
+          { tasks: [{ agent: "echo", task: "Task", timeoutMs: 1 }] },
+          { action: "resume", id: "legacy-run", message: "Continue", timeoutMs: 1 },
+        ];
+
+        for (const [index, params] of cases.entries()) {
+          const result = await executor.execute(
+            `timeout-retired-${index}`,
+            params as any,
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /timeoutMs is no longer supported/);
+          assert.match(result.content[0]?.text ?? "", /execution\.maxRunTimeMs/);
+          assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
+        }
         assert.equal(mockPi.callCount(), 0);
       },
     );
 
     it(
-      "allows timeout settings for async runs before spawning",
+      "forwards non-success resume runtime evidence with the human run timeout before spawning",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const runId = `resume-runtime-forwarding-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "failed",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "failed",
+              sessionFile,
+              activeRuntimeMs: 321.4,
+              activeRuntimeCheckpointAt: 654.9,
+            },
+          ],
+        });
+        const observed: Array<{ id: string; params: Record<string, unknown> }> = [];
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = (id, params) => {
+          observed.push({ id, params });
+          return {
+            content: [{ text: "stubbed continuation" }],
+            details: { asyncId: "resume-runtime-forwarded" },
+          };
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
+            { execution: { maxRunTimeMs: 1_234 } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-runtime-forwarding-call",
+            { action: "resume", id: runId, message: "Continue." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
 
-        const result = await executor.execute(
-          "timeout-async-validation",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.match(result.content[0]?.text ?? "", /Async:/);
-        assert.equal(result.details?.timeoutMs, 1_000);
+          assert.equal(result.isError, undefined);
+          assert.equal(observed.length, 1);
+          assert.match(observed[0]?.id ?? "", /^[0-9a-f]{8}$/);
+          assert.equal(observed[0]?.params.timeoutMs, 1_234);
+          assert.equal(observed[0]?.params.activeRuntimeMs, 322);
+          assert.equal(observed[0]?.params.activeRuntimeCheckpointAt, 654);
+          assert.equal(state.foregroundRuns.size, 0);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
       },
     );
 
     it(
-      "clamps async timeout requests to the agent execution ceiling",
+      "omits a disabled human timeout and resets successful resume runtime before spawning",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs: 600 })]);
+        const runId = `resume-runtime-reset-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "complete",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "completed",
+              sessionFile,
+              activeRuntimeMs: 9_001,
+              activeRuntimeCheckpointAt: 777,
+            },
+          ],
+        });
+        const observed: Array<Record<string, unknown>> = [];
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = (_id, params) => {
+          observed.push(params);
+          return {
+            content: [{ text: "stubbed continuation" }],
+            details: { asyncId: "resume-runtime-reset" },
+          };
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 100 })],
+            { execution: { maxRunTimeMs: false } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-runtime-reset-call",
+            { action: "resume", id: runId, message: "Continue with a fresh budget." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
 
-        const result = await executor.execute(
-          "timeout-async-clamped",
-          { agent: "echo", task: "Task", async: true, timeoutMs: 1_000 },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
+          assert.equal(result.isError, undefined);
+          assert.equal(observed.length, 1);
+          assert.equal(observed[0]?.timeoutMs, undefined);
+          assert.equal(observed[0]?.activeRuntimeMs, 0);
+          assert.equal(Object.hasOwn(observed[0]!, "activeRuntimeCheckpointAt"), false);
+          assert.equal(state.foregroundRuns.size, 0);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
 
-        assert.equal(result.isError, undefined);
-        assert.equal(result.details?.timeoutMs, 600);
+    it(
+      "rejects an exhausted supervisor-paused resume before reading context or claiming",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `resume-supervisor-budget-${Date.now().toString(36)}`;
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const statusPath = path.join(asyncDir, "status.json");
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const activeRuntimeMs = 700;
+        const activeRuntimeCheckpointAt = 600;
+        const persistedStatus = {
+          runId,
+          mode: "single",
+          state: "paused",
+          steps: [
+            {
+              agent: "echo",
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+            },
+          ],
+          activeRuntimeMs,
+          activeRuntimeCheckpointAt,
+        };
+        fs.writeFileSync(statusPath, JSON.stringify(persistedStatus), "utf-8");
+        const beforeStatus = fs.readFileSync(statusPath);
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "paused",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+            },
+          ],
+        });
+        const ctx = makeMinimalCtx(tempDir);
+        let snapshotReads = 0;
+        const originalGetAvailable = ctx.modelRegistry.getAvailable.bind(ctx.modelRegistry);
+        ctx.modelRegistry.getAvailable = () => {
+          snapshotReads += 1;
+          return originalGetAvailable();
+        };
+        let continuationCalls = 0;
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = () => {
+          continuationCalls += 1;
+          throw new Error("continuation should not be invoked");
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 500 })],
+            { execution: { maxRunTimeMs: 10_000 } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-supervisor-budget-call",
+            { action: "resume", id: runId, message: "Continue after the decision." },
+            new AbortController().signal,
+            undefined,
+            ctx,
+          );
+
+          assert.equal(result.isError, true);
+          assert.equal(
+            result.content[0]?.text,
+            "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling after 700ms of active runtime.",
+          );
+          assert.equal(snapshotReads, 0);
+          assert.equal(continuationCalls, 0);
+          assert.equal(mockPi.callCount(), 0);
+          assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+          assert.equal(state.foregroundRuns.size, 1);
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          fs.rmSync(sessionFile, { force: true });
+        }
       },
     );
 
@@ -3086,7 +3368,7 @@ describe(
         );
         const result = await executor.execute(
           "resume-timeout-forwarding",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 10_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3095,6 +3377,185 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
         assert.ok(result.details?.deadlineAt !== undefined);
+      },
+    );
+
+    it(
+      "persists supervisor-pause runtime for a fresh-process resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        let statusPath: string | undefined;
+        const maxExecutionTimeMs = 5_000;
+        let pausingStatus: AsyncStatus | undefined;
+
+        mockPi.onCall({
+          ignoreSigint: true,
+          ignoreSigterm: true,
+          spawnStubbornDescendants: true,
+          steps: [
+            {
+              delay: 150,
+              jsonl: [
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need a decision before continuing",
+                }),
+              ],
+            },
+            { delay: 10_000, jsonl: [events.assistantMessage("must not complete before pause")] },
+          ],
+        });
+
+        const observedRunSync: ExecutionModule["runSync"] = async (
+          runtimeCwd,
+          agents,
+          agentName,
+          task,
+          options,
+        ) => {
+          const callback =
+            typeof options.onSupervisorPauseTransition === "function"
+              ? (options.onSupervisorPauseTransition as (transition: unknown) => void)
+              : undefined;
+          return runSync!(runtimeCwd, agents, agentName, task, {
+            ...options,
+            onSupervisorPauseTransition: (transition: unknown) => {
+              callback?.(transition);
+              const stage =
+                transition && typeof transition === "object" && "stage" in transition
+                  ? transition.stage
+                  : undefined;
+              if (stage === "pausing") {
+                for (const entry of fs.readdirSync(ASYNC_DIR, { withFileTypes: true })) {
+                  if (!entry.isDirectory()) continue;
+                  const candidatePath = path.join(ASYNC_DIR, entry.name, "status.json");
+                  try {
+                    const candidate = readPersistedStatus(candidatePath);
+                    if (candidate.state === "pausing" && candidate.cwd === tempDir) {
+                      statusPath = candidatePath;
+                      pausingStatus = candidate;
+                      break;
+                    }
+                  } catch {
+                    // Ignore unrelated or transient status files while locating this run.
+                  }
+                }
+              }
+            },
+          });
+        };
+
+        const initialState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          initialState,
+          observedRunSync,
+        );
+        const paused = await initialExecutor.execute(
+          "supervisor-runtime-pause",
+          { agent: "echo", task: "Pause while waiting for a supervisor decision" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(paused.isError, undefined);
+        assert.ok(statusPath, "expected persisted status path before child cleanup");
+        assert.ok(pausingStatus, "expected persisted pausing status before child cleanup");
+        const pausingStep = pausingStatus.steps?.[0];
+        const runId = pausingStatus.runId;
+        assert.equal(pausingStatus.state, "pausing");
+        assert.equal(pausingStep?.status, "pausing");
+        assert.ok(
+          typeof pausingStatus.activeRuntimeMs === "number" && pausingStatus.activeRuntimeMs > 0,
+        );
+        assert.equal(pausingStatus.activeRuntimeMs, pausingStep?.activeRuntimeMs);
+        assert.ok(typeof pausingStatus.activeRuntimeCheckpointAt === "number");
+        assert.equal(
+          pausingStatus.activeRuntimeCheckpointAt,
+          pausingStep?.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausingStatus.activeRuntimeCheckpointAt ?? 0) >= (pausingStatus.pause?.requestedAt ?? 0),
+        );
+
+        const pausedStatus = readPersistedStatus(statusPath);
+        assert.equal(pausedStatus.runId, runId);
+        const pausedStep = pausedStatus.steps?.[0];
+        assert.equal(pausedStatus.state, "paused");
+        assert.equal(pausedStep?.status, "paused");
+        assert.equal(pausedStatus.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(pausedStep?.activeRuntimeMs, pausingStatus.activeRuntimeMs);
+        assert.equal(
+          pausedStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.equal(
+          pausedStep?.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) >= (pausedStatus.activeRuntimeCheckpointAt ?? 0),
+        );
+        assert.ok(
+          (pausedStatus.pause?.pausedAt ?? 0) - (pausedStatus.activeRuntimeCheckpointAt ?? 0) >=
+            100,
+          "expected stubborn cleanup time after the runtime checkpoint",
+        );
+
+        const activeRuntimeMs = pausingStatus.activeRuntimeMs!;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const offlineStatus = readPersistedStatus(statusPath);
+        assert.equal(offlineStatus.activeRuntimeMs, activeRuntimeMs);
+        assert.equal(
+          offlineStatus.activeRuntimeCheckpointAt,
+          pausingStatus.activeRuntimeCheckpointAt,
+        );
+
+        mockPi.onCall({ output: "resumed after restart" });
+        const restartedState = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const resumed = await makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          restartedState,
+        ).execute(
+          "supervisor-runtime-resume",
+          { action: "resume", id: runId, message: "Continue after the supervisor responds." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(restartedState.foregroundRuns.size, 0);
+        assert.equal(resumed.isError, undefined);
+        assert.equal(resumed.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
+        const resumedId = resumed.details?.asyncId;
+        assert.ok(resumedId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumedId), "utf-8"),
+        ) as unknown;
+        assert.ok(
+          resumedPayload && typeof resumedPayload === "object" && !Array.isArray(resumedPayload),
+        );
+        assert.equal((resumedPayload as Record<string, unknown>).state, "complete");
+        assert.equal((resumedPayload as Record<string, unknown>).success, true);
       },
     );
 
@@ -3187,8 +3648,10 @@ describe(
       },
       async () => {
         // The run phase and the resume phase deliberately use different ceilings.
-        // A generous run ceiling means the child completes on its own instead of
-        // racing a kill, so activeRuntimeMs is a real duration (>= runDelayMs).
+        // A generous run ceiling means the child reaches a terminal failure on its
+        // own instead of racing a kill, so activeRuntimeMs is a real duration
+        // (>= runDelayMs). Non-success terminal runs retain that budget; a
+        // successful completion would intentionally reset it before revival.
         // The resume ceiling is far below that duration, so
         // remainingExecutionTimeMs(resumeCeilingMs, activeRuntimeMs) is 0 and the
         // pre-spawn guard rejects the resume. CPU contention only makes
@@ -3197,7 +3660,11 @@ describe(
         const runDelayMs = 150;
         const runCeilingMs = 10_000;
         const resumeCeilingMs = 50;
-        mockPi.onCall({ delay: runDelayMs, output: "finished under the generous ceiling" });
+        mockPi.onCall({
+          delay: runDelayMs,
+          output: "finished under the generous ceiling",
+          exitCode: 1,
+        });
         const state = {
           baseCwd: tempDir,
           currentSessionId: null,
@@ -3218,10 +3685,8 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.ok(
-          !completed.isError,
-          "producer run should complete successfully under the generous ceiling",
-        );
+        assert.equal(completed.isError, true);
+        assert.match(completed.content[0]?.text ?? "", /Child process exited with code 1/);
 
         const remembered = [...state.foregroundRuns.values()][0];
         const activeRuntimeMs = remembered?.children[0]?.activeRuntimeMs;
@@ -3235,7 +3700,7 @@ describe(
         );
         const result = await resumeExecutor.execute(
           "resume-ceiling-exhausted",
-          { action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 1_000 },
+          { action: "resume", id: remembered!.runId, message: "Continue." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
@@ -3247,6 +3712,83 @@ describe(
           new RegExp(`exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms`),
         );
         assert.equal(mockPi.callCount(), 1);
+      },
+    );
+
+    it(
+      "resets the logical runtime budget after successful completion before resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const resumeCeilingMs = 10_000;
+        const consumedSourceRuntimeMs = resumeCeilingMs + 1_000;
+        mockPi.onCall({ output: "completed successfully" });
+        mockPi.onCall({ delay: 250, output: "fresh follow-up" });
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        const initialExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: 10_000 })],
+          {},
+          state,
+        );
+        const completed = await initialExecutor.execute(
+          "producer-successful-run",
+          { agent: "echo", task: "Complete successfully before resuming" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(completed.isError, undefined);
+
+        const remembered = [...state.foregroundRuns.values()][0];
+        assert.ok(remembered, "expected the successful source to be remembered");
+        const source = remembered.children[0];
+        assert.ok(source, "expected the successful source child to be remembered");
+        assert.equal(source.status, "completed");
+        source.activeRuntimeMs = consumedSourceRuntimeMs;
+        assert.equal(source.activeRuntimeMs, consumedSourceRuntimeMs);
+        assert.ok(
+          source.activeRuntimeMs > resumeCeilingMs,
+          `expected injected source runtime to exceed the ${resumeCeilingMs}ms resume ceiling`,
+        );
+
+        const resumeExecutor = makeExecutor(
+          [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
+          {},
+          state,
+        );
+        const resumed = await resumeExecutor.execute(
+          "resume-after-success",
+          { action: "resume", id: remembered!.runId, message: "Continue with a fresh budget." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resumed.isError, undefined);
+        assert.ok(resumed.details?.asyncId, "expected resumed async id");
+        const resumedPayload = JSON.parse(
+          fs.readFileSync(await waitForAsyncResultFile(resumed.details.asyncId!), "utf-8"),
+        ) as {
+          state?: string;
+          success?: boolean;
+          error?: string;
+          results?: Array<{ output?: string; error?: string }>;
+        };
+        assert.equal(
+          resumedPayload.state,
+          "complete",
+          `successful completion reset should allow resume: state=${resumedPayload.state}, error=${resumedPayload.error ?? resumedPayload.results?.[0]?.error ?? "none"}`,
+        );
+        assert.equal(resumedPayload.success, true);
+        assert.match(resumedPayload.results?.[0]?.output ?? "", /fresh follow-up/);
+        assert.equal(mockPi.callCount(), 2);
       },
     );
 
@@ -3509,11 +4051,10 @@ describe(
       });
     });
 
-    it("passes supervisor metadata through to child execution", async () => {
+    it("passes native supervisor metadata through to child execution", async () => {
       mockPi.onCall({
         echoEnv: [
-          "PI_SUBAGENT_INTERCOM_SESSION_NAME",
-          "PI_SUBAGENT_ORCHESTRATOR_TARGET",
+          "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID",
           "PI_SUBAGENT_RUN_ID",
           "PI_SUBAGENT_CHILD_AGENT",
           "PI_SUBAGENT_CHILD_INDEX",
@@ -3524,14 +4065,12 @@ describe(
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "78f659a3",
         index: 2,
-        intercomSessionName: "subagent-echo-78f659a3-3",
-        orchestratorIntercomTarget: "subagent-chat-parent",
+        parentSessionId: "session-parent",
       });
 
       assert.equal(result.exitCode, 0);
       assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-        PI_SUBAGENT_INTERCOM_SESSION_NAME: "subagent-echo-78f659a3-3",
-        PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
+        PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: "session-parent",
         PI_SUBAGENT_RUN_ID: "78f659a3",
         PI_SUBAGENT_CHILD_AGENT: "echo",
         PI_SUBAGENT_CHILD_INDEX: "2",
@@ -3960,38 +4499,6 @@ describe(
       assert.equal(metadata.sessionFile, undefined);
     });
 
-    it("allows a foreground run to finish on the final turn-budget grace turn", async () => {
-      mockPi.onCall({
-        jsonl: [
-          mockAssistantMessage("working before wrap-up", "tool_use"),
-          mockAssistantMessage("final wrapped output", "stop"),
-        ],
-      });
-      const agents = makeAgentConfigs(["worker"]);
-
-      const result = await runSync(
-        tempDir,
-        agents,
-        "worker",
-        "Use the final grace turn to wrap up.",
-        {
-          turnBudget: { maxTurns: 1, graceTurns: 1 },
-          runId: "foreground-turn-budget-soft",
-        },
-      );
-
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.turnBudgetExceeded, undefined);
-      assert.equal(result.wrapUpRequested, true);
-      assert.equal(result.turnBudget?.outcome, "wrap-up-requested");
-      assert.equal(result.turnBudget?.turnCount, 2);
-      assert.match(
-        result.finalOutput ?? "",
-        /Turn budget wrap-up was requested after 1 assistant turn/,
-      );
-      assert.match(result.finalOutput ?? "", /final wrapped output/);
-    });
-
     it("does not run acceptance verification after a foreground timeout", async () => {
       const markerPath = path.join(tempDir, "verify-ran.txt");
       const report = [
@@ -4269,91 +4776,7 @@ describe(
       assert.match(result.finalOutput ?? "", /Interrupted/);
     });
 
-    for (const toolName of ["intercom", "contact_supervisor"]) {
-      it(`pauses cleanly on ${toolName} handoff and reaps the child before returning`, async () => {
-        const eventBus = createEventBus();
-        let accepted = false;
-        eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
-          if (!payload || typeof payload !== "object") return;
-          accepted = (payload as { accepted?: unknown }).accepted === true;
-        });
-        mockPi.onCall({
-          steps: [
-            {
-              jsonl: [
-                events.toolStart(
-                  toolName,
-                  toolName === "intercom"
-                    ? { action: "ask", to: "orchestrator" }
-                    : { reason: "need_decision", message: "Need a decision" },
-                ),
-              ],
-            },
-            { delay: 1000, jsonl: [events.assistantMessage("received pong")] },
-          ],
-        });
-        const agents = makeAgentConfigs(["echo"]);
-
-        // Emit the detach request the moment we observe the coordination tool start
-        // in a progress update — this is the signal the parent has set
-        // `intercomStarted=true`. Using a fixed delay here races the mock's
-        // cold spawn and flakes under load.
-        let detachEmitted = false;
-        const runPromise = runSync(tempDir, agents, "echo", "Task", {
-          runId: `${toolName}-detach`,
-          allowIntercomDetach: true,
-          pauseBlockingSupervisor: true,
-          intercomEvents: eventBus,
-          onUpdate: (update: unknown) => {
-            if (detachEmitted) return;
-            const progress = (
-              update as { details?: { progress?: Array<{ currentTool?: string }> } }
-            ).details?.progress;
-            const sawCoordinationTool =
-              Array.isArray(progress) && progress.some((p) => p?.currentTool === toolName);
-            if (!sawCoordinationTool) return;
-            detachEmitted = true;
-            eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "test-request" });
-          },
-        });
-
-        const callDeadline = Date.now() + 5_000;
-        let childPid: number | undefined;
-        while (Date.now() < callDeadline && childPid === undefined) {
-          const callFiles = fs
-            .readdirSync(mockPi.dir)
-            .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-            .sort();
-          const match = callFiles.at(-1)?.match(/^call-\d+-(\d+)-/);
-          if (match) childPid = Number(match[1]);
-          if (childPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-
-        const result = await runPromise;
-
-        assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
-        assert.equal(result.interrupted, true);
-        assert.equal(result.pause?.kind, "awaiting_supervisor");
-        assert.equal(result.pause?.ownerPid, undefined);
-        assert.match(
-          result.finalOutput ?? "",
-          /Resume unchanged: subagent\(\{ action: "resume", id: "/,
-        );
-        assert.match(result.finalOutput ?? "", /No child process is running\./);
-        assert.match(result.finalOutput ?? "", /Cancel: subagent\(\{ action: "interrupt", id: /);
-        assert.doesNotMatch(
-          result.finalOutput ?? "",
-          /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
-        );
-        assert.equal(accepted, true);
-        assert.ok(childPid, "expected mock child pid");
-        assert.throws(() => process.kill(childPid!, 0), /ESRCH/);
-      });
-    }
-
     for (const testCase of [
-      { name: "intercom ask", toolName: "intercom", args: { action: "ask", to: "orchestrator" } },
       {
         name: "contact_supervisor need_decision",
         toolName: "contact_supervisor",
@@ -4376,18 +4799,14 @@ describe(
 
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: `${testCase.toolName}-blocking-detach`,
-          allowIntercomDetach: true,
           pauseBlockingSupervisor: true,
         });
 
         assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
         assert.equal(result.interrupted, true);
         assert.equal(result.pause?.kind, "awaiting_supervisor");
         assert.equal(result.pause?.ownerPid, undefined);
-        if (testCase.toolName === "intercom") {
-          assert.deepEqual(result.pause?.request, { tool: "intercom", action: "ask" });
-        } else if (testCase.args.reason === "interview_request") {
+        if (testCase.args.reason === "interview_request") {
           assert.deepEqual(result.pause?.request, {
             tool: "contact_supervisor",
             reason: "interview_request",
@@ -4407,10 +4826,6 @@ describe(
         );
         assert.match(result.finalOutput ?? "", /No child process is running\./);
         assert.match(result.finalOutput ?? "", /Cancel: subagent\(\{ action: "interrupt", id: /);
-        assert.doesNotMatch(
-          result.finalOutput ?? "",
-          /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
-        );
       });
     }
 
@@ -4440,7 +4855,6 @@ describe(
         const agents = makeAgentConfigs(["echo"]);
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: "stubborn-owned-group-pause",
-          allowIntercomDetach: true,
           pauseBlockingSupervisor: true,
         });
 
@@ -4487,7 +4901,6 @@ describe(
 
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-ordering",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: (transition: unknown) => {
           transitions.push(
@@ -4528,7 +4941,6 @@ describe(
       const secret = "/private/root/pause-persist-secret";
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-persist-fails",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
           if (stage === "pausing") throw new Error(`pause persistence failed at ${secret}`);
@@ -4562,7 +4974,6 @@ describe(
       const secret = "/private/root/pause-finalize-secret";
       const runPromise = runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-finalize-fails",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
           if (stage === "paused") throw new Error(`pause finalization failed at ${secret}`);
@@ -4597,11 +5008,6 @@ describe(
 
     for (const testCase of [
       {
-        name: "intercom send",
-        toolName: "intercom",
-        args: { action: "send", to: "orchestrator", message: "FYI" },
-      },
-      {
         name: "contact_supervisor progress_update",
         toolName: "contact_supervisor",
         args: { reason: "progress_update", message: "FYI" },
@@ -4619,68 +5025,13 @@ describe(
 
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: `${testCase.toolName}-nonblocking`,
-          allowIntercomDetach: true,
         });
 
         assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
         assert.equal(result.finalOutput, "done");
         assert.equal(result.progress?.status, "completed");
       });
     }
-
-    it("lets an active intercom child accept detach when another child is listening", async () => {
-      const eventBus = createEventBus();
-      let firstDetachResponse: boolean | undefined;
-      eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
-        if (!payload || typeof payload !== "object") return;
-        if ((payload as { requestId?: unknown }).requestId !== "parallel-request") return;
-        firstDetachResponse ??= (payload as { accepted?: unknown }).accepted === true;
-      });
-      mockPi.onCall({ delay: 500, output: "quiet child done" });
-      const agents = makeAgentConfigs(["quiet", "intercom"]);
-
-      const quietRun = runSync(tempDir, agents, "quiet", "Quiet task", {
-        runId: "quiet-listener",
-        allowIntercomDetach: true,
-        intercomEvents: eventBus,
-      });
-      for (let attempt = 0; attempt < 50 && mockPi.callCount() < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      assert.equal(mockPi.callCount(), 1);
-      mockPi.onCall({
-        steps: [
-          { jsonl: [events.toolStart("intercom", { action: "send", to: "orchestrator" })] },
-          { delay: 500, jsonl: [events.assistantMessage("after intercom")] },
-        ],
-      });
-
-      let detachEmitted = false;
-      const intercomRun = runSync(tempDir, agents, "intercom", "Intercom task", {
-        runId: "active-intercom",
-        allowIntercomDetach: true,
-        intercomEvents: eventBus,
-        onUpdate: (update: unknown) => {
-          if (detachEmitted) return;
-          const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } })
-            .details?.progress;
-          const sawIntercom =
-            Array.isArray(progress) && progress.some((p) => p?.currentTool === "intercom");
-          if (!sawIntercom) return;
-          detachEmitted = true;
-          eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "parallel-request" });
-        },
-      });
-
-      const [quietResult, intercomResult] = await Promise.all([quietRun, intercomRun]);
-
-      assert.equal(quietResult.exitCode, 0);
-      assert.equal(quietResult.detached, undefined);
-      assert.equal(intercomResult.exitCode, 0);
-      assert.equal(intercomResult.detached, true);
-      assert.equal(firstDetachResponse, true);
-    });
 
     it("handles stderr without exit code as info (not error)", async () => {
       mockPi.onCall({ output: "Success", stderr: "Warning: something", exitCode: 0 });

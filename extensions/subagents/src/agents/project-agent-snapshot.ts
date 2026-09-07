@@ -299,12 +299,6 @@ function validCapturedAgentConfig(value: unknown): value is AgentConfig {
   )
     return false;
   if (
-    value.defaultContext !== undefined &&
-    value.defaultContext !== "fresh" &&
-    value.defaultContext !== "fork"
-  )
-    return false;
-  if (
     value.acceptanceRole !== undefined &&
     value.acceptanceRole !== "read-only" &&
     value.acceptanceRole !== "writer"

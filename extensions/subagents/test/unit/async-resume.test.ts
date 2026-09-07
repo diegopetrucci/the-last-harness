@@ -120,7 +120,6 @@ describe("async resume lookup", () => {
       assert.equal(target.agent, "worker");
       assert.equal(target.sessionFile, sessionFile);
       assert.equal(target.cwd, root);
-      assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
       assert.equal(target.continuationAcceptance, undefined);
       assert.deepEqual(target.contextPressureCrossedThresholds, ["warning", "critical"]);
     } finally {
@@ -436,6 +435,223 @@ describe("async resume lookup", () => {
       );
 
       assert.equal(target.activeRuntimeMs, 75);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes each runtime field before applying per-field status/result fallback", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-runtime-precedence-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      const statusSessionA = path.join(root, "status-a.jsonl");
+      const statusSessionB = path.join(root, "status-b.jsonl");
+      const resultSessionA = path.join(root, "result-a.jsonl");
+      const resultSessionB = path.join(root, "result-b.jsonl");
+      for (const sessionFile of [statusSessionA, statusSessionB, resultSessionA, resultSessionB]) {
+        fs.writeFileSync(sessionFile, "", "utf-8");
+      }
+      writeJson(path.join(asyncRoot, "run-runtime-precedence", "status.json"), {
+        runId: "run-runtime-precedence",
+        mode: "parallel",
+        state: "complete",
+        startedAt: 100,
+        cwd: root,
+        steps: [
+          {
+            agent: "status-runtime",
+            status: "complete",
+            sessionFile: statusSessionA,
+            activeRuntimeMs: 100.25,
+            activeRuntimeCheckpointAt: -1,
+          },
+          {
+            agent: "status-checkpoint",
+            status: "complete",
+            sessionFile: statusSessionB,
+            activeRuntimeCheckpointAt: 200.75,
+          },
+        ],
+      });
+      writeJson(path.join(resultsDir, "run-runtime-precedence.json"), {
+        id: "run-runtime-precedence",
+        agent: "result-runtime",
+        success: true,
+        state: "complete",
+        cwd: root,
+        results: [
+          {
+            agent: "result-checkpoint",
+            success: true,
+            sessionFile: resultSessionA,
+            activeRuntimeMs: 900.25,
+            activeRuntimeCheckpointAt: 800.75,
+          },
+          {
+            agent: "result-runtime",
+            success: true,
+            sessionFile: resultSessionB,
+            activeRuntimeMs: 700.25,
+            activeRuntimeCheckpointAt: 900.75,
+          },
+        ],
+      });
+
+      const statusRuntimeTarget = resolveAsyncResumeTarget(
+        { id: "run-runtime-precedence", index: 0 },
+        { asyncDirRoot: asyncRoot, resultsDir },
+        { readOnly: true },
+      );
+      assert.equal(statusRuntimeTarget.activeRuntimeMs, 101);
+      // The malformed status checkpoint is normalized away before the valid
+      // result checkpoint is selected as the per-field fallback.
+      assert.equal(statusRuntimeTarget.activeRuntimeCheckpointAt, 800);
+
+      const statusCheckpointTarget = resolveAsyncResumeTarget(
+        { id: "run-runtime-precedence", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir },
+        { readOnly: true },
+      );
+      assert.equal(statusCheckpointTarget.activeRuntimeMs, 701);
+      assert.equal(statusCheckpointTarget.activeRuntimeCheckpointAt, 200);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits malformed result-only runtime checkpoints without weakening valid runtime evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-checkpoint-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const sessionFile = path.join(root, "result-checkpoint.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-checkpoint.json"), {
+        id: "run-result-checkpoint",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        cwd: root,
+        results: [
+          {
+            agent: "worker",
+            success: true,
+            sessionFile,
+            activeRuntimeMs: 125.25,
+            activeRuntimeCheckpointAt: -1,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-result-checkpoint" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      assert.equal(target.activeRuntimeMs, 126);
+      assert.equal(target.activeRuntimeCheckpointAt, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports selected-child success independently of aggregate cohort state", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-selected-success-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const successfulSession = path.join(root, "successful.jsonl");
+      const failedSession = path.join(root, "failed.jsonl");
+      fs.writeFileSync(successfulSession, "", "utf-8");
+      fs.writeFileSync(failedSession, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-selected-success", "status.json"), {
+        runId: "run-selected-success",
+        mode: "parallel",
+        state: "failed",
+        startedAt: 100,
+        cwd: root,
+        steps: [
+          { agent: "successful", status: "complete", sessionFile: successfulSession },
+          { agent: "failed", status: "failed", sessionFile: failedSession },
+        ],
+      });
+
+      const successfulTarget = resolveAsyncResumeTarget(
+        { id: "run-selected-success", index: 0 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      assert.equal(successfulTarget.successfulCompletion, true);
+
+      const failedTarget = resolveAsyncResumeTarget(
+        { id: "run-selected-success", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      assert.equal(failedTarget.successfulCompletion, false);
+
+      writeJson(path.join(asyncRoot, "run-selected-failed-complete", "status.json"), {
+        runId: "run-selected-failed-complete",
+        mode: "parallel",
+        state: "complete",
+        startedAt: 100,
+        cwd: root,
+        steps: [{ agent: "failed", status: "failed", sessionFile: failedSession }],
+      });
+      const failedChildInCompleteRun = resolveAsyncResumeTarget(
+        { id: "run-selected-failed-complete", index: 0 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      assert.equal(failedChildInCompleteRun.successfulCompletion, false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses result-only child success when no status artifact is available", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-success-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const sessionFile = path.join(root, "result-success.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-success.json"), {
+        id: "run-result-success",
+        agent: "worker",
+        success: false,
+        state: "failed",
+        cwd: root,
+        results: [{ agent: "worker", success: true, sessionFile }],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-result-success" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      assert.equal(target.successfulCompletion, true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to aggregate completion for legacy single-child result artifacts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-legacy-success-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const sessionFile = path.join(root, "legacy-success.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-legacy-success.json"), {
+        id: "run-legacy-success",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        cwd: root,
+        sessionFile,
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-legacy-success" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      assert.equal(target.successfulCompletion, true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1368,26 +1584,168 @@ describe("async resume lookup", () => {
     }
   });
 
-  it("returns a live intercom target for a running child", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-live-"));
+  it("rejects malformed steps[].activeRuntimeMs in status (negative)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-neg-"));
     try {
       const asyncRoot = path.join(root, "runs");
-      writeJson(path.join(asyncRoot, "run-live", "status.json"), {
-        runId: "run-live",
+      writeJson(path.join(asyncRoot, "run-bad-runtime-neg", "status.json"), {
+        runId: "run-bad-runtime-neg",
         mode: "single",
         state: "running",
         startedAt: 100,
-        lastUpdate: 100,
-        steps: [{ agent: "scout", status: "running" }],
+        steps: [{ agent: "worker", status: "running", activeRuntimeMs: -1 }],
+      });
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-neg" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (string)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-str-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: a string value is genuinely persistable and cannot
+      // be expressed through the typed fixture helper.
+      const dir = path.join(asyncRoot, "run-bad-runtime-str");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-str",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: "500ms" }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-str" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (null)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-null-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: null is the persistable form produced by
+      // JSON.stringify for NaN/Infinity, covering the case where a corrupt writer
+      // emits an explicit null budget field.
+      const dir = path.join(asyncRoot, "run-bad-runtime-null");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-null",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: null }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-null" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed steps[].activeRuntimeMs in status (object)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-bad-runtime-obj-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      // Write raw JSON directly: an object shape is a genuinely persistable
+      // non-integer value that a corrupt writer could produce.
+      const dir = path.join(asyncRoot, "run-bad-runtime-obj");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "status.json"),
+        JSON.stringify({
+          runId: "run-bad-runtime-obj",
+          mode: "single",
+          state: "running",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "running", activeRuntimeMs: { ms: 500 } }],
+        }),
+        "utf-8",
+      );
+
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-bad-runtime-obj" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+          ),
+        /steps\[0\]\.activeRuntimeMs must be a non-negative finite number/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts valid steps[].activeRuntimeMs with malformed activeRuntimeCheckpointAt in status", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-valid-runtime-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "valid-runtime.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      // activeRuntimeCheckpointAt: -999 is a malformed (negative) but persistable
+      // value. It must NOT be strictly rejected — it is only normalized away
+      // (checkpoint metadata cannot widen a budget). Resume must still succeed
+      // with activeRuntimeMs intact and the checkpoint omitted from the target.
+      writeJson(path.join(asyncRoot, "run-valid-runtime", "status.json"), {
+        runId: "run-valid-runtime",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        sessionFile,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            activeRuntimeMs: 500,
+            activeRuntimeCheckpointAt: -999,
+          },
+        ],
       });
 
       const target = resolveAsyncResumeTarget(
-        { id: "run-live" },
+        { id: "run-valid-runtime" },
         { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
       );
-
-      assert.equal(target.kind, "live");
-      assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
+      assert.equal(target.kind, "revive");
+      assert.equal(target.activeRuntimeMs, 500);
+      // Malformed checkpoint is normalized to undefined, not strictly rejected.
+      assert.equal(target.activeRuntimeCheckpointAt, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1431,7 +1789,7 @@ describe("async resume lookup", () => {
       fs.writeFileSync(sessionFile, "", "utf-8");
       writeJson(path.join(asyncRoot, "run-pending", "status.json"), {
         runId: "run-pending",
-        mode: "chain",
+        mode: "parallel",
         state: "running",
         startedAt: 100,
         lastUpdate: 200,
@@ -1464,7 +1822,7 @@ describe("async resume lookup", () => {
       fs.writeFileSync(secondSession, "", "utf-8");
       writeJson(path.join(asyncRoot, "run-multi", "status.json"), {
         runId: "run-multi",
-        mode: "chain",
+        mode: "parallel",
         state: "complete",
         startedAt: 100,
         lastUpdate: 200,
@@ -2021,7 +2379,6 @@ describe("async resume lookup", () => {
         state: "complete",
         agent: "worker",
         index: 0,
-        intercomTarget: "subagent-worker-run-old-1",
         sessionFile: "/tmp/session.jsonl",
       },
       "What changed?",

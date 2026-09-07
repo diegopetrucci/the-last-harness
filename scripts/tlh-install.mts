@@ -32,6 +32,7 @@ import {
   copySafeProfileFile,
   ensureSafeProfileDir,
   isSymlink,
+  realpathForCompare,
   validateInstallerTargets,
   validateProfileRelativePath,
 } from "./lib/tlh-install-paths.mjs";
@@ -84,7 +85,7 @@ import {
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.84.4";
+const PINNED_PI_VERSION = "0.85.1";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -108,8 +109,8 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"] as
 //                  | "migrated" (provenance-gated: piInstalledByTlh=true in install-state)
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
-// npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.84.4.  Mirrors the advisory exclusivity
+// npm 11.x --prefix layout; empirically confirmed: npm 11.19.0 +
+// @earendil-works/pi-coding-agent@0.85.1.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -723,6 +724,35 @@ function spawnCapture(
   return result;
 }
 
+function readInstalledCommitSubject(config: InstallConfig): string | undefined {
+  if (config.dryRun) return undefined;
+
+  const topLevelResult = spawnCapture(
+    config,
+    ["git", "-C", config.packageRoot, "rev-parse", "--show-toplevel"],
+    { allowFailure: true },
+  );
+  if (topLevelResult.error || topLevelResult.status !== 0) return undefined;
+
+  const topLevel = topLevelResult.stdout.trim();
+  if (!topLevel) return undefined;
+  try {
+    if (realpathForCompare(topLevel) !== realpathForCompare(config.packageRoot)) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  const result = spawnCapture(
+    config,
+    ["git", "-C", config.packageRoot, "log", "-1", "--format=%s"],
+    { allowFailure: true },
+  );
+  if (result.error || result.status !== 0) return undefined;
+
+  const subject = result.stdout.trim();
+  return subject || undefined;
+}
+
 function runNodeScript(
   config: InstallConfig,
   scriptPath: string,
@@ -920,7 +950,7 @@ function assertSupportedPiVersion(
     versionCommandDisplay = "pi --version",
   }: SupportedPiVersionOptions = {},
 ): void {
-  // `pi --version` prints a bare semver (e.g. "0.84.4") on stdout. Older builds may
+  // `pi --version` prints a bare semver (e.g. "0.85.1") on stdout. Older builds may
   // differ, so we extract the first semver-shaped substring rather than match strictly.
   const result = spawnCapture(config, [piCommand, "--version"], {
     allowFailure: true,
@@ -1684,6 +1714,9 @@ async function writeInstallState(config: InstallConfig): Promise<void> {
     "--wrapper-name",
     config.wrapperName,
   ];
+  const commitSubject = readInstalledCommitSubject(config);
+  if (commitSubject) args.push(`--commit-subject=${commitSubject}`);
+
   const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
   const piInstalledByTlhForWrite =
     config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true

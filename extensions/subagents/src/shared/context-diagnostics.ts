@@ -35,7 +35,6 @@ const KNOWN_TERMINATION_REASONS = new Set<SubagentTerminationReason>([
   "model_error",
   "interrupted",
   "timed_out",
-  "turn_budget_exceeded",
   "tool_budget_blocked",
   "paused",
   "cancelled",
@@ -465,7 +464,6 @@ export function resolveSubagentTerminationReason(input: {
   cancelled?: boolean;
   paused?: boolean;
   timedOut?: boolean;
-  turnBudgetExceeded?: boolean;
   toolBudgetBlocked?: boolean;
   interrupted?: boolean;
   assistantStopReason?: string;
@@ -475,7 +473,6 @@ export function resolveSubagentTerminationReason(input: {
   if (input.cancelled) return "cancelled";
   if (input.paused) return "paused";
   if (input.timedOut) return "timed_out";
-  if (input.turnBudgetExceeded) return "turn_budget_exceeded";
   if (input.toolBudgetBlocked) return "tool_budget_blocked";
   if (input.interrupted) return "interrupted";
   switch (input.assistantStopReason) {

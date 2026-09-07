@@ -7,6 +7,7 @@ import { getProjectAgentSnapshotProvenance, registerProjectAgentSnapshot, resolv
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
+import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
 export const PROJECT_AGENT_PARENT_DIRECTORY = path.join(".tlh", "agents");
 export const PROJECT_AGENT_PACKAGE = "embedded";
@@ -33,7 +34,6 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
     "systemPromptMode",
     "inheritProjectContext",
     "inheritSkills",
-    "defaultContext",
     "acceptanceRole",
     "skill",
     "skills",
@@ -754,9 +754,8 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         systemPromptMode !== "replace") {
         throw new ProjectAgentDefinitionError(filePath, "systemPromptMode must be 'append' or 'replace'");
     }
-    const defaultContext = frontmatter.defaultContext;
-    if (defaultContext !== undefined && defaultContext !== "fresh" && defaultContext !== "fork") {
-        throw new ProjectAgentDefinitionError(filePath, "defaultContext must be 'fresh' or 'fork'");
+    if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+        throw new ProjectAgentDefinitionError(filePath, "defaultContext is no longer supported; remove it because TLH always starts child sessions fresh");
     }
     let acceptanceRole;
     if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim() !== "") {
@@ -766,7 +765,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         acceptanceRole = frontmatter.acceptanceRole;
     }
     const parsedMaxSubagentDepth = parseStrictNonNegativeInteger(frontmatter, "maxSubagentDepth", filePath);
-    const maxExecutionTimeMs = parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath);
+    const maxExecutionTimeMs = resolveCustomAgentMaxExecutionTimeMs(parseStrictPositiveInteger(frontmatter, "maxExecutionTimeMs", filePath));
     const toolBudget = parseToolBudget(frontmatter.toolBudget, filePath);
     const completionGuard = frontmatter.completionGuard === undefined
         ? undefined
@@ -801,7 +800,6 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
                     : "replace",
         inheritProjectContext,
         inheritSkills,
-        defaultContext,
         acceptanceRole,
         systemPrompt: body,
         source: "project",

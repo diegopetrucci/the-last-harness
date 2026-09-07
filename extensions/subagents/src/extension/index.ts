@@ -9,7 +9,6 @@
  * Toggle: async parameter (default: false)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
  */
 
 import * as fs from "node:fs";
@@ -38,9 +37,9 @@ import {
   cleanupAllArtifactDirs,
   cleanupOldArtifacts,
   getArtifactsDir,
+  resolveArtifactConfig,
 } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.ts";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.ts";
 import {
@@ -70,7 +69,7 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
+import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
@@ -79,13 +78,13 @@ import registerSubagentNotify, {
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
+import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
   type SubagentState,
   type SubagentToolResult,
   ASYNC_DIR,
-  DEFAULT_ARTIFACT_CONFIG,
   RESULTS_DIR,
   SLASH_TEXT_RESULT_TYPE,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -365,10 +364,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   ensureAccessibleDir(RESULTS_DIR);
   ensureAccessibleDir(ASYNC_DIR);
-  cleanupOldChainDirs();
   cleanupRuntimeDirs();
 
   const config = loadConfig();
+  const artifactConfig = resolveArtifactConfig(config.artifacts);
+  const executionPolicy = resolveExecutionPolicy(config.execution);
   const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
   // Lazily captured session context for modelRegistry access.
   // ctx is not available at extension setup; we capture it from the session_start
@@ -382,7 +382,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
   });
   const tempArtifactsDir = getArtifactsDir(null);
-  cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+  cleanupAllArtifactDirs(artifactConfig.cleanupDays);
   const liveDetailController = createSubagentLiveDetailController();
 
   const state: SubagentState = {
@@ -472,6 +472,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     pi,
     state,
     config,
+    artifactConfig,
+    executionPolicy,
     tempArtifactsDir,
     getSubagentSessionRoot,
     expandTilde,
@@ -795,7 +797,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     try {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (sessionFile) {
-        cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+        cleanupOldArtifacts(getArtifactsDir(sessionFile), artifactConfig.cleanupDays);
       }
     } catch {
       // Cleanup failures should not block session lifecycle events.
@@ -828,7 +830,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     if (resolvedHbConfig.enabled) {
-      // Reset session-scoped state (error breaker, consecutive errors, session
+      // Reset session-scoped state (failure breaker, consecutive failures, session
       // totals) for the new session.  Must run before capturing ctx so stale
       // state from the previous session does not persist into this one.
       hbWiring.resetSession();

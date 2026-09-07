@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -20,6 +20,13 @@ import {
 import { buildInstallConfig, parseArgs, usage } from "../scripts/tlh-install.mjs";
 import { validateInstallerTargets } from "../scripts/lib/tlh-install-paths.mjs";
 
+const repoNestedFixtureParent = join(repoRoot, ".symphony", "tlh-sessions");
+
+function makeRepoNestedFixture(prefix) {
+  mkdirSync(repoNestedFixtureParent, { recursive: true });
+  return mkdtempSync(join(repoNestedFixtureParent, prefix));
+}
+
 test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --verbose", (t) => {
   for (const verbose of [false, true]) {
     const { result, agentDir } = runStage1LocalPackageInstall(t, { verbose });
@@ -31,6 +38,7 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
       /Running settings-wide extension refresh from merged settings; fallback retries only 9 non-critical bundled default source\(s\) individually\./;
 
     assert.equal(result.status, 0, output);
+    assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).commitSubject, undefined);
     if (verbose) {
       assert.ok(output.includes(pathNotice), output);
       assert.match(output, refreshDetailPattern);
@@ -39,6 +47,54 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
       assert.doesNotMatch(output, refreshDetailPattern);
     }
   }
+});
+
+test("stage-1 records checkout subjects that begin with a hyphen", (t) => {
+  const packageRoot = makeRepoNestedFixture(".tlh-test-git-package-");
+  const emptyHooksDir = join(packageRoot, "empty-hooks");
+  mkdirSync(emptyHooksDir);
+  t.after(() => rmSync(packageRoot, { recursive: true, force: true }));
+  execFileSync("git", ["-C", packageRoot, "init", "--quiet"]);
+  execFileSync("git", ["-C", packageRoot, "config", "user.email", "tlh-tests@example.invalid"]);
+  execFileSync("git", ["-C", packageRoot, "config", "user.name", "TLH tests"]);
+  execFileSync("git", [
+    "-C",
+    packageRoot,
+    "-c",
+    "commit.gpgSign=false",
+    "-c",
+    `core.hooksPath=${emptyHooksDir}`,
+    "commit",
+    "--quiet",
+    "--no-verify",
+    "--allow-empty",
+    "-m",
+    "-cosmetic install metadata",
+  ]);
+
+  const { result, agentDir } = runStage1LocalPackageInstall(t, {
+    envOverrides: { TLH_PACKAGE_SOURCE: `file:${packageRoot}` },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.equal(
+    readJson(join(agentDir, "tlh", "install-state.json")).commitSubject,
+    "-cosmetic install metadata",
+  );
+});
+
+test("stage-1 ignores an ancestor Git commit for a non-Git nested package source", (t) => {
+  const packageRoot = makeRepoNestedFixture(".tlh-test-non-git-package-");
+  t.after(() => rmSync(packageRoot, { recursive: true, force: true }));
+
+  const { result, agentDir } = runStage1LocalPackageInstall(t, {
+    envOverrides: { TLH_PACKAGE_SOURCE: `file:${packageRoot}` },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).commitSubject, undefined);
 });
 
 test("stage-1 rejects legacy ticket integration flags", () => {
@@ -514,9 +570,13 @@ test("stage-1 normalizes absolute file: sources for Pi while preserving raw inst
       .slice(0, 3),
     ["--version", `install ${repoRoot}`, `update ${repoRoot}`],
   );
+  const state = readJson(join(agentDir, "tlh", "install-state.json"));
+  assert.equal(state.packageSource, filePackageSource);
   assert.equal(
-    readJson(join(agentDir, "tlh", "install-state.json")).packageSource,
-    filePackageSource,
+    state.commitSubject,
+    execFileSync("git", ["-C", repoRoot, "log", "-1", "--format=%s"], {
+      encoding: "utf8",
+    }).trim(),
   );
   const settings = readJson(join(agentDir, "settings.json"));
   assert.equal(settings.packages[0], repoRoot);

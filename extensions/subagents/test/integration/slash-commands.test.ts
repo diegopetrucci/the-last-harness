@@ -197,7 +197,7 @@ describe(
         const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-slash-doctor-"));
         try {
           const sent: unknown[] = [];
-          const config = { intercomBridge: { mode: "off" } };
+          const config = {};
           const { commands, events } = registerCommands(cwd, sent, config);
           const sessionFile = path.join(cwd, "sessions", "parent.jsonl");
           await commands.get("subagents-doctor")!.handler(
@@ -227,7 +227,6 @@ describe(
           assert.ok(content.includes(`- cwd: ${cwd}`));
           assert.match(content, /- current session file: .*parent\.jsonl/);
           assert.match(content, /- current session id: session-active/);
-          assert.ok(content.includes("- bridge: inactive (bridge mode is off)"));
         } finally {
           fs.rmSync(cwd, { recursive: true, force: true });
         }

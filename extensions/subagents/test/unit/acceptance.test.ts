@@ -183,7 +183,7 @@ describe("acceptance gates", () => {
         agentName: "explorer",
         acceptanceRole: "read-only",
         task: "Explore each target",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );
@@ -192,7 +192,7 @@ describe("acceptance gates", () => {
         agentName: "worker",
         acceptanceRole: "writer",
         task: "Review only; do not edit files",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );
@@ -200,7 +200,7 @@ describe("acceptance gates", () => {
       resolveEffectiveAcceptance({
         agentName: "reviewer",
         task: "Review each target",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );
@@ -918,6 +918,39 @@ describe("acceptance gates", () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  it("preserves exact validation error order across malformed nested sections", () => {
+    assert.deepEqual(
+      validateAcceptanceInput(
+        {
+          verify: [{ unsupported: true }],
+          review: {
+            zeta: true,
+            alpha: true,
+            agent: 42,
+            focus: 42,
+            required: "yes",
+          },
+          stopRules: [123],
+        },
+        "custom.acceptance",
+      ),
+      [
+        "custom.acceptance.verify[0].unsupported is not supported.",
+        "custom.acceptance.verify[0].id is required.",
+        "custom.acceptance.verify[0].command is required.",
+        "custom.acceptance.review.zeta is not supported.",
+        "custom.acceptance.review.alpha is not supported.",
+        "custom.acceptance.review.agent must be a string.",
+        "custom.acceptance.review.focus must be a string.",
+        "custom.acceptance.review.required must be a boolean.",
+        "custom.acceptance.stopRules[0] must be a string.",
+      ],
+    );
+    assert.deepEqual(validateAcceptanceInput({ review: true }, "custom.acceptance"), [
+      "custom.acceptance.review must be false or an object.",
+    ]);
   });
 
   it("validates invalid disable and verify shapes", () => {

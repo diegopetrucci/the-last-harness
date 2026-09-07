@@ -8,9 +8,10 @@ import {
 } from "../../shared/types.ts";
 import {
   lifecycleContinuationForIndex,
+  normalizeActiveRuntimeCheckpointAt,
+  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import {
   normalizeProjectAgentRunCapture,
   type ProjectAgentRunCapture,
@@ -152,7 +153,6 @@ type AsyncResumeTarget = {
   state: AsyncStatus["state"];
   agent: string;
   index: number;
-  intercomTarget: string;
   cwd?: string;
   sessionFile?: string;
   tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
@@ -166,6 +166,9 @@ type AsyncResumeTarget = {
   claimed?: boolean;
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
+  activeRuntimeCheckpointAt?: number;
+  /** Selected-child success, independent of the aggregate async lifecycle state. */
+  successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
   /** Present only when the persisted run carried a run-level project inventory. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -227,6 +230,11 @@ type AsyncResumeModelMetadata = Pick<AsyncResumeTarget, "modelIdentity" | "model
 type AsyncResumeDiagnosticMetadata = Pick<
   AsyncResumeTarget,
   "contextUsage" | "contextPressure" | "contextPressureCrossedThresholds" | "terminationReason"
+>;
+
+type AsyncResumeRuntimeMetadata = Pick<
+  AsyncResumeTarget,
+  "activeRuntimeMs" | "activeRuntimeCheckpointAt" | "successfulCompletion"
 >;
 
 interface AsyncResumeResolutionContext {
@@ -347,12 +355,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         resultPath,
         `results[${index}].sessionFile`,
       );
-      const intercomTarget = validateOptionalString(
-        child,
-        "intercomTarget",
-        resultPath,
-        `results[${index}].intercomTarget`,
-      );
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
       const thinking = parseThinkingLevel(child.thinking);
       const modelIdentity = parseResultModelIdentity(
@@ -396,6 +398,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
           `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
         );
       }
+      // Checkpoint timestamps are optional diagnostics. Invalid external values
+      // are unknown and must not affect continuation selection.
+      const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+        child.activeRuntimeCheckpointAt,
+      );
       // Acceptance is accepted opaquely — the caller validates contract fields.
       const acceptance =
         child.acceptance !== undefined &&
@@ -411,7 +418,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       return {
         agent,
         sessionFile,
-        intercomTarget,
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(model ? { model } : {}),
@@ -423,6 +429,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
         ...(terminationReason ? { terminationReason } : {}),
         ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(acceptance ? { acceptance } : {}),
         ...(projectAgent ? { projectAgent } : {}),
       };
@@ -444,6 +451,10 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
     )
     .filter((capture): capture is ProjectAgentRunCapture => Boolean(capture));
+  const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
+  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    data.activeRuntimeCheckpointAt,
+  );
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -474,6 +485,8 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         }
       : {}),
     ...(typeof success === "boolean" ? { success } : {}),
+    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
@@ -831,6 +844,50 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
   }
 }
 
+/**
+ * Fail-closed pre-normalization check for steps[].activeRuntimeMs in a raw
+ * status file. normalizeAsyncLifecycleStatus silently drops invalid values
+ * before validateStatusForResume runs, so we must validate the raw JSON here
+ * to mirror the result-path strict rejection at lines 385-393.
+ *
+ * activeRuntimeCheckpointAt is deliberately NOT checked; it cannot widen a
+ * budget and is only normalized (never strictly validated) on all paths.
+ */
+function validateRawStatusStepsForResume(statusPath: string): void {
+  let content: string;
+  try {
+    content = fs.readFileSync(statusPath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch {
+    // JSON parse errors are reported later by the reconciler/readStatus path.
+    return;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+  const steps = (raw as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return;
+  for (let index = 0; index < steps.length; index++) {
+    const step = steps[index];
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const activeRuntimeMs = (step as Record<string, unknown>).activeRuntimeMs;
+    if (
+      activeRuntimeMs !== undefined &&
+      (typeof activeRuntimeMs !== "number" ||
+        !Number.isFinite(activeRuntimeMs) ||
+        activeRuntimeMs < 0)
+    ) {
+      throw new Error(
+        `Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`,
+      );
+    }
+  }
+}
+
 function validateResumeSessionFile(
   runId: string,
   sessionFile: string,
@@ -953,7 +1010,6 @@ function buildLiveAsyncResumeTarget(
     state: context.state,
     agent: statusStep.agent,
     index,
-    intercomTarget: resolveSubagentIntercomTarget(context.runId, statusStep.agent, index),
     cwd: context.status?.cwd ?? context.result?.cwd,
     sessionFile:
       statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
@@ -1007,6 +1063,127 @@ function resolveLiveAsyncResumeTarget(
       `Async run '${context.runId}' has ${running.length} running children. Provide index to choose one.`,
     );
   return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
+}
+
+function selectedChildSuccessfulCompletion(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): boolean {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  if (
+    statusStep?.terminationReason === "interrupted" ||
+    resultStep?.interrupted === true ||
+    resultStep?.terminationReason === "interrupted"
+  ) {
+    return false;
+  }
+  const status = statusStep?.status;
+  if (status !== undefined) {
+    return status === "complete" || status === "completed";
+  }
+  const resultSuccess = resultStep?.success;
+  if (typeof resultSuccess === "boolean") return resultSuccess;
+  // Older single-child artifacts did not always persist per-child evidence.
+  // Preserve their aggregate completion fallback without letting a failed
+  // parallel cohort reset an unrelated child's runtime ledger.
+  return context.stepCount === 1 && context.state === "complete";
+}
+
+function resolveSelectedChildRuntimeMetadata(
+  context: AsyncResumeResolutionContext,
+  index: number,
+): AsyncResumeRuntimeMetadata {
+  const statusStep = context.statusSteps[index];
+  const resultStep = context.resultSteps[index];
+  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs);
+  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs);
+  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    statusStep?.activeRuntimeCheckpointAt,
+  );
+  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
+    resultStep?.activeRuntimeCheckpointAt,
+  );
+  return {
+    ...(selectedActiveRuntimeMs !== undefined
+      ? { activeRuntimeMs: selectedActiveRuntimeMs }
+      : resultActiveRuntimeMs !== undefined
+        ? { activeRuntimeMs: resultActiveRuntimeMs }
+        : {}),
+    ...(selectedActiveRuntimeCheckpointAt !== undefined
+      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
+      : resultActiveRuntimeCheckpointAt !== undefined
+        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
+        : {}),
+    successfulCompletion: selectedChildSuccessfulCompletion(context, index),
+  };
+}
+
+function buildTerminalAsyncResumeTarget(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  selectedStatusStep: AsyncStatusStep | undefined,
+  selectedContinuation: ReturnType<typeof lifecycleContinuationForIndex>,
+  agent: string,
+  resolvedSessionFile: string | undefined,
+  continuationAcceptance: AsyncResumeTarget["continuationAcceptance"],
+): AsyncResumeTarget {
+  const target: AsyncResumeTarget = {
+    kind: "revive",
+    runId: context.runId,
+    asyncDir: context.location.asyncDir ?? undefined,
+    state: context.state,
+    agent,
+    index,
+    cwd: context.status?.cwd ?? context.result?.cwd,
+    ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+  };
+  const modelMetadata = resolveResumeModelMetadata(
+    index,
+    selectedStatusStep,
+    context.resultSteps,
+    context.result,
+  );
+  const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+  const targetWithModelMetadata: AsyncResumeTarget = {
+    ...target,
+    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+    ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
+    ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+    ...(selectedStatusStep?.pause?.kind
+      ? { pauseKind: selectedStatusStep.pause.kind }
+      : context.status?.pause?.kind
+        ? { pauseKind: context.status.pause.kind }
+        : {}),
+    ...(typeof selectedContinuation?.claimToken === "string" &&
+    selectedContinuation.claimToken.length > 0
+      ? { claimed: true }
+      : {}),
+    ...(continuationAcceptance ? { continuationAcceptance } : {}),
+  };
+  const diagnosticMetadata = resolveResumeDiagnosticMetadata(
+    index,
+    selectedStatusStep,
+    context.resultSteps,
+    context.result,
+  );
+  const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+  return {
+    ...targetWithModelMetadata,
+    ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
+    ...(diagnosticMetadata.contextPressure
+      ? { contextPressure: diagnosticMetadata.contextPressure }
+      : {}),
+    ...(diagnosticMetadata.contextPressureCrossedThresholds
+      ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
+      : {}),
+    ...(diagnosticMetadata.terminationReason
+      ? { terminationReason: diagnosticMetadata.terminationReason }
+      : {}),
+    ...runtimeMetadata,
+  };
 }
 
 function resolveTerminalAsyncResumeTarget(
@@ -1117,66 +1294,15 @@ function resolveTerminalAsyncResumeTarget(
   const continuationAcceptance = selectedChildPaused
     ? resolvePausedContinuationAcceptance(context.runId, pausedStepAcceptance)
     : undefined;
-  const target: AsyncResumeTarget = {
-    kind: "revive",
-    runId: context.runId,
-    asyncDir: context.location.asyncDir ?? undefined,
-    state: context.state,
+  return buildTerminalAsyncResumeTarget(
+    context,
+    index,
+    selectedStatusStep,
+    selectedContinuation,
     agent,
-    index,
-    intercomTarget: resolveSubagentIntercomTarget(context.runId, agent, index),
-    cwd: context.status?.cwd ?? context.result?.cwd,
-    ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-  };
-  const modelMetadata = resolveResumeModelMetadata(
-    index,
-    selectedStatusStep,
-    context.resultSteps,
-    context.result,
+    resolvedSessionFile,
+    continuationAcceptance,
   );
-  const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
-  const targetWithModelMetadata: AsyncResumeTarget = {
-    ...target,
-    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
-    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
-    ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
-    ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
-    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
-    ...(selectedStatusStep?.pause?.kind
-      ? { pauseKind: selectedStatusStep.pause.kind }
-      : context.status?.pause?.kind
-        ? { pauseKind: context.status.pause.kind }
-        : {}),
-    ...(typeof selectedContinuation?.claimToken === "string" &&
-    selectedContinuation.claimToken.length > 0
-      ? { claimed: true }
-      : {}),
-    ...(continuationAcceptance ? { continuationAcceptance } : {}),
-  };
-  const diagnosticMetadata = resolveResumeDiagnosticMetadata(
-    index,
-    selectedStatusStep,
-    context.resultSteps,
-    context.result,
-  );
-  return {
-    ...targetWithModelMetadata,
-    ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
-    ...(diagnosticMetadata.contextPressure
-      ? { contextPressure: diagnosticMetadata.contextPressure }
-      : {}),
-    ...(diagnosticMetadata.contextPressureCrossedThresholds
-      ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
-      : {}),
-    ...(diagnosticMetadata.terminationReason
-      ? { terminationReason: diagnosticMetadata.terminationReason }
-      : {}),
-    ...(selectedStatusStep?.activeRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
-      : context.resultSteps[index]?.activeRuntimeMs !== undefined
-        ? { activeRuntimeMs: context.resultSteps[index]!.activeRuntimeMs }
-        : {}),
-  };
 }
 
 export function resolveAsyncResumeTarget(
@@ -1190,6 +1316,13 @@ export function resolveAsyncResumeTarget(
   const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
   if (!location.asyncDir && !location.resultPath) {
     throw new Error("Async run not found. Provide id or dir.");
+  }
+
+  // Validate raw status JSON before normalization strips malformed budget fields.
+  // normalizeAsyncLifecycleStatus silently drops invalid steps[].activeRuntimeMs;
+  // fail-closed here mirrors the result-path strict rejection (lines 385-393).
+  if (location.asyncDir) {
+    validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
   }
 
   const reconciliation =

@@ -3,11 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import { Type } from "typebox";
-import { Compile } from "typebox/compile";
 import {
   ProjectTrustStore,
   type ExtensionAPI,
@@ -28,26 +25,17 @@ import {
   SUBAGENT_CHILD_INDEX_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-  SUBAGENT_ORCHESTRATOR_TARGET_ENV,
   SUBAGENT_RUN_ID_ENV,
   SUBAGENT_STEER_INBOX_ENV,
+  SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import {
-  STRUCTURED_OUTPUT_CAPTURE_ENV,
-  STRUCTURED_OUTPUT_SCHEMA_ENV,
-} from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
-import {
-  BACKGROUND_COMPLETION_NUDGE_TEXT,
-  CONTROL_NOTICE_NUDGE_TEXT,
-} from "../../src/runs/shared/nudge-texts.ts";
 import registerSubagentPromptRuntime, {
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-  SUBAGENT_INTERCOM_SESSION_NAME_ENV,
+  NATIVE_SUPERVISOR_GUIDANCE,
   rewriteSubagentPrompt,
   stripInheritedSkills,
-  stripParentOnlySubagentMessages,
   stripProjectContext,
   stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
@@ -73,13 +61,6 @@ function makeToolInfo(name: string): ToolInfo {
   };
 }
 
-function matchesToolParameters<TParams extends TSchema>(
-  schema: TParams,
-  value: unknown,
-): value is Static<TParams> {
-  return Compile(schema).Check(value);
-}
-
 function hasSystemPrompt(value: unknown): value is { systemPrompt: string } {
   if (typeof value !== "object" || value === null || !("systemPrompt" in value)) return false;
   return typeof value.systemPrompt === "string";
@@ -89,60 +70,18 @@ function countOccurrences(value: string, needle: string): number {
   return needle.length === 0 ? 0 : value.split(needle).length - 1;
 }
 
-function makeUserMessage(content: UserMessage["content"]): UserMessage {
-  return { role: "user", content, timestamp: 1 };
-}
-
-function makeCustomMessage(customType: string, content: string): AgentMessage {
-  return { role: "custom", customType, content, display: true, timestamp: 1 };
-}
-
-function makeToolResultMessage(toolName: string, content: string): ToolResultMessage<undefined> {
-  return {
-    role: "toolResult",
-    toolCallId: `${toolName}-call`,
-    toolName,
-    content: [{ type: "text", text: content }],
-    isError: false,
-    timestamp: 1,
-  };
-}
-
-function makeAssistantMessage(content: AssistantMessage["content"]): AssistantMessage {
-  return {
-    role: "assistant",
-    content,
-    api: "anthropic-messages",
-    provider: "anthropic",
-    model: "test-model",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      totalTokens: 0,
-    },
-    stopReason: "stop",
-    timestamp: 1,
-  };
-}
-
 const envSnapshot = {
   PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
   PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
-  PI_SUBAGENT_INTERCOM_SESSION_NAME: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
   PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
-  PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
-  PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
   PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
-  PI_SUBAGENT_ORCHESTRATOR_TARGET: process.env.PI_SUBAGENT_ORCHESTRATOR_TARGET,
   PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
   PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: process.env.PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
   PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT,
   PI_SUBAGENT_CHILD_INDEX: process.env.PI_SUBAGENT_CHILD_INDEX,
   PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
+  PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
 };
 
 const SKILLS_SECTION =
@@ -166,12 +105,6 @@ const PROMPT_WITH_EXPLICIT_SKILL = [
 const CONFIGURED_SKILLS_SECTION =
   "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
 
-const STRUCTURED_OUTPUT_INSTRUCTIONS = [
-  "This subagent step has a strict structured output contract.",
-  "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
-  "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
-].join("\n");
-
 afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined)
     delete process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT;
@@ -181,25 +114,11 @@ afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_INHERIT_SKILLS === undefined)
     delete process.env.PI_SUBAGENT_INHERIT_SKILLS;
   else process.env.PI_SUBAGENT_INHERIT_SKILLS = envSnapshot.PI_SUBAGENT_INHERIT_SKILLS;
-  if (envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME === undefined)
-    delete process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME;
-  else
-    process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME = envSnapshot.PI_SUBAGENT_INTERCOM_SESSION_NAME;
   if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined)
     delete process.env[SUBAGENT_STEER_INBOX_ENV];
   else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
-  if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined)
-    delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
-  else
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
-  if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined)
-    delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-  else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
   if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
   else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
-  if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_TARGET === undefined)
-    delete process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV];
-  else process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = envSnapshot.PI_SUBAGENT_ORCHESTRATOR_TARGET;
   if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID === undefined)
     delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
   else
@@ -223,6 +142,9 @@ afterEach(() => {
   else
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] =
       envSnapshot.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE;
+  if (envSnapshot.PI_SUBAGENT_SUPERVISOR_BRIDGE === undefined)
+    delete process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV];
+  else process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = envSnapshot.PI_SUBAGENT_SUPERVISOR_BRIDGE;
 });
 
 type ProjectGuidanceFixture = {
@@ -264,12 +186,14 @@ async function withChildGuidanceEnv<T>(
     inheritProjectContext?: boolean;
     inheritSkills?: boolean;
     projectAgentGuidance?: boolean | string;
+    supervisorBridge?: boolean | string;
   } = {},
 ): Promise<T> {
   const previous = {
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
     PI_SUBAGENT_CHILD_AGENT: process.env[SUBAGENT_CHILD_AGENT_ENV],
     PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+    PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
     PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
     PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
   };
@@ -277,8 +201,20 @@ async function withChildGuidanceEnv<T>(
   if (role === undefined) delete process.env[SUBAGENT_CHILD_AGENT_ENV];
   else process.env[SUBAGENT_CHILD_AGENT_ENV] = role;
   process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = Object.hasOwn(options, "projectAgentGuidance")
-    ? String(options.projectAgentGuidance)
+    ? options.projectAgentGuidance === true
+      ? "1"
+      : options.projectAgentGuidance === false
+        ? "0"
+        : String(options.projectAgentGuidance)
     : "1";
+  if (Object.hasOwn(options, "supervisorBridge"))
+    process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] =
+      options.supervisorBridge === true
+        ? "1"
+        : options.supervisorBridge === false
+          ? "0"
+          : String(options.supervisorBridge);
+  else process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = "1";
   process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT =
     options.inheritProjectContext === false ? "0" : "1";
   process.env.PI_SUBAGENT_INHERIT_SKILLS = options.inheritSkills === false ? "0" : "1";
@@ -334,7 +270,6 @@ function persistProjectTrust(fixture: ProjectGuidanceFixture): void {
 }
 
 function setSupervisorEnv(): void {
-  process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "subagent-chat-parent";
   process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
   process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = path.join(
     os.tmpdir(),
@@ -346,7 +281,6 @@ function setSupervisorEnv(): void {
 }
 
 function clearSupervisorEnv(): void {
-  delete process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV];
   delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
   delete process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV];
   delete process.env[SUBAGENT_RUN_ID_ENV];
@@ -441,6 +375,90 @@ describe("subagent prompt runtime", () => {
         assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       });
     }
+  });
+
+  it("injects neutral native supervisor guidance for custom/project agents", async (t) => {
+    const fixture = makeProjectGuidanceFixture();
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const handlers = registerPromptRuntimeHandlers();
+
+    await withChildGuidanceEnv(
+      fixture,
+      "custom-agent",
+      async () => {
+        setSupervisorEnv();
+        const ctx = makeMinimalCtx(fixture.cwd);
+        await handlers.sessionStart(ctx);
+        const event = await handlers.beforeAgentStart({ systemPrompt: "custom role" }, ctx);
+        assert.ok(hasSystemPrompt(event));
+        assert.match(event.systemPrompt, /Native supervisor coordination:/);
+        assert.match(event.systemPrompt, /contact_supervisor/);
+        assert.equal(countOccurrences(event.systemPrompt, NATIVE_SUPERVISOR_GUIDANCE), 1);
+        assert.doesNotMatch(event.systemPrompt, /TLH Project Agent Guidance/);
+        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+
+        const repeated = await handlers.beforeAgentStart(event, ctx);
+        const repeatedPrompt = hasSystemPrompt(repeated)
+          ? repeated.systemPrompt
+          : event.systemPrompt;
+        assert.equal(countOccurrences(repeatedPrompt, NATIVE_SUPERVISOR_GUIDANCE), 1);
+        assert.ok(repeatedPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+      },
+      { projectAgentGuidance: false },
+    );
+  });
+
+  it("does not duplicate native guidance for canonical packaged prompts", async (t) => {
+    const fixture = makeProjectGuidanceFixture();
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const handlers = registerPromptRuntimeHandlers();
+
+    await withChildGuidanceEnv(
+      fixture,
+      "developer",
+      async () => {
+        setSupervisorEnv();
+        const ctx = makeMinimalCtx(fixture.cwd);
+        await handlers.sessionStart(ctx);
+        const event = await handlers.beforeAgentStart({ systemPrompt: "canonical role" }, ctx);
+        assert.ok(hasSystemPrompt(event));
+        assert.doesNotMatch(event.systemPrompt, /Native supervisor coordination:/);
+        assert.doesNotMatch(event.systemPrompt, /<tlh_project_agent_guidance>/);
+        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+      },
+      { projectAgentGuidance: true },
+    );
+  });
+
+  it("suppresses native guidance and runtime registration for supervisor opt-out", async (t) => {
+    const fixture = makeProjectGuidanceFixture();
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const handlers = new Map<TestEventName, TestEventHandler>();
+    const registered: string[] = [];
+    const extensionApi = makeExtensionAPI({
+      on: recordEvents(handlers),
+      getAllTools: () => registered.map(makeToolInfo),
+      registerTool<TParams extends TSchema, TDetails, TState>(
+        tool: ToolDefinition<TParams, TDetails, TState>,
+      ) {
+        registered.push(tool.name);
+      },
+    });
+    registerSubagentPromptRuntime(extensionApi);
+
+    await withChildGuidanceEnv(
+      fixture,
+      "custom-agent",
+      async () => {
+        setSupervisorEnv();
+        await handlers.get("session_start")?.({});
+        const event = await handlers.get("before_agent_start")?.({ systemPrompt: "custom role" });
+        assert.ok(hasSystemPrompt(event));
+        assert.doesNotMatch(event.systemPrompt, /Native supervisor coordination:/);
+        assert.deepEqual(registered, []);
+      },
+      { projectAgentGuidance: false, supervisorBridge: false },
+    );
   });
 
   it("requires an exact enabled provenance sentinel before resolving child guidance", async (t) => {
@@ -658,59 +676,6 @@ describe("subagent prompt runtime", () => {
     }
   });
 
-  it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-runtime-"));
-    try {
-      const schemaPath = path.join(dir, "schema.json");
-      const outputPath = path.join(dir, "output.json");
-      fs.writeFileSync(
-        schemaPath,
-        JSON.stringify({
-          type: "object",
-          required: ["ok"],
-          properties: { ok: { type: "boolean" } },
-        }),
-        "utf-8",
-      );
-      process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
-      process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
-      let execute:
-        | ((_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>)
-        | undefined;
-
-      registerSubagentPromptRuntime(
-        makeExtensionAPI({
-          registerTool<TParams extends TSchema, TDetails, TState>(
-            tool: ToolDefinition<TParams, TDetails, TState>,
-          ) {
-            if (tool.name !== "structured_output") return;
-            execute = async (toolCallId, params) => {
-              if (!matchesToolParameters(tool.parameters, params)) {
-                throw new Error("test structured_output params failed schema validation");
-              }
-              const result = await tool.execute(
-                toolCallId,
-                params,
-                undefined,
-                undefined,
-                makeMinimalCtx(process.cwd()),
-              );
-              return { terminate: result.terminate };
-            };
-          },
-          on: () => {},
-        }),
-      );
-
-      assert.ok(execute, "structured_output tool should be registered");
-      const result = await execute("tool-1", { value: { ok: true } });
-      assert.equal(result.terminate, true);
-      assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it("strips only the project context block", () => {
     const rewritten = stripProjectContext(BASE_PROMPT);
     assert.ok(!rewritten.includes("# Project Context"));
@@ -737,51 +702,6 @@ describe("subagent prompt runtime", () => {
     assert.ok(!rewritten.includes("# Project Context"));
     assert.ok(!rewritten.includes("<available_skills>"));
     assert.ok(rewritten.includes("Current working directory: /repo"));
-  });
-
-  it("keeps no-guidance and structured-output safety blocks singular", () => {
-    const noGuidance = rewriteSubagentPrompt(
-      `packaged role\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
-      {
-        inheritProjectContext: true,
-        inheritSkills: true,
-      },
-    );
-    assert.equal(countOccurrences(noGuidance, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(noGuidance, "This subagent step has a strict structured output contract."),
-      0,
-    );
-
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = "structured-output.json";
-    const structured = rewriteSubagentPrompt(
-      `packaged role\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
-      {
-        inheritProjectContext: true,
-        inheritSkills: true,
-      },
-    );
-    assert.equal(countOccurrences(structured, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(structured, "This subagent step has a strict structured output contract."),
-      1,
-    );
-    assert.ok(
-      structured.indexOf("This subagent step has a strict structured output contract.") <
-        structured.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
-    );
-    const structuredAgain = rewriteSubagentPrompt(structured, {
-      inheritProjectContext: true,
-      inheritSkills: true,
-    });
-    assert.equal(countOccurrences(structuredAgain, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(
-        structuredAgain,
-        "This subagent step has a strict structured output contract.",
-      ),
-      1,
-    );
   });
 
   it("preserves role text containing guidance delimiters while deduplicating the exact snapshot", () => {
@@ -822,7 +742,6 @@ describe("subagent prompt runtime", () => {
   });
 
   it("preserves quoted runtime blocks and appends only the owned suffix", () => {
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = "structured-output.json";
     const snapshot = [
       "## TLH Project Agent Guidance",
       "",
@@ -837,16 +756,13 @@ describe("subagent prompt runtime", () => {
       "Quoted project guidance:",
       snapshot,
       "Continuation after the quoted guidance.",
-      "Quoted structured-output instructions:",
-      STRUCTURED_OUTPUT_INSTRUCTIONS,
-      "Continuation after the quoted structured-output instructions.",
       "Quoted child boundary:",
       CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
       "Continuation after the quoted child boundary.",
     ].join("\n\n");
     const explicitRuntimeBlock = [
       CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-      [snapshot, STRUCTURED_OUTPUT_INSTRUCTIONS].join("\n\n"),
+      snapshot,
       CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
     ].join("\n");
     const promptWithRuntimeSuffix =
@@ -866,7 +782,6 @@ describe("subagent prompt runtime", () => {
     ].join("\n\n");
     assert.equal(rewritten, expected);
     assert.equal(countOccurrences(rewritten, snapshot), 2);
-    assert.equal(countOccurrences(rewritten, STRUCTURED_OUTPUT_INSTRUCTIONS), 2);
     assert.equal(countOccurrences(rewritten, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 2);
     assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
@@ -954,110 +869,7 @@ describe("subagent prompt runtime", () => {
     assert.ok(rewritten.includes('<skill name="safe-bash">'));
   });
 
-  it("strips parent-only subagent custom messages from forked child context", () => {
-    const user = makeUserMessage("Task");
-    const instruction = makeCustomMessage(
-      "subagent-orchestration-instructions",
-      "Subagent orchestration is enabled.",
-    );
-    const slashTextResult = makeCustomMessage("subagent-slash-text-result", "Subagent profiles");
-    const notify = makeCustomMessage("subagent-notify", "Background task completed");
-    const control = makeCustomMessage("subagent_control_notice", "needs attention");
-    const otherCustom = makeCustomMessage("other", "keep");
-
-    assert.deepEqual(
-      stripParentOnlySubagentMessages([
-        user,
-        instruction,
-        slashTextResult,
-        notify,
-        control,
-        otherCustom,
-      ]),
-      [user, otherCustom],
-    );
-  });
-
-  it("strips legacy slash-result custom messages from forked child context", () => {
-    const legacySlashResult = makeCustomMessage("subagent-slash-result", "## Legacy result");
-    const otherCustom = makeCustomMessage("other", "keep");
-
-    assert.deepEqual(stripParentOnlySubagentMessages([legacySlashResult, otherCustom]), [
-      otherCustom,
-    ]);
-  });
-
-  it("strips prior parent subagent tool calls and results from forked child context", () => {
-    const user = makeUserMessage("Task");
-    const subagentResult = makeToolResultMessage("subagent", "subagent results");
-    const readResult = makeToolResultMessage("read", "file contents");
-    const mixedAssistant = makeAssistantMessage([
-      { type: "text", text: "I will inspect the repo." },
-      { type: "toolCall", id: "subagent-call", name: "subagent", arguments: { agent: "worker" } },
-      { type: "toolCall", id: "read-call", name: "read", arguments: { path: "README.md" } },
-    ]);
-    const pureSubagentCall = makeAssistantMessage([
-      {
-        type: "toolCall",
-        id: "reviewer-call",
-        name: "subagent",
-        arguments: { agent: "reviewer" },
-      },
-    ]);
-
-    const textBlock = mixedAssistant.content[0];
-    const readBlock = mixedAssistant.content[2];
-    assert.ok(textBlock);
-    assert.ok(readBlock);
-    assert.deepEqual(
-      stripParentOnlySubagentMessages([
-        user,
-        subagentResult,
-        readResult,
-        mixedAssistant,
-        pureSubagentCall,
-      ]),
-      [
-        user,
-        readResult,
-        {
-          ...mixedAssistant,
-          content: [textBlock, readBlock],
-        },
-      ],
-    );
-  });
-
-  it("strips wake-up nudge user messages (string content) from forked child context", () => {
-    const normalUser = makeUserMessage("Hello from the human.");
-    const bgNudge = makeUserMessage(BACKGROUND_COMPLETION_NUDGE_TEXT);
-    const controlNudge = makeUserMessage(CONTROL_NOTICE_NUDGE_TEXT);
-
-    assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [
-      normalUser,
-    ]);
-  });
-
-  it("strips wake-up nudge user messages (single text-block content) from forked child context", () => {
-    const normalUser = makeUserMessage([{ type: "text", text: "Hello from the human." }]);
-    const bgNudge = makeUserMessage([{ type: "text", text: BACKGROUND_COMPLETION_NUDGE_TEXT }]);
-    const controlNudge = makeUserMessage([{ type: "text", text: CONTROL_NOTICE_NUDGE_TEXT }]);
-
-    assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [
-      normalUser,
-    ]);
-  });
-
-  it("does not strip normal user messages or [tlh]-prefixed messages that are not registered nudges", () => {
-    const normalUser = makeUserMessage("Do the task.");
-    const tlhPrefixed = makeUserMessage("[tlh] Some other instruction.");
-    const almostNudge = makeUserMessage(BACKGROUND_COMPLETION_NUDGE_TEXT + " (extra)");
-
-    const result = stripParentOnlySubagentMessages([normalUser, tlhPrefixed, almostNudge]);
-    assert.deepEqual(result, [normalUser, tlhPrefixed, almostNudge]);
-  });
-
-  it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {
+  it("defers native supervisor registration until runtime events", async () => {
     setSupervisorEnv();
     const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
@@ -1065,7 +877,7 @@ describe("subagent prompt runtime", () => {
     registerSubagentPromptRuntime(
       makeExtensionAPI({
         on: recordEvents(handlers),
-        getAllTools: () => [makeToolInfo("intercom"), makeToolInfo("contact_supervisor")],
+        getAllTools: () => [makeToolInfo("contact_supervisor")],
         registerTool<TParams extends TSchema, TDetails, TState>(
           tool: ToolDefinition<TParams, TDetails, TState>,
         ) {
@@ -1080,7 +892,7 @@ describe("subagent prompt runtime", () => {
     assert.deepEqual(registered, []);
   });
 
-  it("keeps installed pi-intercom while filling only a missing child contact_supervisor tool", async () => {
+  it("fills a missing child contact_supervisor tool", async () => {
     setSupervisorEnv();
     const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
@@ -1088,7 +900,7 @@ describe("subagent prompt runtime", () => {
     registerSubagentPromptRuntime(
       makeExtensionAPI({
         on: recordEvents(handlers),
-        getAllTools: () => [makeToolInfo("intercom"), ...registered.map(makeToolInfo)],
+        getAllTools: () => registered.map(makeToolInfo),
         registerTool<TParams extends TSchema, TDetails, TState>(
           tool: ToolDefinition<TParams, TDetails, TState>,
         ) {
@@ -1103,7 +915,7 @@ describe("subagent prompt runtime", () => {
     assert.deepEqual(registered, ["contact_supervisor"]);
   });
 
-  it("registers only contact_supervisor at runtime when pi-intercom is absent", async () => {
+  it("registers contact_supervisor at runtime", async () => {
     setSupervisorEnv();
     const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
@@ -1127,26 +939,6 @@ describe("subagent prompt runtime", () => {
     assert.deepEqual(registered, ["contact_supervisor"]);
   });
 
-  it("sets the child intercom session name from env during agent startup", async () => {
-    clearSupervisorEnv();
-    let sessionName: string | undefined;
-    const handlers = new Map<TestEventName, TestEventHandler>();
-    process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV] = "subagent-worker-78f659a3";
-
-    registerSubagentPromptRuntime(
-      makeExtensionAPI({
-        on: recordEvents(handlers),
-        setSessionName(name: string) {
-          sessionName = name;
-        },
-      }),
-    );
-
-    await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-
-    assert.equal(sessionName, "subagent-worker-78f659a3");
-  });
-
   it("rewrites the final child-visible prompt through before_agent_start", async () => {
     clearSupervisorEnv();
     const handlers = new Map<TestEventName, TestEventHandler>();
@@ -1167,73 +959,5 @@ describe("subagent prompt runtime", () => {
     assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
     assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
     assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
-  });
-
-  it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {
-    const handlers = new Map<TestEventName, TestEventHandler>();
-    registerSubagentPromptRuntime(
-      makeExtensionAPI({
-        on: recordEvents(handlers),
-      }),
-    );
-
-    const priorParentTurn = makeUserMessage(
-      "Earlier we said planner → worker → reviewers → worker.",
-    );
-    const currentTask = makeUserMessage("Now implement only the assigned fix.");
-    const instruction = makeCustomMessage(
-      "subagent-orchestration-instructions",
-      "Subagent orchestration is enabled.",
-    );
-    const subagentResult = makeToolResultMessage("subagent", "subagent results");
-    const subagentCall = makeAssistantMessage([
-      {
-        type: "toolCall",
-        id: "worker-call",
-        name: "subagent",
-        arguments: { agent: "worker" },
-      },
-    ]);
-    const otherCustom = makeCustomMessage("other", "keep");
-
-    assert.deepEqual(
-      handlers.get("context")?.({
-        messages: [
-          priorParentTurn,
-          instruction,
-          subagentCall,
-          subagentResult,
-          otherCustom,
-          currentTask,
-        ],
-      }),
-      {
-        messages: [priorParentTurn, otherCustom, currentTask],
-      },
-    );
-  });
-
-  it("does not rewrite child context when no parent-only artifacts are present", () => {
-    const handlers = new Map<TestEventName, TestEventHandler>();
-    registerSubagentPromptRuntime(
-      makeExtensionAPI({
-        on: recordEvents(handlers),
-      }),
-    );
-
-    const messages: AgentMessage[] = [
-      makeUserMessage("Task"),
-      makeToolResultMessage("read", "file"),
-      makeAssistantMessage([
-        {
-          type: "toolCall",
-          id: "read-call",
-          name: "read",
-          arguments: { path: "README.md" },
-        },
-      ]),
-    ];
-
-    assert.equal(handlers.get("context")?.({ messages }), undefined);
   });
 });

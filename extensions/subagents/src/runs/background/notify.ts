@@ -83,11 +83,11 @@ interface NestedNotifyChild {
   children?: NestedNotifyChild[];
 }
 
-interface ChainStepResult {
+interface SubagentChildResult {
   agent: string;
   output?: string;
   success?: boolean;
-  status?: "completed" | "failed" | "paused" | "detached";
+  status?: "completed" | "failed" | "paused";
   summary?: string;
   artifactPath?: string;
   sessionPath?: string;
@@ -138,7 +138,7 @@ interface SubagentResult {
   shareUrl?: string;
   gistUrl?: string;
   shareError?: string;
-  results?: ChainStepResult[];
+  results?: SubagentChildResult[];
   taskIndex?: number;
   totalTasks?: number;
   sessionId?: string | null;
@@ -380,11 +380,10 @@ function resolveResumeTarget(
     const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
     return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
   }
-  const statusPriority: Array<NonNullable<ChainStepResult["status"]>> = [
+  const statusPriority: Array<NonNullable<SubagentChildResult["status"]>> = [
     "failed",
     "paused",
     "completed",
-    "detached",
   ];
   const resumableChild = statusPriority
     .map((status) =>
@@ -406,7 +405,9 @@ function resolveResumeTarget(
   return { sessionPath, index: resumableChild.index, childCount: children.length };
 }
 
-function resolveChildStatus(child: ChainStepResult): NonNullable<ChainStepResult["status"]> {
+function resolveChildStatus(
+  child: SubagentChildResult,
+): NonNullable<SubagentChildResult["status"]> {
   return child.status ?? (child.success === false ? "failed" : "completed");
 }
 
@@ -427,14 +428,14 @@ function resolveOuterStatus(result: SubagentResult): SubagentNotifyDetails["stat
   return "completed";
 }
 
-function countChildStatuses(children: ChainStepResult[]): string | undefined {
+function countChildStatuses(children: SubagentChildResult[]): string | undefined {
   if (children.length <= 1) return undefined;
   const counts = new Map<string, number>();
   for (const child of children) {
     const key = resolveChildStatus(child);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const ordered = ["completed", "failed", "paused", "detached"];
+  const ordered = ["completed", "failed", "paused"];
   const parts = ordered
     .map((status) => (counts.get(status) ? `${counts.get(status)} ${status}` : undefined))
     .filter((part): part is string => Boolean(part));
@@ -484,7 +485,7 @@ function formatNestedChildren(
   return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
 }
 
-function formatChildReferences(child: ChainStepResult, privacySafe = false): string[] {
+function formatChildReferences(child: SubagentChildResult, privacySafe = false): string[] {
   if (privacySafe) return [];
   const acceptanceLine = (() => {
     if (!child.acceptance) return undefined;
@@ -514,7 +515,7 @@ function formatProtectedLifecyclePreview(
   }
   const counts = countChildStatuses(children);
   const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-  const displayedChildren = ["failed", "paused", "completed", "detached"]
+  const displayedChildren = ["failed", "paused", "completed"]
     .flatMap((status) =>
       children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
@@ -676,7 +677,7 @@ function formatResultPreview(
   // Multi-child path.
   const counts = countChildStatuses(children);
   const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-  const displayedChildren = ["failed", "paused", "completed", "detached"]
+  const displayedChildren = ["failed", "paused", "completed"]
     .flatMap((status) =>
       children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
@@ -1007,9 +1008,6 @@ function resolveCompletionStatus(result: SubagentResult): SubagentNotifyDetails[
     if (outerStatus === "failed") return "failed";
     if (statuses.includes("paused") || outerStatus === "paused") return "paused";
     if (statuses.includes("completed")) return "completed";
-    // Native notices have no detached terminal label. Treat an all-detached
-    // grouped result as failed so it receives immediate attention rather than
-    // entering successful-completion batching.
     return "failed";
   }
 

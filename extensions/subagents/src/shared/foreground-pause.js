@@ -10,6 +10,7 @@ export function formatForegroundPauseMessage(input) {
         input.headline,
         "Pause succeeded; this foreground run is paused and waiting for your explicit next action, not a dispatch error.",
         "Note: doctor/status may show no active run after a foreground pause because the child process has stopped.",
+        "Use status and the canonical child session for ordinary recovery; compact mode may omit the optional diagnostic child transcript.",
         "Next actions:",
         `- ${resumeLine}`,
         `- Replace/re-dispatch: ${input.redispatch}`,
@@ -23,6 +24,7 @@ export function formatForegroundSupervisorPauseMessage(input) {
         input.headline,
         "Pause succeeded; this run is durably paused awaiting supervisor guidance.",
         "No child process is running.",
+        "Use status and the canonical child session for ordinary recovery; compact mode may omit the optional diagnostic child transcript.",
         ...(input.requestSummary ? [`Request: ${input.requestSummary}`] : []),
         "Next actions:",
         ...(input.claimUnavailable

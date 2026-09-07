@@ -453,32 +453,6 @@ async function waitForMarkerFile(markerPath) {
   }
 }
 
-async function maybeWriteStructuredOutput(response, jsonMode) {
-  if (!Object.hasOwn(response, "structuredOutput")) return;
-  const outputPath = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
-  if (!outputPath) return;
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, JSON.stringify(response.structuredOutput), "utf-8");
-  if (!jsonMode) return;
-  await writeJsonlLine({
-    type: "tool_execution_start",
-    toolName: "structured_output",
-    args: { value: response.structuredOutput },
-  });
-  await writeJsonlLine({
-    type: "tool_result_end",
-    message: {
-      role: "toolResult",
-      toolCallId: "mock-structured-output",
-      toolName: "structured_output",
-      content: [{ type: "text", text: "Structured output captured." }],
-      isError: false,
-      timestamp: Date.now(),
-    },
-  });
-  await writeJsonlLine({ type: "tool_execution_end", toolName: "structured_output" });
-}
-
 async function main() {
   if (!queueDir) fail("MOCK_PI_QUEUE_DIR is required.");
   if (!fs.existsSync(queueDir)) fail(`Mock queue dir does not exist: ${queueDir}`);
@@ -555,8 +529,6 @@ async function main() {
     if (jsonMode) await writeJsonlLine(defaultAssistantMessage(output));
     else await writeStdout(`${output}\n`);
   }
-  await maybeWriteStructuredOutput(response, jsonMode);
-
   if (Array.isArray(response.stderrByteChunks)) {
     for (const chunk of response.stderrByteChunks) {
       if (Array.isArray(chunk) && chunk.length > 0) await writeStderr(Buffer.from(chunk));

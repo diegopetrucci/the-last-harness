@@ -157,7 +157,6 @@ function resolveResumeTarget(result, asyncId) {
         "failed",
         "paused",
         "completed",
-        "detached",
     ];
     const resumableChild = statusPriority
         .map((status) => children.find((child) => resolveChildStatus(child) === status &&
@@ -196,7 +195,7 @@ function countChildStatuses(children) {
         const key = resolveChildStatus(child);
         counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    const ordered = ["completed", "failed", "paused", "detached"];
+    const ordered = ["completed", "failed", "paused"];
     const parts = ordered
         .map((status) => (counts.get(status) ? `${counts.get(status)} ${status}` : undefined))
         .filter((part) => Boolean(part));
@@ -261,7 +260,7 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
     }
     const counts = countChildStatuses(children);
     const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-    const displayedChildren = ["failed", "paused", "completed", "detached"]
+    const displayedChildren = ["failed", "paused", "completed"]
         .flatMap((status) => children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
@@ -362,7 +361,7 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     }
     const counts = countChildStatuses(children);
     const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-    const displayedChildren = ["failed", "paused", "completed", "detached"]
+    const displayedChildren = ["failed", "paused", "completed"]
         .flatMap((status) => children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))

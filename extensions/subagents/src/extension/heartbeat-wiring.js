@@ -158,8 +158,6 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         }
     }
     function onBeatResult(result) {
-        if (!currentGap || result.gapId !== currentGap.gapId)
-            return;
         if (result.sessionDisabled) {
             sessionBreakerDisabled = true;
         }
@@ -215,7 +213,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         }
     }
     function openGapIfNeeded(sessionId) {
-        if (currentGap)
+        if (sessionBreakerDisabled || currentGap)
             return;
         const sid = sessionId ?? "";
         const gapId = `${sid}-${nowFn()}`;

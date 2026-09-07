@@ -187,12 +187,11 @@ describe(
           path.join(runDir, "status.json"),
           JSON.stringify({
             runId: "run-restore-continued",
-            mode: "chain",
+            mode: "parallel",
             state: "running",
             sessionId: "session-restore-continued",
             startedAt: 1000,
             lastUpdate: 2000,
-            chainStepCount: 3,
             steps: [
               { agent: "worker", status: "continued" },
               { agent: "reviewer", status: "running" },
@@ -221,12 +220,11 @@ describe(
           path.join(runDir, "status.json"),
           JSON.stringify({
             runId: "run-restore-continued",
-            mode: "chain",
+            mode: "parallel",
             state: "continued",
             sessionId: "session-restore-continued",
             startedAt: 1000,
             lastUpdate: 3000,
-            chainStepCount: 3,
             steps: [
               { agent: "worker", status: "continued" },
               { agent: "reviewer", status: "running" },
@@ -255,15 +253,13 @@ describe(
           path.join(runDir, "status.json"),
           JSON.stringify({
             runId: "run-restored",
-            mode: "chain",
+            mode: "parallel",
             state: "running",
             sessionId: "session-restored",
             startedAt: 1000,
             lastUpdate: 2000,
             currentStep: 1,
-            chainStepCount: 3,
             tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-            parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
             steps: [
               { agent: "scout", status: "complete" },
               { agent: "reviewer", status: "running", currentTool: "read" },
@@ -305,15 +301,14 @@ describe(
         assert.equal(job.status, "running");
         assert.equal(job.sessionId, "session-restored");
         assert.deepEqual(job.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
-        assert.deepEqual(job.agents, ["reviewer", "worker"]);
+        assert.deepEqual(job.agents, ["scout", "reviewer", "worker", "writer"]);
         assert.deepEqual(
           job.steps?.map((step: { index?: number }) => step.index),
-          [1, 2],
+          [0, 1, 2, 3],
         );
-        assert.equal(job.stepsTotal, 2);
+        assert.equal(job.stepsTotal, 4);
         assert.equal(job.runningSteps, 2);
-        assert.equal(job.completedSteps, 0);
-        assert.equal(job.activeParallelGroup, true);
+        assert.equal(job.completedSteps, 1);
         assert.ok(state.poller, "expected restored active jobs to start polling");
         assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
         assert.equal(
@@ -329,6 +324,73 @@ describe(
           "historical control events should not be replayed during restore",
         );
       } finally {
+        removeTempDir(asyncRoot);
+      }
+    });
+
+    it("keeps observed runtime evidence monotonic across status polls", async () => {
+      const asyncRoot = createTempDir("pi-async-job-runtime-monotonic-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const runDir = path.join(asyncRoot, "run-runtime-monotonic");
+        fs.mkdirSync(runDir, { recursive: true });
+        const statusPath = path.join(runDir, "status.json");
+        const writeStatus = (activeRuntimeMs: number, activeRuntimeCheckpointAt: number) =>
+          fs.writeFileSync(
+            statusPath,
+            JSON.stringify({
+              runId: "run-runtime-monotonic",
+              mode: "single",
+              state: "running",
+              sessionId: "session-runtime-monotonic",
+              startedAt: 1000,
+              lastUpdate: activeRuntimeCheckpointAt,
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+              steps: [
+                {
+                  agent: "worker",
+                  status: "running",
+                  activeRuntimeMs,
+                  activeRuntimeCheckpointAt,
+                },
+              ],
+            }),
+            "utf-8",
+          );
+        writeStatus(100, 2_000);
+
+        const state = createState();
+        state.currentSessionId = "session-runtime-monotonic";
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 10 },
+        );
+        tracker.restoreActiveJobs();
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 100,
+          "initial runtime evidence poll",
+        );
+
+        writeStatus(600, 3_000);
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs === 600,
+          "higher runtime evidence poll",
+        );
+        writeStatus(250, 2_500);
+        await waitForCondition(
+          () => state.asyncJobs.get("run-runtime-monotonic")?.updatedAt === 2_500,
+          "regressed status write poll",
+        );
+        assert.equal(state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeMs, 600);
+        assert.equal(
+          state.asyncJobs.get("run-runtime-monotonic")?.activeRuntimeCheckpointAt,
+          3_000,
+        );
+      } finally {
+        tracker?.resetJobs();
         removeTempDir(asyncRoot);
       }
     });
@@ -886,34 +948,6 @@ describe(
       }
     });
 
-    it("uses flattened async-start agents for initial parallel group widget state", () => {
-      const asyncRoot = createTempDir("pi-async-job-tracker-");
-      try {
-        const state = createState();
-        const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot);
-
-        tracker.handleStarted({
-          id: "run-parallel-start",
-          asyncDir: path.join(asyncRoot, "run-parallel-start"),
-          agent: "scout",
-          agents: ["scout", "reviewer", "worker", "writer"],
-          chain: ["[scout+reviewer+worker]", "writer"],
-          chainStepCount: 2,
-          parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-        });
-
-        const job = state.asyncJobs.get("run-parallel-start");
-        assert.deepEqual(job?.agents, ["scout", "reviewer", "worker"]);
-        assert.equal(job?.chainStepCount, 2);
-        assert.deepEqual(job?.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
-        assert.equal(job?.stepsTotal, 3);
-        assert.equal(job?.activeParallelGroup, true);
-      } finally {
-        removeTempDir(asyncRoot);
-      }
-    });
-
     it("normalizes tk ticket metadata from async-start events", () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
@@ -932,76 +966,6 @@ describe(
           id: "psr-raw4",
           title: "Show active tk title",
         });
-      } finally {
-        removeTempDir(asyncRoot);
-      }
-    });
-
-    it("adds flat step indexes to polled active parallel group steps", async () => {
-      const asyncRoot = createTempDir("pi-async-job-tracker-");
-      try {
-        const runDir = path.join(asyncRoot, "run-chain");
-        fs.mkdirSync(runDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(runDir, "status.json"),
-          JSON.stringify({
-            runId: "run-chain",
-            mode: "chain",
-            state: "running",
-            startedAt: Date.now() - 1000,
-            lastUpdate: Date.now(),
-            currentStep: 1,
-            chainStepCount: 3,
-            parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
-            steps: [
-              { agent: "scout", status: "complete" },
-              {
-                agent: "reviewer",
-                status: "running",
-                currentTool: "read",
-                currentToolArgs: "src/tui/render.ts",
-                recentTools: [{ tool: "grep", args: "async widget", endMs: Date.now() - 100 }],
-                recentOutput: ["reviewer line"],
-              },
-              { agent: "auditor", status: "running" },
-              { agent: "writer", status: "pending" },
-            ],
-          }),
-          "utf-8",
-        );
-
-        const state = createState();
-        const ui = createUiContext();
-        const recorder = createEventRecorder();
-        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
-          pollIntervalMs: 10,
-        });
-        tracker.resetJobs(ui.ctx as never);
-        tracker.handleStarted({
-          id: "run-chain",
-          asyncDir: runDir,
-          mode: "chain",
-          agents: ["scout", "reviewer", "auditor", "writer"],
-        });
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        const job = state.asyncJobs.get("run-chain");
-        assert.deepEqual(
-          job?.steps?.map((step: { index?: number }) => step.index),
-          [1, 2],
-        );
-        assert.deepEqual(job?.agents, ["reviewer", "auditor"]);
-        assert.equal(job?.steps?.[0]?.currentTool, "read");
-        assert.equal(job?.steps?.[0]?.currentToolArgs, "src/tui/render.ts");
-        assert.deepEqual(
-          job?.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({
-            tool: tool.tool,
-            args: tool.args,
-          })),
-          [{ tool: "grep", args: "async widget" }],
-        );
-        assert.deepEqual(job?.steps?.[0]?.recentOutput, ["reviewer line"]);
       } finally {
         removeTempDir(asyncRoot);
       }
@@ -1358,8 +1322,6 @@ describe(
           sessionId: "session-current",
           mode: "parallel",
           agents: ["scout", "reviewer", "worker"],
-          chainStepCount: 1,
-          parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
         });
 
         await new Promise((resolve) => setTimeout(resolve, 80));
@@ -1373,8 +1335,6 @@ describe(
         assert.equal(status.sessionId, "session-current");
         assert.equal(status.mode, "parallel");
         assert.equal(status.currentStep, 0);
-        assert.equal(status.chainStepCount, 1);
-        assert.deepEqual(status.parallelGroups, [{ start: 0, count: 3, stepIndex: 0 }]);
         assert.deepEqual(
           status.steps.map((step: { agent: string; status: string }) => [step.agent, step.status]),
           [
@@ -2421,7 +2381,7 @@ describe(
       }
     });
 
-    it("honors async control notification channels", async () => {
+    it("ignores removed async control notification channels", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
         const runDir = path.join(asyncRoot, "run-channels");
@@ -2471,24 +2431,20 @@ describe(
           recorder.events.some((event) => event.channel === "subagent:control-event"),
           false,
         );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          true,
-        );
       } finally {
         removeTempDir(asyncRoot);
       }
     });
 
-    it("does not bridge active-long-running records to intercom", async () => {
+    it("delivers active-long-running records through the native event channel", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
-        const runDir = path.join(asyncRoot, "run-active-intercom");
+        const runDir = path.join(asyncRoot, "run-active-native");
         fs.mkdirSync(runDir, { recursive: true });
         fs.writeFileSync(
           path.join(runDir, "status.json"),
           JSON.stringify({
-            runId: "run-active-intercom",
+            runId: "run-active-native",
             mode: "single",
             state: "running",
             startedAt: Date.now() - 1000,
@@ -2501,16 +2457,15 @@ describe(
           path.join(runDir, "events.jsonl"),
           `${JSON.stringify({
             type: "subagent.control",
-            channels: ["event", "intercom"],
+            channels: ["event"],
             event: {
               type: "active_long_running",
               to: "active_long_running",
               ts: 123,
-              runId: "run-active-intercom",
+              runId: "run-active-native",
               agent: "worker",
               message: "worker is still active but long-running",
             },
-            intercom: { to: "main", message: "stale active notice" },
           })}\n`,
           "utf-8",
         );
@@ -2520,23 +2475,19 @@ describe(
         const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           pollIntervalMs: 10,
         });
-        tracker.handleStarted({ id: "run-active-intercom", asyncDir: runDir, agent: "worker" });
+        tracker.handleStarted({ id: "run-active-native", asyncDir: runDir, agent: "worker" });
 
         await new Promise((resolve) => setTimeout(resolve, 30));
         assert.equal(
           recorder.events.some((event) => event.channel === "subagent:control-event"),
           true,
         );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          false,
-        );
       } finally {
         removeTempDir(asyncRoot);
       }
     });
 
-    it("bridges async control events from events.jsonl to the parent event bus", async () => {
+    it("delivers async control events from events.jsonl to the parent event bus", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
         const runDir = path.join(asyncRoot, "run-3");
@@ -2557,10 +2508,7 @@ describe(
           path.join(runDir, "events.jsonl"),
           `${JSON.stringify({
             type: "subagent.control",
-            channels: ["event", "intercom"],
-            childIntercomTarget: "subagent-worker-run-3-1",
-            noticeText:
-              'Subagent needs attention: worker\nNudge: intercom({ action: "send", to: "subagent-worker-run-3-1", message: "<message>" })',
+            channels: ["event"],
             event: {
               type: "needs_attention",
               to: "needs_attention",
@@ -2569,7 +2517,6 @@ describe(
               agent: "worker",
               message: "worker needs attention",
             },
-            intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-3." },
           })}\n`,
           "utf-8",
         );
@@ -2589,11 +2536,7 @@ describe(
         assert.ok(controlEvent);
         assert.match(
           (controlEvent.data as { noticeText?: string }).noticeText ?? "",
-          /subagent-worker-run-3-1/,
-        );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          true,
+          /Nudge: subagent\(\{ action: "resume", id: "run-3"/,
         );
       } finally {
         removeTempDir(asyncRoot);

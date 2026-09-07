@@ -7,13 +7,65 @@ function getConfigPath(): string {
   return path.join(getAgentDir(), "extensions", "subagent", "config.json");
 }
 
+function isConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Copy a JSON value as an own data property without invoking __proto__ setters. */
+function defineOwnProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value,
+  });
+}
+
 function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
   if (!fs.existsSync(configPath)) return {};
-  const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8")) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  const parsed: unknown = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  if (!isConfigObject(parsed)) {
     throw new Error(`Subagent config at '${configPath}' must be a JSON object`);
   }
-  return parsed as ExtensionConfig;
+
+  // Keep this settings object intentionally open: existing and future keys are
+  // tolerated, while consumed nested blocks are copied through an own-property
+  // boundary so resolvers can validate only the fields TLH owns.
+  const config: ExtensionConfig = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key !== "artifacts" && key !== "execution") defineOwnProperty(config, key, value);
+  }
+
+  if (Object.hasOwn(parsed, "artifacts")) {
+    const rawArtifacts = parsed.artifacts;
+    const artifacts: Record<string, unknown> = {};
+    if (isConfigObject(rawArtifacts)) {
+      if (Object.hasOwn(rawArtifacts, "mode")) {
+        defineOwnProperty(artifacts, "mode", rawArtifacts.mode);
+      }
+    } else {
+      // Preserve an invalid block as an invalid mode value for the shared
+      // resolver to reject safely, rather than silently changing the config.
+      defineOwnProperty(artifacts, "mode", rawArtifacts);
+    }
+    defineOwnProperty(config, "artifacts", artifacts);
+  }
+
+  if (Object.hasOwn(parsed, "execution")) {
+    const rawExecution = parsed.execution;
+    if (isConfigObject(rawExecution)) {
+      const execution: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(rawExecution)) {
+        defineOwnProperty(execution, key, value);
+      }
+      defineOwnProperty(config, "execution", execution);
+    } else {
+      // Preserve an invalid block for the shared resolver to reject safely,
+      // rather than coercing it into a valid maxRunTimeMs value.
+      defineOwnProperty(config, "execution", rawExecution);
+    }
+  }
+  return config;
 }
 
 export function loadConfig(): ExtensionConfig {

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   checkSubagentDepth,
   getSubagentDepthEnv,
-  DEFAULT_SUBAGENT_MAX_DEPTH,
   normalizeMaxSubagentDepth,
   resolveTopLevelParallelConcurrency,
   resolveTopLevelParallelMaxTasks,
@@ -24,12 +23,6 @@ afterEach(() => {
   else process.env.PI_SUBAGENT_DEPTH = savedDepth;
   if (savedMaxDepth === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
   else process.env.PI_SUBAGENT_MAX_DEPTH = savedMaxDepth;
-});
-
-describe("DEFAULT_SUBAGENT_MAX_DEPTH", () => {
-  it("is 2", () => {
-    assert.equal(DEFAULT_SUBAGENT_MAX_DEPTH, 2);
-  });
 });
 
 describe("normalizeMaxSubagentDepth", () => {
@@ -72,11 +65,10 @@ describe("top-level parallel config helpers", () => {
     assert.equal(resolveTopLevelParallelMaxTasks("oops"), 8);
   });
 
-  it("resolves concurrency from per-call override, config, or default", () => {
-    assert.equal(resolveTopLevelParallelConcurrency(2, 6), 2);
-    assert.equal(resolveTopLevelParallelConcurrency(undefined, 6), 6);
-    assert.equal(resolveTopLevelParallelConcurrency(0, 6), 6);
-    assert.equal(resolveTopLevelParallelConcurrency(undefined, 0), 4);
+  it("resolves concurrency from config or the default", () => {
+    assert.equal(resolveTopLevelParallelConcurrency(6), 6);
+    assert.equal(resolveTopLevelParallelConcurrency(0), 4);
+    assert.equal(resolveTopLevelParallelConcurrency(undefined), 4);
   });
 });
 

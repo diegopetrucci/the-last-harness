@@ -55,7 +55,7 @@ When scoped help is needed, delegate only to:
 - `librarian` for external GitHub repositories, issues, releases, or docs research.
 - `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review, and it is narrower than a broad second-opinion pass.
 
-To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
+To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
 ## Product workflow
 

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   beginBeat,
-  CACHE_WRITE_MISMATCH_THRESHOLD,
   closeGap,
   completeBeat,
   createHeartbeatState,
@@ -233,6 +232,21 @@ describe("completeBeat — error and circuit breaker", () => {
     assert.equal(state.disabled, false);
   });
 
+  it("counts generation_cutoff as a breaker failure", () => {
+    const state = createHeartbeatState();
+    openGap(state, "g", 0);
+
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+      beginBeat(state);
+      const result = completeBeat(state, "generation_cutoff", (i + 1) * 1000);
+      assert.equal(result.disableSession, i === MAX_CONSECUTIVE_ERRORS - 1);
+    }
+
+    assert.equal(state.consecutiveErrors, MAX_CONSECUTIVE_ERRORS);
+    assert.equal(state.disabled, true);
+    assert.equal(state.gap?.beatCount, MAX_CONSECUTIVE_ERRORS);
+  });
+
   it("disables session after MAX_CONSECUTIVE_ERRORS errors", () => {
     const state = createHeartbeatState();
     openGap(state, "g", 0);
@@ -277,18 +291,5 @@ describe("completeBeat — cache_write_mismatch circuit breaker", () => {
     const result = completeBeat(state, "cache_write_mismatch", 1000);
     assert.equal(state.disabled, false);
     assert.equal(result.disableSession, false);
-  });
-});
-
-describe("CACHE_WRITE_MISMATCH_THRESHOLD", () => {
-  it("is a positive number", () => {
-    assert.ok(CACHE_WRITE_MISMATCH_THRESHOLD > 0);
-  });
-});
-
-describe("LATE_BEAT_THRESHOLD_MS", () => {
-  it("is less than 300 000 (5-minute Anthropic cache TTL)", () => {
-    assert.ok(LATE_BEAT_THRESHOLD_MS < 300_000);
-    assert.ok(LATE_BEAT_THRESHOLD_MS > 0);
   });
 });

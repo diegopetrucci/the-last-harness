@@ -120,7 +120,7 @@ describe(
       removeTempDir(tempDir);
     });
 
-    function makeExecutor(agents = [makeAgent("echo")]) {
+    function makeExecutor(agents = [makeAgent("echo")], config: Record<string, unknown> = {}) {
       return createSubagentExecutor({
         pi: { events: createEventBus(), getSessionName: () => undefined },
         state: {
@@ -130,7 +130,7 @@ describe(
           foregroundControls: new Map(),
           lastForegroundControlId: null,
         },
-        config: {},
+        config,
         tempArtifactsDir: tempDir,
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
@@ -352,7 +352,12 @@ describe(
           exitCode: 0,
         });
         mockPi.onCall({ output: "Recovered on the dispatch fallback" });
-        const executor = makeExecutor([makeAgent("echo", { model: "openai/gpt-5-mini" })]);
+        const executor = makeExecutor([
+          makeAgent("echo", {
+            model: "openai/gpt-5-mini",
+            fallbackModels: ["anthropic/claude-sonnet-4"],
+          }),
+        ]);
 
         const result = await executor.execute(
           "parallel-fallback-notice",
@@ -361,7 +366,6 @@ describe(
               {
                 agent: "echo",
                 task: "Task",
-                fallbackModels: ["anthropic/claude-sonnet-4"],
                 modelFallbackNotice: "Quota fallback engaged",
               },
             ],
@@ -504,7 +508,10 @@ describe(
           ],
         });
         mockPi.onCall({ matchArgIncludes: "Fast review", output: "fast done" });
-        const executor = makeExecutor();
+        const executor = makeExecutor([makeAgent("echo")], {
+          parallel: { concurrency: 2 },
+          execution: { maxRunTimeMs: 300 },
+        });
 
         const start = Date.now();
         const result = await executor.execute(
@@ -514,8 +521,6 @@ describe(
               { agent: "echo", task: "Slow review" },
               { agent: "echo", task: "Fast review" },
             ],
-            concurrency: 2,
-            timeoutMs: 300,
           },
           new AbortController().signal,
           undefined,
@@ -527,7 +532,10 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.results?.length, 2);
         assert.equal(result.details?.results?.[0]?.timedOut, true);
-        assert.equal(result.details?.results?.[0]?.error, "Subagent timed out after 300ms.");
+        assert.equal(
+          result.details?.results?.[0]?.error,
+          "Subagent exceeded the configured maximum execution time.",
+        );
         assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Child index: 0/);
         assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Current tool: read/);
         assert.match(
@@ -543,8 +551,14 @@ describe(
         assert.match(text, /Children: 1 completed, 1 failed/);
         assert.match(text, /1\/2\. echo — failed/);
         assert.match(text, /2\/2\. echo — completed/);
-        assert.equal(text.match(/Subagent timed out after 300ms\./g)?.length ?? 0, 1);
-        assert.match(text, /Summary:\nSubagent timed out after 300ms\.\n\nRecovery diagnostics:/);
+        assert.equal(
+          text.match(/Subagent exceeded the configured maximum execution time\./g)?.length ?? 0,
+          1,
+        );
+        assert.match(
+          text,
+          /Summary:\nSubagent exceeded the configured maximum execution time\.\n\nRecovery diagnostics:/,
+        );
         assert.match(text, /Child index: 0/);
         assert.match(text, /Recent child output:\n- slow partial update/);
         assert.match(text, /Summary:\nfast done/);
@@ -563,10 +577,13 @@ describe(
       async () => {
         mockPi.onCall({ matchArgIncludes: "Short ceiling", delay: 10000 });
         mockPi.onCall({ matchArgIncludes: "Long ceiling", delay: 10000 });
-        const executor = makeExecutor([
-          makeAgent("short", { maxExecutionTimeMs: 75 }),
-          makeAgent("long", { maxExecutionTimeMs: 180 }),
-        ]);
+        const executor = makeExecutor(
+          [
+            makeAgent("short", { maxExecutionTimeMs: 75 }),
+            makeAgent("long", { maxExecutionTimeMs: 180 }),
+          ],
+          { parallel: { concurrency: 2 } },
+        );
 
         const result = await executor.execute(
           "parallel-mixed-agent-ceilings",
@@ -575,7 +592,6 @@ describe(
               { agent: "short", task: "Short ceiling" },
               { agent: "long", task: "Long ceiling" },
             ],
-            concurrency: 2,
           },
           new AbortController().signal,
           undefined,
@@ -730,17 +746,17 @@ describe(
     );
 
     it(
-      "top-level parallel reads are injected once with chain-style prefix",
+      "top-level parallel reads are injected once with a task/read prefix",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
         mockPi.onCall({ output: "Read done" });
-        const executor = makeExecutor();
+        const executor = makeExecutor([makeAgent("echo", { defaultReads: ["a.md", "b.md"] })]);
 
         await executor.execute(
           "parallel-reads",
-          { tasks: [{ agent: "echo", task: "Inspect", reads: ["a.md", "b.md"] }] },
+          { tasks: [{ agent: "echo", task: "Inspect" }] },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),

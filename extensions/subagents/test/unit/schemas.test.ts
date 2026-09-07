@@ -13,14 +13,6 @@ function hasAnyOfType(schema: JsonSchemaNode | undefined, type: string): boolean
   return anyOfBranches(schema).some((branch) => branch.type === type);
 }
 
-function hasAnyOfArrayWithStringItems(schema: JsonSchemaNode | undefined): boolean {
-  return anyOfBranches(schema).some((branch) => {
-    if (branch.type !== "array") return false;
-    const items = branch.items;
-    return !!items && typeof items === "object" && (items as JsonSchemaNode).type === "string";
-  });
-}
-
 function isSchemaObject(value: unknown): value is JsonSchemaNode {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -57,19 +49,12 @@ const { Compile: CompileSchema } = (await import("typebox/compile")) as {
 };
 
 describe("SubagentParams schema", () => {
-  it("includes context field for fresh/fork execution mode", () => {
-    const contextSchema = getPropertySchema(SubagentParams, ["context"]);
-    assert.ok(contextSchema, "context schema should exist");
-    assert.equal(contextSchema.type, "string");
-    assert.deepEqual(contextSchema.enum, ["fresh", "fork"]);
-    const description = String(contextSchema.description ?? "");
-    assert.match(description, /fresh/);
-    assert.match(description, /fork/);
-    assert.match(description, /each requested agent/);
-    assert.match(description, /overrides every child/);
+  it("does not expose a public execution context selector", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["context"]), undefined);
+    assert.equal(SubagentParams.additionalProperties, false);
   });
 
-  it("includes count and concurrency on top-level parallel mode", () => {
+  it("includes count and omits retired caller execution controls", () => {
     const taskSchemaOwner = getPropertySchema(SubagentParams, ["tasks"]);
     const taskItemsSchema = isSchemaObject(taskSchemaOwner?.items)
       ? taskSchemaOwner.items
@@ -82,17 +67,7 @@ describe("SubagentParams schema", () => {
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      [
-        "agent",
-        "task",
-        "cwd",
-        "count",
-        "output",
-        "outputMode",
-        "reads",
-        "progress",
-        "model",
-      ].sort(),
+      ["agent", "task", "cwd", "count", "output", "outputMode", "model"].sort(),
       "tasks[] allowlist mismatch",
     );
     const taskCwdSchema = isSchemaObject(taskSchema?.cwd) ? taskSchema.cwd : undefined;
@@ -101,17 +76,11 @@ describe("SubagentParams schema", () => {
     assert.equal(outputSchema?.type, undefined);
     assert.equal(hasAnyOfType(outputSchema, "string"), true);
     assert.equal(hasAnyOfType(outputSchema, "boolean"), true);
-    const readsSchema = isSchemaObject(taskSchema?.reads) ? taskSchema.reads : undefined;
-    assert.equal(readsSchema?.type, undefined);
-    assert.equal(hasAnyOfArrayWithStringItems(readsSchema), true);
-    assert.equal(hasAnyOfType(readsSchema, "boolean"), true);
-    const progressSchema = isSchemaObject(taskSchema?.progress) ? taskSchema.progress : undefined;
-    assert.equal(progressSchema?.type, "boolean");
-
-    const concurrencySchema = getPropertySchema(SubagentParams, ["concurrency"]);
-    assert.ok(concurrencySchema, "concurrency schema should exist");
-    assert.equal(concurrencySchema.minimum, 1);
-    assert.match(String(concurrencySchema.description ?? ""), /parallel/i);
+    assert.equal(getPropertySchema(taskItemsSchema, ["reads"]), undefined);
+    assert.equal(getPropertySchema(taskItemsSchema, ["progress"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["concurrency"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["fallbackModels"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["includeProgress"]), undefined);
   });
 
   it("action is a closed enum with exactly the TLH-minimal management values", () => {
@@ -134,12 +103,8 @@ describe("SubagentParams schema", () => {
     assert.match(description, /resume/);
   });
 
-  it("includes foreground timeout", () => {
-    const timeoutSchema = getPropertySchema(SubagentParams, ["timeoutMs"]);
-    assert.ok(timeoutSchema, "timeoutMs schema should exist");
-    assert.equal(timeoutSchema.minimum, 1);
-    assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
-    assert.doesNotMatch(String(timeoutSchema.description ?? ""), /foreground-only/i);
+  it("does not expose a public execution timeout", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["timeoutMs"]), undefined);
   });
 
   it("includes id, index, and message control parameters", () => {
@@ -333,20 +298,17 @@ describe("SubagentParams schema", () => {
     const validator = CompileSchema(SubagentParams);
     const validValues = [
       { agent: "reviewer", task: "check this" },
-      { tasks: [{ agent: "reviewer", task: "check this", cwd: "packages/app", reads: false }] },
+      { tasks: [{ agent: "reviewer", task: "check this", cwd: "packages/app" }] },
       {
         tasks: [
           {
             agent: "reviewer",
             task: "check this",
             output: "review.md",
-            reads: ["input.md"],
-            progress: true,
           },
         ],
       },
       { tasks: [{ agent: "reviewer", task: "check this", model: "anthropic/claude-sonnet-4" }] },
-      { agent: "worker", task: "Fix", timeoutMs: 1000 },
       { action: "status", id: "run-1" },
       { action: "interrupt", id: "run-1" },
       { action: "resume", id: "run-1", message: "focus on tests" },
@@ -358,18 +320,19 @@ describe("SubagentParams schema", () => {
       { action: "doctor" },
       { agent: "worker", task: "Fix", output: "out.md" },
       { agent: "worker", task: "Fix", output: false },
-      { agent: "worker", task: "Fix", fallbackModels: ["openai/gpt-4o"] },
-      { tasks: [{ agent: "worker", task: "Fix" }], concurrency: 2 },
-      { agent: "worker", task: "Fix", context: "fresh" },
-      { agent: "worker", task: "Fix", context: "fork" },
       { agent: "worker", task: "Fix", agentScope: "user" },
-      { agent: "worker", task: "Fix", artifacts: false, includeProgress: true },
+      { agent: "worker", task: "Fix", artifacts: false },
       { agent: "worker", task: "Fix", async: true },
     ];
     const invalidValues = [
       { output: 123 },
-      { timeoutMs: 0 },
+      { timeoutMs: 1 },
+      { tasks: [{ agent: "reviewer", task: "check this", timeoutMs: 1 }] },
       { tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
+      { tasks: [{ agent: "reviewer", task: "check this", progress: true }] },
+      { fallbackModels: ["openai/gpt-4o"] },
+      { concurrency: 2 },
+      { includeProgress: true },
       { tasks: [{ agent: "reviewer", task: "check this", arbitrary: "/tmp" }] },
       { tasks: [{ agent: "reviewer", task: "check this", arbitrary: true }] },
       {
@@ -436,8 +399,6 @@ describe("SubagentParams schema", () => {
       "agent",
       "task",
       "tasks",
-      "concurrency",
-      "context",
       "async",
       "action",
       "id",
@@ -447,11 +408,8 @@ describe("SubagentParams schema", () => {
       "output",
       "outputMode",
       "model",
-      "fallbackModels",
-      "timeoutMs",
       "cwd",
       "artifacts",
-      "includeProgress",
     ].sort();
     assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
@@ -488,6 +446,7 @@ describe("SubagentParams schema", () => {
       "skill",
       "chainDir",
       "__unknown__",
+      "context",
     ];
     const removedNestedTaskKeys = [
       "clarify",
@@ -499,6 +458,8 @@ describe("SubagentParams schema", () => {
       "toolBudget",
       "fallbackModels",
       "modelFallbackNotice",
+      "reads",
+      "progress",
       "outputSchema",
       "arbitrary",
     ];
