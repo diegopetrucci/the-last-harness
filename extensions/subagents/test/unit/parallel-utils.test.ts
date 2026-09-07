@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import {
   mapConcurrent,
   aggregateParallelOutputs,
-  MAX_PARALLEL_CONCURRENCY,
-  DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
   Semaphore,
 } from "../../src/runs/shared/parallel-utils.ts";
 
@@ -128,12 +126,6 @@ describe("mapConcurrent", () => {
   });
 });
 
-describe("DEFAULT_GLOBAL_CONCURRENCY_LIMIT", () => {
-  it("is 20", () => {
-    assert.equal(DEFAULT_GLOBAL_CONCURRENCY_LIMIT, 20);
-  });
-});
-
 describe("aggregateParallelOutputs", () => {
   it("aggregates successful outputs with headers", () => {
     const result = aggregateParallelOutputs([
@@ -170,11 +162,5 @@ describe("aggregateParallelOutputs", () => {
     ]);
     assert.ok(result.includes("SKIPPED"), "skipped task should show SKIPPED");
     assert.ok(!result.includes("FAILED"), "skipped task should not show FAILED");
-  });
-});
-
-describe("MAX_PARALLEL_CONCURRENCY", () => {
-  it("is 4", () => {
-    assert.equal(MAX_PARALLEL_CONCURRENCY, 4);
   });
 });

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
-import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
@@ -612,23 +612,17 @@ function backupPathFor(settingsPath) {
 function assertNotNormalPiSettings(settingsPath) {
     assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness installer: ${settingsPath}`);
 }
-function writeExistingProfileBackup(settingsPath, backupPath) {
-    const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
-    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(backupPath), content, "Pi settings backup", {
-        mode,
-    });
-}
 function writeSettings(settingsPath, value, { dryRun, existed }) {
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (dryRun)
         return undefined;
-    let backupPath;
-    if (existed) {
-        backupPath = backupPathFor(settingsPath);
-        writeExistingProfileBackup(settingsPath, backupPath);
-    }
-    writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(settingsPath), formatted, "Pi settings");
-    return backupPath;
+    const backupPath = existed ? backupPathFor(settingsPath) : undefined;
+    return writeProfileFileWithBackup(settingsPath, formatted, {
+        targetLabel: "Pi settings",
+        sourceLabel: "Pi settings",
+        backupLabel: "Pi settings backup",
+        backupPath,
+    });
 }
 function log(args, message) {
     if (!args.quiet)

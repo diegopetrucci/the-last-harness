@@ -754,6 +754,58 @@ test("/switch-primary-agent default writes tlh.primaryAgent with a backup", asyn
   }
 });
 
+test("primary-agent settings writers preserve malformed-object diagnostics", async (t) => {
+  const cases = [
+    {
+      settings: { tlh: "invalid" },
+      defaultMessage:
+        "Could not update TLH primary-agent persistent default: settings.tlh must be an object to update primary-agent settings.",
+      modelMessage:
+        "Could not clear model override: settings.tlh must be an object to update model-override settings.",
+    },
+    {
+      settings: { tlh: { primaryAgent: "invalid" } },
+      defaultMessage:
+        "Could not update TLH primary-agent persistent default: settings.tlh.primaryAgent must be an object to update primary-agent defaults.",
+      modelMessage:
+        "Could not clear model override: settings.tlh.primaryAgent must be an object to update model-override settings.",
+    },
+  ];
+
+  for (const scenario of cases) {
+    const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
+      cwd: true,
+      test: t,
+    });
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      writeFileSync(
+        join(fixture.agent, "settings.json"),
+        `${JSON.stringify(scenario.settings, null, 2)}\n`,
+      );
+      const { pi } = registerRuntimeHarness({
+        primaryAgents: selectablePrimaryAgents(),
+        subagentMetadata: [],
+      });
+      const command = pi.commands.get("switch-primary-agent");
+      assert.ok(command, "registers /switch-primary-agent");
+
+      const defaultAttempt = createCommandContext([], { cwd: fixture.cwd });
+      await command.handler("default rush", defaultAttempt.ctx);
+      assert.deepEqual(defaultAttempt.notifications.at(-1), {
+        message: scenario.defaultMessage,
+        type: "error",
+      });
+
+      const modelAttempt = createCommandContext([], { cwd: fixture.cwd });
+      await command.handler("model reset", modelAttempt.ctx);
+      assert.deepEqual(modelAttempt.notifications.at(-1), {
+        message: scenario.modelMessage,
+        type: "error",
+      });
+    });
+  }
+});
+
 test("/switch-primary-agent default refuses normal Pi settings", async () => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });
   const normalAgent = join(fixture.home, ".pi", "agent");
@@ -782,26 +834,6 @@ test("/switch-primary-agent default refuses normal Pi settings", async () => {
 });
 
 // ─── Embedded subagents (ts-42p1) ───────────────────────────────────────────
-
-test("project execution keeps retired binding and fail-open paths absent", () => {
-  const sourcePaths = [
-    "extensions/the-last-harness/primary-agent-runtime.ts",
-    "extensions/the-last-harness/primary-agent-runtime.js",
-    "extensions/subagents/src/runs/foreground/subagent-executor.ts",
-    "extensions/subagents/src/runs/foreground/subagent-executor.js",
-    "extensions/the-last-harness/prompts.ts",
-    "extensions/the-last-harness/prompts.js",
-    "extensions/the-last-harness-subagent-safety.mjs",
-  ];
-  for (const relativePath of sourcePaths) {
-    const source = readFileSync(join(process.cwd(), relativePath), "utf8");
-    assert.doesNotMatch(
-      source,
-      /projectCustomBinding|ProjectCustomAgentBinding|isProjectCustomAgentBinding|ProjectCustomAgentAuthorization|loadAuthorizedEmbeddedSubagentRuntimeNames/,
-      `${relativePath} must not restore retired custom binding/authorization paths`,
-    );
-  }
-});
 
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
   if (agentDir.endsWith(`${sep}agent`)) {

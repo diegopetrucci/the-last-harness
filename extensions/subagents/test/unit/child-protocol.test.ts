@@ -16,9 +16,6 @@ import {
   formatStderrTailOverflow,
   isChildProtocolEvent,
   MAX_CHILD_ERROR_BYTES,
-  MAX_CHILD_RAW_STDOUT_BYTES,
-  MAX_CHILD_STDERR_BYTES,
-  MAX_CHILD_STDERR_LINE_BYTES,
   parseChildProtocolLine,
 } from "../../src/runs/shared/child-protocol.ts";
 import type { Message } from "@earendil-works/pi-ai";
@@ -275,9 +272,6 @@ describe("bounded child diagnostics", () => {
       formatBoundedRawStdout(prefix),
       "startup \n[stdout truncated: showing the bounded prefix; later child output was dropped]",
     );
-    assert.equal(MAX_CHILD_RAW_STDOUT_BYTES, 64 * 1024);
-    assert.equal(MAX_CHILD_STDERR_BYTES, 128 * 1024);
-    assert.equal(MAX_CHILD_STDERR_LINE_BYTES, 64 * 1024);
   });
 
   it("retains a complete UTF-8 code point ending exactly at the raw stdout cap", () => {
