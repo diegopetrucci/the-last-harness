@@ -39,6 +39,35 @@ import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
+function summarizeSettledResults(results, maxOutput) {
+    let summary = results
+        .map((result) => {
+        const body = result.success
+            ? result.output
+            : formatErrorWithOutput(result.error, result.output);
+        return `${result.agent}:\n${body}`;
+    })
+        .join("\n\n");
+    let truncated = false;
+    if (maxOutput) {
+        const outputConfig = { ...DEFAULT_MAX_OUTPUT, ...maxOutput };
+        const lastArtifactPath = results[results.length - 1]?.artifactPaths?.outputPath;
+        const truncResult = truncateOutput(summary, outputConfig, lastArtifactPath);
+        if (truncResult.truncated) {
+            summary = truncResult.text;
+            truncated = true;
+        }
+    }
+    const totalCost = results.reduce((sum, result) => ({
+        inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? 0),
+        outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? 0),
+        costUsd: sum.costUsd + (result.totalCost?.costUsd ?? 0),
+    }), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0
+        ? totalCost
+        : undefined;
+    return { summary, truncated, finalTotalCost };
+}
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const DEFAULT_MAX_ASYNC_EVENTS_BYTES = 50 * 1024 * 1024;
 const ASYNC_EVENTS_MAX_BYTES_ENV = "PI_SUBAGENT_ASYNC_EVENTS_MAX_BYTES";
@@ -3531,30 +3560,9 @@ async function runSubagentWithInput(config, plan) {
             flatIndex++;
         }
     }
-    let summary = results
-        .map((r) => {
-        const body = r.success ? r.output : formatErrorWithOutput(r.error, r.output);
-        return `${r.agent}:\n${body}`;
-    })
-        .join("\n\n");
-    let truncated = false;
-    if (maxOutput) {
-        const config = { ...DEFAULT_MAX_OUTPUT, ...maxOutput };
-        const lastArtifactPath = results[results.length - 1]?.artifactPaths?.outputPath;
-        const truncResult = truncateOutput(summary, config, lastArtifactPath);
-        if (truncResult.truncated) {
-            summary = truncResult.text;
-            truncated = true;
-        }
-    }
-    const totalCost = results.reduce((sum, result) => ({
-        inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? 0),
-        outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? 0),
-        costUsd: sum.costUsd + (result.totalCost?.costUsd ?? 0),
-    }), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
-    const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0
-        ? totalCost
-        : undefined;
+    const settledResultSummary = summarizeSettledResults(results, maxOutput);
+    let summary = settledResultSummary.summary;
+    const { truncated, finalTotalCost } = settledResultSummary;
     const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
     const agentName = finalFlatAgents.length === 1 ? finalFlatAgents[0] : `parallel:${finalFlatAgents.join("+")}`;
     let sessionFile;

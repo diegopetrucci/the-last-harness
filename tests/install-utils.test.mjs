@@ -206,6 +206,20 @@ test("parseBackupTimestamp: parses all four backup filename variants", () => {
   );
 });
 
+test("parseBackupTimestamp: rejects impossible calendar days and preserves valid ISO hour-24 normalization", () => {
+  assert.equal(parseBackupTimestamp("settings.json.backup-2025-02-29T00-00-00Z"), undefined);
+  assert.equal(parseBackupTimestamp("settings.json.backup-2024-02-30T00-00-00Z"), undefined);
+  assert.equal(parseBackupTimestamp("settings.json.backup-2024-04-31T00-00-00Z"), undefined);
+  assert.deepEqual(
+    parseBackupTimestamp("settings.json.backup-2024-02-29T23-59-59-999Z"),
+    new Date("2024-02-29T23:59:59.999Z"),
+  );
+  assert.deepEqual(
+    parseBackupTimestamp("settings.json.backup-2024-02-29T24-00-00Z"),
+    new Date("2024-03-01T00:00:00Z"),
+  );
+});
+
 test("parseBackupTimestamp: returns undefined for unrecognised filenames", () => {
   assert.equal(parseBackupTimestamp("settings.json"), undefined);
   assert.equal(parseBackupTimestamp("settings.json.bak"), undefined);

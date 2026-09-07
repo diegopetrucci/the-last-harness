@@ -1079,6 +1079,21 @@ function resolveForegroundResumeTarget(params, state) {
             : {}),
     };
 }
+function formatRevivedAsyncResponse(target, revivedId, details, notice) {
+    const privacySafeSupervisorResume = target.kind === "revive" &&
+        target.state === "paused" &&
+        target.pauseKind === "awaiting_supervisor";
+    const lines = [
+        `Revived ${target.source} subagent from ${target.runId}.`,
+        `Revived run: ${revivedId}`,
+        `Agent: ${target.agent}`,
+        notice ? `Notice: ${notice}` : undefined,
+        privacySafeSupervisorResume ? undefined : `Session: ${target.sessionFile}`,
+        !privacySafeSupervisorResume && details.asyncDir ? `Async dir: ${details.asyncDir}` : undefined,
+        `Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
+    ].filter((line) => Boolean(line));
+    return formatAsyncStartedMessage(lines.join("\n"));
+}
 function isAsyncInterruptFailure(result) {
     return !result.ok;
 }
@@ -3172,25 +3187,13 @@ async function resumeAsyncRun(input) {
         releaseProjectSourceAfterContinuation(target);
     if (target.source === "foreground")
         input.deps.state.foregroundRuns?.delete(target.runId);
-    const sourceLabel = target.source;
-    const privacySafeSupervisorResume = target.kind === "revive" &&
-        target.state === "paused" &&
-        target.pauseKind === "awaiting_supervisor";
-    const lines = [
-        `Revived ${sourceLabel} subagent from ${target.runId}.`,
-        `Revived run: ${revivedId}`,
-        `Agent: ${target.agent}`,
-        persistedProjectAuthorization?.digestChangeNotice
-            ? `Notice: ${persistedProjectAuthorization.digestChangeNotice}`
-            : undefined,
-        privacySafeSupervisorResume ? undefined : `Session: ${target.sessionFile}`,
-        !privacySafeSupervisorResume && result.details.asyncDir
-            ? `Async dir: ${result.details.asyncDir}`
-            : undefined,
-        `Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
-    ].filter((line) => Boolean(line));
     return {
-        content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n")) }],
+        content: [
+            {
+                type: "text",
+                text: formatRevivedAsyncResponse(target, revivedId, result.details, persistedProjectAuthorization?.digestChangeNotice),
+            },
+        ],
         details: result.details,
     };
 }

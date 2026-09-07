@@ -932,6 +932,23 @@ function cleanupRelativeProfileDirs(config, relativePaths) {
 export function cleanupRetiredProfileDirectories(config) {
     cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES);
 }
+function isMissingCleanupMetadataError(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
+}
+function readCleanupMetadata(config, target, label) {
+    try {
+        return config.cleanupMetadata ? config.cleanupMetadata(target) : lstatSync(target);
+    }
+    catch (error) {
+        if (isMissingCleanupMetadataError(error))
+            return undefined;
+        warn(`Skipping ${label}: cannot inspect ${target}: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+    }
+}
 function cleanupRelativeProfileFiles(config, relativePaths) {
     for (const relativePath of relativePaths) {
         try {
@@ -951,11 +968,8 @@ function cleanupRelativeProfileFiles(config, relativePaths) {
             warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
             continue;
         }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isFile())
+        const metadata = readCleanupMetadata(config, target, "retired profile file cleanup");
+        if (!metadata || metadata.isSymbolicLink() || !metadata.isFile())
             continue;
         if (config.dryRun) {
             log(config, `Would remove retired profile file: ${target}`);
@@ -1063,12 +1077,9 @@ export function cleanupOldSettingsBackups(config) {
             warn(`Skipping stale settings backup cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
             continue;
         }
-        if (isSymlink(target))
-            continue; // Conservative: never remove or follow symlinks
-        if (!existsSync(target))
-            continue; // Idempotent: absent is fine
-        if (!lstatSync(target).isFile())
-            continue; // Conservative: only regular files
+        const metadata = readCleanupMetadata(config, target, "stale settings backup");
+        if (!metadata || metadata.isSymbolicLink() || !metadata.isFile())
+            continue;
         if (config.dryRun) {
             log(config, `Would remove stale settings backup: ${target}`);
             continue;
