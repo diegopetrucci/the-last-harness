@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bundled minor agents now declare acceptance roles so implementation work uses writer semantics while read-only workers retain read-only acceptance inference.
 - Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. OpenAI Codex and OpenRouter defaults are unchanged.
 
 ## [0.40.0] - 2026-09-06

@@ -15,6 +15,7 @@ preferOppositeProvider: true
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
+acceptanceRole: read-only
 ---
 You are the TLH oracle. Your job is to provide fresh, read-only, high-reasoning second opinions and direct analysis for the architect.
 
