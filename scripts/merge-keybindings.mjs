@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { assertNotInNormalPiConfig, backupPathWithTimestamp, defaultTlhKeybindingsPath, expandHomePath, readJsonFile, readOptionValue, readRegularFileForBackup, } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { assertNotInNormalPiConfig, backupPathWithTimestamp, defaultTlhKeybindingsPath, expandHomePath, readJsonFile, readOptionValue, } from "./lib/tlh-install-utils.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 function usage() {
@@ -108,23 +108,17 @@ function assertKeybindingsTarget(keybindingsPath) {
     }
     assertNotInNormalPiConfig(keybindingsPath, `Refusing to modify normal Pi config from The Last Harness installer: ${keybindingsPath}`);
 }
-function writeExistingProfileBackup(keybindingsPath, backupPath) {
-    const { content, mode } = readRegularFileForBackup(keybindingsPath, "Pi keybindings");
-    writeSafeProfileFile({ agentDir: dirname(keybindingsPath) }, basename(backupPath), content, "Pi keybindings backup", {
-        mode,
-    });
-}
 function writeKeybindings(keybindingsPath, value, { dryRun, existed }) {
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (dryRun)
         return undefined;
-    let backupPath;
-    if (existed) {
-        backupPath = backupPathFor(keybindingsPath);
-        writeExistingProfileBackup(keybindingsPath, backupPath);
-    }
-    writeSafeProfileFile({ agentDir: dirname(keybindingsPath) }, basename(keybindingsPath), formatted, "Pi keybindings");
-    return backupPath;
+    const backupPath = existed ? backupPathFor(keybindingsPath) : undefined;
+    return writeProfileFileWithBackup(keybindingsPath, formatted, {
+        targetLabel: "Pi keybindings",
+        sourceLabel: "Pi keybindings",
+        backupLabel: "Pi keybindings backup",
+        backupPath,
+    });
 }
 function log(args, message) {
     if (!args.quiet)

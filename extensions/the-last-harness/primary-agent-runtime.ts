@@ -729,6 +729,37 @@ function parseTlhSettingsContent(content: string | undefined): Record<string, un
   return parsed;
 }
 
+function prepareTlhPrimaryAgentSettings(
+  content: string | undefined,
+  invalidTlhMessage: string,
+  invalidPrimaryAgentMessage: string,
+): { settings: Record<string, unknown>; primaryAgent: Record<string, unknown> } {
+  const settings = parseTlhSettingsContent(content);
+  const rawTlh = settings.tlh;
+  let tlh: Record<string, unknown>;
+  if (rawTlh === undefined) {
+    tlh = {};
+    settings.tlh = tlh;
+  } else if (isRecord(rawTlh)) {
+    tlh = rawTlh;
+  } else {
+    throw new Error(invalidTlhMessage);
+  }
+
+  const rawPrimaryAgent = tlh.primaryAgent;
+  let primaryAgent: Record<string, unknown>;
+  if (rawPrimaryAgent === undefined) {
+    primaryAgent = {};
+    tlh.primaryAgent = primaryAgent;
+  } else if (isRecord(rawPrimaryAgent)) {
+    primaryAgent = rawPrimaryAgent;
+  } else {
+    throw new Error(invalidPrimaryAgentMessage);
+  }
+
+  return { settings, primaryAgent };
+}
+
 function writeTlhPrimaryAgentModelOverride(
   cwd: string,
   primary: TlhPrimaryAgentSelection,
@@ -738,30 +769,11 @@ function writeTlhPrimaryAgentModelOverride(
     cwd,
     "Refusing to write model-override settings outside the isolated TLH profile.",
     (current) => {
-      const settings = parseTlhSettingsContent(current);
-      const rawTlh = settings.tlh;
-      let tlh: Record<string, unknown>;
-      if (rawTlh === undefined) {
-        tlh = {};
-        settings.tlh = tlh;
-      } else if (isRecord(rawTlh)) {
-        tlh = rawTlh;
-      } else {
-        throw new Error("settings.tlh must be an object to update model-override settings.");
-      }
-
-      const rawPrimaryAgent = tlh.primaryAgent;
-      let primaryAgent: Record<string, unknown>;
-      if (rawPrimaryAgent === undefined) {
-        primaryAgent = {};
-        tlh.primaryAgent = primaryAgent;
-      } else if (isRecord(rawPrimaryAgent)) {
-        primaryAgent = rawPrimaryAgent;
-      } else {
-        throw new Error(
-          "settings.tlh.primaryAgent must be an object to update model-override settings.",
-        );
-      }
+      const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(
+        current,
+        "settings.tlh must be an object to update model-override settings.",
+        "settings.tlh.primaryAgent must be an object to update model-override settings.",
+      );
 
       const rawModelOverrides = primaryAgent.modelOverrides;
       let modelOverrides: Record<string, unknown>;
@@ -808,30 +820,11 @@ function writeTlhPrimaryAgentDefault(
     cwd,
     "Refusing to write primary-agent settings outside the isolated TLH profile.",
     (current) => {
-      const settings = parseTlhSettingsContent(current);
-      const rawTlh = settings.tlh;
-      let tlh: Record<string, unknown>;
-      if (rawTlh === undefined) {
-        tlh = {};
-        settings.tlh = tlh;
-      } else if (isRecord(rawTlh)) {
-        tlh = rawTlh;
-      } else {
-        throw new Error("settings.tlh must be an object to update primary-agent settings.");
-      }
-
-      const rawPrimaryAgent = tlh.primaryAgent;
-      let primaryAgent: Record<string, unknown>;
-      if (rawPrimaryAgent === undefined) {
-        primaryAgent = {};
-        tlh.primaryAgent = primaryAgent;
-      } else if (isRecord(rawPrimaryAgent)) {
-        primaryAgent = rawPrimaryAgent;
-      } else {
-        throw new Error(
-          "settings.tlh.primaryAgent must be an object to update primary-agent defaults.",
-        );
-      }
+      const { settings, primaryAgent } = prepareTlhPrimaryAgentSettings(
+        current,
+        "settings.tlh must be an object to update primary-agent settings.",
+        "settings.tlh.primaryAgent must be an object to update primary-agent defaults.",
+      );
 
       let changed = false;
       const setField = (key: "enabled" | "selected", value: boolean | string | undefined) => {
