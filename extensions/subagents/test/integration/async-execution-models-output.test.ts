@@ -44,6 +44,31 @@ import {
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseJsonRecord(text: string, source: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(text);
+  if (!isRecord(parsed)) throw new Error(`Expected JSON object in ${source}`);
+  return parsed;
+}
+
+function readJsonRecord(filePath: string): Record<string, unknown> {
+  return parseJsonRecord(fs.readFileSync(filePath, "utf-8"), filePath);
+}
+
+function readJsonRecords(value: unknown, source: string): Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || !value.every(isRecord))
+    throw new Error(`Expected JSON object array in ${source}`);
+  return value;
+}
+
+function requiredString(value: unknown, source: string): string {
+  if (typeof value !== "string") throw new Error(`Expected string in ${source}`);
+  return value;
+}
+
 describe("async execution utilities", () => {
   let tempDir: string;
   let mockPi: MockPi;
@@ -1604,6 +1629,162 @@ describe("async execution utilities", () => {
     assert.equal(statusPayload.steps?.[0]?.exitCode, 1);
   });
 
+  it("background summaries preserve ordered outcomes and cross-publication cost totals", async () => {
+    const assistantEvent = (
+      text: string,
+      usage?: Record<string, unknown>,
+      errorMessage?: string,
+    ) => ({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        model: "mock/test-model",
+        stopReason: errorMessage ? "error" : "stop",
+        ...(errorMessage ? { errorMessage } : {}),
+        ...(usage ? { usage } : {}),
+      },
+    });
+    mockPi.onCall({
+      matchArgIncludes: "ordered first task",
+      jsonl: [assistantEvent("first output")],
+    });
+    mockPi.onCall({
+      matchArgIncludes: "ordered second task",
+      jsonl: [
+        assistantEvent("second partial output", {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { total: 0 },
+        }),
+      ],
+      stderr: "second failure",
+      exitCode: 1,
+    });
+    mockPi.onCall({
+      matchArgIncludes: "ordered third task",
+      jsonl: [
+        assistantEvent("third output", {
+          input: 7,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { total: 0.004 },
+        }),
+      ],
+    });
+
+    const id = `async-summary-aggregation-${Date.now().toString(36)}`;
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "first", task: "ordered first task" },
+        { agent: "second", task: "ordered second task" },
+        { agent: "third", task: "ordered third task" },
+      ],
+      concurrency: 1,
+      agents: [
+        makeAgent("first", { completionGuard: false }),
+        makeAgent("second", { completionGuard: false }),
+        makeAgent("third", { completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = readJsonRecord(resultPath);
+    const payloadResults = readJsonRecords(payload.results, "summary result payload");
+    const asyncDir = path.join(ASYNC_DIR, id);
+    assert.equal(payload.success, false);
+    assert.equal(payload.summary, "second failure");
+    const runLog = fs.readFileSync(path.join(asyncDir, `subagent-log-${id}.md`), "utf-8");
+    assert.match(
+      runLog,
+      /## Summary\nfirst:\nfirst output\n\nsecond:\nsecond failure\n\nOutput:\nsecond partial output\n\nthird:\nthird output/,
+    );
+    assert.deepEqual(
+      payloadResults.map((result) => result.agent),
+      ["first", "second", "third"],
+    );
+    assert.equal(payloadResults[0]?.totalCost, undefined, "missing usage stays cost-less");
+    assert.equal(payloadResults[1]?.totalCost, undefined, "zero usage stays cost-less");
+    assert.deepEqual(payloadResults[2]?.totalCost, {
+      inputTokens: 7,
+      outputTokens: 0,
+      costUsd: 0.004,
+    });
+    const totalCost = { inputTokens: 7, outputTokens: 0, costUsd: 0.004 };
+    assert.deepEqual(payload.totalCost, totalCost);
+
+    const status = readJsonRecord(path.join(asyncDir, "status.json"));
+    assert.deepEqual(status.totalCost, totalCost);
+    const completedEvent = fs
+      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line, index) => parseJsonRecord(line, `events.jsonl line ${index + 1}`))
+      .find((event) => event.type === "subagent.run.completed");
+    assert.deepEqual(completedEvent?.totalCost, totalCost);
+  });
+
+  it("background summaries preserve empty aggregation after a prequeued interrupt", async () => {
+    const id = `async-summary-prequeued-interrupt-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    fs.mkdirSync(asyncDir, { recursive: true });
+    const interruptPath = requestAsyncInterrupt(asyncDir, {
+      source: "async-summary-empty-test",
+      reason: "before-runner-start",
+    });
+    assert.ok(fs.existsSync(interruptPath));
+
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "This task must not start",
+      agentConfig: makeAgent("worker", { completionGuard: false }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+
+    const payload = readJsonRecord(await waitForAsyncResultFile(id));
+    assert.equal(payload.state, "paused");
+    assert.equal(payload.summary, "Paused after interrupt. Waiting for explicit next action.");
+    assert.equal(payload.truncated, false);
+    assert.equal(Object.hasOwn(payload, "totalCost"), false);
+    assert.equal(readJsonRecords(payload.results, "prequeued interrupt results").length, 0);
+    assert.equal(mockPi.callCount(), 0, "prequeued interrupt must skip child execution");
+
+    const runLog = fs.readFileSync(path.join(asyncDir, `subagent-log-${id}.md`), "utf-8");
+    assert.match(runLog, /## Summary\n\(no output\)/);
+    const completedEvent = fs
+      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line, index) => parseJsonRecord(line, `events.jsonl line ${index + 1}`))
+      .find((event) => event.type === "subagent.run.completed");
+    assert.equal(completedEvent?.totalCost, undefined);
+  });
+
   it("background file-only runs write full output but return only a file reference", async () => {
     mockPi.onCall({ output: "async full output\nwith details" });
     const id = `async-file-only-${Date.now().toString(36)}`;
@@ -1645,6 +1826,146 @@ describe("async execution utilities", () => {
     assert.match(payload.results[0]?.output ?? "", /Output saved to:/);
     assert.doesNotMatch(payload.results[0]?.output ?? "", /async full output/);
     assert.equal(fs.readFileSync(outputPath, "utf-8"), "async full output\nwith details");
+  });
+
+  it("background summaries distinguish absent and empty maxOutput defaults", async () => {
+    const oversizedOutput = "x".repeat(205_000);
+    mockPi.onCall({
+      matchArgIncludes: "absent max-output",
+      output: oversizedOutput,
+    });
+    mockPi.onCall({
+      matchArgIncludes: "empty max-output",
+      output: oversizedOutput,
+    });
+    const artifactConfig = {
+      enabled: false,
+      includeInput: false,
+      includeOutput: false,
+      includeJsonl: false,
+      includeMetadata: false,
+      cleanupDays: 7,
+    } as const;
+    const run = (id: string, task: string, maxOutput?: Record<string, number>) =>
+      executeAsyncSingle(id, {
+        agent: "worker",
+        task,
+        agentConfig: makeAgent("worker", { completionGuard: false }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig,
+        shareEnabled: false,
+        maxOutput,
+        maxSubagentDepth: 2,
+      });
+
+    const absentId = `async-summary-max-output-absent-${Date.now().toString(36)}`;
+    run(absentId, "absent max-output");
+    const absentPayload = readJsonRecord(await waitForAsyncResultFile(absentId));
+    const absentSummary = requiredString(absentPayload.summary, "absent max-output summary");
+    assert.equal(absentPayload.truncated, false);
+    assert.ok(absentSummary.includes(oversizedOutput));
+
+    const emptyId = `async-summary-max-output-empty-${Date.now().toString(36)}`;
+    run(emptyId, "empty max-output", {});
+    const emptyPayload = readJsonRecord(await waitForAsyncResultFile(emptyId));
+    const emptySummary = requiredString(emptyPayload.summary, "empty max-output summary");
+    assert.equal(emptyPayload.truncated, true);
+    assert.match(emptySummary, /\[TRUNCATED: showing first 2 of 2 lines/);
+    assert.equal(emptySummary.includes(oversizedOutput), false);
+  });
+
+  it("background summaries honor byte/line limits and last-result artifact markers", async () => {
+    mockPi.onCall({
+      matchArgIncludes: "line-limited summary",
+      output: "line one\nline two\nline three",
+    });
+    const lineId = `async-summary-line-limit-${Date.now().toString(36)}`;
+    executeAsyncSingle(lineId, {
+      agent: "worker",
+      task: "line-limited summary",
+      agentConfig: makeAgent("worker", { completionGuard: false }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxOutput: { lines: 2, bytes: 1024 },
+      maxSubagentDepth: 2,
+    });
+    const linePayload = readJsonRecord(await waitForAsyncResultFile(lineId));
+    const lineSummary = requiredString(linePayload.summary, "line-limited summary");
+    assert.equal(linePayload.truncated, true);
+    assert.match(lineSummary, /\[TRUNCATED: showing first 2 of 4 lines/);
+    assert.match(lineSummary, /line one/);
+    assert.doesNotMatch(lineSummary, /line two/);
+
+    const byteOutput = "😀".repeat(30);
+    mockPi.onCall({
+      matchArgIncludes: "byte-limited first",
+      output: `${byteOutput}\nfirst tail`,
+    });
+    mockPi.onCall({
+      matchArgIncludes: "byte-limited second",
+      output: `${byteOutput}\nsecond tail`,
+    });
+    const parallelId = `async-summary-byte-limit-${Date.now().toString(36)}`;
+    const artifactsDir = path.join(tempDir, `${parallelId}-artifacts`);
+    executeAsyncParallel(parallelId, {
+      tasks: [
+        { agent: "first", task: "byte-limited first" },
+        { agent: "second", task: "byte-limited second" },
+      ],
+      concurrency: 1,
+      agents: [
+        makeAgent("first", { completionGuard: false }),
+        makeAgent("second", { completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      maxOutput: { lines: 5000, bytes: 40 },
+      artifactsDir,
+      artifactConfig: {
+        mode: "compact",
+        enabled: true,
+        includeInput: false,
+        includeOutput: true,
+        includeJsonl: false,
+        includeMetadata: false,
+        includeTranscript: false,
+        includeChildEventProjections: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    const bytePayload = readJsonRecord(await waitForAsyncResultFile(parallelId));
+    const byteResults = readJsonRecords(bytePayload.results, "byte-limited result payload");
+    const byteSummary = requiredString(bytePayload.summary, "byte-limited summary");
+    const firstArtifactPaths = byteResults[0]?.artifactPaths;
+    const lastArtifactPaths = byteResults[1]?.artifactPaths;
+    if (!isRecord(firstArtifactPaths) || !isRecord(lastArtifactPaths))
+      throw new Error("expected output artifact paths");
+    const firstArtifactPath = requiredString(
+      firstArtifactPaths.outputPath,
+      "first output artifact path",
+    );
+    const lastArtifactPath = requiredString(
+      lastArtifactPaths.outputPath,
+      "last output artifact path",
+    );
+    assert.equal(bytePayload.truncated, true);
+    assert.ok(fs.existsSync(firstArtifactPath));
+    assert.ok(fs.existsSync(lastArtifactPath));
+    assert.match(byteSummary, new RegExp(`full output at ${escapeRegExp(lastArtifactPath)}`));
+    assert.doesNotMatch(byteSummary, new RegExp(escapeRegExp(firstArtifactPath)));
+    const markerEnd = byteSummary.indexOf("]\n");
+    assert.ok(markerEnd >= 0, "expected a truncation marker");
+    const keptBody = byteSummary.slice(markerEnd + 2);
+    assert.ok(Buffer.byteLength(keptBody, "utf-8") <= 40);
   });
 
   it("background single runs route relative outputs to outputBaseDir", async () => {
