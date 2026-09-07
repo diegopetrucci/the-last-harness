@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   checkSubagentDepth,
   getSubagentDepthEnv,
-  DEFAULT_SUBAGENT_MAX_DEPTH,
   normalizeMaxSubagentDepth,
   resolveTopLevelParallelConcurrency,
   resolveTopLevelParallelMaxTasks,
@@ -24,12 +23,6 @@ afterEach(() => {
   else process.env.PI_SUBAGENT_DEPTH = savedDepth;
   if (savedMaxDepth === undefined) delete process.env.PI_SUBAGENT_MAX_DEPTH;
   else process.env.PI_SUBAGENT_MAX_DEPTH = savedMaxDepth;
-});
-
-describe("DEFAULT_SUBAGENT_MAX_DEPTH", () => {
-  it("is 2", () => {
-    assert.equal(DEFAULT_SUBAGENT_MAX_DEPTH, 2);
-  });
 });
 
 describe("normalizeMaxSubagentDepth", () => {

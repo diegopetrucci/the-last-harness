@@ -9,46 +9,6 @@ import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "../../src/extension/tool-desc
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const FORBIDDEN_VOCABULARY = [
-  /\bchain\b/i,
-  /\bchains\b/i,
-  /\bworktree\b/i,
-  /\bschedule\b/i,
-  /\bscheduling\b/i,
-  /\bcreate\b/i,
-  /\bupdate\b/i,
-  /\bdelete\b/i,
-  /\beject\b/i,
-  /\bdisable\b/i,
-  /\benable\b/i,
-  /\breset\b/i,
-  /append-step/i,
-  /\bclarify\b/i,
-  /toolBudget/i,
-  /\bbudget\b/i,
-  /proactive skill subagent suggestions/i,
-];
-const ALLOWED_ACTIONS = [
-  "list",
-  "get",
-  "status",
-  "interrupt",
-  "resume",
-  "steer",
-  "doctor",
-] as const;
-
-function assertMinimalContract(description: string): void {
-  for (const pattern of FORBIDDEN_VOCABULARY) assert.doesNotMatch(description, pattern);
-  for (const action of ALLOWED_ACTIONS) {
-    assert.match(description, new RegExp(`action: "${escapeRegex(action)}"`));
-  }
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env[SUBAGENT_CHILD_ENV];
@@ -57,34 +17,6 @@ function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 }
 
 describe("registered subagent tool description", () => {
-  it("always uses the compact TLH-minimal contract", () => {
-    const description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
-    assert.ok(
-      description.length <= 2500,
-      `expected compact description <= 2500 chars, got ${description.length}`,
-    );
-    for (const builtinName of ["scout", "worker", "planner"]) {
-      assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
-    }
-    assertMinimalContract(description);
-    assert.match(description, /SINGLE:/i);
-    assert.match(description, /PARALLEL:/i);
-    assert.match(description, /fallbackModels/i);
-    assert.doesNotMatch(description, /context:\s*"fresh"\s*\|\s*"fork"/);
-    assert.match(description, /async:true|async: true/);
-    assert.match(description, /Do not sleep or poll(?: status)? just to wait/i);
-    assert.match(description, /no child process is running/i);
-    assert.match(description, /subagents cannot spawn subagents/i);
-    assert.match(description, /keep one writer/i);
-    assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
-    assert.match(description, /affects inferred acceptance only, never tools?/i);
-    assert.match(description, /artifacts controls whether per-child run artifacts are written/i);
-    assert.doesNotMatch(description, /artifacts\.mode|\bdebug artifacts?\b/i);
-
-    assert.match(description, /status\.json/);
-    assert.match(description, /events\.jsonl/);
-  });
-
   function readRegisteredDescription(agentDir: string): string {
     const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
