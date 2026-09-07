@@ -5,8 +5,7 @@
  *   (a) Removed actions (append-step, schedule, create) return Unknown-action error.
  *   (b) action='steer' async path is covered here and in async-interrupt-action.test.ts;
  *       nested steer routing is covered in nested-control.test.ts.
- *   (c) Extension startup no longer constructs the scheduled-run manager;
- *       structural source-text assertion confirms the wiring is absent.
+ *   (c) Removed schedule action fails closed through the full extension stack.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -22,7 +21,6 @@ import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/typ
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-
 const EXPECTED_VALID = "list, get, status, interrupt, resume, steer, doctor";
 
 function createState(): SubagentState {
@@ -110,20 +108,6 @@ describe("executor: removed actions return Unknown-action error", () => {
     );
     assert.equal(result.isError, true);
     assert.match(text(result), /Unknown action: append-step/);
-    assert.match(text(result), new RegExp(`Valid: ${EXPECTED_VALID}`));
-  });
-
-  it("returns Unknown-action for schedule", async () => {
-    const executor = makeExecutor(createState());
-    const result = await executor.execute(
-      "schedule",
-      { action: "schedule" as any },
-      new AbortController().signal,
-      undefined,
-      ctx(),
-    );
-    assert.equal(result.isError, true);
-    assert.match(text(result), /Unknown action: schedule/);
     assert.match(text(result), new RegExp(`Valid: ${EXPECTED_VALID}`));
   });
 
@@ -265,7 +249,7 @@ describe("executor: steer still routes correctly", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// (c) Extension startup no longer constructs the scheduled-run manager
+// (c) Removed schedule action fails closed through the full extension stack
 // ─────────────────────────────────────────────────────────────────────────────
 
 function parentToolEnv(): NodeJS.ProcessEnv {
@@ -274,21 +258,7 @@ function parentToolEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-describe("extension: no scheduled-run manager at startup", () => {
-  it("src/extension/index.ts contains no scheduledRunManager references (structural)", () => {
-    const source = fs.readFileSync(path.join(projectRoot, "src", "extension", "index.ts"), "utf-8");
-    assert.doesNotMatch(
-      source,
-      /createScheduledRunManager/,
-      "index.ts must not reference createScheduledRunManager",
-    );
-    assert.doesNotMatch(
-      source,
-      /scheduledRunManager/,
-      "index.ts must not reference scheduledRunManager",
-    );
-  });
-
+describe("extension: removed schedule action fails closed", () => {
   it("action=schedule returns Unknown-action through the full extension stack", () => {
     const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";

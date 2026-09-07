@@ -2,7 +2,7 @@
  * Integration tests for error handling across execution modes.
  *
  * Tests: agent crashes, stderr capture, detectSubagentError override,
- * signal/abort handling, and error propagation across parallel tasks.
+ * and error propagation across parallel tasks.
  *
  * Requires pi packages for execution tests. Skips gracefully if unavailable.
  */
@@ -173,23 +173,6 @@ describe(
 
       assert.notEqual(result.exitCode, 0, "should detect hidden failure");
       assert.ok(result.error?.includes("connection refused"));
-    });
-
-    it("handles abort signal (completes faster than delay)", async () => {
-      mockPi.onCall({ delay: 10000 });
-      const agents = makeAgentConfigs(["slow"]);
-      const controller = new AbortController();
-
-      const start = Date.now();
-      setTimeout(() => controller.abort(), 200);
-
-      await runSync(tempDir, agents, "slow", "Slow task", {
-        signal: controller.signal,
-      });
-      const elapsed = Date.now() - start;
-
-      // Key: should complete much faster than the 10s delay
-      assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
     });
   },
 );

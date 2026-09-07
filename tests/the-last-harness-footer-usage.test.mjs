@@ -998,22 +998,6 @@ function makeInstallNotice(kind, detail, commitSubject) {
   };
 }
 
-test("footer appends no warning line when no install notice is provided", () => {
-  const ctx = createCtx({ entries: [] });
-  const footer = createTlhFooter(
-    pi,
-    ctx,
-    theme,
-    () => "architect",
-    createFooterData(),
-    {},
-    null,
-    undefined,
-  );
-  const lines = footer.render(WIDTH);
-  assert.doesNotMatch(lines.join("\n"), /running TLH from/);
-});
-
 test("footer warning line is absent when installNotice is undefined", () => {
   const ctx = createCtx({ entries: [] });
   const footer = createTlhFooter(

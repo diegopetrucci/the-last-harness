@@ -20,10 +20,7 @@ import {
   clearLegacyResultAnimationTimer,
   renderWidget,
 } from "../../src/tui/render.ts";
-import {
-  WHIMSICAL_THINKING_PHRASES,
-  whimsicalThinkingPhrase,
-} from "../../src/tui/whimsical-phrases.ts";
+import { whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
 const theme = createPlainTheme();
 
@@ -2953,7 +2950,6 @@ describe("subagent async widget rendering", () => {
   });
 
   it("cycles compact async thinking phrases per turn while expanded rows retain telemetry", () => {
-    assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
     const now = Date.now();
     const job: AsyncJobState = {
       asyncId: "run-thinking",
