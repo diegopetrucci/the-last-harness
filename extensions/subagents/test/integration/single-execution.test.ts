@@ -279,6 +279,11 @@ interface ExecutorModule {
   };
 }
 
+type ExecuteAsyncSingleOverride = (
+  id: string,
+  params: Record<string, unknown>,
+) => ExecutorToolResult;
+
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
@@ -379,6 +384,7 @@ describe(
         lastForegroundControlId: null,
       },
       runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
+      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
     ) {
       return createSubagentExecutor!({
         pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -389,6 +395,7 @@ describe(
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
         runSync: runSyncOverride,
+        executeAsyncSingle: executeAsyncSingleOverride,
       });
     }
 
@@ -3060,6 +3067,248 @@ describe(
           assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
         }
         assert.equal(mockPi.callCount(), 0);
+      },
+    );
+
+    it(
+      "forwards non-success resume runtime evidence with the human run timeout before spawning",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `resume-runtime-forwarding-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "failed",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "failed",
+              sessionFile,
+              activeRuntimeMs: 321.4,
+              activeRuntimeCheckpointAt: 654.9,
+            },
+          ],
+        });
+        const observed: Array<{ id: string; params: Record<string, unknown> }> = [];
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = (id, params) => {
+          observed.push({ id, params });
+          return {
+            content: [{ text: "stubbed continuation" }],
+            details: { asyncId: "resume-runtime-forwarded" },
+          };
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
+            { execution: { maxRunTimeMs: 1_234 } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-runtime-forwarding-call",
+            { action: "resume", id: runId, message: "Continue." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.equal(observed.length, 1);
+          assert.match(observed[0]?.id ?? "", /^[0-9a-f]{8}$/);
+          assert.equal(observed[0]?.params.timeoutMs, 1_234);
+          assert.equal(observed[0]?.params.activeRuntimeMs, 322);
+          assert.equal(observed[0]?.params.activeRuntimeCheckpointAt, 654);
+          assert.equal(state.foregroundRuns.size, 0);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "omits a disabled human timeout and resets successful resume runtime before spawning",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `resume-runtime-reset-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "complete",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "completed",
+              sessionFile,
+              activeRuntimeMs: 9_001,
+              activeRuntimeCheckpointAt: 777,
+            },
+          ],
+        });
+        const observed: Array<Record<string, unknown>> = [];
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = (_id, params) => {
+          observed.push(params);
+          return {
+            content: [{ text: "stubbed continuation" }],
+            details: { asyncId: "resume-runtime-reset" },
+          };
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 100 })],
+            { execution: { maxRunTimeMs: false } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-runtime-reset-call",
+            { action: "resume", id: runId, message: "Continue with a fresh budget." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.equal(observed.length, 1);
+          assert.equal(observed[0]?.timeoutMs, undefined);
+          assert.equal(observed[0]?.activeRuntimeMs, 0);
+          assert.equal(Object.hasOwn(observed[0]!, "activeRuntimeCheckpointAt"), false);
+          assert.equal(state.foregroundRuns.size, 0);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "rejects an exhausted supervisor-paused resume before reading context or claiming",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `resume-supervisor-budget-${Date.now().toString(36)}`;
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const statusPath = path.join(asyncDir, "status.json");
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        const activeRuntimeMs = 700;
+        const activeRuntimeCheckpointAt = 600;
+        const persistedStatus = {
+          runId,
+          mode: "single",
+          state: "paused",
+          steps: [
+            {
+              agent: "echo",
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+            },
+          ],
+          activeRuntimeMs,
+          activeRuntimeCheckpointAt,
+        };
+        fs.writeFileSync(statusPath, JSON.stringify(persistedStatus), "utf-8");
+        const beforeStatus = fs.readFileSync(statusPath);
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "paused",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              activeRuntimeMs,
+              activeRuntimeCheckpointAt,
+            },
+          ],
+        });
+        const ctx = makeMinimalCtx(tempDir);
+        let snapshotReads = 0;
+        const originalGetAvailable = ctx.modelRegistry.getAvailable.bind(ctx.modelRegistry);
+        ctx.modelRegistry.getAvailable = () => {
+          snapshotReads += 1;
+          return originalGetAvailable();
+        };
+        let continuationCalls = 0;
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = () => {
+          continuationCalls += 1;
+          throw new Error("continuation should not be invoked");
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo", { maxExecutionTimeMs: 500 })],
+            { execution: { maxRunTimeMs: 10_000 } },
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-supervisor-budget-call",
+            { action: "resume", id: runId, message: "Continue after the decision." },
+            new AbortController().signal,
+            undefined,
+            ctx,
+          );
+
+          assert.equal(result.isError, true);
+          assert.equal(
+            result.content[0]?.text,
+            "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling after 700ms of active runtime.",
+          );
+          assert.equal(snapshotReads, 0);
+          assert.equal(continuationCalls, 0);
+          assert.equal(mockPi.callCount(), 0);
+          assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+          assert.equal(state.foregroundRuns.size, 1);
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          fs.rmSync(sessionFile, { force: true });
+        }
       },
     );
 
