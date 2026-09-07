@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -33,9 +33,8 @@ import {
   defaultTlhSettingsPath,
   expandHomePath,
   readJsonFile,
-  readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 
 interface CliArgs extends Record<string, unknown> {
   defaultsPath?: string;
@@ -902,19 +901,6 @@ function assertNotNormalPiSettings(settingsPath: string): void {
   );
 }
 
-function writeExistingProfileBackup(settingsPath: string, backupPath: string): void {
-  const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
-  writeSafeProfileFile(
-    { agentDir: dirname(settingsPath) },
-    basename(backupPath),
-    content,
-    "Pi settings backup",
-    {
-      mode,
-    },
-  );
-}
-
 function writeSettings(
   settingsPath: string,
   value: JsonObject,
@@ -923,19 +909,13 @@ function writeSettings(
   const formatted = `${JSON.stringify(value, null, 2)}\n`;
   if (dryRun) return undefined;
 
-  let backupPath: string | undefined;
-  if (existed) {
-    backupPath = backupPathFor(settingsPath);
-    writeExistingProfileBackup(settingsPath, backupPath);
-  }
-
-  writeSafeProfileFile(
-    { agentDir: dirname(settingsPath) },
-    basename(settingsPath),
-    formatted,
-    "Pi settings",
-  );
-  return backupPath;
+  const backupPath = existed ? backupPathFor(settingsPath) : undefined;
+  return writeProfileFileWithBackup(settingsPath, formatted, {
+    targetLabel: "Pi settings",
+    sourceLabel: "Pi settings",
+    backupLabel: "Pi settings backup",
+    backupPath,
+  });
 }
 
 function log(args: CliArgs, message: string): void {

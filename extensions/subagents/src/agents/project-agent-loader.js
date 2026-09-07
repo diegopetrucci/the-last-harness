@@ -9,7 +9,6 @@ import { buildRuntimeName } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
-export const PROJECT_AGENT_PARENT_DIRECTORY = path.join(".tlh", "agents");
 export const PROJECT_AGENT_PACKAGE = "embedded";
 export const MAX_PROJECT_AGENT_FILE_BYTES = 64 * 1024;
 export const MAX_PROJECT_AGENT_FILES = 128;

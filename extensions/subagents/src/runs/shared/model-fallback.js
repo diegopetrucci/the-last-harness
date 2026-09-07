@@ -338,9 +338,6 @@ export function buildModelCandidatePlan(primaryModel, fallbackModels, availableM
             : {}),
     };
 }
-export function buildModelCandidates(primaryModel, fallbackModels, availableModels, preferredProvider, options) {
-    return buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, preferredProvider, options).candidates;
-}
 function replaceModelNoticeControlCharacters(value) {
     return [...value]
         .map((character) => {

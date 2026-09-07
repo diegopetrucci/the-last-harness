@@ -148,7 +148,7 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
 
   it("surfaces validation evidence in the artifact for a completed async run", async () => {
     // The motivating case: the async path uses rawOutput = finalResult.finalOutput
-    // (unstripped), so parseAcceptanceReport finds the block and the digest is live.
+    // (unstripped), so parseAndStripAcceptanceReport finds the block and the digest is live.
     mockPi.onCall({ jsonl: [events.assistantMessage("Async implementation complete.")] });
     const id = `async-digest-inline-${Date.now().toString(36)}`;
 
@@ -290,7 +290,7 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
 
   it("does not add a digest when the async run produced no acceptance report", async () => {
     // Acceptance disabled → no ## Acceptance Contract in the prompt → mock emits
-    // no block → parseAcceptanceReport returns null → artifact stays bare.
+    // no block → parseAndStripAcceptanceReport returns no report → artifact stays bare.
     mockPi.onCall({ jsonl: [events.assistantMessage("async findings only")] });
     const id = `async-digest-absent-${Date.now().toString(36)}`;
 

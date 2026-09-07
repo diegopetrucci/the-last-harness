@@ -15,6 +15,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Switching an isolated profile from a local TLH package source back to a canonical source now removes only local registrations confirmed by a valid TLH `package.json` manifest.
+- Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
 
 ## [0.40.0] - 2026-09-06
 

@@ -11,9 +11,8 @@ import {
   expandHomePath,
   readJsonFile,
   readOptionValue,
-  readRegularFileForBackup,
 } from "./lib/tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 
 interface CliArgs {
   defaultsPath?: string;
@@ -153,19 +152,6 @@ function assertKeybindingsTarget(keybindingsPath: string): void {
   );
 }
 
-function writeExistingProfileBackup(keybindingsPath: string, backupPath: string): void {
-  const { content, mode } = readRegularFileForBackup(keybindingsPath, "Pi keybindings");
-  writeSafeProfileFile(
-    { agentDir: dirname(keybindingsPath) },
-    basename(backupPath),
-    content,
-    "Pi keybindings backup",
-    {
-      mode,
-    },
-  );
-}
-
 function writeKeybindings(
   keybindingsPath: string,
   value: KeybindingMap,
@@ -174,19 +160,13 @@ function writeKeybindings(
   const formatted = `${JSON.stringify(value, null, 2)}\n`;
   if (dryRun) return undefined;
 
-  let backupPath: string | undefined;
-  if (existed) {
-    backupPath = backupPathFor(keybindingsPath);
-    writeExistingProfileBackup(keybindingsPath, backupPath);
-  }
-
-  writeSafeProfileFile(
-    { agentDir: dirname(keybindingsPath) },
-    basename(keybindingsPath),
-    formatted,
-    "Pi keybindings",
-  );
-  return backupPath;
+  const backupPath = existed ? backupPathFor(keybindingsPath) : undefined;
+  return writeProfileFileWithBackup(keybindingsPath, formatted, {
+    targetLabel: "Pi keybindings",
+    sourceLabel: "Pi keybindings",
+    backupLabel: "Pi keybindings backup",
+    backupPath,
+  });
 }
 
 function log(args: CliArgs, message: string): void {
