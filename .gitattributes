@@ -144,6 +144,7 @@ extensions/subagents/src/runs/background/run-status.js linguist-generated=true
 extensions/subagents/src/runs/background/stale-run-reconciler.js linguist-generated=true
 extensions/subagents/src/runs/background/subagent-runner.js linguist-generated=true
 extensions/subagents/src/runs/foreground/execution.js linguist-generated=true
+extensions/subagents/src/runs/foreground/foreground-pause-state.js linguist-generated=true
 extensions/subagents/src/runs/foreground/subagent-executor.js linguist-generated=true
 extensions/subagents/src/runs/shared/acceptance.js linguist-generated=true
 extensions/subagents/src/runs/shared/child-protocol.js linguist-generated=true
