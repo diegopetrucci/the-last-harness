@@ -13,8 +13,25 @@ export function createJsonlWriter(filePath, source, deps = {}) {
     const createWriteStream = deps.createWriteStream ??
         ((targetPath) => fs.createWriteStream(targetPath, { flags: "a" }));
     let stream;
+    let streamFailed = false;
+    let backpressured = false;
+    let closed = false;
+    let closePromise;
+    let resolveClose;
+    let bytesWritten = 0;
+    const maxBytes = deps.maxBytes ?? DEFAULT_MAX_JSONL_BYTES;
+    const markStreamFailed = () => {
+        streamFailed = true;
+        stream = undefined;
+        if (backpressured) {
+            backpressured = false;
+            source.resume();
+        }
+        resolveClose?.();
+    };
     try {
         stream = createWriteStream(filePath);
+        stream.on("error", markStreamFailed);
     }
     catch {
         return {
@@ -24,14 +41,9 @@ export function createJsonlWriter(filePath, source, deps = {}) {
             },
         };
     }
-    let backpressured = false;
-    let closed = false;
-    let closePromise;
-    let bytesWritten = 0;
-    const maxBytes = deps.maxBytes ?? DEFAULT_MAX_JSONL_BYTES;
     return {
         writeLine(line) {
-            if (!stream || closed || !line.trim())
+            if (!stream || streamFailed || closed || !line.trim())
                 return;
             const chunk = `${line}\n`;
             const chunkBytes = Buffer.byteLength(chunk, "utf-8");
@@ -44,14 +56,16 @@ export function createJsonlWriter(filePath, source, deps = {}) {
                     backpressured = true;
                     source.pause();
                     stream.once("drain", () => {
+                        if (!backpressured)
+                            return;
                         backpressured = false;
-                        if (!closed)
+                        if (!closed && !streamFailed)
                             source.resume();
                     });
                 }
             }
             catch {
-                void 0;
+                markStreamFailed();
             }
         },
         close() {
@@ -64,7 +78,15 @@ export function createJsonlWriter(filePath, source, deps = {}) {
             closed = true;
             const current = stream;
             stream = undefined;
-            closePromise = new Promise((resolve) => current.end(() => resolve()));
+            closePromise = new Promise((resolve) => {
+                resolveClose = resolve;
+                try {
+                    current.end(resolve);
+                }
+                catch {
+                    resolve();
+                }
+            });
             return closePromise;
         },
     };
