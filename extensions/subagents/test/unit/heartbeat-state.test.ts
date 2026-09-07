@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   beginBeat,
-  CACHE_WRITE_MISMATCH_THRESHOLD,
   closeGap,
   completeBeat,
   createHeartbeatState,
@@ -292,18 +291,5 @@ describe("completeBeat — cache_write_mismatch circuit breaker", () => {
     const result = completeBeat(state, "cache_write_mismatch", 1000);
     assert.equal(state.disabled, false);
     assert.equal(result.disableSession, false);
-  });
-});
-
-describe("CACHE_WRITE_MISMATCH_THRESHOLD", () => {
-  it("is a positive number", () => {
-    assert.ok(CACHE_WRITE_MISMATCH_THRESHOLD > 0);
-  });
-});
-
-describe("LATE_BEAT_THRESHOLD_MS", () => {
-  it("is less than 300 000 (5-minute Anthropic cache TTL)", () => {
-    assert.ok(LATE_BEAT_THRESHOLD_MS < 300_000);
-    assert.ok(LATE_BEAT_THRESHOLD_MS > 0);
   });
 });

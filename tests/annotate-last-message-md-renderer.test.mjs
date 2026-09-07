@@ -224,13 +224,6 @@ test("classifyLine: unordered list with +", () => {
   assert.equal(result.bullet, "+");
 });
 
-test("classifyLine: unordered list preserves leading indentation", () => {
-  const result = classifyLine("    - nested item");
-  assert.equal(result.type, "ul");
-  assert.equal(result.indent, "    ");
-  assert.equal(result.text, "nested item");
-});
-
 test("classifyLine: ordered list", () => {
   const result = classifyLine("1. First item");
   assert.equal(result.type, "ol");

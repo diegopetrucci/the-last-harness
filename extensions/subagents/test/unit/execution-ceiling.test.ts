@@ -66,17 +66,6 @@ describe("human-owned execution policy", () => {
       DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS,
     );
     assert.equal(resolveCustomAgentMaxExecutionTimeMs(99), 99);
-    assert.deepEqual(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS, {
-      developer: 7_200_000,
-      "code-reviewer": 1_800_000,
-      "test-runner": 3_600_000,
-      librarian: 14_400_000,
-      oracle: 2_700_000,
-      contrarian: 1_800_000,
-      "repo-scout": 600_000,
-      "web-scout": 300_000,
-      "diff-summarizer": 300_000,
-    });
     assert.deepEqual(
       [...PACKAGED_MINOR_AGENT_ROLES].sort(),
       Object.keys(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS).sort(),

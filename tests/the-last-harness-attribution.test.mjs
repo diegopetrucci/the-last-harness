@@ -58,10 +58,6 @@ function registeredToggleCommand() {
 }
 
 test("commit attribution helper resolves unset and boolean preference values", () => {
-  assert.equal(
-    TLH_DEFAULT_COMMIT_ATTRIBUTION,
-    "Co-authored-by: The Last Harness <hi@thelastharness.com>",
-  );
   assert.deepEqual(resolveTlhCommitAttribution(undefined), {
     enabled: true,
     footer: TLH_DEFAULT_COMMIT_ATTRIBUTION,

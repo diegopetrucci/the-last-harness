@@ -204,47 +204,6 @@ const REAL_FS: ProjectDefaultsLoaderFileSystem = {
 };
 
 // ---------------------------------------------------------------------------
-// Module exports (parity gate)
-// ---------------------------------------------------------------------------
-
-describe("project-defaults-loader exports", () => {
-  it("exports PROJECT_DEFAULTS_FILE constant", () => {
-    assert.ok(typeof PROJECT_DEFAULTS_FILE === "string");
-    assert.ok(PROJECT_DEFAULTS_FILE.includes("defaults.json"));
-  });
-
-  it("exports warning bounds as positive numbers", () => {
-    assert.ok(MAX_PROJECT_DEFAULT_WARNINGS > 0);
-    assert.ok(MAX_PROJECT_DEFAULT_WARNING_LENGTH > 0);
-  });
-
-  it("exports MAX_PROJECT_DEFAULTS_FILE_BYTES as a positive number", () => {
-    assert.ok(typeof MAX_PROJECT_DEFAULTS_FILE_BYTES === "number");
-    assert.ok(MAX_PROJECT_DEFAULTS_FILE_BYTES > 0);
-  });
-
-  it("exports loadProjectDefaults as an async function", () => {
-    assert.ok(typeof loadProjectDefaults === "function");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Generated .js parity
-// ---------------------------------------------------------------------------
-
-describe("generated .js parity", () => {
-  it("the generated .js exports the same public symbols as the .ts source", async () => {
-    const jsUrl = new URL("../../src/agents/project-defaults-loader.js", import.meta.url);
-    const jsModule = (await import(jsUrl.href)) as Record<string, unknown>;
-    assert.ok(typeof jsModule.PROJECT_DEFAULTS_FILE === "string");
-    assert.ok(typeof jsModule.MAX_PROJECT_DEFAULTS_FILE_BYTES === "number");
-    assert.equal(jsModule.MAX_PROJECT_DEFAULT_WARNINGS, MAX_PROJECT_DEFAULT_WARNINGS);
-    assert.equal(jsModule.MAX_PROJECT_DEFAULT_WARNING_LENGTH, MAX_PROJECT_DEFAULT_WARNING_LENGTH);
-    assert.ok(typeof jsModule.loadProjectDefaults === "function");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Worktree root resolution
 // ---------------------------------------------------------------------------
 

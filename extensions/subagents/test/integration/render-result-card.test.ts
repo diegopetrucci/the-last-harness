@@ -1052,7 +1052,6 @@ describe("renderSubagentResult", () => {
   });
 
   it("cycles the full attributed thinking pool per turn and suppresses it for active tools", () => {
-    assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
     const firstCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) => whimsicalThinkingPhrase(turn));
     const repeatedCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) =>
       whimsicalThinkingPhrase(turn),

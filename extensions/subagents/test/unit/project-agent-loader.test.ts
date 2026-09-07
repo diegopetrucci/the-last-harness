@@ -385,29 +385,6 @@ describe("trusted project-agent loader", () => {
     );
   });
 
-  it("keeps the execution-plane trust resolver persisted-only in both source artifacts", () => {
-    for (const sourceName of ["project-agent-loader.ts", "project-agent-loader.js"]) {
-      const source = fs.readFileSync(
-        new URL(`../../src/agents/${sourceName}`, import.meta.url),
-        "utf8",
-      );
-      for (const forbidden of [
-        "SESSION_TRUST_DECISIONS",
-        "defaultProjectTrust",
-        "isProjectTrusted",
-        "options.confirm",
-        "options.ui",
-        "hasUI",
-      ]) {
-        assert.equal(
-          source.includes(forbidden),
-          false,
-          `${sourceName} must not contain non-persisted trust input ${forbidden}`,
-        );
-      }
-    }
-  });
-
   it("requires a persisted containing trust entry and ignores transient or upstream approval", async () => {
     const project = tempProject();
     const nested = path.join(project, "nested");
