@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
@@ -20,6 +21,11 @@ import {
   withLegacyRetiredDefaultPackageIdentities,
 } from "./lib/default-extensions.mjs";
 import type { DefaultExtensionEntry } from "./lib/default-extensions.mjs";
+import {
+  isLocalPackageSource,
+  packageSourceInstallDir,
+  packageSourcePiSource,
+} from "./lib/tlh-install-package-source.mjs";
 import {
   assertNotInNormalPiConfig,
   assignOptionValue,
@@ -330,6 +336,52 @@ function applyHarnessPackageDedupes(
       `remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`,
     );
   }
+}
+
+function isTlhPackageManifest(path: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
+    return isPlainObject(parsed) && parsed.name === "the-last-harness";
+  } catch {
+    return false;
+  }
+}
+
+function isConfirmedLocalTlhPackage(source: string, profileDir: string, homeDir: string): boolean {
+  const trimmedSource = source.trim();
+  if (!trimmedSource || !isLocalPackageSource(trimmedSource)) return false;
+
+  // packageSourcePiSource returns the original value for unsupported file: forms;
+  // do not reinterpret those values as profile-relative directory names.
+  if (
+    /^file:/i.test(trimmedSource) &&
+    packageSourcePiSource(trimmedSource, { agentDir: profileDir, homeDir }) === trimmedSource
+  ) {
+    return false;
+  }
+
+  const packageDir = packageSourceInstallDir(trimmedSource, { agentDir: profileDir, homeDir });
+  return Boolean(packageDir) && isTlhPackageManifest(join(packageDir, "package.json"));
+}
+
+function applyCanonicalHarnessCleanup(
+  settings: JsonObject,
+  ensuredSource: string,
+  profileDir: string,
+  homeDir: string,
+  changes: string[],
+): void {
+  if (packageIdentity(ensuredSource) !== HARNESS_PACKAGE_IDENTITY) return;
+  if (!Array.isArray(settings.packages)) return;
+
+  settings.packages = settings.packages.filter((entry: unknown) => {
+    const source = packageSourceOf(entry);
+    if (source === undefined || !isConfirmedLocalTlhPackage(source, profileDir, homeDir)) {
+      return true;
+    }
+    changes.push(`remove local TLH package superseded by canonical source: ${source}`);
+    return false;
+  });
 }
 
 function applyNonCanonicalHarnessCleanup(
@@ -926,6 +978,20 @@ function main(): void {
   );
   const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
   applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
+  // An omitted source uses the default for ordinary merge behavior, but does
+  // not authorize destructive local-registration cleanup (for example, doctor).
+  if (
+    args.packageSource?.trim() &&
+    packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY
+  ) {
+    applyCanonicalHarnessCleanup(
+      next,
+      ensuredHarnessSource,
+      dirname(settingsPath),
+      process.env.HOME || homedir(),
+      changes,
+    );
+  }
   applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
   const managedDefaultExtensionProvenance =
     readDefaultExtensionProvenance(next).managedPackageIdentities;
