@@ -288,6 +288,17 @@ export function backupPathWithTimestamp(
 // Backup-retention helpers (pure / deterministic)
 // ---------------------------------------------------------------------------
 
+function isValidBackupCalendarDate(datePart: string): boolean {
+  const year = Number(datePart.slice(0, 4));
+  const month = Number(datePart.slice(5, 7));
+  const day = Number(datePart.slice(8, 10));
+  if (month < 1 || month > 12 || day < 1) return false;
+
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthLengths = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= monthLengths[month - 1];
+}
+
 /**
  * Parse the ISO-8601-derived timestamp embedded in a backup filename produced
  * by backupPathWithTimestamp. Handles all four naming variants:
@@ -304,6 +315,7 @@ export function parseBackupTimestamp(filename: string): Date | undefined {
   const match = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?Z$/.exec(filename);
   if (!match) return undefined;
   const [, datePart, hh, mm, ss, ms] = match;
+  if (!isValidBackupCalendarDate(datePart)) return undefined;
   const iso = ms ? `${datePart}T${hh}:${mm}:${ss}.${ms}Z` : `${datePart}T${hh}:${mm}:${ss}Z`;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return undefined;
