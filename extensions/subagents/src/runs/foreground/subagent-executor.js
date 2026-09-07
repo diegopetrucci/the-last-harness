@@ -3269,6 +3269,57 @@ function resolveSuccessfulResumeCompletion(target) {
     return (("successfulCompletion" in target ? target.successfulCompletion : undefined) ??
         target.state === "complete");
 }
+function preflightResumeRuntimePolicy(target, agentConfig, executionPolicy) {
+    const runTimeoutMs = executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
+    const successfulCompletion = resolveSuccessfulResumeCompletion(target);
+    const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
+    if (!successfulCompletion &&
+        target.activeRuntimeMs !== undefined &&
+        normalizedTargetActiveRuntimeMs === undefined) {
+        return {
+            kind: "error",
+            message: "Invalid active runtime evidence; continuation cannot start.",
+        };
+    }
+    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(target.activeRuntimeCheckpointAt);
+    if (!successfulCompletion &&
+        target.activeRuntimeCheckpointAt !== undefined &&
+        activeRuntimeCheckpointAt === undefined) {
+        return {
+            kind: "error",
+            message: "Invalid active runtime checkpoint; continuation cannot start.",
+        };
+    }
+    const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
+    const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
+    if (remainingAgentTimeMs === 0) {
+        return {
+            kind: "error",
+            message: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+        };
+    }
+    return {
+        kind: "ready",
+        activeRuntimeMs,
+        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+        successfulCompletion,
+        ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
+    };
+}
+function preflightResumeContextPolicy(target, agentConfig, modelOverride, currentModel, availableModels) {
+    if (target.kind !== "revive")
+        return { kind: "ready" };
+    const selectedModel = explicitResumeModel(modelOverride) ??
+        (target.modelIdentity ? modelReferenceFromIdentity(target.modelIdentity) : undefined) ??
+        agentConfig.model ??
+        (currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined);
+    const modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, currentModel?.provider);
+    const contextAssessment = assessDurableResumeContext(target.contextUsage, modelContextWindow ?? target.contextUsage?.contextWindow);
+    if (contextAssessment.blocked) {
+        return { kind: "error", message: formatDurableResumeContextBlock(contextAssessment) };
+    }
+    return { kind: "ready", modelContextWindow };
+}
 async function resumeAsyncRun(input) {
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
     input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -3387,64 +3438,26 @@ async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const runTimeoutMs = input.executionPolicy.maxRunTimeMs === false ? undefined : input.executionPolicy.maxRunTimeMs;
-    const successfulCompletion = resolveSuccessfulResumeCompletion(target);
-    const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
-    if (!successfulCompletion &&
-        target.activeRuntimeMs !== undefined &&
-        normalizedTargetActiveRuntimeMs === undefined) {
+    const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, input.executionPolicy);
+    if (runtimePolicy.kind === "error") {
         return {
-            content: [
-                { type: "text", text: "Invalid active runtime evidence; continuation cannot start." },
-            ],
+            content: [{ type: "text", text: runtimePolicy.message }],
             isError: true,
             details: { mode: "management", results: [] },
         };
     }
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(target.activeRuntimeCheckpointAt);
-    if (!successfulCompletion &&
-        target.activeRuntimeCheckpointAt !== undefined &&
-        activeRuntimeCheckpointAt === undefined) {
-        return {
-            content: [
-                { type: "text", text: "Invalid active runtime checkpoint; continuation cannot start." },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-        };
-    }
-    const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
-    const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
-    if (remainingAgentTimeMs === 0) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
-                },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-        };
-    }
+    const { activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs } = runtimePolicy;
     const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
     const { availableModels } = modelRegistrySnapshot;
-    let modelContextWindow;
-    if (target.kind === "revive") {
-        const selectedModel = explicitResumeModel(input.params.model) ??
-            (target.modelIdentity ? modelReferenceFromIdentity(target.modelIdentity) : undefined) ??
-            agentConfig.model ??
-            (input.ctx.model ? `${input.ctx.model.provider}/${input.ctx.model.id}` : undefined);
-        modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, input.ctx.model?.provider);
-        const contextAssessment = assessDurableResumeContext(target.contextUsage, modelContextWindow ?? target.contextUsage?.contextWindow);
-        if (contextAssessment.blocked) {
-            return {
-                content: [{ type: "text", text: formatDurableResumeContextBlock(contextAssessment) }],
-                isError: true,
-                details: { mode: "management", results: [] },
-            };
-        }
+    const contextPolicy = preflightResumeContextPolicy(target, agentConfig, input.params.model, input.ctx.model, availableModels);
+    if (contextPolicy.kind === "error") {
+        return {
+            content: [{ type: "text", text: contextPolicy.message }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
+    const { modelContextWindow } = contextPolicy;
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {
