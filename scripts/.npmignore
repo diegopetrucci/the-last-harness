@@ -15,6 +15,8 @@ check-release-tag-ancestry.mjs
 check-startup-performance.mjs
 release-notes.mjs
 run-subagents-tests.mjs
+run-bun-tests.mjs
+benchmark-tests.mjs
 run-lane.mjs
 run-ci-test-shard.mjs
 run-ci-validation.mjs

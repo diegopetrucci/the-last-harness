@@ -41,6 +41,8 @@
     "format:check": "oxfmt --check scripts tests extensions",
     "lint:sh": "git ls-files '*.sh' | xargs shellcheck",
     "test": "node --test --test-reporter=dot \"tests/**/*.test.mjs\" && npm run test:subagents",
+    "test:bun": "node scripts/run-bun-tests.mjs",
+    "benchmark:tests": "node scripts/benchmark-tests.mjs",
     "test:verbose": "node --test \"tests/**/*.test.mjs\" && npm run test:subagents",
     "test:subagents": "npm run test:subagents:unit && npm run test:subagents:integration && npm run test:subagents:e2e",
     "test:subagents:unit": "node scripts/run-subagents-tests.mjs unit",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
+import fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsWithProjectSnapshot, } from "../../agents/agents.js";
 import { PROJECT_AGENT_DIRECTORY, PROJECT_AGENT_PACKAGE, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";

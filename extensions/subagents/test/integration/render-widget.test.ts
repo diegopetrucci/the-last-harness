@@ -86,6 +86,12 @@ function widgetContent(line: string): string {
   return line.slice(1).trimEnd();
 }
 
+function semanticVisibleWidth(line: string, renderWidth: number): number {
+  const withoutTrailingPadding = line.trimEnd();
+  const hasRealTuiPadding = visibleWidth(line) === renderWidth && line.startsWith(" ");
+  return visibleWidth(hasRealTuiPadding ? withoutTrailingPadding.slice(1) : withoutTrailingPadding);
+}
+
 function wrappedText(lines: string[], padded = false): string {
   return lines
     .map((line) => (padded ? widgetContent(line) : line))
@@ -1223,6 +1229,23 @@ describe("subagent async widget rendering", () => {
     );
   });
 
+  it("uses the actual render width when normalizing TUI padding", () => {
+    const indentedRow = "    intentionally indented row  ";
+    assert.equal(
+      semanticVisibleWidth(indentedRow, 40),
+      visibleWidth(indentedRow.trimEnd()),
+      "pre-render indentation must not be mistaken for TUI padding",
+    );
+
+    const renderedRow = renderWithRealPiTui([indentedRow.trimEnd()], 40)[0] ?? "";
+    assert.equal(visibleWidth(renderedRow), 40);
+    assert.equal(
+      semanticVisibleWidth(renderedRow, 40),
+      visibleWidth(indentedRow.trimEnd()),
+      "real TUI padding should be removed without removing intentional indentation",
+    );
+  });
+
   it("preserves freshness while fitting long phrases into 60-column parallel rows", () => {
     resetWidgetLayout();
     withStdoutSize(60, 60, () => {
@@ -1257,7 +1280,7 @@ describe("subagent async widget rendering", () => {
       assertWrappedSource(lines, "active now");
       for (const line of lines)
         assert.ok(
-          visibleWidth(line) <= 58,
+          semanticVisibleWidth(line, 60) <= 58,
           `parallel row should fit 58 columns: ${JSON.stringify(line)}`,
         );
     });
@@ -2766,7 +2789,7 @@ describe("subagent async widget rendering", () => {
         assert.match(lines.join(""), /\+\d+ more/);
         for (const line of lines)
           assert.ok(
-            visibleWidth(line) <= width - 2,
+            semanticVisibleWidth(line, width) <= width - 2,
             `progressive row should fit ${width - 2} columns: ${JSON.stringify(line)}`,
           );
         assert.equal(

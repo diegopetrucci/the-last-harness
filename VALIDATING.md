@@ -38,6 +38,16 @@ npm run test:subagents:integration
 npm run test:subagents:e2e
 ```
 
+The alternate Bun path runs the complete discovered root and first-party subagent corpus with `bun test` while keeping the canonical Node/npm path unchanged:
+
+```sh
+npm run test:bun
+```
+
+Bun 1.4.0 is required for this path. Its test-only runner discovers explicit files (rather than relying on quoted globs), gives each suite a fresh temporary `PI_CODING_AGENT_DIR`, `HOME`, and `TMPDIR`, keeps Node for product subprocess checks, and rejects failed, cancelled, skipped, todo, zero-test, and below-floor results. It does not update the package manager, lockfiles, CI commands, or published runtime. By default, files run through one Bun worker (`--parallel=1`) as a conservative serialization baseline, not a proven necessity; an opt-in experiment can request a positive worker count, for example `npm run test:bun -- --parallel=9`. Each suite receives exactly one worker-count flag, file isolation remains enabled, and duplicate/ambiguous counts plus `--no-isolate` are rejected. This is suite-level environment isolation, not a per-test sandbox. The canonical Node loader retains its importer-scoped lightweight `pi-tui`/`pi-coding-agent` shim for `render.ts` line-layout tests. Bun uses real TUI wrapping while canonical Node remains authoritative for detecting over-wide pre-render rows. The shared assertions normalize renderer-only trailing padding rather than branching on the runner.
+
+For a local Node-versus-Bun timing comparison after both paths pass, run: **`npm run benchmark:tests -- --runs=3`**. The benchmark invokes the existing `npm test` and `npm run test:bun` scripts on the complete corpus, runs them sequentially, alternates which runner starts each repetition, stops at the first failure, and reports every wall-clock sample plus each runner's median total. **Caveat:** canonical Node (`npm test`) runs test files in parallel processes, while the default Bun path is serialized with `--parallel=1` to preserve this corpus's fixture/race assumptions. This compares the two viable repository test configurations, not equal-concurrency raw runtime throughput. It does not install dependencies and is not a CI check; results are machine- and load-dependent.
+
 On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests.
 
 CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.

@@ -408,8 +408,8 @@ describe(
           );
           assert.doesNotThrow(() => tracker!.restoreActiveJobs());
           assert.deepEqual(
-            [...state.asyncJobs.keys()],
-            [`run-failing-${failure.operation}`, "run-healthy"],
+            [...state.asyncJobs.keys()].sort(),
+            [`run-failing-${failure.operation}`, "run-healthy"].sort(),
           );
           assert.equal(state.asyncJobs.get(`run-failing-${failure.operation}`)?.status, "running");
           assert.equal(state.asyncJobs.get("run-healthy")?.status, "running");
