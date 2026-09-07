@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+
 const jiti = createJiti(import.meta.url);
-const { classifyTlhInstallState, formatTlhInstallNoticeTrackLabel } = await jiti.import(
-  "../extensions/the-last-harness/install-state.ts",
+const { classifyTlhInstallState, formatTlhInstallNoticeTrackLabel, readTlhInstallNotice } =
+  await jiti.import("../extensions/the-last-harness/install-state.ts");
+const { readTlhInstallState } = await jiti.import(
+  "../extensions/the-last-harness/profile-state.ts",
 );
 
 const OFFICIAL_LATEST_STABLE = {
@@ -20,6 +26,89 @@ function assertNoticeLabel(notice, label, message) {
   assert.ok(notice, message);
   assert.equal(formatTlhInstallNoticeTrackLabel(notice), label, message);
 }
+
+function createInstallStateFixture(t, contents) {
+  const fixture = createIsolatedProfileFixture("tlh-install-state-reader-", { test: t });
+  const stateDir = join(fixture.agent, "tlh");
+  mkdirSync(stateDir, { recursive: true });
+  if (contents !== undefined) {
+    writeFileSync(
+      join(stateDir, "install-state.json"),
+      typeof contents === "string" ? contents : JSON.stringify(contents),
+      "utf8",
+    );
+  }
+  return fixture;
+}
+
+function withInstallStateProfile(fixture, callback) {
+  return withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, callback);
+}
+
+test("readTlhInstallState synchronously parses valid install-state JSON", async (t) => {
+  const fixture = createInstallStateFixture(t, OFFICIAL_LATEST_STABLE);
+  await withInstallStateProfile(fixture, () => {
+    assert.deepEqual(readTlhInstallState(), OFFICIAL_LATEST_STABLE);
+  });
+});
+
+test("readTlhInstallState synchronously returns {} for missing or corrupt JSON", async (t) => {
+  const missingFixture = createInstallStateFixture(t);
+  await withInstallStateProfile(missingFixture, () => {
+    assert.deepEqual(readTlhInstallState(), {});
+  });
+
+  const corruptFixture = createInstallStateFixture(t, "NOT JSON");
+  await withInstallStateProfile(corruptFixture, () => {
+    assert.deepEqual(readTlhInstallState(), {});
+  });
+});
+
+test("synchronous install-state readers return unknown outside an isolated profile", async (t) => {
+  const fixture = createInstallStateFixture(t, OFFICIAL_LATEST_STABLE);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: undefined }, () => {
+    assert.deepEqual(readTlhInstallState(), {});
+    assert.deepEqual(readTlhInstallNotice(), {
+      kind: "unknown",
+      summary: "TLH install metadata is missing or invalid.",
+    });
+  });
+});
+
+test("readTlhInstallNotice synchronously returns no notice for official latest-stable installs", async (t) => {
+  const fixture = createInstallStateFixture(t, OFFICIAL_LATEST_STABLE);
+  await withInstallStateProfile(fixture, () => {
+    assert.equal(readTlhInstallNotice(), undefined);
+  });
+});
+
+test("readTlhInstallNotice synchronously returns unknown for missing or corrupt metadata", async (t) => {
+  for (const contents of [undefined, "NOT JSON"]) {
+    const fixture = createInstallStateFixture(t, contents);
+    await withInstallStateProfile(fixture, () => {
+      assert.deepEqual(readTlhInstallNotice(), {
+        kind: "unknown",
+        summary: "TLH install metadata is missing or invalid.",
+      });
+    });
+  }
+});
+
+test("readTlhInstallNotice synchronously classifies ref-track installs", async (t) => {
+  const fixture = createInstallStateFixture(t, {
+    ...OFFICIAL_LATEST_STABLE,
+    track: "ref",
+    ref: "main",
+    packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+  });
+  await withInstallStateProfile(fixture, () => {
+    assert.deepEqual(readTlhInstallNotice(), {
+      kind: "ref",
+      summary: "TLH follows a non-stable git ref.",
+      detail: "main",
+    });
+  });
+});
 
 test("classifier returns no notice for official latest-stable installs", () => {
   assert.equal(classifyTlhInstallState(OFFICIAL_LATEST_STABLE), undefined);

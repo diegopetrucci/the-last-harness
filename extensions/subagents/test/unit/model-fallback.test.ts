@@ -4,7 +4,6 @@ import {
   appendRuntimeFallbackResolution,
   buildFallbackModelList,
   buildModelCandidatePlan,
-  buildModelCandidates,
   combineModelFallbackNotices,
   canonicalSubagentModelIdentity,
   fuzzyResolveModel,
@@ -131,11 +130,11 @@ describe("model fallback helpers", () => {
 
   it("builds a deduplicated ordered candidate list", () => {
     assert.deepEqual(
-      buildModelCandidates(
+      buildModelCandidatePlan(
         "gpt-5-mini",
         ["openai/gpt-5-mini", "anthropic/claude-sonnet-4", "gpt-5-mini"],
         availableModels,
-      ),
+      ).candidates,
       ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
     );
   });
@@ -338,12 +337,12 @@ describe("model fallback helpers", () => {
       { provider: "github-copilot", id: "gpt-5-mini", fullId: "github-copilot/gpt-5-mini" },
     ];
     assert.deepEqual(
-      buildModelCandidates(
+      buildModelCandidatePlan(
         "gpt-5-mini",
         ["gpt-5-mini", "anthropic/claude-sonnet-4"],
         ambiguous,
         "github-copilot",
-      ),
+      ).candidates,
       ["github-copilot/gpt-5-mini", "anthropic/claude-sonnet-4"],
     );
   });
@@ -827,7 +826,7 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 
   it("warns for out-of-scope fallback models while keeping them available", () => {
     const warnings: string[] = [];
-    const candidates = buildModelCandidates(
+    const candidates = buildModelCandidatePlan(
       "gpt-5-mini",
       ["deepseek/deepseek-v4"],
       availableModels,
@@ -836,7 +835,7 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
         scope,
         onWarn: (v) => warnings.push(v.message),
       },
-    );
+    ).candidates;
     assert.deepEqual(candidates, ["openai/gpt-5-mini", "deepseek/deepseek-v4"]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0]!, /deepseek\/deepseek-v4/);
