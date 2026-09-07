@@ -587,6 +587,15 @@ describe("async execution utilities", () => {
         await waitForAsyncState(asyncDir, "paused");
         const pausedPayload = await readAsyncPayload(id);
         assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
+        const resumeTarget = resolveAsyncResumeTarget({ id });
+        assert.equal(resumeTarget.kind, "revive");
+        assert.equal(resumeTarget.state, "paused");
+        assert.equal(resumeTarget.agent, "worker");
+        assert.equal(resumeTarget.index, 0);
+        assert.equal(resumeTarget.pauseKind, "awaiting_supervisor");
+        assert.equal(resumeTarget.successfulCompletion, false);
+        assert.ok(resumeTarget.activeRuntimeMs !== undefined);
+        assert.equal(resumeTarget.continuationAcceptance?.level, "checked");
         mockPi.onCall({ output: "resumed unchanged after reload" });
         const reloaded = makeAsyncExecutor([makeAgent("worker")]);
         const resumed = await reloaded.execute(

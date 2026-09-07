@@ -45,7 +45,7 @@ import {
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
-import { getAsyncConfigPath } from "../../src/shared/types.ts";
+import { getAsyncConfigPath, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 import type {
   RunnerSubagentStep,
   SubagentRunConfig,
@@ -143,6 +143,53 @@ describe("async execution utilities", () => {
 
   it("reports the required async runner as available", () => {
     assert.equal(isAsyncAvailable(), true);
+  });
+
+  it("keeps single launch synchronous and emits after launch filesystem setup", async () => {
+    mockPi.onCall({ output: "synchronous launch complete" });
+    const id = `async-sync-launch-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const effects: string[] = [];
+    let startedPayload: Record<string, unknown> | undefined;
+    const result = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Say synchronous launch complete. Do not edit files.",
+      agentConfig: makeAgent("worker"),
+      ctx: {
+        pi: {
+          events: {
+            emit(event: string, payload: unknown) {
+              effects.push(`emit:${event}`);
+              assert.equal(event, SUBAGENT_ASYNC_STARTED_EVENT);
+              assert.equal(fs.existsSync(asyncDir), true);
+              assert.equal(fs.existsSync(getAsyncConfigPath(id)), true);
+              if (!isRecord(payload)) throw new Error("started event payload must be an object");
+              startedPayload = payload;
+            },
+          },
+        },
+        cwd: tempDir,
+        currentSessionId: "session-1",
+      },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    effects.push("return");
+
+    assert.equal("then" in result, false);
+    assert.deepEqual(effects, [`emit:${SUBAGENT_ASYNC_STARTED_EVENT}`, "return"]);
+    assert.equal(startedPayload?.id, id);
+    assert.equal(startedPayload?.mode, "single");
+    assert.equal(startedPayload?.asyncDir, asyncDir);
+    await waitForAsyncResultFile(id);
   });
 
   it("spawns the async runner with node when process.execPath is not node", async () => {

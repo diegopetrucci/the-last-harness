@@ -975,6 +975,263 @@ export function executeAsyncParallel(
   };
 }
 
+interface AsyncSingleRunnerPlanInputs {
+  task: string;
+  taskWithOutputInstruction: string;
+  runnerCwd: string;
+  systemPrompt: string;
+  resolvedSkillNames: string[];
+  outputPath?: string;
+  outputMode: "inline" | "file-only";
+  runDeadlineAt?: number;
+}
+
+interface AsyncSingleRunnerPlanBuildResult {
+  buildPlan: () => Extract<SubagentRunPlan, { kind: "single" }>;
+  effectiveTimeoutMs?: number;
+  effectiveDeadlineAt?: number;
+}
+
+/**
+ * Resolve the synchronous single-run plan before handing ownership to the
+ * detached runner. This keeps model, budget, and runtime policy resolution in
+ * one synchronous launch seam while leaving filesystem and lifecycle effects
+ * with the caller.
+ */
+function buildAsyncSingleRunnerPlan(
+  params: AsyncSingleParams,
+  inputs: AsyncSingleRunnerPlanInputs,
+): AsyncSingleRunnerPlanBuildResult | { error: string } {
+  const {
+    agent,
+    agentConfig,
+    ctx,
+    modelOverride,
+    restoredModelIdentity,
+    modelResolution: persistedModelResolution,
+    availableModels,
+    providerFallbackModels,
+    modelFallbackNotice,
+    contextUsage,
+    contextPressure,
+    contextPressureCrossedThresholds,
+    continuationAcceptance,
+    acceptance,
+    toolBudget,
+    activeRuntimeMs,
+    activeRuntimeCheckpointAt,
+    timeoutMs,
+    projectAgent,
+    sessionFile,
+    maxSubagentDepth,
+  } = params;
+  const {
+    task,
+    taskWithOutputInstruction,
+    runnerCwd,
+    systemPrompt,
+    resolvedSkillNames,
+    outputPath,
+    outputMode,
+    runDeadlineAt,
+  } = inputs;
+  const thinkingSuffixOptions = {
+    availableModels,
+    preferredModelProvider: ctx.currentModelProvider,
+  };
+  const durableResume =
+    persistedModelResolution !== undefined || restoredModelIdentity !== undefined;
+  const explicitResumeModel =
+    durableResume && typeof modelOverride === "string" && modelOverride.trim() !== ""
+      ? modelOverride.trim() !== "inherit"
+      : false;
+  const restoringModel = Boolean(durableResume && !explicitResumeModel && restoredModelIdentity);
+  const requestedPrimaryModel = restoringModel
+    ? modelReferenceFromIdentity(restoredModelIdentity!)
+    : (modelOverride ?? agentConfig.model);
+  const scopeWarnings: string[] = [];
+  const primaryModel = resolveSubagentModelOverride(
+    requestedPrimaryModel,
+    ctx.currentModel,
+    availableModels,
+    ctx.currentModelProvider,
+    durableResume
+      ? {
+          scope: ctx.modelScope,
+          source: explicitResumeModel ? "explicit" : "inherited",
+          onWarn: (violation) => scopeWarnings.push(violation.message),
+        }
+      : undefined,
+  );
+  const fallbackModels = buildFallbackModelList(providerFallbackModels, agentConfig.fallbackModels);
+  const effectiveThinking = restoringModel ? restoredModelIdentity?.thinking : agentConfig.thinking;
+  const attemptNotes: string[] = [];
+  const thinkingDroppedModels: string[] = [];
+  const primaryThinkingDropped = Boolean(
+    getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions),
+  );
+  appendThinkingDropNote(
+    attemptNotes,
+    thinkingDroppedModels,
+    primaryModel,
+    effectiveThinking,
+    thinkingSuffixOptions,
+  );
+  const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
+  if (
+    restoringModel &&
+    availableModels &&
+    availableModels.length > 0 &&
+    restoredModelIdentity &&
+    !availableModels.some((candidate) => candidate.fullId === primaryModel)
+  ) {
+    attemptNotes.push(
+      `Notice: Persisted model '${modelReferenceFromIdentity(restoredModelIdentity)}' was not present in the current model registry; retaining it so configured runtime fallback policy can apply.`,
+    );
+  }
+  const modelIdentity = canonicalSubagentModelIdentity(
+    model,
+    primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
+  );
+  const candidatePlan = buildModelCandidatePlan(
+    primaryModel,
+    fallbackModels,
+    availableModels,
+    ctx.currentModelProvider,
+    {
+      scope: ctx.modelScope,
+      registry: params.modelRegistry,
+      ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
+    },
+  );
+  const modelCandidates = candidatePlan.candidates
+    .map((candidate) => {
+      appendThinkingDropNote(
+        attemptNotes,
+        thinkingDroppedModels,
+        candidate,
+        effectiveThinking,
+        thinkingSuffixOptions,
+      );
+      return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
+    })
+    .filter((candidate): candidate is string => candidate !== undefined);
+  const modelThinking =
+    modelIdentity?.thinking ??
+    (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+  const modelResolution = persistedModelResolution
+    ? {
+        ...persistedModelResolution,
+        ...(modelIdentity ? { resumed: modelIdentity } : {}),
+        reason: [persistedModelResolution.reason, ...scopeWarnings, ...attemptNotes].join(" "),
+      }
+    : undefined;
+  const toolBudgetInput = toolBudget ?? agentConfig.toolBudget;
+  const resolvedToolBudget = validateToolBudgetConfig(
+    toolBudgetInput,
+    toolBudget ? "toolBudget" : "agent.toolBudget",
+  );
+  if (resolvedToolBudget.error) return { error: resolvedToolBudget.error };
+  const runtimePolicy = resolveAsyncSingleRuntimePolicy(
+    agent,
+    { activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, agentConfig },
+    runDeadlineAt,
+  );
+  if ("error" in runtimePolicy) return { error: runtimePolicy.error };
+  const {
+    activeRuntimeMs: resolvedActiveRuntimeMs,
+    activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt,
+    effectiveTimeoutMs,
+    timeoutOwner,
+    effectiveDeadlineAt,
+  } = runtimePolicy;
+  return {
+    buildPlan: () => ({
+      kind: "single",
+      task: {
+        parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+        ...(projectAgent ? { projectAgent } : {}),
+        agent,
+        projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
+        task: taskWithOutputInstruction,
+        cwd: runnerCwd,
+        model,
+        thinking: modelThinking,
+        ...(modelIdentity ? { modelIdentity } : {}),
+        ...(modelResolution ? { modelResolution } : {}),
+        modelCandidates,
+        contextWindows: Object.fromEntries(
+          (availableModels ?? [])
+            .filter(
+              (candidate) =>
+                typeof candidate.contextWindow === "number" && candidate.contextWindow > 0,
+            )
+            .map((candidate) => [candidate.fullId, candidate.contextWindow!]),
+        ),
+        ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
+        ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+        ...(candidatePlan.filteringNotice
+          ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+          : {}),
+        modelFallbackNotice,
+        tools: agentConfig.tools,
+        extensions: agentConfig.extensions,
+        subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
+        completionGuard: agentConfig.completionGuard,
+        supervisorBridge: agentConfig.supervisorBridge,
+        systemPrompt,
+        systemPromptMode: agentConfig.systemPromptMode,
+        inheritProjectContext: agentConfig.inheritProjectContext,
+        inheritSkills: agentConfig.inheritSkills,
+        skills: resolvedSkillNames,
+        outputPath,
+        outputMode,
+        sessionFile,
+        ...(parseContextUsageDiagnostics(contextUsage)
+          ? { contextUsage: parseContextUsageDiagnostics(contextUsage) }
+          : {}),
+        ...(parseContextPressureProjection(contextPressure)
+          ? { contextPressure: parseContextPressureProjection(contextPressure) }
+          : {}),
+        // Lifecycle-aware callers omit both pressure fields for a newly
+        // created continuation. Same-segment revivals restore the latest
+        // display projection separately from machine deduplication history.
+        ...(parseContextPressureCrossedThresholds(contextPressureCrossedThresholds)
+          ? {
+              contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
+                contextPressureCrossedThresholds,
+              ),
+            }
+          : {}),
+        maxSubagentDepth: resolveChildMaxSubagentDepth(
+          maxSubagentDepth,
+          agentConfig.maxSubagentDepth,
+        ),
+        effectiveAcceptance: continuationAcceptance
+          ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ??
+            continuationAcceptance)
+          : resolveEffectiveAcceptance({
+              explicit: acceptance,
+              agentName: agent,
+              acceptanceRole: agentConfig.acceptanceRole,
+              task,
+              mode: "single",
+              async: true,
+            }),
+        ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
+        ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
+        ...(timeoutOwner ? { timeoutOwner } : {}),
+        ...(resolvedActiveRuntimeMs > 0 ? { activeRuntimeMs: resolvedActiveRuntimeMs } : {}),
+        ...(resolvedActiveRuntimeCheckpointAt !== undefined
+          ? { activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt }
+          : {}),
+      },
+    }),
+    effectiveTimeoutMs,
+    effectiveDeadlineAt,
+  };
+}
+
 /**
  * Execute a single agent asynchronously
  */
@@ -989,8 +1246,6 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     artifactConfig,
     shareEnabled,
     sessionRoot,
-    sessionFile,
-    maxSubagentDepth,
     controlConfig,
     nestedRoute,
   } = params;
@@ -1005,11 +1260,6 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     return formatAsyncStartError("single", acceptanceErrors.join(" "));
   const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
   const skillNames = params.skills ?? agentConfig.skills ?? [];
-  const availableModels = params.availableModels;
-  const thinkingSuffixOptions = {
-    availableModels,
-    preferredModelProvider: ctx.currentModelProvider,
-  };
   const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
     skillNames,
     runnerCwd,
@@ -1062,202 +1312,27 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
   );
   if (validationError) return formatAsyncStartError("single", validationError);
   const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
-  const durableResume =
-    params.modelResolution !== undefined || params.restoredModelIdentity !== undefined;
-  const explicitResumeModel =
-    durableResume && typeof params.modelOverride === "string" && params.modelOverride.trim() !== ""
-      ? params.modelOverride.trim() !== "inherit"
-      : false;
-  const restoringModel = Boolean(
-    durableResume && !explicitResumeModel && params.restoredModelIdentity,
-  );
-  const requestedPrimaryModel = restoringModel
-    ? modelReferenceFromIdentity(params.restoredModelIdentity!)
-    : (params.modelOverride ?? agentConfig.model);
-  const scopeWarnings: string[] = [];
-  const primaryModel = resolveSubagentModelOverride(
-    requestedPrimaryModel,
-    ctx.currentModel,
-    availableModels,
-    ctx.currentModelProvider,
-    durableResume
-      ? {
-          scope: ctx.modelScope,
-          source: explicitResumeModel ? "explicit" : "inherited",
-          onWarn: (violation) => scopeWarnings.push(violation.message),
-        }
-      : undefined,
-  );
-  const fallbackModels = buildFallbackModelList(
-    params.providerFallbackModels,
-    agentConfig.fallbackModels,
-  );
-  const effectiveThinking = restoringModel
-    ? params.restoredModelIdentity?.thinking
-    : agentConfig.thinking;
-  const attemptNotes: string[] = [];
-  const thinkingDroppedModels: string[] = [];
-  const primaryThinkingDropped = Boolean(
-    getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions),
-  );
-  appendThinkingDropNote(
-    attemptNotes,
-    thinkingDroppedModels,
-    primaryModel,
-    effectiveThinking,
-    thinkingSuffixOptions,
-  );
-  const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
-  if (
-    restoringModel &&
-    availableModels &&
-    availableModels.length > 0 &&
-    params.restoredModelIdentity &&
-    !availableModels.some((candidate) => candidate.fullId === primaryModel)
-  ) {
-    attemptNotes.push(
-      `Notice: Persisted model '${modelReferenceFromIdentity(params.restoredModelIdentity)}' was not present in the current model registry; retaining it so configured runtime fallback policy can apply.`,
-    );
-  }
-  const modelIdentity = canonicalSubagentModelIdentity(
-    model,
-    primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
-  );
-  const candidatePlan = buildModelCandidatePlan(
-    primaryModel,
-    fallbackModels,
-    availableModels,
-    ctx.currentModelProvider,
-    {
-      scope: ctx.modelScope,
-      registry: params.modelRegistry,
-      ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
-    },
-  );
-  const modelCandidates = candidatePlan.candidates
-    .map((candidate) => {
-      appendThinkingDropNote(
-        attemptNotes,
-        thinkingDroppedModels,
-        candidate,
-        effectiveThinking,
-        thinkingSuffixOptions,
-      );
-      return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
-    })
-    .filter((candidate): candidate is string => candidate !== undefined);
-  const modelThinking =
-    modelIdentity?.thinking ??
-    (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-  const modelResolution = params.modelResolution
-    ? {
-        ...params.modelResolution,
-        ...(modelIdentity ? { resumed: modelIdentity } : {}),
-        reason: [params.modelResolution.reason, ...scopeWarnings, ...attemptNotes].join(" "),
-      }
-    : undefined;
-  const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget;
-  const resolvedToolBudget = validateToolBudgetConfig(
-    toolBudgetInput,
-    params.toolBudget ? "toolBudget" : "agent.toolBudget",
-  );
-  if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-  const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, params, runDeadlineAt);
-  if ("error" in runtimePolicy) return formatAsyncStartError("single", runtimePolicy.error);
-  const {
-    activeRuntimeMs,
-    activeRuntimeCheckpointAt,
-    effectiveTimeoutMs,
-    timeoutOwner,
-    effectiveDeadlineAt,
-  } = runtimePolicy;
+  const launchPlan = buildAsyncSingleRunnerPlan(params, {
+    task,
+    taskWithOutputInstruction,
+    runnerCwd,
+    systemPrompt,
+    resolvedSkillNames: resolvedSkills.map((skill) => skill.name),
+    outputPath,
+    outputMode,
+    runDeadlineAt,
+  });
+  if ("error" in launchPlan) return formatAsyncStartError("single", launchPlan.error);
   const tkTicket = detectTkTicketId(task)
     ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
     : normalizeTkTicketMetadata(params.inheritedTkTicket);
+  const { buildPlan, effectiveTimeoutMs, effectiveDeadlineAt } = launchPlan;
   let spawnResult: { pid?: number; error?: string };
   try {
     spawnResult = spawnRunner(
       {
         id,
-        plan: {
-          kind: "single",
-          task: {
-            parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
-            ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
-            agent,
-            projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
-            task: taskWithOutputInstruction,
-            cwd: runnerCwd,
-            model,
-            thinking: modelThinking,
-            ...(modelIdentity ? { modelIdentity } : {}),
-            ...(modelResolution ? { modelResolution } : {}),
-            modelCandidates,
-            contextWindows: Object.fromEntries(
-              (availableModels ?? [])
-                .filter(
-                  (candidate) =>
-                    typeof candidate.contextWindow === "number" && candidate.contextWindow > 0,
-                )
-                .map((candidate) => [candidate.fullId, candidate.contextWindow!]),
-            ),
-            ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
-            ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
-            ...(candidatePlan.filteringNotice
-              ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
-              : {}),
-            modelFallbackNotice: params.modelFallbackNotice,
-            tools: agentConfig.tools,
-            extensions: agentConfig.extensions,
-            subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
-            completionGuard: agentConfig.completionGuard,
-            supervisorBridge: agentConfig.supervisorBridge,
-            systemPrompt,
-            systemPromptMode: agentConfig.systemPromptMode,
-            inheritProjectContext: agentConfig.inheritProjectContext,
-            inheritSkills: agentConfig.inheritSkills,
-            skills: resolvedSkills.map((r) => r.name),
-            outputPath,
-            outputMode,
-            sessionFile,
-            ...(parseContextUsageDiagnostics(params.contextUsage)
-              ? { contextUsage: parseContextUsageDiagnostics(params.contextUsage) }
-              : {}),
-            ...(parseContextPressureProjection(params.contextPressure)
-              ? { contextPressure: parseContextPressureProjection(params.contextPressure) }
-              : {}),
-            // Lifecycle-aware callers omit both pressure fields for a newly
-            // created continuation. Same-segment revivals restore the latest
-            // display projection separately from machine deduplication history.
-            ...(parseContextPressureCrossedThresholds(params.contextPressureCrossedThresholds)
-              ? {
-                  contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
-                    params.contextPressureCrossedThresholds,
-                  ),
-                }
-              : {}),
-            maxSubagentDepth: resolveChildMaxSubagentDepth(
-              maxSubagentDepth,
-              agentConfig.maxSubagentDepth,
-            ),
-            effectiveAcceptance: params.continuationAcceptance
-              ? (mergeContinuationAcceptance(params.continuationAcceptance, params.acceptance) ??
-                params.continuationAcceptance)
-              : resolveEffectiveAcceptance({
-                  explicit: params.acceptance,
-                  agentName: agent,
-                  acceptanceRole: agentConfig.acceptanceRole,
-                  task,
-                  mode: "single",
-                  async: true,
-                }),
-            ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-            ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
-            ...(timeoutOwner ? { timeoutOwner } : {}),
-            ...(activeRuntimeMs > 0 ? { activeRuntimeMs } : {}),
-            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-          },
-        },
+        plan: buildPlan(),
         resultPath: inheritedNestedRoute
           ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
           : path.join(RESULTS_DIR, `${id}.json`),
