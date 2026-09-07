@@ -7,7 +7,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, parseGitSource, } from "./lib/tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, realpathForCompare, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, disabledDefaultExtensionIds, packageIdentity, packageSourceOf, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, readJsonFile, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
@@ -475,6 +475,28 @@ function spawnCapture(config, commandArgs, { cwd, env = {}, allowFailure = false
         throw new Error(output || result.error?.message || `command failed: ${commandDisplay(commandArgs)}`);
     }
     return result;
+}
+function readInstalledCommitSubject(config) {
+    if (config.dryRun)
+        return undefined;
+    const topLevelResult = spawnCapture(config, ["git", "-C", config.packageRoot, "rev-parse", "--show-toplevel"], { allowFailure: true });
+    if (topLevelResult.error || topLevelResult.status !== 0)
+        return undefined;
+    const topLevel = topLevelResult.stdout.trim();
+    if (!topLevel)
+        return undefined;
+    try {
+        if (realpathForCompare(topLevel) !== realpathForCompare(config.packageRoot))
+            return undefined;
+    }
+    catch {
+        return undefined;
+    }
+    const result = spawnCapture(config, ["git", "-C", config.packageRoot, "log", "-1", "--format=%s"], { allowFailure: true });
+    if (result.error || result.status !== 0)
+        return undefined;
+    const subject = result.stdout.trim();
+    return subject || undefined;
 }
 function runNodeScript(config, scriptPath, args, { captureStdout = false } = {}) {
     const commandArgs = [process.execPath, scriptPath, ...args];
@@ -1277,6 +1299,9 @@ async function writeInstallState(config) {
         "--wrapper-name",
         config.wrapperName,
     ];
+    const commitSubject = readInstalledCommitSubject(config);
+    if (commitSubject)
+        args.push(`--commit-subject=${commitSubject}`);
     const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
     const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true
         ? true

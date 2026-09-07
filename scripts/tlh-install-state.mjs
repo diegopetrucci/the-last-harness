@@ -25,6 +25,7 @@ Options:
   --agent-dir DIR                   Isolated Pi agent dir
   --bin-dir DIR                     Wrapper install dir
   --wrapper-name NAME               Wrapper command name
+  --commit-subject SUBJECT          Installed TLH checkout HEAD subject (optional)
   --pi-installed-by-tlh BOOL        Whether TLH installed Pi globally (true|false; omit to leave field absent)
   --dry-run                         Print intended changes without writing
   --quiet                           Suppress non-essential output
@@ -44,6 +45,7 @@ function parseArgs(argv) {
     agentDir: undefined,
     binDir: undefined,
     wrapperName: undefined,
+    commitSubject: undefined,
     piInstalledByTlh: undefined,
     dryRun: false,
     quiet: false,
@@ -126,6 +128,17 @@ function parseArgs(argv) {
       index = wrapperNameIndex;
       continue;
     }
+    const commitSubjectIndex = assignOptionValue(
+      args,
+      "commitSubject",
+      argv,
+      index,
+      "--commit-subject",
+    );
+    if (commitSubjectIndex !== undefined) {
+      index = commitSubjectIndex;
+      continue;
+    }
     const piInstalledByTlh = readOptionValue(argv, index, "--pi-installed-by-tlh");
     if (piInstalledByTlh) {
       const raw = piInstalledByTlh.value;
@@ -194,6 +207,10 @@ function buildState(args) {
     wrapperName: args.wrapperName,
     installedAt: new Date().toISOString(),
   };
+  const commitSubject = args.commitSubject?.trim();
+  if (commitSubject) {
+    state.commitSubject = commitSubject;
+  }
   if (args.piInstalledByTlh !== undefined) {
     state.piInstalledByTlh = args.piInstalledByTlh;
   }
