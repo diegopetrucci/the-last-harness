@@ -187,10 +187,6 @@ function resolvePiCliScriptWithStatus(deps: PiSpawnDeps = {}): PiCliScriptResolu
   return resolvePiCliScriptFromPackageJson(deps, resolvePiCliPackageRoot(deps));
 }
 
-export function resolvePiCliScript(deps: PiSpawnDeps = {}): string | undefined {
-  return resolvePiCliScriptWithStatus(deps).cliPath;
-}
-
 function getPiCliResolutionFailureSpawnCommand(
   resolution: PiCliScriptResolution & { packageRoot: PiPackageRootResolution },
   deps: PiSpawnDeps,

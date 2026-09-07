@@ -19,14 +19,14 @@ import {
   MAX_CHILD_RAW_STDOUT_BYTES,
   MAX_CHILD_STDERR_BYTES,
   MAX_CHILD_STDERR_LINE_BYTES,
-  parseChildProtocolLine,
+  parseChildProtocolInput,
 } from "../../src/runs/shared/child-protocol.ts";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ProtocolOutputLimit } from "../../src/shared/types.ts";
 
 describe("child protocol validation", () => {
   it("accepts consumed event shapes and preserves unknown fields", () => {
-    const event = parseChildProtocolLine(
+    const parsed = parseChildProtocolInput(
       JSON.stringify({
         type: "message_end",
         message: {
@@ -49,6 +49,9 @@ describe("child protocol validation", () => {
         futureField: { retained: true },
       }),
     );
+    assert.equal(parsed.kind, "event");
+    assert.ok(parsed.kind === "event");
+    const event = parsed.event;
 
     assert.ok(event);
     assert.equal(event.type, "message_end");
@@ -139,7 +142,8 @@ describe("child protocol validation", () => {
       }),
     ];
 
-    for (const line of malformed) assert.equal(parseChildProtocolLine(line), undefined, line);
+    for (const line of malformed)
+      assert.notEqual(parseChildProtocolInput(line).kind, "event", line);
   });
 });
 
