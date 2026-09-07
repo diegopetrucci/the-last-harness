@@ -1,5 +1,5 @@
 import { TLH_REPO } from "./constants.js";
-import { readTlhInstallState, readTlhInstallStateAsync } from "./profile-state.js";
+import { readTlhInstallState } from "./profile-state.js";
 import type { TlhInstallNotice, TlhInstallState } from "./types.js";
 
 const STABLE_TRACK = "latest-release";
@@ -111,21 +111,6 @@ export function classifyTlhInstallState(
   if (track === STABLE_TRACK) {
     return undefined;
   }
-  if (track === "pinned-tag") {
-    return {
-      kind: "pinned-tag",
-      summary: "TLH is pinned to a specific release tag.",
-      detail: ref,
-    };
-  }
-  if (track === "ref") {
-    return {
-      kind: "ref",
-      summary: "TLH follows a non-stable git ref.",
-      detail: ref,
-      ...(mainCommitSubject ? { commitSubject: mainCommitSubject } : {}),
-    };
-  }
   return {
     kind: "custom-track",
     summary: "TLH uses a custom update track.",
@@ -135,10 +120,6 @@ export function classifyTlhInstallState(
 
 export function readTlhInstallNotice(): TlhInstallNotice | undefined {
   return classifyTlhInstallState(readTlhInstallState());
-}
-
-export async function readTlhInstallNoticeAsync(): Promise<TlhInstallNotice | undefined> {
-  return classifyTlhInstallState(await readTlhInstallStateAsync());
 }
 
 export function formatTlhInstallNoticeTrackLabel(notice: TlhInstallNotice): string {

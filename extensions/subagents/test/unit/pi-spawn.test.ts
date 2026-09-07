@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import {
   buildSubagentSpawnEnv,
   getPiSpawnCommand,
-  resolvePiCliScript,
   type PiSpawnDeps,
 } from "../../src/runs/shared/pi-spawn.ts";
 
@@ -408,17 +407,21 @@ describe("getPiSpawnCommand with piPackageRoot", () => {
   });
 });
 
-describe("resolvePiCliScript", () => {
-  it("supports package bin as string", () => {
+describe("getPiSpawnCommand package bin resolution", () => {
+  it("supports a package bin string", () => {
     const packageJsonPath = "/opt/pi/package.json";
     const cliPath = path.resolve(path.dirname(packageJsonPath), "dist/cli/index.mjs");
     const deps = makeDeps({
       platform: "win32",
+      execPath: "/usr/local/bin/node",
       argv1: "/opt/pi/subagent-runner.ts",
       packageJsonPath,
       packageJsonContent: JSON.stringify({ bin: "dist/cli/index.mjs" }),
       existing: [packageJsonPath, cliPath],
     });
-    assert.equal(resolvePiCliScript(deps), cliPath);
+    assert.deepEqual(getPiSpawnCommand(["-p", "Task: hello"], deps), {
+      command: "/usr/local/bin/node",
+      args: [cliPath, "-p", "Task: hello"],
+    });
   });
 });

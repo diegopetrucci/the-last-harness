@@ -284,12 +284,6 @@ export function parseChildProtocolInput(line: string): ChildProtocolLine {
     : { kind: "unknown", value: parsed };
 }
 
-/** Parse and validate one known child protocol event. */
-export function parseChildProtocolLine(line: string): ChildProtocolEvent | undefined {
-  const parsed = parseChildProtocolInput(line);
-  return parsed.kind === "event" ? parsed.event : undefined;
-}
-
 /** Format a bounded protocol overflow without embedding unbounded child data. */
 export function formatProtocolOutputLimit(limit: ProtocolOutputLimit): string {
   return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline); the line is not retained in full: a bounded prefix and tail remain in the protocol_output_limit record, and subsequent input on that stream is dropped. Inspect the bounded result/session diagnostics, and set artifacts.mode to "debug" before reproducing if the surrounding child protocol is required.`;

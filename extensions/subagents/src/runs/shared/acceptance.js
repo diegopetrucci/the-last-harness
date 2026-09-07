@@ -646,11 +646,6 @@ function parseReportJson(body) {
     }
     throw new Error("Acceptance report JSON must contain a JSON value.");
 }
-function fencedBlocks(output, tag) {
-    return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
-        .map((match) => match[1]?.trim())
-        .filter((value) => Boolean(value));
-}
 function parseAcceptanceReportBody(body) {
     const parsed = unwrapAcceptanceReport(parseReportJson(body));
     return validateAcceptanceReport(parsed.value, parsed.wrapper);
@@ -661,54 +656,6 @@ function parseGenericJsonAcceptanceReportBody(body) {
     if (!validation.report)
         return undefined;
     return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
-}
-export function parseAcceptanceReport(output) {
-    const fenced = fencedBlocks(output, "acceptance-report");
-    const parseErrors = [];
-    for (const body of fenced) {
-        try {
-            const validation = parseAcceptanceReportBody(body);
-            if (validation.report)
-                return { report: validation.report };
-            parseErrors.push(`Invalid acceptance-report: ${validation.errors.join("; ")}`);
-        }
-        catch (error) {
-            parseErrors.push(error instanceof Error ? error.message : String(error));
-        }
-    }
-    if (parseErrors.length > 0)
-        return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
-    for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
-        try {
-            const report = parseGenericJsonAcceptanceReportBody(body);
-            if (report)
-                return { report };
-        }
-        catch {
-        }
-    }
-    const markerIndex = output.search(/ACCEPTANCE_REPORT\s*:/i);
-    if (markerIndex !== -1) {
-        const jsonStart = output.indexOf("{", markerIndex);
-        if (jsonStart !== -1) {
-            const json = extractBalancedJson(output, jsonStart);
-            if (json) {
-                try {
-                    const parsed = unwrapAcceptanceReport(parseReportJson(json));
-                    const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
-                    if (validation.report)
-                        return { report: validation.report };
-                    return {
-                        error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`,
-                    };
-                }
-                catch (error) {
-                    return { error: error instanceof Error ? error.message : String(error) };
-                }
-            }
-        }
-    }
-    return { error: "Structured acceptance report not found." };
 }
 export function parseAndStripAcceptanceReport(output) {
     const trailingFencePattern = /\n?```(acceptance-report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;

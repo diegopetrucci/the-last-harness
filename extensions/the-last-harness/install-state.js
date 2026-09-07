@@ -1,5 +1,5 @@
 import { TLH_REPO } from "./constants.js";
-import { readTlhInstallState, readTlhInstallStateAsync } from "./profile-state.js";
+import { readTlhInstallState } from "./profile-state.js";
 const STABLE_TRACK = "latest-release";
 const VALID_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref", "custom"]);
 const REF_REQUIRED_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref"]);
@@ -91,21 +91,6 @@ export function classifyTlhInstallState(state) {
     if (track === STABLE_TRACK) {
         return undefined;
     }
-    if (track === "pinned-tag") {
-        return {
-            kind: "pinned-tag",
-            summary: "TLH is pinned to a specific release tag.",
-            detail: ref,
-        };
-    }
-    if (track === "ref") {
-        return {
-            kind: "ref",
-            summary: "TLH follows a non-stable git ref.",
-            detail: ref,
-            ...(mainCommitSubject ? { commitSubject: mainCommitSubject } : {}),
-        };
-    }
     return {
         kind: "custom-track",
         summary: "TLH uses a custom update track.",
@@ -114,9 +99,6 @@ export function classifyTlhInstallState(state) {
 }
 export function readTlhInstallNotice() {
     return classifyTlhInstallState(readTlhInstallState());
-}
-export async function readTlhInstallNoticeAsync() {
-    return classifyTlhInstallState(await readTlhInstallStateAsync());
 }
 export function formatTlhInstallNoticeTrackLabel(notice) {
     if (notice.kind === "unknown") {
