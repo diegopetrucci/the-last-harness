@@ -4,7 +4,7 @@
     "aliases": ["openai-fast"],
     "replaces": ["npm:@diegopetrucci/pi-openai-fast"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-fast@0.1.0",
+    "source": "npm:@diegopetrucci/pi-fast@0.1.2",
     "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions."
   },
   {
@@ -29,29 +29,29 @@
   },
   {
     "id": "inline-bash",
-    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.9",
+    "source": "npm:@diegopetrucci/pi-inline-bash@0.1.11",
     "description": "Expand inline bash commands in user prompts."
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.11",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.13",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
     "id": "quiet-tools",
     "aliases": ["compact-bash"],
     "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.10",
+    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
     "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
   },
   {
     "id": "dirty-repo-guard",
-    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.9",
+    "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.11",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
     "id": "pi-transcribe",
-    "source": "git:github.com/earendil-works/pi-transcribe@e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1",
+    "source": "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816",
     "description": "Local speech-to-text dictation with /transcribe, Ctrl+Alt+Z, and the transcribe_file tool."
   }
 ]
