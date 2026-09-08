@@ -15,6 +15,8 @@ import {
   type ContextPressureProjection,
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
+  type DurableAttentionReason,
+  type CompactionReason,
   type NestedRunSummary,
   type SubagentModelIdentity,
   type SubagentModelResolution,
@@ -49,6 +51,7 @@ import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
+import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -61,6 +64,9 @@ interface AsyncRunStepSummary {
   agent: string;
   status: AsyncJobStep["status"];
   activityState?: ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: DurableAttentionReason[];
+  compaction?: { reason: CompactionReason };
   lastActivityAt?: number;
   currentTool?: string;
   currentToolArgs?: string;
@@ -202,6 +208,58 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
   }
 }
 
+const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
+  "context_pressure",
+  "tool_failures",
+  "completion_guard",
+]);
+const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+]);
+
+function normalizePersistedActivityState(value: unknown): ActivityState | undefined {
+  return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+}
+
+function normalizePersistedDurableAttentionReasons(
+  value: unknown,
+): DurableAttentionReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.filter(
+    (reason): reason is DurableAttentionReason =>
+      typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+  );
+  return reasons.length > 0 ? [...new Set(reasons)] : undefined;
+}
+
+function normalizePersistedCompaction(value: unknown): { reason: CompactionReason } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reason = (value as { reason?: unknown }).reason;
+  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
+    ? { reason: reason as CompactionReason }
+    : undefined;
+}
+
+function normalizePersistedHealth(value: {
+  activityState?: unknown;
+  idleEpisodeId?: unknown;
+  durableAttentionReasons?: unknown;
+  compaction?: unknown;
+}): void {
+  const activityState = normalizePersistedActivityState(value.activityState);
+  const idleEpisodeId = normalizeIdleEpisodeId(value.idleEpisodeId);
+  const durableAttentionReasons = normalizePersistedDurableAttentionReasons(
+    value.durableAttentionReasons,
+  );
+  const compaction = normalizePersistedCompaction(value.compaction);
+  value.activityState = activityState;
+  value.idleEpisodeId = idleEpisodeId;
+  value.durableAttentionReasons = durableAttentionReasons;
+  value.compaction = compaction;
+}
+
 function deriveAsyncActivityState(
   asyncDir: string,
   status: AsyncStatus,
@@ -230,6 +288,7 @@ export function validatePersistedAsyncStatus(
   asyncDir: string,
   status: AsyncStatus & { cwd?: string },
 ): void {
+  normalizePersistedHealth(status);
   if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
     throw createAsyncStatusValidationError({
       asyncDir,
@@ -275,6 +334,7 @@ export function validatePersistedAsyncStatus(
   if (activeRuntimeCheckpointAt === undefined) status.activeRuntimeCheckpointAt = undefined;
   else status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
   for (const step of status.steps ?? []) {
+    normalizePersistedHealth(step);
     // Invalid external accounting evidence is unknown, not a reason to
     // fabricate elapsed time or to trust a caller-supplied value.
     const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
@@ -334,6 +394,11 @@ function statusToSummary(
       status: step.status,
       ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
       ...(stepActivityState ? { activityState: stepActivityState } : {}),
+      ...(step.idleEpisodeId ? { idleEpisodeId: step.idleEpisodeId } : {}),
+      ...(step.durableAttentionReasons?.length
+        ? { durableAttentionReasons: [...step.durableAttentionReasons] }
+        : {}),
+      ...(step.compaction ? { compaction: { ...step.compaction } } : {}),
       ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
       ...(step.currentTool ? { currentTool: step.currentTool } : {}),
       ...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),

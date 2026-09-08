@@ -680,6 +680,153 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(expanded, new RegExp(escapeRegExp(whimsicalThinkingPhrase(13))));
   });
 
+  it("clears recovered health in widget rows without smearing sibling or legacy warnings", () => {
+    const now = 20_000;
+    const parallelText = buildWidgetLines(
+      [
+        {
+          asyncId: "health-sibling",
+          asyncDir: "/tmp/health-sibling",
+          status: "running",
+          mode: "parallel",
+          agents: ["recovered", "idle"],
+          activityState: "needs_attention",
+          lastActivityAt: now - 5_000,
+          updatedAt: now,
+          steps: [
+            {
+              index: 0,
+              agent: "recovered",
+              status: "running",
+              lastActivityAt: now - 1_000,
+            },
+            {
+              index: 1,
+              agent: "idle",
+              status: "running",
+              activityState: "needs_attention",
+              lastActivityAt: now - 5_000,
+            },
+          ],
+        },
+      ],
+      theme,
+      180,
+      true,
+    ).join("\n");
+    const recoveredStart = parallelText.indexOf("recovered");
+    const idleStart = parallelText.indexOf("idle");
+    const recoveredSection = parallelText.slice(
+      recoveredStart,
+      idleStart >= 0 ? idleStart : undefined,
+    );
+    assert.match(recoveredSection, /active 1s ago/);
+    assert.doesNotMatch(recoveredSection, /no activity|long-running/);
+    assert.match(parallelText, /no activity for 5s/);
+
+    const legacyText = buildWidgetLines(
+      [
+        {
+          asyncId: "legacy-health",
+          asyncDir: "/tmp/legacy-health",
+          status: "running",
+          mode: "single",
+          agents: ["legacy"],
+          lastActivityAt: now - 90_000,
+          updatedAt: now,
+          steps: [{ index: 0, agent: "legacy", status: "running", lastActivityAt: now - 90_000 }],
+        },
+      ],
+      theme,
+      180,
+      true,
+    ).join("\n");
+    assert.match(legacyText, /legacy[\s\S]*active 1m ago/);
+    assert.doesNotMatch(legacyText, /no activity for|active but long-running/);
+  });
+
+  it("keeps aggregate parallel health in progressive summaries without smearing child details", () => {
+    const now = 20_000;
+    const healthCases = [
+      { state: "needs_attention", warning: "no activity for 5s" },
+      { state: "active_long_running", warning: "active but long-running · last activity 5s ago" },
+    ] as const;
+
+    const makeJobs = (state: (typeof healthCases)[number]["state"]): AsyncJobState[] => [
+      {
+        asyncId: `progressive-parallel-${state}`,
+        asyncDir: `/tmp/progressive-parallel-${state}`,
+        status: "running",
+        mode: "parallel",
+        agents: ["recovered", "attention"],
+        activityState: state,
+        lastActivityAt: now - 5_000,
+        updatedAt: now,
+        runningSteps: 2,
+        completedSteps: 0,
+        stepsTotal: 2,
+        steps: [
+          {
+            index: 0,
+            agent: "recovered",
+            status: "running",
+            turnCount: 31,
+            lastActivityAt: now - 1_000,
+          },
+          {
+            index: 1,
+            agent: "attention",
+            status: "running",
+            activityState: state,
+            turnCount: 32,
+            lastActivityAt: now - 5_000,
+          },
+        ],
+      },
+      {
+        asyncId: `progressive-read-${state}`,
+        asyncDir: `/tmp/progressive-read-${state}`,
+        status: "running",
+        mode: "single",
+        agents: ["reader"],
+        currentTool: "read",
+      },
+      {
+        asyncId: `progressive-edit-${state}`,
+        asyncDir: `/tmp/progressive-edit-${state}`,
+        status: "running",
+        mode: "single",
+        agents: ["editor"],
+        currentTool: "edit",
+      },
+    ];
+
+    for (const { state, warning } of healthCases) {
+      resetWidgetLayout();
+      withStdoutSize(22, 120, () => {
+        const ui = createUiContext();
+        renderWidget(ui.ctx as never, makeJobs(state));
+        const lines = renderWidgetHarnessLines(ui.widgets.at(-1));
+        const text = lines.join("\n");
+        const parallelRow = lines.find((line) => line.includes("parallel")) ?? "";
+        assert.match(parallelRow, new RegExp(escapeRegExp(warning)));
+        assert.doesNotMatch(parallelRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(31))));
+        assert.match(text, /\+2 more/);
+      });
+
+      const expandedText = buildWidgetLines([makeJobs(state)[0]!], theme, 180, true).join("\n");
+      const recoveredStart = expandedText.indexOf("Agent 1/2: recovered");
+      const attentionStart = expandedText.indexOf("Agent 2/2: attention");
+      assert.ok(recoveredStart >= 0, "expanded layout must include the recovered child");
+      assert.ok(attentionStart > recoveredStart, "expanded layout must keep child order");
+      const recoveredSection = expandedText.slice(recoveredStart, attentionStart);
+      assert.match(recoveredSection, /active 1s ago/);
+      assert.doesNotMatch(recoveredSection, /no activity for|active but long-running/);
+      assert.match(expandedText.slice(attentionStart), new RegExp(escapeRegExp(warning)));
+    }
+    resetWidgetLayout();
+  });
+
   it("suppresses health phrases in the constrained progressive row", () => {
     resetWidgetLayout();
     withStdoutSize(22, 120, () => {

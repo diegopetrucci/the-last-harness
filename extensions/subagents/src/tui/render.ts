@@ -601,6 +601,8 @@ function projectContinuedWidgetStep(
     ...step,
     status,
     activityState: undefined,
+    idleEpisodeId: undefined,
+    compaction: undefined,
     lastActivityAt: undefined,
     currentTool: undefined,
     currentToolArgs: undefined,
@@ -622,6 +624,8 @@ function widgetActivityState(
   job: AsyncJobState,
   runningStep?: AsyncJobStep,
 ): ActivityState | undefined {
+  // Job summaries use the aggregate projection. Per-child rows read each step's
+  // own projection in widgetParallelAgentDetails and foregroundStyleWidgetDetails.
   return (
     job.activityState ??
     job.steps?.find(

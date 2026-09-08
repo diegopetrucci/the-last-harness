@@ -53,6 +53,9 @@ interface ProgressSummary {
   index: number;
   status: string;
   activityState?: string;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: string[];
+  compaction?: { reason?: string };
   lastActivityAt?: number;
   currentTool?: string;
   currentToolArgs?: string;
@@ -110,6 +113,7 @@ interface RunSyncResult {
     type?: string;
     message: string;
     reason?: string;
+    idleEpisodeId?: string;
     contextPressureSeverity?: string;
     contextPressureThreshold?: string;
     turns?: number;
@@ -324,6 +328,14 @@ function writePackageSkill(packageRoot: string, skillName: string): void {
     `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
     "utf-8",
   );
+}
+
+async function waitForTestMarker(markerPath: string, timeoutMs = scaleTestTimeout(10_000)) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(markerPath)) {
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for test marker: ${markerPath}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 describe(
@@ -1520,7 +1532,628 @@ describe(
         result.controlEvents?.find((event) => event.reason === "idle")?.type,
         "needs_attention",
       );
+      // The trailing validated message recovers the idle episode before the
+      // final result is published; the warning remains in the control record.
+      assert.equal(result.progress.activityState, undefined);
+      assert.equal(result.progress.idleEpisodeId, undefined);
+      assert.equal(
+        idleEvent?.idleEpisodeId,
+        result.controlEvents?.find((event) => event.reason === "idle")?.idleEpisodeId,
+      );
+    });
+
+    it("recovers each foreground idle episode only at validated activity and dedupes continuous idle", async () => {
+      const markerDir = path.join(tempDir, "idle-recovery-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const firstIdleRelease = path.join(markerDir, "first-idle-release");
+      const rawDone = path.join(markerDir, "raw-done");
+      const validatedRelease = path.join(markerDir, "validated-release");
+      const secondIdleRelease = path.join(markerDir, "second-idle-release");
+      mockPi.onCall({
+        steps: [
+          { jsonl: [mockAssistantMessage("initial progress", "tool_use")] },
+          { waitForMarker: firstIdleRelease },
+          { stderr: "raw diagnostic noise\\n", writeMarkerAfter: rawDone },
+          { waitForMarker: validatedRelease },
+          { jsonl: [mockAssistantMessage("validated progress", "tool_use")] },
+          { waitForMarker: secondIdleRelease },
+          { jsonl: [events.assistantMessage("final progress")] },
+        ],
+      });
+      const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
+      const snapshots: ProgressSummary[] = [];
+      const resultPromise = runSync!(
+        tempDir,
+        [makeAgent("scout")],
+        "scout",
+        "Investigate behavior",
+        {
+          runId: "foreground-idle-recovery",
+          controlConfig: {
+            enabled: true,
+            needsAttentionAfterMs: 200,
+            activeNoticeAfterTurns: 999_999,
+            activeNoticeAfterMs: 999_999,
+            activeNoticeAfterTokens: 999_999,
+            notifyOn: ["active_long_running", "needs_attention"],
+          },
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => {
+            controlEvents.push(event);
+            if (
+              event.reason === "idle" &&
+              controlEvents.filter((item) => item.reason === "idle").length === 1
+            )
+              fs.writeFileSync(firstIdleRelease, "", "utf-8");
+            else if (event.reason === "idle") fs.writeFileSync(secondIdleRelease, "", "utf-8");
+          },
+          onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => {
+            const progress = update.details?.progress?.[0];
+            if (progress) snapshots.push({ ...progress, recentOutput: [...progress.recentOutput] });
+          },
+        },
+      );
+
+      await waitForTestMarker(rawDone);
+      assert.equal(controlEvents.filter((event) => event.reason === "idle").length, 1);
+      assert.equal(controlEvents[0]?.idleEpisodeId !== undefined, true);
+      fs.writeFileSync(validatedRelease, "", "utf-8");
+      const result = await resultPromise;
+
+      const idleEvents = controlEvents.filter((event) => event.reason === "idle");
+      assert.equal(result.exitCode, 0);
+      assert.equal(idleEvents.length, 2);
+      assert.ok(idleEvents[0]?.idleEpisodeId);
+      assert.ok(idleEvents[1]?.idleEpisodeId);
+      assert.notEqual(idleEvents[0]?.idleEpisodeId, idleEvents[1]?.idleEpisodeId);
+      assert.equal(result.progress.activityState, undefined);
+      assert.equal(result.progress.idleEpisodeId, undefined);
+      assert.ok(
+        snapshots.some(
+          (progress) =>
+            progress.activityState === "needs_attention" &&
+            progress.idleEpisodeId === idleEvents[0]?.idleEpisodeId,
+        ),
+      );
+      const recoveredIndex = snapshots.findIndex(
+        (progress, index) =>
+          index > 0 && progress.activityState === undefined && progress.idleEpisodeId === undefined,
+      );
+      assert.notEqual(recoveredIndex, -1, "validated activity should publish recovered progress");
+      assert.equal(idleEvents[0]?.idleEpisodeId, controlEvents[0]?.idleEpisodeId);
+      assert.equal(idleEvents[1]?.idleEpisodeId, controlEvents[1]?.idleEpisodeId);
+    });
+
+    it("does not turn foreground compaction into idle and stalls only after compaction ends", async () => {
+      for (const variant of [
+        { name: "normal", reason: "manual" as const, options: {} },
+        {
+          name: "abort",
+          reason: "threshold" as const,
+          options: { aborted: true, willRetry: true },
+        },
+        {
+          name: "failure",
+          reason: "overflow" as const,
+          options: { aborted: false, willRetry: false, errorMessage: "compaction failed" },
+        },
+      ]) {
+        mockPi.reset();
+        const markerDir = path.join(tempDir, `compaction-${variant.name}`);
+        fs.mkdirSync(markerDir, { recursive: true });
+        const started = path.join(markerDir, "started");
+        const release = path.join(markerDir, "release");
+        const idleRelease = path.join(markerDir, "idle-release");
+        mockPi.onCall({
+          steps: [
+            { jsonl: [mockAssistantMessage("before compaction", "tool_use")] },
+            {
+              jsonl: [events.compactionStart(variant.reason)],
+              writeMarkerAfter: started,
+            },
+            { waitForMarker: release },
+            { jsonl: [events.compactionEnd(variant.reason, variant.options)] },
+            { waitForMarker: idleRelease },
+            { jsonl: [events.assistantMessage("after compaction")] },
+          ],
+        });
+        const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+        const snapshots: ProgressSummary[] = [];
+        const resultPromise = runSync!(
+          tempDir,
+          [makeAgent("scout")],
+          "scout",
+          "Investigate behavior",
+          {
+            runId: `foreground-compaction-${variant.name}`,
+            controlConfig: {
+              enabled: true,
+              needsAttentionAfterMs: 200,
+              activeNoticeAfterMs: 200,
+              activeNoticeAfterTurns: 999_999,
+              activeNoticeAfterTokens: 999_999,
+              notifyOn: ["active_long_running", "needs_attention"],
+            },
+            onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
+              controls.push(event),
+            onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => {
+              const progress = update.details?.progress?.[0];
+              if (progress)
+                snapshots.push({ ...progress, recentOutput: [...progress.recentOutput] });
+            },
+          },
+        );
+        await waitForTestMarker(started);
+        const activeDeadline = Date.now() + scaleTestTimeout(5_000);
+        while (!controls.some((event) => event.type === "active_long_running")) {
+          if (Date.now() > activeDeadline)
+            assert.fail(`Timed out waiting for compaction long-running notice (${variant.name})`);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.equal(
+          controls.some((event) => event.reason === "idle"),
+          false,
+        );
+        assert.ok(snapshots.some((progress) => progress.compaction?.reason === variant.reason));
+        fs.writeFileSync(release, "", "utf-8");
+        const idleDeadline = Date.now() + scaleTestTimeout(5_000);
+        while (!controls.some((event) => event.reason === "idle")) {
+          if (Date.now() > idleDeadline)
+            assert.fail(`Timed out waiting for post-compaction idle (${variant.name})`);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        fs.writeFileSync(idleRelease, "", "utf-8");
+        const result = await resultPromise;
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.progress.compaction, undefined);
+        assert.equal(result.progress.activityState, "active_long_running");
+        assert.equal(controls.filter((event) => event.reason === "idle").length, 1);
+      }
+    });
+
+    it("cleans up foreground compaction without an end event before fallback idle recovery", async () => {
+      const markerDir = path.join(tempDir, "foreground-no-end-fallback-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const firstCompactionStarted = path.join(markerDir, "first-compaction-started");
+      const firstRelease = path.join(markerDir, "first-release");
+      const fallbackStarted = path.join(markerDir, "fallback-started");
+      const fallbackIdleRelease = path.join(markerDir, "fallback-idle-release");
+      mockPi.onCall({
+        exitCode: 1,
+        steps: [
+          {
+            jsonl: [events.compactionStart("manual")],
+            writeMarkerAfter: firstCompactionStarted,
+          },
+          { waitForMarker: firstRelease },
+          {
+            jsonl: [
+              {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "rate limit exceeded" }],
+                  model: "openai/gpt-5-mini",
+                  errorMessage: "rate limit exceeded",
+                  stopReason: "error",
+                  usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+                },
+              },
+            ],
+          },
+        ],
+      });
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [mockAssistantMessage("fallback still working", "tool_use")],
+            writeMarkerAfter: fallbackStarted,
+          },
+          { waitForMarker: fallbackIdleRelease },
+          { jsonl: [events.assistantMessage("fallback completed")] },
+        ],
+      });
+      const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+      const snapshots: ProgressSummary[] = [];
+      const resultPromise = runSync!(
+        tempDir,
+        [
+          makeAgent("scout", {
+            model: "openai/gpt-5-mini",
+            fallbackModels: ["anthropic/claude-sonnet-4"],
+          }),
+        ],
+        "scout",
+        "Investigate behavior",
+        {
+          runId: "foreground-no-end-fallback",
+          artifactsDir: path.join(tempDir, "foreground-no-end-fallback-artifacts"),
+          artifactConfig: {
+            enabled: true,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: true,
+            includeMetadata: false,
+          },
+          controlConfig: {
+            enabled: true,
+            needsAttentionAfterMs: 200,
+            activeNoticeAfterTurns: 999_999,
+            activeNoticeAfterMs: 999_999,
+            activeNoticeAfterTokens: 999_999,
+            notifyOn: ["active_long_running", "needs_attention"],
+          },
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
+            controls.push(event),
+          onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => {
+            const progress = update.details?.progress?.[0];
+            if (progress) snapshots.push({ ...progress, recentOutput: [...progress.recentOutput] });
+          },
+        },
+      );
+
+      await waitForTestMarker(firstCompactionStarted);
+      const compactionDeadline = Date.now() + scaleTestTimeout(5_000);
+      while (!snapshots.some((progress) => progress.compaction?.reason === "manual")) {
+        if (Date.now() > compactionDeadline)
+          assert.fail("Timed out waiting for foreground compaction snapshot");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.equal(
+        controls.some((event) => event.reason === "idle"),
+        false,
+        "an in-flight compaction must not enter idle",
+      );
+      fs.writeFileSync(firstRelease, "", "utf-8");
+
+      await waitForTestMarker(fallbackStarted);
+      const idleDeadline = Date.now() + scaleTestTimeout(5_000);
+      while (!controls.some((event) => event.reason === "idle")) {
+        if (Date.now() > idleDeadline)
+          assert.fail("Timed out waiting for fallback idle after unpaired compaction");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const idleEvents = controls.filter((event) => event.reason === "idle");
+      assert.equal(idleEvents.length, 1);
+      assert.ok(idleEvents[0]?.idleEpisodeId);
+      assert.ok(
+        snapshots.some(
+          (progress) =>
+            progress.activityState === "needs_attention" &&
+            progress.idleEpisodeId === idleEvents[0]?.idleEpisodeId &&
+            progress.compaction === undefined,
+        ),
+        "fallback attempt must publish a fresh idle episode without inherited compaction",
+      );
+      fs.writeFileSync(fallbackIdleRelease, "", "utf-8");
+
+      const result = await resultPromise;
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.finalOutput, "fallback completed");
+      assert.deepEqual(
+        result.modelAttempts?.map((attempt) => attempt.success),
+        [false, true],
+      );
+      assert.equal(result.progress.activityState, undefined);
+      assert.equal(result.progress.idleEpisodeId, undefined);
+      assert.equal(result.progress.compaction, undefined);
+      assert.equal(result.progress.durableAttentionReasons, undefined);
+      assert.ok(result.artifactPaths?.jsonlPath, "expected JSONL artifact");
+      const jsonl = fs.readFileSync(result.artifactPaths!.jsonlPath, "utf-8");
+      assert.match(jsonl, /"type":"compaction_start"/);
+      assert.doesNotMatch(jsonl, /"type":"compaction_end"/);
+    });
+
+    it("clears foreground unpaired compaction during interrupt and timeout cleanup", async () => {
+      for (const variant of ["interrupt", "timeout"] as const) {
+        mockPi.reset();
+        const markerDir = path.join(tempDir, `foreground-no-end-${variant}-markers`);
+        fs.mkdirSync(markerDir, { recursive: true });
+        const compactionStarted = path.join(markerDir, "compaction-started");
+        const release = path.join(markerDir, "release");
+        mockPi.onCall({
+          steps: [
+            {
+              jsonl: [
+                {
+                  type: "message_end",
+                  message: {
+                    role: "assistant",
+                    content: [{ type: "text", text: "near context limit" }],
+                    provider: "mock",
+                    model: "mock/test-model",
+                    stopReason: "toolUse",
+                    usage: {
+                      totalTokens: 800,
+                      input: 700,
+                      output: 100,
+                      cacheRead: 0,
+                      cacheWrite: 0,
+                      cost: { total: 0 },
+                    },
+                  },
+                },
+              ],
+            },
+            {
+              jsonl: [events.compactionStart("threshold")],
+              writeMarkerAfter: compactionStarted,
+            },
+            { waitForMarker: release },
+          ],
+        });
+        const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+        const snapshots: ProgressSummary[] = [];
+        const controller = new AbortController();
+        const options: Record<string, unknown> = {
+          runId: `foreground-no-end-${variant}`,
+          artifactsDir: path.join(tempDir, `foreground-no-end-${variant}-artifacts`),
+          artifactConfig: {
+            enabled: true,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: true,
+            includeMetadata: false,
+          },
+          availableModels: [
+            { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+          ],
+          controlConfig: {
+            enabled: true,
+            needsAttentionAfterMs: 200,
+            activeNoticeAfterTurns: 999_999,
+            activeNoticeAfterMs: 999_999,
+            activeNoticeAfterTokens: 999_999,
+            notifyOn: ["active_long_running", "needs_attention"],
+          },
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
+            controls.push(event),
+          onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => {
+            const progress = update.details?.progress?.[0];
+            if (progress) snapshots.push({ ...progress, recentOutput: [...progress.recentOutput] });
+          },
+        };
+        if (variant === "interrupt") options.interruptSignal = controller.signal;
+        else options.timeoutMs = scaleTestTimeout(3_000);
+
+        const resultPromise = runSync!(
+          tempDir,
+          [makeAgent("worker", { model: "mock/test-model" })],
+          "worker",
+          "Implement the approved fixes",
+          options,
+        );
+        await waitForTestMarker(compactionStarted);
+        const activeDeadline = Date.now() + scaleTestTimeout(5_000);
+        while (
+          !snapshots.some((progress) => progress.compaction?.reason === "threshold") ||
+          !controls.some((event) => event.reason === "context_pressure")
+        ) {
+          if (Date.now() > activeDeadline)
+            assert.fail(`Timed out waiting for ${variant} compaction health snapshot`);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.equal(
+          controls.some((event) => event.reason === "idle"),
+          false,
+          `${variant} cleanup must not emit an idle notice from unpaired compaction`,
+        );
+        if (variant === "interrupt") controller.abort();
+
+        const result = await resultPromise;
+        if (variant === "interrupt") {
+          assert.equal(result.exitCode, 0);
+          assert.equal(result.interrupted, true);
+          assert.equal(result.terminationReason, "interrupted");
+        } else {
+          assert.notEqual(result.exitCode, 0);
+          assert.equal(result.timedOut, true);
+          assert.equal(result.terminationReason, "timed_out");
+        }
+        assert.equal(result.progress.activityState, undefined);
+        assert.equal(result.progress.idleEpisodeId, undefined);
+        assert.equal(result.progress.compaction, undefined);
+        assert.deepEqual(result.progress.durableAttentionReasons, ["context_pressure"]);
+        assert.equal(controls.filter((event) => event.reason === "context_pressure").length, 1);
+        assert.equal(controls.filter((event) => event.reason === "idle").length, 0);
+        assert.ok(
+          snapshots.some(
+            (progress) =>
+              progress.activityState === undefined &&
+              progress.idleEpisodeId === undefined &&
+              progress.compaction === undefined &&
+              progress.durableAttentionReasons?.includes("context_pressure"),
+          ),
+          `${variant} cleanup must publish cleared ephemeral health while retaining the durable reason`,
+        );
+        assert.ok(result.artifactPaths?.jsonlPath, "expected JSONL artifact");
+        const jsonl = fs.readFileSync(result.artifactPaths!.jsonlPath, "utf-8");
+        assert.match(jsonl, /"type":"compaction_start"/);
+        assert.doesNotMatch(jsonl, /"type":"compaction_end"/);
+      }
+    });
+
+    it("keeps foreground durable attention reasons through validated recovery and later idle", async () => {
+      const markerDir = path.join(tempDir, "durable-health-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const release = path.join(markerDir, "release");
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [
+              {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "near context limit" }],
+                  provider: "mock",
+                  model: "mock/test-model",
+                  stopReason: "stop",
+                  usage: {
+                    totalTokens: 950,
+                    input: 900,
+                    output: 50,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    cost: { total: 0 },
+                  },
+                },
+              },
+              events.toolStart("edit", { path: "src/health.ts" }),
+              events.toolEnd("edit"),
+              events.toolResult("edit", "No exact match", true),
+              events.toolStart("edit", { path: "src/health.ts" }),
+              events.toolEnd("edit"),
+              events.toolResult("edit", "No exact match", true),
+              events.toolStart("edit", { path: "src/health.ts" }),
+              events.toolEnd("edit"),
+              events.toolResult("edit", "No exact match", true),
+            ],
+          },
+          { jsonl: [mockAssistantMessage("validated after durable warnings", "tool_use")] },
+          { waitForMarker: release },
+          { jsonl: [events.assistantMessage("final")] },
+        ],
+      });
+      const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+      const resultPromise = runSync!(
+        tempDir,
+        [makeAgent("worker", { model: "mock/test-model" })],
+        "worker",
+        "Implement the approved fixes",
+        {
+          runId: "foreground-durable-health",
+          availableModels: [
+            { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+          ],
+          controlConfig: {
+            enabled: true,
+            needsAttentionAfterMs: 200,
+            activeNoticeAfterTurns: 999_999,
+            activeNoticeAfterMs: 999_999,
+            activeNoticeAfterTokens: 999_999,
+            failedToolAttemptsBeforeAttention: 3,
+            notifyOn: ["active_long_running", "needs_attention"],
+          },
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
+            controls.push(event),
+          onUpdate: (update: { details?: { progress?: ProgressSummary[] } }) => {
+            const progress = update.details?.progress?.[0];
+            if (
+              progress?.durableAttentionReasons?.includes("context_pressure") &&
+              progress.durableAttentionReasons.includes("tool_failures")
+            )
+              fs.writeFileSync(release, "", "utf-8");
+          },
+        },
+      );
+      const result = await resultPromise;
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(result.progress.durableAttentionReasons, [
+        "context_pressure",
+        "tool_failures",
+      ]);
       assert.equal(result.progress.activityState, "needs_attention");
+      assert.equal(controls.filter((event) => event.reason === "context_pressure").length, 2);
+      assert.equal(controls.filter((event) => event.reason === "tool_failures").length, 1);
+      assert.equal(
+        controls.some((event) => event.reason === "idle"),
+        false,
+      );
+    });
+
+    it("records completion-guard attention as a durable foreground reason", async () => {
+      mockPi.onCall({ output: "I will plan the implementation before making edits." });
+      const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+      const result = await runSync!(
+        tempDir,
+        [makeAgent("worker")],
+        "worker",
+        "Implement the approved fixes",
+        {
+          runId: "foreground-completion-guard-health",
+          controlConfig: { enabled: true, notifyOn: ["active_long_running", "needs_attention"] },
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
+            controls.push(event),
+        },
+      );
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(result.progress.durableAttentionReasons, ["completion_guard"]);
+      assert.equal(controls.at(-1)?.reason, "completion_guard");
+      assert.equal(result.controlEvents?.at(-1)?.reason, "completion_guard");
+    });
+
+    it("resets foreground idle episode identity across fallback attempts", async () => {
+      const markerDir = path.join(tempDir, "fallback-health-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const firstRelease = path.join(markerDir, "first-release");
+      const secondRelease = path.join(markerDir, "second-release");
+      mockPi.onCall({
+        exitCode: 1,
+        steps: [
+          { jsonl: [mockAssistantMessage("first attempt started", "tool_use")] },
+          { waitForMarker: firstRelease },
+          {
+            jsonl: [
+              {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "rate limit exceeded" }],
+                  model: "openai/gpt-5-mini",
+                  errorMessage: "rate limit exceeded",
+                  stopReason: "error",
+                  usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+                },
+              },
+            ],
+          },
+        ],
+      });
+      mockPi.onCall({
+        steps: [
+          { jsonl: [mockAssistantMessage("fallback started", "tool_use")] },
+          { waitForMarker: secondRelease },
+          { jsonl: [events.assistantMessage("fallback completed")] },
+        ],
+      });
+      const controls: NonNullable<RunSyncResult["controlEvents"]> = [];
+      const resultPromise = runSync!(
+        tempDir,
+        [
+          makeAgent("scout", {
+            model: "openai/gpt-5-mini",
+            fallbackModels: ["anthropic/claude-sonnet-4"],
+          }),
+        ],
+        "scout",
+        "Investigate behavior",
+        {
+          runId: "foreground-fallback-health",
+          onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => {
+            controls.push(event);
+            if (
+              event.reason === "idle" &&
+              controls.filter((item) => item.reason === "idle").length === 1
+            )
+              fs.writeFileSync(firstRelease, "", "utf-8");
+            else if (event.reason === "idle") fs.writeFileSync(secondRelease, "", "utf-8");
+          },
+          controlConfig: {
+            enabled: true,
+            needsAttentionAfterMs: 200,
+            activeNoticeAfterTurns: 999_999,
+            activeNoticeAfterMs: 999_999,
+            activeNoticeAfterTokens: 999_999,
+            notifyOn: ["active_long_running", "needs_attention"],
+          },
+        },
+      );
+      const result = await resultPromise;
+      const idleEvents = controls.filter((event) => event.reason === "idle");
+      assert.equal(result.exitCode, 0);
+      assert.equal(idleEvents.length, 2);
+      assert.notEqual(idleEvents[0]?.idleEpisodeId, idleEvents[1]?.idleEpisodeId);
+      assert.equal(result.attemptedModels?.length, 2);
     });
 
     it("escalates repeated mutating tool failures to needs attention", async () => {

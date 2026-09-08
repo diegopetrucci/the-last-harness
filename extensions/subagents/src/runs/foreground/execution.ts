@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -151,6 +152,14 @@ import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
 } from "../../shared/context-diagnostics.ts";
+import {
+  createHealthTransitionState,
+  resetHealthTransitionState,
+  transitionHealth,
+  type HealthTransitionAction,
+  type HealthTransitionResult,
+  type HealthTransitionState,
+} from "../shared/health-transition.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -159,6 +168,84 @@ const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE =
 
 function emptyUsage(): Usage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+}
+
+type HealthTransitionBox = { value: HealthTransitionState; closed: boolean };
+
+function ignoredHealthTransition(state: HealthTransitionState): HealthTransitionResult {
+  return {
+    state,
+    changed: false,
+    projectionChanged: false,
+    projection: state.activityState,
+    idleEpisodeStarted: false,
+    idleEpisodeEnded: false,
+    activeLongRunningNotice: false,
+    idleAttentionEligible: false,
+  };
+}
+
+function applyHealthProgressProjection(
+  progress: Pick<
+    AgentProgress,
+    "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+  >,
+  state: HealthTransitionState,
+): void {
+  progress.activityState = state.activityState;
+  progress.idleEpisodeId = state.idleEpisodeId;
+  progress.durableAttentionReasons = state.durableAttentionReasons.length
+    ? [...state.durableAttentionReasons]
+    : undefined;
+  progress.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
+
+function transitionHealthForProgress(
+  box: HealthTransitionBox,
+  progress: Pick<
+    AgentProgress,
+    "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+  >,
+  action: HealthTransitionAction,
+): HealthTransitionResult {
+  const closed = box.closed;
+  // Lifecycle cleanup closes the ephemeral segment, but a real durable
+  // producer can still arrive while the child drains. Record its evidence
+  // without allowing the helper to re-project current liveness or operation
+  // state onto the closed progress record.
+  if (closed && action.type !== "durable_attention") return ignoredHealthTransition(box.value);
+  const transition = transitionHealth(box.value, action);
+  const publishedState = closed
+    ? {
+        ...transition.state,
+        activityState: undefined,
+        idleEpisodeId: undefined,
+        compaction: undefined,
+      }
+    : transition.state;
+  const publishedTransition = closed
+    ? {
+        ...transition,
+        state: publishedState,
+        projection: undefined,
+        projectionChanged: false,
+      }
+    : transition;
+  box.value = publishedState;
+  applyHealthProgressProjection(progress, publishedState);
+  return publishedTransition;
+}
+
+function clearHealthForProgress(
+  box: HealthTransitionBox,
+  progress: Pick<
+    AgentProgress,
+    "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+  >,
+): void {
+  if (box.closed) return;
+  transitionHealthForProgress(box, progress, { type: "clear_ephemeral" });
+  box.closed = true;
 }
 
 function sumUsage(target: Usage, source: Usage): void {
@@ -365,6 +452,10 @@ function snapshotProgress(progress: AgentProgress): AgentProgress {
   return {
     ...progress,
     skills: progress.skills ? [...progress.skills] : undefined,
+    durableAttentionReasons: progress.durableAttentionReasons
+      ? [...progress.durableAttentionReasons]
+      : undefined,
+    compaction: progress.compaction ? { ...progress.compaction } : undefined,
     recentTools: progress.recentTools.map((tool) => ({ ...tool })),
     recentOutput: [...progress.recentOutput],
   };
@@ -560,6 +651,7 @@ type SingleAttemptFinalizationInput = {
   observedMutationAttempt: boolean;
   allControlEvents: ControlEvent[];
   emitControlEvent: (event: ControlEvent) => void;
+  healthState: HealthTransitionBox;
 };
 
 function normalizeSingleAttemptResult(result: SingleResult): void {
@@ -655,9 +747,14 @@ function finalizeSingleAttemptOutput(input: SingleAttemptFinalizationInput): Sin
       "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
     progress.status = "failed";
     progress.error = result.error;
+    const previousActivityState = progress.activityState;
+    transitionHealthForProgress(input.healthState, progress, {
+      type: "durable_attention",
+      reason: "completion_guard",
+    });
     emitControlEvent(
       buildControlEvent({
-        from: progress.activityState,
+        from: previousActivityState,
         to: "needs_attention",
         runId: options.runId ?? agent.name,
         agent: agent.name,
@@ -760,7 +857,7 @@ function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): SingleRes
         requestSummary: result.pause?.summary,
       });
     result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-    progress.activityState = undefined;
+    clearHealthForProgress(input.healthState, progress);
     progress.durationMs = Date.now() - startTime;
     result.progressSummary = {
       toolCount: progress.toolCount,
@@ -776,7 +873,7 @@ function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): SingleRes
     result.error = undefined;
     result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
     result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-    progress.activityState = undefined;
+    clearHealthForProgress(input.healthState, progress);
     progress.durationMs = Date.now() - startTime;
     result.progressSummary = {
       toolCount: progress.toolCount,
@@ -1040,8 +1137,16 @@ async function runSingleAttempt(
     contextPressureCrossedThresholds: Set<ContextPressureThreshold>;
     contextPressure?: ContextPressureProjection;
     runtimeTracker: ActiveRuntimeTracker;
+    healthState: HealthTransitionBox;
   },
 ): Promise<SingleResult> {
+  if (!shared.healthState.closed) {
+    shared.healthState.value = resetHealthTransitionState(
+      shared.healthState.value,
+      randomUUID(),
+    ).state;
+  }
+
   const effectiveThinking = agent.thinking;
   const thinkingSuffixOptions = {
     availableModels: options.availableModels,
@@ -1116,6 +1221,7 @@ async function runSingleAttempt(
       lastActivityAt: now,
       error: message,
     };
+    applyHealthProgressProjection(progress, shared.healthState.value);
     shared.runtimeTracker.freeze(now);
     return {
       agent: agent.name,
@@ -1181,9 +1287,13 @@ async function runSingleAttempt(
     durationMs: 0,
     lastActivityAt: startTime,
   };
+  applyHealthProgressProjection(progress, shared.healthState.value);
+  const applyHealthTransition = (action: HealthTransitionAction): HealthTransitionResult =>
+    transitionHealthForProgress(shared.healthState, progress, action);
   result.progress = progress;
   const attemptTimeout = resolveAttemptTimeout(options);
   if (attemptTimeout?.remainingMs === 0) {
+    clearHealthForProgress(shared.healthState, progress);
     shared.runtimeTracker.freeze(Date.now());
     result.exitCode = 1;
     result.timedOut = true;
@@ -1305,7 +1415,7 @@ async function runSingleAttempt(
         agent: agent.name,
         requestSummary: pause.summary,
       });
-      progress.activityState = undefined;
+      clearHealthForProgress(shared.healthState, progress);
       progress.durationMs = Date.now() - startTime;
       try {
         options.onSupervisorPauseTransition?.({
@@ -1393,7 +1503,6 @@ async function runSingleAttempt(
       return events;
     };
 
-    let activeLongRunningNotified = false;
     let pendingToolResult:
       | { tool: string; path?: string; mutates: boolean; startedAt?: number }
       | undefined;
@@ -1415,8 +1524,24 @@ async function runSingleAttempt(
       } = {},
     ): boolean => {
       if (!controlConfig.enabled) return false;
+      const reason = input.reason ?? "idle";
+      const durableReason =
+        reason === "context_pressure" ||
+        reason === "tool_failures" ||
+        reason === "completion_guard";
+      if (shared.healthState.closed && !durableReason) return false;
       const previous = progress.activityState;
-      progress.activityState = "needs_attention";
+      let transition: HealthTransitionResult;
+      if (
+        reason === "context_pressure" ||
+        reason === "tool_failures" ||
+        reason === "completion_guard"
+      ) {
+        transition = applyHealthTransition({ type: "durable_attention", reason });
+      } else {
+        transition = applyHealthTransition({ type: "enter_idle" });
+        if (!transition.idleEpisodeStarted || !transition.idleAttentionEligible) return false;
+      }
       const event = buildControlEvent({
         type: "needs_attention",
         from: previous,
@@ -1429,7 +1554,8 @@ async function runSingleAttempt(
         message: input.message,
         contextPressureSeverity: input.contextPressureSeverity,
         contextPressureThreshold: input.contextPressureThreshold,
-        reason: input.reason ?? "idle",
+        reason,
+        idleEpisodeId: reason === "idle" ? transition.state.idleEpisodeId : undefined,
         turns: result.usage.turns,
         tokens: progress.tokens,
         toolCount: progress.toolCount,
@@ -1439,18 +1565,13 @@ async function runSingleAttempt(
         recentFailureSummary: input.recentFailureSummary,
       });
       emitControlEvent(event);
-      return previous !== "needs_attention";
+      return transition.changed;
     };
     const emitActiveLongRunning = (now: number, reason: ControlEvent["reason"]): boolean => {
-      if (
-        !controlConfig.enabled ||
-        activeLongRunningNotified ||
-        progress.activityState === "needs_attention"
-      )
-        return false;
-      activeLongRunningNotified = true;
+      if (!controlConfig.enabled) return false;
       const previous = progress.activityState;
-      progress.activityState = "active_long_running";
+      const transition = applyHealthTransition({ type: "active_long_running" });
+      if (!transition.activeLongRunningNotice) return false;
       emitControlEvent(
         buildControlEvent({
           type: "active_long_running",
@@ -1475,16 +1596,16 @@ async function runSingleAttempt(
     };
     const updateActivityState = (now: number): boolean => {
       if (!controlConfig.enabled) return false;
-      const idleState = deriveActivityState({
-        config: controlConfig,
-        startedAt: startTime,
-        lastActivityAt: progress.lastActivityAt,
-        toolCallInFlight: Boolean(progress.currentTool),
-        now,
-      });
-      if (idleState === "needs_attention") {
-        return progress.activityState === "needs_attention" ? false : emitNeedsAttention(now);
-      }
+      const idleState = shared.healthState.value.compaction
+        ? undefined
+        : deriveActivityState({
+            config: controlConfig,
+            startedAt: startTime,
+            lastActivityAt: progress.lastActivityAt,
+            toolCallInFlight: Boolean(progress.currentTool),
+            now,
+          });
+      if (idleState === "needs_attention") return emitNeedsAttention(now);
       const activeReason = nextLongRunningTrigger(controlConfig, {
         startedAt: startTime,
         now,
@@ -1540,8 +1661,13 @@ async function runSingleAttempt(
 
       const now = Date.now();
       progress.durationMs = now - startTime;
+      applyHealthTransition({ type: "validated_activity" });
+      if (evt.type === "compaction_start") {
+        applyHealthTransition({ type: "compaction_start", reason: evt.reason });
+      } else if (evt.type === "compaction_end") {
+        applyHealthTransition({ type: "compaction_end" });
+      }
       progress.lastActivityAt = now;
-      updateActivityState(now);
 
       if (evt.type === "tool_execution_start") {
         const toolArgs = evt.args ?? {};
@@ -1665,6 +1791,11 @@ async function runSingleAttempt(
         fireUpdate();
       }
 
+      if (evt.type === "compaction_start" || evt.type === "compaction_end") {
+        updateActivityState(now);
+        fireUpdate();
+      }
+
       if (evt.type === "tool_result_end" && evt.message) {
         result.messages ??= [];
         appendBoundedChildMessage(
@@ -1745,6 +1876,7 @@ async function runSingleAttempt(
       timeoutTimer = scheduleDeadline(attemptTimeout.deadlineAt, () => {
         if (processClosed || settled || interruptedByControl || protocolOutputLimit) return;
         if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
+        clearHealthForProgress(shared.healthState, progress);
         shared.runtimeTracker.freeze(Date.now());
         result.timedOut = true;
         result.error = boundChildError(attemptTimeout.message);
@@ -1774,6 +1906,7 @@ async function runSingleAttempt(
       onLimit: (limit) => {
         if (protocolOutputLimit) return;
         if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
+        clearHealthForProgress(shared.healthState, progress);
         shared.runtimeTracker.freeze(Date.now());
         protocolOutputLimit = limit;
         const message = boundChildError(formatProtocolOutputLimit(limit));
@@ -1952,6 +2085,7 @@ async function runSingleAttempt(
       if (!result.error) {
         result.error = boundChildError(error instanceof Error ? error.message : String(error));
       }
+      clearHealthForProgress(shared.healthState, progress);
       // processClosed must be set before the first await so timeout, abort, and interrupt
       // paths cannot observe a stale false and reinterpret a real process error. Freeze
       // before the async artifact flush, which is not child execution time.
@@ -1976,6 +2110,7 @@ async function runSingleAttempt(
           pauseForSupervisor(pendingSupervisorPause);
           return;
         }
+        clearHealthForProgress(shared.healthState, progress);
         shared.runtimeTracker.freeze(Date.now());
         proc.kill("SIGTERM");
         setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
@@ -1995,11 +2130,11 @@ async function runSingleAttempt(
         shared.runtimeTracker.freeze(Date.now());
         interruptedByControl = true;
         clearTimeoutTimers();
+        clearHealthForProgress(shared.healthState, progress);
         progress.status = "running";
         progress.durationMs = Date.now() - startTime;
         result.interrupted = true;
         result.finalOutput = "Interrupted. Waiting for explicit next action.";
-        progress.activityState = undefined;
         fireUpdate();
         void beginSupervisorPauseCleanup();
       };
@@ -2011,6 +2146,7 @@ async function runSingleAttempt(
       }
     }
   });
+  applyHealthTransition({ type: "compaction_end" });
   result.exitCode = exitCode;
   return finalizeSingleAttempt({
     result,
@@ -2027,6 +2163,7 @@ async function runSingleAttempt(
     observedMutationAttempt,
     allControlEvents,
     emitControlEvent,
+    healthState: shared.healthState,
   });
 }
 
@@ -2154,6 +2291,11 @@ export async function runSync(
   let totalToolCount = 0;
   let totalDurationMs = 0;
   let totalActiveRuntimeMs = 0;
+  const healthState: HealthTransitionBox = {
+    value: createHealthTransitionState(randomUUID()),
+    closed: false,
+  };
+  const allControlEvents: ControlEvent[] = [];
 
   const { artifactPathsResult, jsonlPath, transcriptWriter } = setupForegroundArtifacts(
     runtimeCwd,
@@ -2195,6 +2337,7 @@ export async function runSync(
         contextPressureCrossedThresholds,
         contextPressure,
         runtimeTracker,
+        healthState,
       },
     );
     result.activeRuntimeMs = runtimeTracker.finalize();
@@ -2218,6 +2361,7 @@ export async function runSync(
     }
     if (result.model) attemptedModels.push(result.model);
     else if (candidate) attemptedModels.push(candidate);
+    if (result.controlEvents) allControlEvents.push(...result.controlEvents);
     sumUsage(aggregateUsage, result.usage);
     totalToolCount += result.progressSummary?.toolCount ?? 0;
     totalDurationMs += normalizeActiveRuntimeMs(result.progressSummary?.durationMs) ?? 0;
@@ -2273,6 +2417,7 @@ export async function runSync(
     modelResolution = { ...modelResolution, resumed: result.modelIdentity };
   }
   result.modelResolution = modelResolution;
+  result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
   result.usage = aggregateUsage;
   result.contextUsage = aggregateContextUsage;
   result.contextPressure = contextPressure;
@@ -2333,7 +2478,7 @@ export async function runSync(
     result.finalOutput = "Interrupted. Waiting for explicit next action.";
     result.acceptance = interruptedAcceptance;
     if (result.progress) {
-      result.progress.activityState = undefined;
+      clearHealthForProgress(healthState, result.progress);
       result.progress.error = undefined;
     }
   }

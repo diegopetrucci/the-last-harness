@@ -127,6 +127,53 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("restores normalized per-child health projections without inventing legacy fields", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-health-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-health", "status.json"), {
+        runId: "run-health",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            activityState: "needs_attention",
+            idleEpisodeId: "  attempt-1~idle~1  ",
+            durableAttentionReasons: [
+              "tool_failures",
+              "context_pressure",
+              "tool_failures",
+              "unknown" as never,
+            ],
+            compaction: { reason: "threshold" },
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-health" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+
+      assert.equal(target.activityState, "needs_attention");
+      assert.equal(target.idleEpisodeId, "attempt-1~idle~1");
+      assert.deepEqual(target.durableAttentionReasons, ["tool_failures", "context_pressure"]);
+      assert.deepEqual(target.compaction, { reason: "threshold" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("carries safe project provenance/config into resume targets and rejects corruption", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-project-agent-"));
     try {
@@ -272,6 +319,10 @@ describe("async resume lookup", () => {
             thinking: "high",
             modelIdentity: identity,
             modelResolution: resolution,
+            activityState: "needs_attention",
+            idleEpisodeId: "attempt-result~idle~1",
+            durableAttentionReasons: ["context_pressure", "context_pressure"],
+            compaction: { reason: "threshold" },
           },
         ],
       });
@@ -281,6 +332,10 @@ describe("async resume lookup", () => {
       );
       assert.deepEqual(resultTarget.modelIdentity, identity);
       assert.deepEqual(resultTarget.modelResolution, resolution);
+      assert.equal(resultTarget.activityState, "needs_attention");
+      assert.equal(resultTarget.idleEpisodeId, "attempt-result~idle~1");
+      assert.deepEqual(resultTarget.durableAttentionReasons, ["context_pressure"]);
+      assert.deepEqual(resultTarget.compaction, { reason: "threshold" });
 
       writeJson(path.join(resultsDir, "run-result-model-strings.json"), {
         id: "run-result-model-strings",

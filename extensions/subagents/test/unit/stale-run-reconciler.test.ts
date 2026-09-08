@@ -112,6 +112,167 @@ describe("async stale-run reconciliation", () => {
     }
   });
 
+  it("clears only affected live health in a generated stale repair", () => {
+    const root = tempRoot("pi-stale-health-repair-");
+    try {
+      const asyncDir = path.join(root, "run-stale-health");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-stale-health",
+        mode: "parallel",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        currentStep: 1,
+        steps: [
+          {
+            agent: "finished",
+            status: "complete",
+            startedAt: 1000,
+            activityState: "needs_attention",
+            durableAttentionReasons: ["context_pressure"],
+          },
+          {
+            agent: "worker",
+            status: "running",
+            startedAt: 1000,
+            activityState: "needs_attention",
+            idleEpisodeId: "attempt-a~idle~1",
+            durableAttentionReasons: ["tool_failures"],
+            compaction: { reason: "overflow" },
+          },
+        ],
+      });
+
+      const repaired = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("ESRCH");
+        },
+        now: () => 2000,
+      });
+      assert.equal(repaired.repaired, true);
+      assert.equal(repaired.status?.state, "failed");
+      assert.equal(repaired.status?.steps?.[0]?.status, "complete");
+      assert.equal(repaired.status?.steps?.[0]?.activityState, "needs_attention");
+      assert.deepEqual(repaired.status?.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(repaired.status?.steps?.[1]?.status, "failed");
+      assert.equal(repaired.status?.steps?.[1]?.activityState, undefined);
+      assert.equal(repaired.status?.steps?.[1]?.idleEpisodeId, undefined);
+      assert.equal(repaired.status?.steps?.[1]?.compaction, undefined);
+      assert.deepEqual(repaired.status?.steps?.[1]?.durableAttentionReasons, ["tool_failures"]);
+
+      const result = JSON.parse(
+        fs.readFileSync(path.join(resultsDir, "run-stale-health.json"), "utf-8"),
+      );
+      assert.equal(result.results[0].success, true);
+      assert.equal(result.results[0].activityState, "needs_attention");
+      assert.deepEqual(result.results[0].durableAttentionReasons, ["context_pressure"]);
+      assert.equal(result.results[1].success, false);
+      assert.equal(result.results[1].activityState, undefined);
+      assert.equal(result.results[1].idleEpisodeId, undefined);
+      assert.equal(result.results[1].compaction, undefined);
+      assert.deepEqual(result.results[1].durableAttentionReasons, ["tool_failures"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing result bytes and finished sibling health during stale merge", () => {
+    const root = tempRoot("pi-stale-health-result-");
+    try {
+      const asyncDir = path.join(root, "run-stale-health-result");
+      const resultsDir = path.join(root, "results");
+      fs.mkdirSync(resultsDir, { recursive: true });
+      writeStatus(asyncDir, {
+        runId: "run-stale-health-result",
+        mode: "parallel",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        currentStep: 1,
+        steps: [
+          {
+            agent: "finished",
+            status: "complete",
+            startedAt: 1000,
+            activityState: "active_long_running",
+            durableAttentionReasons: ["context_pressure"],
+          },
+          {
+            agent: "worker",
+            status: "running",
+            startedAt: 1000,
+            activityState: "needs_attention",
+            idleEpisodeId: "attempt-a~idle~1",
+            durableAttentionReasons: ["tool_failures"],
+            compaction: { reason: "threshold" },
+          },
+        ],
+      });
+      const resultPath = path.join(resultsDir, "run-stale-health-result.json");
+      const resultContent = `${JSON.stringify(
+        {
+          id: "run-stale-health-result",
+          agent: "finished",
+          mode: "parallel",
+          success: false,
+          state: "failed",
+          summary: "one child failed",
+          results: [
+            {
+              agent: "finished",
+              success: true,
+              output: "done",
+              activityState: "active_long_running",
+              durableAttentionReasons: ["context_pressure"],
+            },
+            {
+              agent: "worker",
+              success: false,
+              output: "",
+              activityState: "needs_attention",
+              idleEpisodeId: "attempt-a~idle~1",
+              durableAttentionReasons: ["completion_guard"],
+              compaction: { reason: "manual" },
+            },
+          ],
+          exitCode: 1,
+          timestamp: 1500,
+          durationMs: 500,
+          asyncDir,
+        },
+        null,
+        2,
+      )}\n`;
+      fs.writeFileSync(resultPath, resultContent, "utf-8");
+
+      const repaired = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        now: () => 2000,
+      });
+
+      assert.equal(repaired.repaired, true);
+      assert.equal(repaired.status?.state, "failed");
+      assert.equal(repaired.status?.steps?.[0]?.status, "complete");
+      assert.equal(repaired.status?.steps?.[0]?.activityState, "active_long_running");
+      assert.deepEqual(repaired.status?.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(repaired.status?.steps?.[1]?.status, "failed");
+      assert.equal(repaired.status?.steps?.[1]?.activityState, undefined);
+      assert.equal(repaired.status?.steps?.[1]?.idleEpisodeId, undefined);
+      assert.equal(repaired.status?.steps?.[1]?.compaction, undefined);
+      assert.deepEqual(repaired.status?.steps?.[1]?.durableAttentionReasons, [
+        "tool_failures",
+        "completion_guard",
+      ]);
+      assert.equal(fs.readFileSync(resultPath, "utf-8"), resultContent);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses terminal child runtime evidence without charging the offline gap", () => {
     const root = tempRoot("pi-stale-run-result-runtime-");
     try {

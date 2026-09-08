@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithFloor, writeMetadata, } from "../../shared/artifacts.js";
@@ -26,11 +27,63 @@ import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervis
 import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-channel.js";
 import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, mergeContextUsageDiagnostics, resolveEffectiveContextWindow, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
+import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
 const artifactOutputByResult = new WeakMap();
 const acceptanceOutputByResult = new WeakMap();
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE = "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
 function emptyUsage() {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+}
+function ignoredHealthTransition(state) {
+    return {
+        state,
+        changed: false,
+        projectionChanged: false,
+        projection: state.activityState,
+        idleEpisodeStarted: false,
+        idleEpisodeEnded: false,
+        activeLongRunningNotice: false,
+        idleAttentionEligible: false,
+    };
+}
+function applyHealthProgressProjection(progress, state) {
+    progress.activityState = state.activityState;
+    progress.idleEpisodeId = state.idleEpisodeId;
+    progress.durableAttentionReasons = state.durableAttentionReasons.length
+        ? [...state.durableAttentionReasons]
+        : undefined;
+    progress.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
+function transitionHealthForProgress(box, progress, action) {
+    const closed = box.closed;
+    if (closed && action.type !== "durable_attention")
+        return ignoredHealthTransition(box.value);
+    const transition = transitionHealth(box.value, action);
+    const publishedState = closed
+        ? {
+            ...transition.state,
+            activityState: undefined,
+            idleEpisodeId: undefined,
+            compaction: undefined,
+        }
+        : transition.state;
+    const publishedTransition = closed
+        ? {
+            ...transition,
+            state: publishedState,
+            projection: undefined,
+            projectionChanged: false,
+        }
+        : transition;
+    box.value = publishedState;
+    applyHealthProgressProjection(progress, publishedState);
+    return publishedTransition;
+}
+function clearHealthForProgress(box, progress) {
+    if (box.closed)
+        return;
+    transitionHealthForProgress(box, progress, { type: "clear_ephemeral" });
+    box.closed = true;
 }
 function sumUsage(target, source) {
     target.input += source.input;
@@ -206,6 +259,10 @@ function snapshotProgress(progress) {
     return {
         ...progress,
         skills: progress.skills ? [...progress.skills] : undefined,
+        durableAttentionReasons: progress.durableAttentionReasons
+            ? [...progress.durableAttentionReasons]
+            : undefined,
+        compaction: progress.compaction ? { ...progress.compaction } : undefined,
         recentTools: progress.recentTools.map((tool) => ({ ...tool })),
         recentOutput: [...progress.recentOutput],
     };
@@ -406,8 +463,13 @@ function finalizeSingleAttemptOutput(input) {
             "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
         progress.status = "failed";
         progress.error = result.error;
+        const previousActivityState = progress.activityState;
+        transitionHealthForProgress(input.healthState, progress, {
+            type: "durable_attention",
+            reason: "completion_guard",
+        });
         emitControlEvent(buildControlEvent({
-            from: progress.activityState,
+            from: previousActivityState,
             to: "needs_attention",
             runId: options.runId ?? agent.name,
             agent: agent.name,
@@ -487,7 +549,7 @@ function finalizeSingleAttempt(input) {
                     requestSummary: result.pause?.summary,
                 });
         result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-        progress.activityState = undefined;
+        clearHealthForProgress(input.healthState, progress);
         progress.durationMs = Date.now() - startTime;
         result.progressSummary = {
             toolCount: progress.toolCount,
@@ -503,7 +565,7 @@ function finalizeSingleAttempt(input) {
         result.error = undefined;
         result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
         result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-        progress.activityState = undefined;
+        clearHealthForProgress(input.healthState, progress);
         progress.durationMs = Date.now() - startTime;
         result.progressSummary = {
             toolCount: progress.toolCount,
@@ -670,6 +732,9 @@ function finalizeForegroundArtifacts(input) {
     }
 }
 async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared) {
+    if (!shared.healthState.closed) {
+        shared.healthState.value = resetHealthTransitionState(shared.healthState.value, randomUUID()).state;
+    }
     const effectiveThinking = agent.thinking;
     const thinkingSuffixOptions = {
         availableModels: options.availableModels,
@@ -736,6 +801,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             lastActivityAt: now,
             error: message,
         };
+        applyHealthProgressProjection(progress, shared.healthState.value);
         shared.runtimeTracker.freeze(now);
         return {
             agent: agent.name,
@@ -801,9 +867,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         durationMs: 0,
         lastActivityAt: startTime,
     };
+    applyHealthProgressProjection(progress, shared.healthState.value);
+    const applyHealthTransition = (action) => transitionHealthForProgress(shared.healthState, progress, action);
     result.progress = progress;
     const attemptTimeout = resolveAttemptTimeout(options);
     if (attemptTimeout?.remainingMs === 0) {
+        clearHealthForProgress(shared.healthState, progress);
         shared.runtimeTracker.freeze(Date.now());
         result.exitCode = 1;
         result.timedOut = true;
@@ -910,7 +979,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 agent: agent.name,
                 requestSummary: pause.summary,
             });
-            progress.activityState = undefined;
+            clearHealthForProgress(shared.healthState, progress);
             progress.durationMs = Date.now() - startTime;
             try {
                 options.onSupervisorPauseTransition?.({
@@ -999,7 +1068,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             pendingControlEvents = [];
             return events;
         };
-        let activeLongRunningNotified = false;
         let pendingToolResult;
         const mutatingFailures = createMutatingFailureState();
         const mutatingFailureWindowMs = 5 * 60_000;
@@ -1007,8 +1075,24 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         const emitNeedsAttention = (now, input = {}) => {
             if (!controlConfig.enabled)
                 return false;
+            const reason = input.reason ?? "idle";
+            const durableReason = reason === "context_pressure" ||
+                reason === "tool_failures" ||
+                reason === "completion_guard";
+            if (shared.healthState.closed && !durableReason)
+                return false;
             const previous = progress.activityState;
-            progress.activityState = "needs_attention";
+            let transition;
+            if (reason === "context_pressure" ||
+                reason === "tool_failures" ||
+                reason === "completion_guard") {
+                transition = applyHealthTransition({ type: "durable_attention", reason });
+            }
+            else {
+                transition = applyHealthTransition({ type: "enter_idle" });
+                if (!transition.idleEpisodeStarted || !transition.idleAttentionEligible)
+                    return false;
+            }
             const event = buildControlEvent({
                 type: "needs_attention",
                 from: previous,
@@ -1021,7 +1105,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 message: input.message,
                 contextPressureSeverity: input.contextPressureSeverity,
                 contextPressureThreshold: input.contextPressureThreshold,
-                reason: input.reason ?? "idle",
+                reason,
+                idleEpisodeId: reason === "idle" ? transition.state.idleEpisodeId : undefined,
                 turns: result.usage.turns,
                 tokens: progress.tokens,
                 toolCount: progress.toolCount,
@@ -1031,16 +1116,15 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 recentFailureSummary: input.recentFailureSummary,
             });
             emitControlEvent(event);
-            return previous !== "needs_attention";
+            return transition.changed;
         };
         const emitActiveLongRunning = (now, reason) => {
-            if (!controlConfig.enabled ||
-                activeLongRunningNotified ||
-                progress.activityState === "needs_attention")
+            if (!controlConfig.enabled)
                 return false;
-            activeLongRunningNotified = true;
             const previous = progress.activityState;
-            progress.activityState = "active_long_running";
+            const transition = applyHealthTransition({ type: "active_long_running" });
+            if (!transition.activeLongRunningNotice)
+                return false;
             emitControlEvent(buildControlEvent({
                 type: "active_long_running",
                 from: previous,
@@ -1064,16 +1148,17 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         const updateActivityState = (now) => {
             if (!controlConfig.enabled)
                 return false;
-            const idleState = deriveActivityState({
-                config: controlConfig,
-                startedAt: startTime,
-                lastActivityAt: progress.lastActivityAt,
-                toolCallInFlight: Boolean(progress.currentTool),
-                now,
-            });
-            if (idleState === "needs_attention") {
-                return progress.activityState === "needs_attention" ? false : emitNeedsAttention(now);
-            }
+            const idleState = shared.healthState.value.compaction
+                ? undefined
+                : deriveActivityState({
+                    config: controlConfig,
+                    startedAt: startTime,
+                    lastActivityAt: progress.lastActivityAt,
+                    toolCallInFlight: Boolean(progress.currentTool),
+                    now,
+                });
+            if (idleState === "needs_attention")
+                return emitNeedsAttention(now);
             const activeReason = nextLongRunningTrigger(controlConfig, {
                 startedAt: startTime,
                 now,
@@ -1124,8 +1209,14 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             shared.transcriptWriter?.writeChildEvent(evt);
             const now = Date.now();
             progress.durationMs = now - startTime;
+            applyHealthTransition({ type: "validated_activity" });
+            if (evt.type === "compaction_start") {
+                applyHealthTransition({ type: "compaction_start", reason: evt.reason });
+            }
+            else if (evt.type === "compaction_end") {
+                applyHealthTransition({ type: "compaction_end" });
+            }
             progress.lastActivityAt = now;
-            updateActivityState(now);
             if (evt.type === "tool_execution_start") {
                 const toolArgs = evt.args ?? {};
                 let supervisorPause;
@@ -1232,6 +1323,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 updateActivityState(now);
                 fireUpdate();
             }
+            if (evt.type === "compaction_start" || evt.type === "compaction_end") {
+                updateActivityState(now);
+                fireUpdate();
+            }
             if (evt.type === "tool_result_end" && evt.message) {
                 result.messages ??= [];
                 appendBoundedChildMessage(result.messages, evt.message, Buffer.byteLength(line, "utf8"), messageLedger);
@@ -1293,6 +1388,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     return;
                 if (!claimChildTerminalReason(terminalReason, "timed_out"))
                     return;
+                clearHealthForProgress(shared.healthState, progress);
                 shared.runtimeTracker.freeze(Date.now());
                 result.timedOut = true;
                 result.error = boundChildError(attemptTimeout.message);
@@ -1325,6 +1421,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     return;
                 if (!claimChildTerminalReason(terminalReason, "output_limit"))
                     return;
+                clearHealthForProgress(shared.healthState, progress);
                 shared.runtimeTracker.freeze(Date.now());
                 protocolOutputLimit = limit;
                 const message = boundChildError(formatProtocolOutputLimit(limit));
@@ -1490,6 +1587,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (!result.error) {
                 result.error = boundChildError(error instanceof Error ? error.message : String(error));
             }
+            clearHealthForProgress(shared.healthState, progress);
             processClosed = true;
             shared.runtimeTracker.freeze(Date.now());
             void (async () => {
@@ -1508,6 +1606,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     pauseForSupervisor(pendingSupervisorPause);
                     return;
                 }
+                clearHealthForProgress(shared.healthState, progress);
                 shared.runtimeTracker.freeze(Date.now());
                 proc.kill("SIGTERM");
                 setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
@@ -1530,11 +1629,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 shared.runtimeTracker.freeze(Date.now());
                 interruptedByControl = true;
                 clearTimeoutTimers();
+                clearHealthForProgress(shared.healthState, progress);
                 progress.status = "running";
                 progress.durationMs = Date.now() - startTime;
                 result.interrupted = true;
                 result.finalOutput = "Interrupted. Waiting for explicit next action.";
-                progress.activityState = undefined;
                 fireUpdate();
                 void beginSupervisorPauseCleanup();
             };
@@ -1546,6 +1645,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }
         }
     });
+    applyHealthTransition({ type: "compaction_end" });
     result.exitCode = exitCode;
     return finalizeSingleAttempt({
         result,
@@ -1562,6 +1662,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         observedMutationAttempt,
         allControlEvents,
         emitControlEvent,
+        healthState: shared.healthState,
     });
 }
 export async function runSync(runtimeCwd, agents, agentName, task, options) {
@@ -1650,6 +1751,11 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     let totalToolCount = 0;
     let totalDurationMs = 0;
     let totalActiveRuntimeMs = 0;
+    const healthState = {
+        value: createHealthTransitionState(randomUUID()),
+        closed: false,
+    };
+    const allControlEvents = [];
     const { artifactPathsResult, jsonlPath, transcriptWriter } = setupForegroundArtifacts(runtimeCwd, agentName, taskWithAcceptance, options);
     let lastResult;
     let aggregateContextUsage;
@@ -1676,6 +1782,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             contextPressureCrossedThresholds,
             contextPressure,
             runtimeTracker,
+            healthState,
         });
         result.activeRuntimeMs = runtimeTracker.finalize();
         result.activeRuntimeCheckpointAt =
@@ -1698,6 +1805,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             attemptedModels.push(result.model);
         else if (candidate)
             attemptedModels.push(candidate);
+        if (result.controlEvents)
+            allControlEvents.push(...result.controlEvents);
         sumUsage(aggregateUsage, result.usage);
         totalToolCount += result.progressSummary?.toolCount ?? 0;
         totalDurationMs += normalizeActiveRuntimeMs(result.progressSummary?.durationMs) ?? 0;
@@ -1748,6 +1857,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         modelResolution = { ...modelResolution, resumed: result.modelIdentity };
     }
     result.modelResolution = modelResolution;
+    result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
     result.usage = aggregateUsage;
     result.contextUsage = aggregateContextUsage;
     result.contextPressure = contextPressure;
@@ -1800,7 +1910,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         result.finalOutput = "Interrupted. Waiting for explicit next action.";
         result.acceptance = interruptedAcceptance;
         if (result.progress) {
-            result.progress.activityState = undefined;
+            clearHealthForProgress(healthState, result.progress);
             result.progress.error = undefined;
         }
     }

@@ -155,6 +155,7 @@ extensions/subagents/src/runs/shared/heartbeat-controller.js linguist-generated=
 extensions/subagents/src/runs/shared/heartbeat-logger.js linguist-generated=true
 extensions/subagents/src/runs/shared/heartbeat-state.js linguist-generated=true
 extensions/subagents/src/runs/shared/foreground-interrupts.js linguist-generated=true
+extensions/subagents/src/runs/shared/health-transition.js linguist-generated=true
 extensions/subagents/src/runs/shared/lifecycle-privacy.js linguist-generated=true
 extensions/subagents/src/runs/shared/lifecycle-state.js linguist-generated=true
 extensions/subagents/src/runs/shared/long-running-guard.js linguist-generated=true

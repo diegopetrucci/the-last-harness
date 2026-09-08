@@ -39,6 +39,7 @@ import {
   waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForAsyncStatusPredicate,
+  waitForMarker,
   waitForMockPiCall,
   writePackageSkill,
 } from "../support/async-execution-helpers.ts";
@@ -305,10 +306,20 @@ describe("async execution utilities", () => {
           status.state === "paused" &&
           status.lifecycle?.continuation?.claimToken === claimToken &&
           status.steps?.[0]?.contextPressure?.severity === "warning" &&
-          status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning"
+          status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning" &&
+          status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true &&
+          status.activityState === undefined &&
+          status.steps?.[0]?.activityState === undefined &&
+          status.steps?.[0]?.idleEpisodeId === undefined &&
+          status.steps?.[0]?.compaction === undefined
         );
       });
       const observedStatus = observed.status;
+      assert.deepEqual(observedStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(observedStatus.activityState, undefined);
+      assert.equal(observedStatus.steps?.[0]?.activityState, undefined);
+      assert.equal(observedStatus.steps?.[0]?.idleEpisodeId, undefined);
+      assert.equal(observedStatus.steps?.[0]?.compaction, undefined);
       const pressureNotice = observed.eventText
         .split("\n")
         .map((line) => {
@@ -342,6 +353,15 @@ describe("async execution utilities", () => {
       assert.equal(finalStatus.lifecycle?.continuation?.claimToken, claimToken);
       assert.equal(finalStatus.steps?.[0]?.contextPressure?.severity, "warning");
       assert.deepEqual(finalStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+      assert.deepEqual(finalStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(finalStatus.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
+      assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
+      assert.deepEqual(resultPayload.results?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(resultPayload.results?.[0]?.activityState, undefined);
+      assert.equal(resultPayload.results?.[0]?.idleEpisodeId, undefined);
+      assert.equal(resultPayload.results?.[0]?.compaction, undefined);
       const controlEvents = observed.eventText
         .split("\n")
         .filter(Boolean)
@@ -2923,6 +2943,797 @@ describe("async execution utilities", () => {
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.state, "complete");
     assert.equal(payload.success, true);
+  });
+
+  it("background idle episodes recover only on validated activity and dedupe raw-noise freshness", async () => {
+    const markerDir = path.join(tempDir, "async-idle-recovery-markers");
+    fs.mkdirSync(markerDir, { recursive: true });
+    const firstIdleRelease = path.join(markerDir, "first-idle-release");
+    const rawDone = path.join(markerDir, "raw-done");
+    const validatedRelease = path.join(markerDir, "validated-release");
+    const secondIdleRelease = path.join(markerDir, "second-idle-release");
+    mockPi.onCall({
+      steps: [
+        { jsonl: [events.assistantMessage("initial progress", "mock/test-model", "tool_use")] },
+        { waitForMarker: firstIdleRelease },
+        { stderr: "raw diagnostic noise\\n", writeMarkerAfter: rawDone },
+        { waitForMarker: validatedRelease },
+        { jsonl: [events.assistantMessage("validated progress", "mock/test-model", "tool_use")] },
+        { waitForMarker: secondIdleRelease },
+        { jsonl: [events.assistantMessage("final progress")] },
+      ],
+    });
+
+    const id = `async-idle-recovery-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Investigate behavior",
+      agentConfig: makeAgent("scout"),
+      ctx: {
+        pi: { events: { emit() {} } },
+        cwd: tempDir,
+        currentSessionId: "session-idle-recovery",
+      },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        activeNoticeAfterTurns: 999_999,
+        activeNoticeAfterMs: 999_999,
+        activeNoticeAfterTokens: 999_999,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["active_long_running", "needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+
+    const firstObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      const controls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+      return (
+        controls.length === 1 &&
+        status.activityState === "needs_attention" &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        typeof status.steps?.[0]?.idleEpisodeId === "string"
+      );
+    });
+    const firstIdleControl = firstObserved.eventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    const firstIdleTs = firstIdleControl?.event?.ts as number;
+    const firstEpisodeId = firstObserved.status.steps?.[0]?.idleEpisodeId;
+    assert.equal(typeof firstEpisodeId, "string");
+    assert.equal(firstIdleControl?.event?.idleEpisodeId, firstEpisodeId);
+    fs.writeFileSync(firstIdleRelease, "", "utf-8");
+
+    await waitForMarker(rawDone);
+    const rawObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      const controls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+      return (
+        controls.length === 1 &&
+        status.steps?.[0]?.idleEpisodeId === firstEpisodeId &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        (status.steps?.[0]?.lastActivityAt ?? 0) > firstIdleTs
+      );
+    });
+    assert.equal(rawObserved.status.activityState, "needs_attention");
+    assert.equal(rawObserved.status.steps?.[0]?.idleEpisodeId, firstEpisodeId);
+    fs.writeFileSync(validatedRelease, "", "utf-8");
+
+    const secondObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      const controls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+      return (
+        controls.length === 2 &&
+        status.activityState === "needs_attention" &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        typeof status.steps?.[0]?.idleEpisodeId === "string" &&
+        status.steps?.[0]?.idleEpisodeId !== firstEpisodeId
+      );
+    });
+    const secondEpisodeId = secondObserved.status.steps?.[0]?.idleEpisodeId;
+    assert.equal(typeof secondEpisodeId, "string");
+    assert.notEqual(secondEpisodeId, firstEpisodeId);
+    fs.writeFileSync(secondIdleRelease, "", "utf-8");
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const finalStatus = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const controls = fs
+      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    assert.equal(payload.state, "complete");
+    assert.equal(payload.success, true);
+    assert.equal(controls.length, 2);
+    assert.notEqual(controls[0]?.event?.idleEpisodeId, controls[1]?.event?.idleEpisodeId);
+    assert.equal(finalStatus.activityState, undefined);
+    assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
+    assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
+  });
+
+  it("background compaction suppresses idle but preserves long-running and post-operation stall detection", async () => {
+    for (const variant of [
+      { name: "normal", reason: "manual" as const, options: {} },
+      { name: "abort", reason: "threshold" as const, options: { aborted: true, willRetry: true } },
+      {
+        name: "failure",
+        reason: "overflow" as const,
+        options: { aborted: false, willRetry: false, errorMessage: "compaction failed" },
+      },
+    ]) {
+      mockPi.reset();
+      const markerDir = path.join(tempDir, `async-compaction-${variant.name}`);
+      fs.mkdirSync(markerDir, { recursive: true });
+      const started = path.join(markerDir, "started");
+      const release = path.join(markerDir, "release");
+      const idleRelease = path.join(markerDir, "idle-release");
+      mockPi.onCall({
+        steps: [
+          { jsonl: [events.assistantMessage("before compaction", "mock/test-model", "tool_use")] },
+          {
+            jsonl: [events.compactionStart(variant.reason)],
+            writeMarkerAfter: started,
+          },
+          { waitForMarker: release },
+          { jsonl: [events.compactionEnd(variant.reason, variant.options)] },
+          { waitForMarker: idleRelease },
+          { jsonl: [events.assistantMessage("after compaction")] },
+        ],
+      });
+      const id = `async-compaction-${variant.name}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, id);
+      executeAsyncSingle(id, {
+        agent: "scout",
+        task: "Investigate behavior",
+        agentConfig: makeAgent("scout"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 200,
+          activeNoticeAfterMs: 200,
+          activeNoticeAfterTurns: 999_999,
+          activeNoticeAfterTokens: 999_999,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["active_long_running", "needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+      });
+      await waitForMarker(started);
+      const activeObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+        const hasActive = eventText.includes('"type":"active_long_running"');
+        const hasIdle = eventText.includes('"reason":"idle"');
+        return (
+          hasActive &&
+          !hasIdle &&
+          status.activityState === "active_long_running" &&
+          status.steps?.[0]?.activityState === "active_long_running" &&
+          status.steps?.[0]?.compaction?.reason === variant.reason
+        );
+      });
+      assert.equal(activeObserved.status.steps?.[0]?.compaction?.reason, variant.reason);
+      fs.writeFileSync(release, "", "utf-8");
+
+      const idleObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+        return (
+          eventText.includes('"reason":"idle"') &&
+          status.activityState === "needs_attention" &&
+          status.steps?.[0]?.activityState === "needs_attention" &&
+          status.steps?.[0]?.compaction === undefined
+        );
+      });
+      assert.equal(idleObserved.status.steps?.[0]?.compaction, undefined);
+      fs.writeFileSync(idleRelease, "", "utf-8");
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const finalStatus = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      assert.equal(payload.success, true);
+      assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
+      assert.equal(finalStatus.steps?.[0]?.activityState, "active_long_running");
+    }
+  });
+
+  it("background cleans up compaction without an end event before fallback idle recovery", async () => {
+    const markerDir = path.join(tempDir, "async-no-end-fallback-markers");
+    fs.mkdirSync(markerDir, { recursive: true });
+    const firstCompactionStarted = path.join(markerDir, "first-compaction-started");
+    const firstRelease = path.join(markerDir, "first-release");
+    const fallbackStarted = path.join(markerDir, "fallback-started");
+    const fallbackIdleRelease = path.join(markerDir, "fallback-idle-release");
+    mockPi.onCall({
+      exitCode: 1,
+      steps: [
+        {
+          jsonl: [events.compactionStart("manual")],
+          writeMarkerAfter: firstCompactionStarted,
+        },
+        { waitForMarker: firstRelease },
+        {
+          jsonl: [
+            {
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "rate limit exceeded" }],
+                model: "openai/gpt-5-mini",
+                errorMessage: "rate limit exceeded",
+                stopReason: "error",
+                usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    mockPi.onCall({
+      steps: [
+        {
+          jsonl: [events.assistantMessage("fallback still working", "mock/test-model", "tool_use")],
+          writeMarkerAfter: fallbackStarted,
+        },
+        { waitForMarker: fallbackIdleRelease },
+        { jsonl: [events.assistantMessage("fallback completed")] },
+      ],
+    });
+    const id = `async-no-end-fallback-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Investigate behavior",
+      agentConfig: makeAgent("scout", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        activeNoticeAfterTurns: 999_999,
+        activeNoticeAfterMs: 999_999,
+        activeNoticeAfterTokens: 999_999,
+        notifyOn: ["active_long_running", "needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+
+    const activeObserved = await waitForAsyncStatusPredicate(
+      asyncDir,
+      (status) =>
+        status.steps?.[0]?.compaction?.reason === "manual" &&
+        status.steps?.[0]?.activityState === undefined &&
+        status.steps?.[0]?.idleEpisodeId === undefined,
+      "unpaired compaction before background fallback",
+    );
+    assert.equal(activeObserved.activityState, undefined);
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"),
+      /"reason":"idle"/,
+    );
+    fs.writeFileSync(firstRelease, "", "utf-8");
+
+    await waitForMarker(fallbackStarted);
+    const idleObserved = await waitForAsyncControlCondition(
+      asyncDir,
+      (status, eventText) => {
+        const idleControls = eventText
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .filter(
+            (record) => record.type === "subagent.control" && record.event?.reason === "idle",
+          );
+        return (
+          idleControls.length === 1 &&
+          status.activityState === "needs_attention" &&
+          status.steps?.[0]?.activityState === "needs_attention" &&
+          typeof status.steps?.[0]?.idleEpisodeId === "string" &&
+          status.steps?.[0]?.compaction === undefined
+        );
+      },
+      scaleTestTimeout(10_000),
+    );
+    const idleControls = idleObserved.eventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    assert.equal(idleControls.length, 1);
+    assert.equal(
+      idleControls[0]?.event?.idleEpisodeId,
+      idleObserved.status.steps?.[0]?.idleEpisodeId,
+    );
+    fs.writeFileSync(fallbackIdleRelease, "", "utf-8");
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const finalStatus = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.state, "complete");
+    assert.equal(payload.success, true);
+    assert.equal(payload.results?.[0]?.activityState, undefined);
+    assert.equal(payload.results?.[0]?.idleEpisodeId, undefined);
+    assert.equal(payload.results?.[0]?.compaction, undefined);
+    assert.equal(payload.results?.[0]?.durableAttentionReasons, undefined);
+    assert.equal(finalStatus.activityState, undefined);
+    assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
+    assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
+    assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
+    assert.equal(finalStatus.steps?.[0]?.durableAttentionReasons, undefined);
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    assert.doesNotMatch(eventText, /compaction_end/);
+    const finalIdleControls = eventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    assert.equal(finalIdleControls.length, 1);
+  });
+
+  it("clears background unpaired compaction during interrupt and timeout cleanup", async () => {
+    for (const variant of ["interrupt", "timeout"] as const) {
+      mockPi.reset();
+      const markerDir = path.join(tempDir, `async-no-end-${variant}-markers`);
+      fs.mkdirSync(markerDir, { recursive: true });
+      const compactionStarted = path.join(markerDir, "compaction-started");
+      const release = path.join(markerDir, "release");
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [
+              {
+                type: "message_end",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: "near context limit" }],
+                  provider: "mock",
+                  model: "mock/test-model",
+                  stopReason: "toolUse",
+                  usage: {
+                    totalTokens: 800,
+                    input: 700,
+                    output: 100,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                  },
+                },
+              },
+            ],
+          },
+          {
+            jsonl: [events.compactionStart("threshold")],
+            writeMarkerAfter: compactionStarted,
+          },
+          { waitForMarker: release },
+        ],
+      });
+      const id = `async-no-end-${variant}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, id);
+      executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Implement the approved fixes",
+        agentConfig: makeAgent("worker", { model: "mock/test-model" }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+        availableModels: [
+          { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+        ],
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+        ...(variant === "timeout" ? { timeoutMs: scaleTestTimeout(3_000) } : {}),
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 200,
+          activeNoticeAfterTurns: 999_999,
+          activeNoticeAfterMs: 999_999,
+          activeNoticeAfterTokens: 999_999,
+          notifyOn: ["active_long_running", "needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+      });
+
+      const activeObserved = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) =>
+          status.steps?.[0]?.compaction?.reason === "threshold" &&
+          status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true &&
+          status.activityState === "needs_attention" &&
+          status.steps?.[0]?.activityState === "needs_attention" &&
+          status.steps?.[0]?.idleEpisodeId === undefined,
+        `${variant} unpaired compaction before cleanup`,
+      );
+      assert.equal(activeObserved.activityState, "needs_attention");
+      assert.equal(
+        activeObserved.steps?.[0]?.durableAttentionReasons?.includes("context_pressure"),
+        true,
+      );
+      if (variant === "interrupt") requestAsyncInterrupt(asyncDir);
+      const cleanupObserved = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) =>
+          status.activityState === undefined &&
+          status.steps?.[0]?.activityState === undefined &&
+          status.steps?.[0]?.idleEpisodeId === undefined &&
+          status.steps?.[0]?.compaction === undefined &&
+          status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true,
+        `${variant} cleared unpaired compaction`,
+      );
+      assert.equal(cleanupObserved.steps?.[0]?.compaction, undefined);
+
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const finalStatus = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      if (variant === "interrupt") {
+        assert.equal(payload.state, "paused");
+        assert.equal(payload.results?.[0]?.interrupted, true);
+        assert.equal(payload.results?.[0]?.terminationReason, "paused");
+        assert.equal(finalStatus.state, "paused");
+        assert.equal(finalStatus.steps?.[0]?.status, "paused");
+      } else {
+        assert.equal(payload.state, "failed");
+        assert.equal(payload.results?.[0]?.timedOut, true);
+        assert.equal(payload.results?.[0]?.terminationReason, "timed_out");
+        assert.equal(finalStatus.state, "failed");
+        assert.equal(finalStatus.steps?.[0]?.status, "failed");
+      }
+      assert.equal(payload.results?.[0]?.activityState, undefined);
+      assert.equal(payload.results?.[0]?.idleEpisodeId, undefined);
+      assert.equal(payload.results?.[0]?.compaction, undefined);
+      assert.deepEqual(payload.results?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(finalStatus.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
+      assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
+      assert.deepEqual(finalStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.doesNotMatch(eventText, /compaction_end/);
+      const controls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control");
+      assert.equal(
+        controls.filter((record) => record.event?.reason === "context_pressure").length,
+        1,
+      );
+      assert.equal(controls.filter((record) => record.event?.reason === "idle").length, 0);
+    }
+  });
+
+  it("background durable health survives validated activity and isolates per-child state", async () => {
+    const markerDir = path.join(tempDir, "async-durable-health-markers");
+    fs.mkdirSync(markerDir, { recursive: true });
+    const release = path.join(markerDir, "release");
+    mockPi.onCall({
+      matchArgIncludes: "Implement the approved fixes",
+      steps: [
+        {
+          jsonl: [
+            {
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "near context limit" }],
+                provider: "mock",
+                model: "test-model",
+                stopReason: "toolUse",
+                usage: {
+                  totalTokens: 950,
+                  input: 900,
+                  output: 50,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  cost: { total: 0 },
+                },
+              },
+            },
+            events.toolStart("edit", { path: "src/health.ts" }),
+            events.toolEnd("edit"),
+            events.toolResult("edit", "No exact match", true),
+            events.toolStart("edit", { path: "src/health.ts" }),
+            events.toolEnd("edit"),
+            events.toolResult("edit", "No exact match", true),
+            events.toolStart("edit", { path: "src/health.ts" }),
+            events.toolEnd("edit"),
+            events.toolResult("edit", "No exact match", true),
+          ],
+        },
+        {
+          jsonl: [
+            events.assistantMessage("validated durable state", "mock/test-model", "tool_use"),
+          ],
+        },
+        { waitForMarker: release },
+        { jsonl: [events.assistantMessage("final durable state")] },
+      ],
+    });
+    mockPi.onCall({
+      matchArgIncludes: "Investigate behavior",
+      delay: 1_500,
+      jsonl: [events.assistantMessage("sibling remains healthy")],
+    });
+    const id = `async-durable-health-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "worker", task: "Implement the approved fixes" },
+        { agent: "scout", task: "Investigate behavior" },
+      ],
+      agents: [makeAgent("worker"), makeAgent("scout")],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      availableModels: [
+        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+      ],
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        activeNoticeAfterTurns: 999_999,
+        activeNoticeAfterMs: 999_999,
+        activeNoticeAfterTokens: 999_999,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["active_long_running", "needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    const durableObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      return (
+        eventText.includes('"reason":"context_pressure"') &&
+        eventText.includes('"reason":"tool_failures"') &&
+        status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true &&
+        status.steps?.[0]?.durableAttentionReasons?.includes("tool_failures") === true &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        status.steps?.[1]?.activityState !== "needs_attention"
+      );
+    });
+    assert.deepEqual(durableObserved.status.steps?.[0]?.durableAttentionReasons, [
+      "context_pressure",
+      "tool_failures",
+    ]);
+    assert.notEqual(durableObserved.status.steps?.[1]?.activityState, "needs_attention");
+    assert.equal(durableObserved.status.steps?.[1]?.durableAttentionReasons, undefined);
+    fs.writeFileSync(release, "", "utf-8");
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const finalStatus = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.success, true);
+    assert.deepEqual(payload.results?.[0]?.durableAttentionReasons, [
+      "context_pressure",
+      "tool_failures",
+    ]);
+    assert.deepEqual(finalStatus.steps?.[0]?.durableAttentionReasons, [
+      "context_pressure",
+      "tool_failures",
+    ]);
+    assert.equal(finalStatus.steps?.[0]?.activityState, "needs_attention");
+    assert.equal(finalStatus.steps?.[1]?.durableAttentionReasons, undefined);
+  });
+
+  it("records background completion-guard attention durably", async () => {
+    mockPi.onCall({ output: "I will plan the implementation before making edits." });
+    const id = `async-completion-guard-health-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Implement the approved fixes",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        notifyOn: ["active_long_running", "needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    assert.equal(payload.success, false);
+    assert.match(eventText, /"reason":"completion_guard"/);
+    assert.deepEqual(payload.results?.[0]?.durableAttentionReasons, ["completion_guard"]);
+    assert.deepEqual(status.steps?.[0]?.durableAttentionReasons, ["completion_guard"]);
+    assert.equal(status.steps?.[0]?.activityState, "needs_attention");
+  });
+
+  it("resets background idle episode identity across fallback attempts", async () => {
+    const markerDir = path.join(tempDir, "async-fallback-health-markers");
+    fs.mkdirSync(markerDir, { recursive: true });
+    const firstRelease = path.join(markerDir, "first-release");
+    const secondRelease = path.join(markerDir, "second-release");
+    mockPi.onCall({
+      exitCode: 1,
+      steps: [
+        { jsonl: [events.assistantMessage("first attempt", "mock/test-model", "tool_use")] },
+        { waitForMarker: firstRelease },
+        {
+          jsonl: [
+            {
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "rate limit exceeded" }],
+                model: "openai/gpt-5-mini",
+                errorMessage: "rate limit exceeded",
+                stopReason: "error",
+                usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    mockPi.onCall({
+      steps: [
+        { jsonl: [events.assistantMessage("fallback attempt", "mock/test-model", "tool_use")] },
+        { waitForMarker: secondRelease },
+        { jsonl: [events.assistantMessage("fallback completed")] },
+      ],
+    });
+    const id = `async-fallback-health-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Investigate behavior",
+      agentConfig: makeAgent("scout", {
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        activeNoticeAfterTurns: 999_999,
+        activeNoticeAfterMs: 999_999,
+        activeNoticeAfterTokens: 999_999,
+        notifyOn: ["active_long_running", "needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+    const secondObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      const idleControls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+      return (
+        idleControls.length === 1 &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        typeof status.steps?.[0]?.idleEpisodeId === "string"
+      );
+    });
+    const firstIdleId = secondObserved.status.steps?.[0]?.idleEpisodeId;
+    const firstIdleControl = secondObserved.eventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    fs.writeFileSync(firstRelease, "", "utf-8");
+    const secondIdleObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+      const idleControls = eventText
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+      return (
+        idleControls.length === 2 &&
+        status.steps?.[0]?.activityState === "needs_attention" &&
+        typeof status.steps?.[0]?.idleEpisodeId === "string" &&
+        status.steps?.[0]?.idleEpisodeId !== firstIdleId
+      );
+    });
+    fs.writeFileSync(secondRelease, "", "utf-8");
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    const idleControls = eventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    assert.equal(payload.success, true);
+    assert.equal(idleControls.length, 2);
+    assert.notEqual(idleControls[0]?.event?.idleEpisodeId, idleControls[1]?.event?.idleEpisodeId);
+    assert.notEqual(
+      firstIdleControl?.event?.idleEpisodeId,
+      secondIdleObserved.status.steps?.[0]?.idleEpisodeId,
+    );
   });
 
   it("background runs escalate repeated mutating tool failures", async () => {

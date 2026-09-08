@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -48,6 +49,8 @@ import {
   type ContextPressureProjection,
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
+  type DurableAttentionReason,
+  type CompactionReason,
   type ModelAttempt,
   type NestedRouteInfo,
   type NestedRunSummary,
@@ -195,6 +198,14 @@ import {
   formatContextPressureGuidance,
 } from "../../shared/context-diagnostics.ts";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
+import {
+  createHealthTransitionState,
+  resetHealthTransitionState,
+  transitionHealth,
+  type HealthTransitionAction,
+  type HealthTransitionResult,
+  type HealthTransitionState,
+} from "../shared/health-transition.ts";
 
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
   "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
@@ -207,6 +218,10 @@ interface StepResult {
   stderr?: string;
   stderrTruncated?: boolean;
   protocolOutputLimit?: ProtocolOutputLimit;
+  activityState?: ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: DurableAttentionReason[];
+  compaction?: { reason: CompactionReason };
   success: boolean;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals;
@@ -1219,6 +1234,7 @@ interface SingleStepContext {
   nestedRoute?: NestedRouteInfo;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
   onChildEvent?: (event: ChildEvent) => void;
+  onAttemptEnd?: () => void;
   onChildProtocolOutputLimit?: (limit: ProtocolOutputLimit) => void;
   skipAcceptance?: () => boolean;
   /** Shared runner-owned tracker used by checkpoints and final settlement. */
@@ -2186,34 +2202,39 @@ async function runSingleStep(
     }
     // Keep this await in runSingleStep: settling a child attempt must not gain a
     // promise continuation from an extracted async helper.
-    const run = await runPiStreaming(
-      attempt.args!,
-      step.cwd ?? stepCtx.cwd,
-      stepCtx.outputFile,
-      attempt.env,
-      stepCtx.piPackageRoot,
-      stepCtx.piArgv1,
-      step.maxSubagentDepth,
-      {
-        eventsPath: setup.eventsPath,
-        runId: stepCtx.id,
-        stepIndex: stepCtx.flatIndex,
-        agent: step.agent,
-        includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
-      },
-      stepCtx.registerInterrupt,
-      stepCtx.onChildEvent,
-      setup.transcriptWriter,
-      stepCtx.registerTimeout,
-      stepCtx.timeoutMessage,
-      stepCtx.onChildProtocolOutputLimit,
-      {
-        restored: setup.restoredSession,
-        configuredModel: candidate,
-        contextWindow: contextWindowForModel(candidate, step.contextWindows),
-        contextWindows: step.contextWindows,
-      },
-    );
+    let run: RunPiStreamingResult;
+    try {
+      run = await runPiStreaming(
+        attempt.args!,
+        step.cwd ?? stepCtx.cwd,
+        stepCtx.outputFile,
+        attempt.env,
+        stepCtx.piPackageRoot,
+        stepCtx.piArgv1,
+        step.maxSubagentDepth,
+        {
+          eventsPath: setup.eventsPath,
+          runId: stepCtx.id,
+          stepIndex: stepCtx.flatIndex,
+          agent: step.agent,
+          includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
+        },
+        stepCtx.registerInterrupt,
+        stepCtx.onChildEvent,
+        setup.transcriptWriter,
+        stepCtx.registerTimeout,
+        stepCtx.timeoutMessage,
+        stepCtx.onChildProtocolOutputLimit,
+        {
+          restored: setup.restoredSession,
+          configuredModel: candidate,
+          contextWindow: contextWindowForModel(candidate, step.contextWindows),
+          contextWindows: step.contextWindows,
+        },
+      );
+    } finally {
+      stepCtx.onAttemptEnd?.();
+    }
     const assessment = assessSingleStepAttempt({
       step,
       state,
@@ -2284,6 +2305,15 @@ async function runSingleStep(
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
   exitCode?: number | null;
 };
+
+function applyHealthStatusProjection(step: RunnerStatusStep, state: HealthTransitionState): void {
+  step.activityState = state.activityState;
+  step.idleEpisodeId = state.idleEpisodeId;
+  step.durableAttentionReasons = state.durableAttentionReasons.length
+    ? [...state.durableAttentionReasons]
+    : undefined;
+  step.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
 
 function projectInitialModelFallbackFilterNotice(notice: string | undefined): {
   modelFallbackNotice?: string;
@@ -2729,6 +2759,13 @@ async function runSubagentWithInput(
   // activity/heartbeat state: accounting checkpoints measure execution time,
   // while activity projections describe user-visible liveness.
   const activeRuntimeTrackers = new Map<number, ActiveRuntimeTracker>();
+  const healthStates: Array<HealthTransitionState | undefined> = initialStatusSteps.map(
+    () => undefined,
+  );
+  // A lifecycle cleanup closes a live health segment. Child callbacks can still
+  // arrive while the process drains, so keep the closure in runner memory rather
+  // than relying only on the serialized projection being cleared.
+  const closedHealthSteps = new Set<number>();
   if (config.continuationSource) {
     const gate = finalizeLifecycleContinuationLaunch(
       config.continuationSource.asyncDir,
@@ -3072,8 +3109,12 @@ async function runSubagentWithInput(
       return;
     if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
     const now = Date.now();
-    // Output limits are terminal for this segment. Freeze before publishing the
-    // failure so child teardown time cannot enter the continuation budget.
+    // Output limits are terminal for this segment. End any in-flight compaction
+    // before publishing the failure so cleanup cannot leak operation state.
+    endAllStepCompactions();
+    clearRunningStepHealth();
+    // Freeze before publishing the failure so child teardown time cannot enter
+    // the continuation budget.
     checkpointActiveRuntime(now, true);
     const message = boundChildError(formatProtocolOutputLimit(limit));
     statusPayload.state = "failed";
@@ -3381,6 +3422,29 @@ async function runSubagentWithInput(
         : {}),
     };
     Object.assign(statusPayload, adoptedStatus);
+    // The child may still drain after a concurrent lifecycle owner publishes a
+    // terminal record. Close the corresponding in-memory health segments too;
+    // otherwise a late event could be merged back over the adopted ephemeral
+    // cleanup. Durable reasons remain sourced from the adopted status.
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      const adoptedStep = statusPayload.steps[index];
+      if (
+        !adoptedStep ||
+        adoptedStep.status === "running" ||
+        adoptedStep.status === "pending" ||
+        adoptedStep.status === "pausing"
+      )
+        continue;
+      const currentHealth = ensureStepHealthState(index);
+      healthStates[index] = {
+        ...currentHealth,
+        activityState: undefined,
+        idleEpisodeId: undefined,
+        compaction: undefined,
+        durableAttentionReasons: [...(adoptedStep.durableAttentionReasons ?? [])],
+      };
+      closedHealthSteps.add(index);
+    }
     // INVARIANT — once a concurrent terminal state has been adopted, this run is
     // over and disk is authoritative:
     //
@@ -3425,10 +3489,12 @@ async function runSubagentWithInput(
       requestedAt: pause.requestedAt ?? Date.now(),
     };
     const now = Date.now();
-    // Freeze each live segment before publishing the pausing lifecycle state.
-    // The transition below must copy this checkpoint, not add another wall-time
-    // interval to it.
+    // End operation projections before freezing and publishing the pausing
+    // lifecycle state. The transition below must copy this checkpoint, not add
+    // another wall-time interval to it.
+    endAllStepCompactions();
     checkpointActiveRuntime(now, true);
+    clearRunningStepHealth();
     // The final checkpoint may discover that another lifecycle owner already
     // committed a terminal state. Do not issue the pause transition afterward:
     // it would use the adopted generation and accidentally downgrade that
@@ -3465,6 +3531,8 @@ async function runSubagentWithInput(
               activeRuntimeMs,
               activeRuntimeCheckpointAt: now,
               activityState: undefined,
+              idleEpisodeId: undefined,
+              compaction: undefined,
               interruptRequestedAt: now,
               ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
               ...(index === requesterIndex
@@ -3576,7 +3644,6 @@ async function runSubagentWithInput(
     return lastActivityAt;
   };
   const emittedControlEventKeys = new Set<string>();
-  const activeLongRunningSteps = new Set<number>();
   const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
   // Runtime-reported identity is trusted only after exact registry validation and
   // is scoped to the currently dispatched child attempt. A fallback invokes
@@ -3625,11 +3692,114 @@ async function runSubagentWithInput(
     statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
     statusPayload.currentPath = activeStep?.currentPath;
   };
-  const maybeEmitActiveLongRunning = (flatIndex: number, now: number): boolean => {
-    if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex)) return false;
+  const syncTopLevelHealthProjection = (): boolean => {
+    const nextRunState = statusPayload.steps.some(
+      (step) => step.activityState === "needs_attention",
+    )
+      ? "needs_attention"
+      : statusPayload.steps.some((step) => step.activityState === "active_long_running")
+        ? "active_long_running"
+        : undefined;
+    const changed = nextRunState !== currentActivityState;
+    currentActivityState = nextRunState;
+    statusPayload.activityState = nextRunState;
+    return changed;
+  };
+  const ensureStepHealthState = (flatIndex: number): HealthTransitionState => {
+    const current = healthStates[flatIndex];
+    if (current) return current;
+    const persistedReasons = statusPayload.steps[flatIndex]?.durableAttentionReasons;
+    const created = createHealthTransitionState(randomUUID());
+    healthStates[flatIndex] = persistedReasons?.length
+      ? { ...created, durableAttentionReasons: [...persistedReasons] }
+      : created;
+    return healthStates[flatIndex]!;
+  };
+  const ignoredHealthTransition = (state: HealthTransitionState): HealthTransitionResult => ({
+    state,
+    changed: false,
+    projectionChanged: false,
+    projection: state.activityState,
+    idleEpisodeStarted: false,
+    idleEpisodeEnded: false,
+    activeLongRunningNotice: false,
+    idleAttentionEligible: false,
+  });
+  const transitionStepHealth = (
+    flatIndex: number,
+    action: HealthTransitionAction,
+  ): HealthTransitionResult => {
+    const current = ensureStepHealthState(flatIndex);
+    const closed = closedHealthSteps.has(flatIndex);
+    // Lifecycle cleanup closes the ephemeral segment, but a real durable
+    // producer can still arrive while the child drains. Record its evidence
+    // without allowing the helper to re-project current liveness or operation
+    // state onto the closed lifecycle record.
+    if (closed && action.type !== "durable_attention") return ignoredHealthTransition(current);
+    const transition = transitionHealth(current, action);
+    const publishedState = closed
+      ? {
+          ...transition.state,
+          activityState: undefined,
+          idleEpisodeId: undefined,
+          compaction: undefined,
+        }
+      : transition.state;
+    const publishedTransition = closed
+      ? {
+          ...transition,
+          state: publishedState,
+          projection: undefined,
+          projectionChanged: false,
+        }
+      : transition;
+    healthStates[flatIndex] = publishedState;
     const step = statusPayload.steps[flatIndex];
-    if (!step || step.status !== "running" || step.activityState === "needs_attention")
-      return false;
+    if (step) applyHealthStatusProjection(step, publishedState);
+    syncTopLevelHealthProjection();
+    return publishedTransition;
+  };
+  const resetStepHealth = (flatIndex: number): HealthTransitionResult => {
+    closedHealthSteps.delete(flatIndex);
+    const transition = resetHealthTransitionState(ensureStepHealthState(flatIndex), randomUUID());
+    healthStates[flatIndex] = transition.state;
+    const step = statusPayload.steps[flatIndex];
+    if (step) applyHealthStatusProjection(step, transition.state);
+    syncTopLevelHealthProjection();
+    return transition;
+  };
+  const clearStepHealth = (flatIndex: number): HealthTransitionResult => {
+    const current = ensureStepHealthState(flatIndex);
+    if (closedHealthSteps.has(flatIndex)) return ignoredHealthTransition(current);
+    const transition = transitionHealth(current, { type: "clear_ephemeral" });
+    healthStates[flatIndex] = transition.state;
+    closedHealthSteps.add(flatIndex);
+    const step = statusPayload.steps[flatIndex];
+    if (step) applyHealthStatusProjection(step, transition.state);
+    syncTopLevelHealthProjection();
+    return transition;
+  };
+  const clearRunningStepHealth = (): void => {
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      if (statusPayload.steps[index]?.status === "running") clearStepHealth(index);
+    }
+  };
+  const endStepCompaction = (flatIndex: number): void => {
+    const transition = transitionStepHealth(flatIndex, { type: "compaction_end" });
+    if (!transition.changed) return;
+    const now = Date.now();
+    statusPayload.lastUpdate = now;
+    writeStatusPayload();
+  };
+  const endAllStepCompactions = (): void => {
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      if (healthStates[index]?.compaction) endStepCompaction(index);
+    }
+  };
+  const maybeEmitActiveLongRunning = (flatIndex: number, now: number): boolean => {
+    if (!controlConfig.enabled) return false;
+    const step = statusPayload.steps[flatIndex];
+    if (!step || step.status !== "running") return false;
     const reason = nextLongRunningTrigger(controlConfig, {
       startedAt: step.startedAt ?? overallStartTime,
       now,
@@ -3637,11 +3807,9 @@ async function runSubagentWithInput(
       tokens: step.tokens?.total ?? 0,
     });
     if (!reason) return false;
-    activeLongRunningSteps.add(flatIndex);
     const previous = step.activityState;
-    step.activityState = "active_long_running";
-    statusPayload.activityState =
-      statusPayload.activityState === "needs_attention" ? "needs_attention" : "active_long_running";
+    const transition = transitionStepHealth(flatIndex, { type: "active_long_running" });
+    if (!transition.activeLongRunningNotice) return false;
     const event = buildControlEvent({
       type: "active_long_running",
       from: previous,
@@ -3739,7 +3907,10 @@ async function runSubagentWithInput(
     const step = statusPayload.steps[flatIndex];
     if (!step) return;
     // This callback is the attempt boundary: only a dispatched candidate starts
-    // a new scope. Arbitrary child message model changes never do.
+    // a new scope. Arbitrary child message model changes never do. The health
+    // reset intentionally clears any prior idle episode and in-flight compaction
+    // while retaining durable causes and already-earned long-running state.
+    resetStepHealth(flatIndex);
     runtimeModelContexts[flatIndex] = undefined;
     activeConfiguredModels[flatIndex] = attempt.model;
     step.model = attempt.model;
@@ -3760,6 +3931,12 @@ async function runSubagentWithInput(
     const step = statusPayload.steps[flatIndex];
     if (!step) return;
     const now = Date.now();
+    transitionStepHealth(flatIndex, { type: "validated_activity" });
+    if (event.type === "compaction_start") {
+      transitionStepHealth(flatIndex, { type: "compaction_start", reason: event.reason });
+    } else if (event.type === "compaction_end") {
+      transitionStepHealth(flatIndex, { type: "compaction_end" });
+    }
     statusPayload.currentStep = flatIndex;
     if (event.type === "tool_execution_start" && event.toolName) {
       const supervisorPause = resolveSupervisorPauseMetadata({
@@ -3841,12 +4018,10 @@ async function runSubagentWithInput(
         );
         if (
           controlConfig.enabled &&
-          shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention) &&
-          step.activityState !== "needs_attention"
+          shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention)
         ) {
           const previous = step.activityState;
-          step.activityState = "needs_attention";
-          statusPayload.activityState = "needs_attention";
+          transitionStepHealth(flatIndex, { type: "durable_attention", reason: "tool_failures" });
           appendControlEvent(
             buildControlEvent({
               type: "needs_attention",
@@ -3935,8 +4110,10 @@ async function runSubagentWithInput(
         writeStatusPayload();
         if (controlConfig.enabled) {
           const previousActivityState = step.activityState;
-          step.activityState = "needs_attention";
-          statusPayload.activityState = "needs_attention";
+          transitionStepHealth(flatIndex, {
+            type: "durable_attention",
+            reason: "context_pressure",
+          });
           appendControlEvent(
             buildControlEvent({
               type: "needs_attention",
@@ -3983,6 +4160,7 @@ async function runSubagentWithInput(
     statusPayload.lastActivityAt = now;
     statusPayload.lastUpdate = now;
     maybeEmitActiveLongRunning(flatIndex, now);
+    syncTopLevelHealthProjection();
     writeStatusPayload();
   };
   const updateRunnerActivityState = (now: number): boolean => {
@@ -3998,28 +4176,34 @@ async function runSubagentWithInput(
         step.lastActivityAt = lastActivityAt;
         changed = true;
       }
-      const idleState = deriveActivityState({
-        config: controlConfig,
-        startedAt: step.startedAt ?? overallStartTime,
-        lastActivityAt,
-        toolCallInFlight: Boolean(step.currentTool),
-        now,
-      });
+      const healthState = ensureStepHealthState(index);
+      const idleState = healthState.compaction
+        ? undefined
+        : deriveActivityState({
+            config: controlConfig,
+            startedAt: step.startedAt ?? overallStartTime,
+            lastActivityAt,
+            toolCallInFlight: Boolean(step.currentTool),
+            now,
+          });
       if (idleState === "needs_attention") {
         const previous = step.activityState;
-        step.activityState = "needs_attention";
-        if (previous !== "needs_attention") {
-          appendControlEvent(
-            buildControlEvent({
-              from: previous,
-              to: "needs_attention",
-              runId: id,
-              agent: step.agent,
-              index,
-              ts: now,
-              lastActivityAt,
-            }),
-          );
+        const transition = transitionStepHealth(index, { type: "enter_idle" });
+        if (transition.idleEpisodeStarted) {
+          if (transition.idleAttentionEligible) {
+            appendControlEvent(
+              buildControlEvent({
+                from: previous,
+                to: "needs_attention",
+                runId: id,
+                agent: step.agent,
+                index,
+                ts: now,
+                lastActivityAt,
+                idleEpisodeId: transition.state.idleEpisodeId,
+              }),
+            );
+          }
           changed = true;
         }
       } else if (maybeEmitActiveLongRunning(index, now)) {
@@ -4030,18 +4214,7 @@ async function runSubagentWithInput(
       statusPayload.lastActivityAt = runLastActivityAt;
       changed = true;
     }
-    const nextRunState = statusPayload.steps.some(
-      (step) => step.activityState === "needs_attention",
-    )
-      ? "needs_attention"
-      : statusPayload.steps.some((step) => step.activityState === "active_long_running")
-        ? "active_long_running"
-        : undefined;
-    if (nextRunState !== currentActivityState) {
-      currentActivityState = nextRunState;
-      statusPayload.activityState = nextRunState;
-      changed = true;
-    }
+    if (syncTopLevelHealthProjection()) changed = true;
     statusPayload.lastUpdate = now;
     if (changed) writeStatusPayload();
     return changed;
@@ -4066,9 +4239,11 @@ async function runSubagentWithInput(
     if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
     interrupted = true;
     const now = Date.now();
+    endAllStepCompactions();
     // Persist the active segment before changing lifecycle state. Paused wall
     // time is excluded because no tracker remains live after this checkpoint.
     checkpointActiveRuntime(now, true);
+    clearRunningStepHealth();
     statusPayload.state = "paused";
     currentActivityState = undefined;
     statusPayload.activityState = undefined;
@@ -4078,6 +4253,8 @@ async function runSubagentWithInput(
       if (step.status === "running") {
         step.status = "paused";
         step.activityState = undefined;
+        step.idleEpisodeId = undefined;
+        step.compaction = undefined;
         step.endedAt = now;
         step.durationMs = step.startedAt ? now - step.startedAt : undefined;
         step.lastActivityAt = now;
@@ -4114,7 +4291,12 @@ async function runSubagentWithInput(
     if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
     timedOut = true;
     const now = Date.now();
+    endAllStepCompactions();
     checkpointActiveRuntime(now, true);
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      const step = statusPayload.steps[index];
+      if (step?.status === "running" || step?.status === "pending") clearStepHealth(index);
+    }
     const message = timeoutMessage ?? "Subagent timed out.";
     statusPayload.state = "failed";
     statusPayload.timedOut = true;
@@ -4130,6 +4312,8 @@ async function runSubagentWithInput(
       step.timedOut = true;
       step.terminationReason = "timed_out";
       step.activityState = undefined;
+      step.idleEpisodeId = undefined;
+      step.compaction = undefined;
       step.endedAt = now;
       step.durationMs = step.startedAt ? now - step.startedAt : 0;
       step.lastActivityAt = now;
@@ -4242,6 +4426,10 @@ async function runSubagentWithInput(
         contextPressure: pr.contextPressure,
         contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
         terminationReason: pr.terminationReason,
+        activityState: statusPayload.steps[fi]?.activityState,
+        idleEpisodeId: statusPayload.steps[fi]?.idleEpisodeId,
+        durableAttentionReasons: statusPayload.steps[fi]?.durableAttentionReasons,
+        compaction: statusPayload.steps[fi]?.compaction,
         sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
         model: pr.model,
         modelIdentity: pr.modelIdentity,
@@ -4317,6 +4505,10 @@ async function runSubagentWithInput(
       contextPressure: singleResult.contextPressure,
       contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
       terminationReason: singleResult.terminationReason,
+      activityState: statusPayload.steps[flatIndex]?.activityState,
+      idleEpisodeId: statusPayload.steps[flatIndex]?.idleEpisodeId,
+      durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
+      compaction: statusPayload.steps[flatIndex]?.compaction,
       activeRuntimeMs: singleResult.activeRuntimeMs,
     });
     const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
@@ -4430,6 +4622,26 @@ async function runSubagentWithInput(
       normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
       normalizeActiveRuntimeCheckpointAt(stepEndTime) ?? 0,
     );
+    const completionGuardActive =
+      singleResult.completionGuardTriggered === true &&
+      !singleResult.interrupted &&
+      !singleResult.timedOut &&
+      !timedOut &&
+      !pausedStep;
+    const completionGuardPreviousActivityState = statusPayload.steps[flatIndex].activityState;
+    if (completionGuardActive) {
+      transitionStepHealth(flatIndex, {
+        type: "durable_attention",
+        reason: "completion_guard",
+      });
+    }
+    if (settledResult) {
+      const healthStep = statusPayload.steps[flatIndex];
+      settledResult.activityState = healthStep?.activityState;
+      settledResult.idleEpisodeId = healthStep?.idleEpisodeId;
+      settledResult.durableAttentionReasons = healthStep?.durableAttentionReasons;
+      settledResult.compaction = healthStep?.compaction;
+    }
     statusPayload.lastUpdate = stepEndTime;
     writeStatusPayload();
 
@@ -4452,9 +4664,9 @@ async function runSubagentWithInput(
         tokens: stepTokens,
       }),
     );
-    if (singleResult.completionGuardTriggered) {
+    if (completionGuardActive) {
       const event = buildControlEvent({
-        from: statusPayload.steps[flatIndex].activityState,
+        from: completionGuardPreviousActivityState,
         to: "needs_attention",
         runId: id,
         agent: seqStep.agent,
@@ -4506,6 +4718,8 @@ async function runSubagentWithInput(
           statusPayload.steps[fi].status = "running";
           statusPayload.steps[fi].error = undefined;
           statusPayload.steps[fi].activityState = undefined;
+          statusPayload.steps[fi].idleEpisodeId = undefined;
+          statusPayload.steps[fi].compaction = undefined;
           resetStepLiveDetail(statusPayload.steps[fi]);
           statusPayload.steps[fi].startedAt = taskStartTime;
           statusPayload.steps[fi].activeRuntimeMs = boundedActiveRuntimeMs(
@@ -4527,6 +4741,7 @@ async function runSubagentWithInput(
           statusPayload.lastActivityAt = taskStartTime;
           statusPayload.lastUpdate = taskStartTime;
           appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
+          syncTopLevelHealthProjection();
           writeStatusPayload();
 
           appendJsonl(
@@ -4567,6 +4782,7 @@ async function runSubagentWithInput(
             startedAt: taskStartTime,
             onAttemptStart: (attempt) => updateStepModel(fi, attempt),
             onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+            onAttemptEnd: () => endStepCompaction(fi),
             onChildProtocolOutputLimit,
             skipAcceptance: () => timedOut,
             runtimeTracker: activeRuntimeTrackers.get(fi),
@@ -4658,6 +4874,19 @@ async function runSubagentWithInput(
             normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0,
             normalizeActiveRuntimeCheckpointAt(taskEndTime) ?? 0,
           );
+          const completionGuardActive =
+            singleResult.completionGuardTriggered === true &&
+            !singleResult.interrupted &&
+            !singleResult.timedOut &&
+            !timedOut &&
+            !pausedStep;
+          const completionGuardPreviousActivityState = statusPayload.steps[fi].activityState;
+          if (completionGuardActive) {
+            transitionStepHealth(fi, {
+              type: "durable_attention",
+              reason: "completion_guard",
+            });
+          }
           statusPayload.lastUpdate = taskEndTime;
           writeStatusPayload();
 
@@ -4679,9 +4908,9 @@ async function runSubagentWithInput(
               durationMs: taskDuration,
             }),
           );
-          if (singleResult.completionGuardTriggered) {
+          if (completionGuardActive) {
             const event = buildControlEvent({
-              from: statusPayload.steps[fi].activityState,
+              from: completionGuardPreviousActivityState,
               to: "needs_attention",
               runId: id,
               agent: task.agent,
@@ -4726,7 +4955,8 @@ async function runSubagentWithInput(
       statusPayload.currentStep = flatIndex;
       statusPayload.steps[flatIndex].status = "running";
       statusPayload.steps[flatIndex].activityState = undefined;
-      statusPayload.activityState = undefined;
+      statusPayload.steps[flatIndex].idleEpisodeId = undefined;
+      statusPayload.steps[flatIndex].compaction = undefined;
       resetStepLiveDetail(statusPayload.steps[flatIndex]);
       statusPayload.steps[flatIndex].skills = seqStep.skills;
       statusPayload.steps[flatIndex].startedAt = stepStartTime;
@@ -4747,6 +4977,7 @@ async function runSubagentWithInput(
       statusPayload.lastUpdate = stepStartTime;
       statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
       appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
+      syncTopLevelHealthProjection();
       writeStatusPayload();
 
       appendJsonl(
@@ -4786,6 +5017,7 @@ async function runSubagentWithInput(
         startedAt: stepStartTime,
         onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt),
         onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
+        onAttemptEnd: () => endStepCompaction(flatIndex),
         onChildProtocolOutputLimit,
         skipAcceptance: () => timedOut,
         runtimeTracker: activeRuntimeTrackers.get(flatIndex),
@@ -5161,6 +5393,10 @@ async function runSubagentWithInput(
           contextPressure: r.contextPressure,
           contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
           terminationReason: r.terminationReason,
+          activityState: r.activityState,
+          idleEpisodeId: r.idleEpisodeId,
+          durableAttentionReasons: r.durableAttentionReasons,
+          compaction: r.compaction,
           sessionFile: r.sessionFile,
           model: r.model,
           modelIdentity: r.modelIdentity,

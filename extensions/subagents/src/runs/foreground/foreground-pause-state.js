@@ -238,6 +238,12 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
             }
             : {}),
         ...(result.cancel ? { cancel: result.cancel } : {}),
+        ...(result.progress?.activityState ? { activityState: result.progress.activityState } : {}),
+        ...(result.progress?.idleEpisodeId ? { idleEpisodeId: result.progress.idleEpisodeId } : {}),
+        ...(result.progress?.durableAttentionReasons
+            ? { durableAttentionReasons: [...result.progress.durableAttentionReasons] }
+            : {}),
+        ...(result.progress?.compaction ? { compaction: { ...result.progress.compaction } } : {}),
         ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
         ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
         ...(result.contextPressureCrossedThresholds
@@ -261,6 +267,12 @@ export function buildCohortPauseStep(input) {
         ...(input.thinking ? { thinking: input.thinking } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(input.modelResolution ? { modelResolution: input.modelResolution } : {}),
+        ...(input.activityState ? { activityState: input.activityState } : {}),
+        ...(input.idleEpisodeId ? { idleEpisodeId: input.idleEpisodeId } : {}),
+        ...(input.durableAttentionReasons
+            ? { durableAttentionReasons: [...input.durableAttentionReasons] }
+            : {}),
+        ...(input.compaction ? { compaction: { ...input.compaction } } : {}),
         ...(input.contextUsage ? { contextUsage: input.contextUsage } : {}),
         ...(input.contextPressure ? { contextPressure: { ...input.contextPressure } } : {}),
         ...(input.contextPressureCrossedThresholds

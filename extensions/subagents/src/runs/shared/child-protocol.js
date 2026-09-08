@@ -82,6 +82,9 @@ function isStopReason(value) {
         value === "aborted" ||
         value === "deferred");
 }
+function isCompactionReason(value) {
+    return value === "manual" || value === "threshold" || value === "overflow";
+}
 function isChildProtocolMessage(value) {
     if (!isRecord(value) || !isFiniteNumber(value.timestamp))
         return false;
@@ -146,6 +149,13 @@ export function isChildProtocolEvent(value) {
         case "message_end":
         case "tool_result_end":
             return isChildProtocolMessage(value.message);
+        case "compaction_start":
+            return isCompactionReason(value.reason);
+        case "compaction_end":
+            return (isCompactionReason(value.reason) &&
+                typeof value.aborted === "boolean" &&
+                typeof value.willRetry === "boolean" &&
+                (value.errorMessage === undefined || typeof value.errorMessage === "string"));
         default:
             return false;
     }

@@ -7,6 +7,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     return path;
 };
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,6 +39,7 @@ import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActive
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
+import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 function summarizeSettledResults(results, maxOutput) {
     let summary = results
@@ -1509,18 +1511,24 @@ async function runSingleStep(step, ctx) {
             };
             break;
         }
-        const run = await runPiStreaming(attempt.args, step.cwd ?? stepCtx.cwd, stepCtx.outputFile, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
-            eventsPath: setup.eventsPath,
-            runId: stepCtx.id,
-            stepIndex: stepCtx.flatIndex,
-            agent: step.agent,
-            includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
-        }, stepCtx.registerInterrupt, stepCtx.onChildEvent, setup.transcriptWriter, stepCtx.registerTimeout, stepCtx.timeoutMessage, stepCtx.onChildProtocolOutputLimit, {
-            restored: setup.restoredSession,
-            configuredModel: candidate,
-            contextWindow: contextWindowForModel(candidate, step.contextWindows),
-            contextWindows: step.contextWindows,
-        });
+        let run;
+        try {
+            run = await runPiStreaming(attempt.args, step.cwd ?? stepCtx.cwd, stepCtx.outputFile, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
+                eventsPath: setup.eventsPath,
+                runId: stepCtx.id,
+                stepIndex: stepCtx.flatIndex,
+                agent: step.agent,
+                includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
+            }, stepCtx.registerInterrupt, stepCtx.onChildEvent, setup.transcriptWriter, stepCtx.registerTimeout, stepCtx.timeoutMessage, stepCtx.onChildProtocolOutputLimit, {
+                restored: setup.restoredSession,
+                configuredModel: candidate,
+                contextWindow: contextWindowForModel(candidate, step.contextWindows),
+                contextWindows: step.contextWindows,
+            });
+        }
+        finally {
+            stepCtx.onAttemptEnd?.();
+        }
         const assessment = assessSingleStepAttempt({
             step,
             state,
@@ -1579,6 +1587,14 @@ async function runSingleStep(step, ctx) {
         outcome,
         activeRuntimeMs,
     });
+}
+function applyHealthStatusProjection(step, state) {
+    step.activityState = state.activityState;
+    step.idleEpisodeId = state.idleEpisodeId;
+    step.durableAttentionReasons = state.durableAttentionReasons.length
+        ? [...state.durableAttentionReasons]
+        : undefined;
+    step.compaction = state.compaction ? { ...state.compaction } : undefined;
 }
 function projectInitialModelFallbackFilterNotice(notice) {
     const sanitized = sanitizeModelFallbackNotice(notice);
@@ -1904,6 +1920,8 @@ async function runSubagentWithInput(config, plan) {
     };
     const { flatSteps, initialStatusSteps, sessionEnabled, statusPayload } = initializeRun();
     const activeRuntimeTrackers = new Map();
+    const healthStates = initialStatusSteps.map(() => undefined);
+    const closedHealthSteps = new Set();
     if (config.continuationSource) {
         const gate = finalizeLifecycleContinuationLaunch(config.continuationSource.asyncDir, config.continuationSource.index, config.continuationSource.claimToken, id);
         if (!gate.finalized) {
@@ -2124,6 +2142,8 @@ async function runSubagentWithInput(config, plan) {
         if (!claimChildTerminalReason(terminalReason, "output_limit"))
             return;
         const now = Date.now();
+        endAllStepCompactions();
+        clearRunningStepHealth();
         checkpointActiveRuntime(now, true);
         const message = boundChildError(formatProtocolOutputLimit(limit));
         statusPayload.state = "failed";
@@ -2352,6 +2372,23 @@ async function runSubagentWithInput(config, plan) {
                 : {}),
         };
         Object.assign(statusPayload, adoptedStatus);
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            const adoptedStep = statusPayload.steps[index];
+            if (!adoptedStep ||
+                adoptedStep.status === "running" ||
+                adoptedStep.status === "pending" ||
+                adoptedStep.status === "pausing")
+                continue;
+            const currentHealth = ensureStepHealthState(index);
+            healthStates[index] = {
+                ...currentHealth,
+                activityState: undefined,
+                idleEpisodeId: undefined,
+                compaction: undefined,
+                durableAttentionReasons: [...(adoptedStep.durableAttentionReasons ?? [])],
+            };
+            closedHealthSteps.add(index);
+        }
         interrupted = persisted.state === "paused";
         if (persisted.state === "paused")
             pausedCheckpointCommitted = true;
@@ -2371,7 +2408,9 @@ async function runSubagentWithInput(config, plan) {
             requestedAt: pause.requestedAt ?? Date.now(),
         };
         const now = Date.now();
+        endAllStepCompactions();
         checkpointActiveRuntime(now, true);
+        clearRunningStepHealth();
         if (concurrentTerminalStatusAdopted) {
             interrupted = true;
             interruptAbortController.abort();
@@ -2405,6 +2444,8 @@ async function runSubagentWithInput(config, plan) {
                             activeRuntimeMs,
                             activeRuntimeCheckpointAt: now,
                             activityState: undefined,
+                            idleEpisodeId: undefined,
+                            compaction: undefined,
                             interruptRequestedAt: now,
                             ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
                             ...(index === requesterIndex
@@ -2515,7 +2556,6 @@ async function runSubagentWithInput(config, plan) {
         return lastActivityAt;
     };
     const emittedControlEventKeys = new Set();
-    const activeLongRunningSteps = new Set();
     const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
     const runtimeModelContexts = initialStatusSteps.map(() => undefined);
     const activeConfiguredModels = initialStatusSteps.map(() => undefined);
@@ -2546,11 +2586,115 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
         statusPayload.currentPath = activeStep?.currentPath;
     };
+    const syncTopLevelHealthProjection = () => {
+        const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
+            ? "needs_attention"
+            : statusPayload.steps.some((step) => step.activityState === "active_long_running")
+                ? "active_long_running"
+                : undefined;
+        const changed = nextRunState !== currentActivityState;
+        currentActivityState = nextRunState;
+        statusPayload.activityState = nextRunState;
+        return changed;
+    };
+    const ensureStepHealthState = (flatIndex) => {
+        const current = healthStates[flatIndex];
+        if (current)
+            return current;
+        const persistedReasons = statusPayload.steps[flatIndex]?.durableAttentionReasons;
+        const created = createHealthTransitionState(randomUUID());
+        healthStates[flatIndex] = persistedReasons?.length
+            ? { ...created, durableAttentionReasons: [...persistedReasons] }
+            : created;
+        return healthStates[flatIndex];
+    };
+    const ignoredHealthTransition = (state) => ({
+        state,
+        changed: false,
+        projectionChanged: false,
+        projection: state.activityState,
+        idleEpisodeStarted: false,
+        idleEpisodeEnded: false,
+        activeLongRunningNotice: false,
+        idleAttentionEligible: false,
+    });
+    const transitionStepHealth = (flatIndex, action) => {
+        const current = ensureStepHealthState(flatIndex);
+        const closed = closedHealthSteps.has(flatIndex);
+        if (closed && action.type !== "durable_attention")
+            return ignoredHealthTransition(current);
+        const transition = transitionHealth(current, action);
+        const publishedState = closed
+            ? {
+                ...transition.state,
+                activityState: undefined,
+                idleEpisodeId: undefined,
+                compaction: undefined,
+            }
+            : transition.state;
+        const publishedTransition = closed
+            ? {
+                ...transition,
+                state: publishedState,
+                projection: undefined,
+                projectionChanged: false,
+            }
+            : transition;
+        healthStates[flatIndex] = publishedState;
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, publishedState);
+        syncTopLevelHealthProjection();
+        return publishedTransition;
+    };
+    const resetStepHealth = (flatIndex) => {
+        closedHealthSteps.delete(flatIndex);
+        const transition = resetHealthTransitionState(ensureStepHealthState(flatIndex), randomUUID());
+        healthStates[flatIndex] = transition.state;
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, transition.state);
+        syncTopLevelHealthProjection();
+        return transition;
+    };
+    const clearStepHealth = (flatIndex) => {
+        const current = ensureStepHealthState(flatIndex);
+        if (closedHealthSteps.has(flatIndex))
+            return ignoredHealthTransition(current);
+        const transition = transitionHealth(current, { type: "clear_ephemeral" });
+        healthStates[flatIndex] = transition.state;
+        closedHealthSteps.add(flatIndex);
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, transition.state);
+        syncTopLevelHealthProjection();
+        return transition;
+    };
+    const clearRunningStepHealth = () => {
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            if (statusPayload.steps[index]?.status === "running")
+                clearStepHealth(index);
+        }
+    };
+    const endStepCompaction = (flatIndex) => {
+        const transition = transitionStepHealth(flatIndex, { type: "compaction_end" });
+        if (!transition.changed)
+            return;
+        const now = Date.now();
+        statusPayload.lastUpdate = now;
+        writeStatusPayload();
+    };
+    const endAllStepCompactions = () => {
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            if (healthStates[index]?.compaction)
+                endStepCompaction(index);
+        }
+    };
     const maybeEmitActiveLongRunning = (flatIndex, now) => {
-        if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex))
+        if (!controlConfig.enabled)
             return false;
         const step = statusPayload.steps[flatIndex];
-        if (!step || step.status !== "running" || step.activityState === "needs_attention")
+        if (!step || step.status !== "running")
             return false;
         const reason = nextLongRunningTrigger(controlConfig, {
             startedAt: step.startedAt ?? overallStartTime,
@@ -2560,11 +2704,10 @@ async function runSubagentWithInput(config, plan) {
         });
         if (!reason)
             return false;
-        activeLongRunningSteps.add(flatIndex);
         const previous = step.activityState;
-        step.activityState = "active_long_running";
-        statusPayload.activityState =
-            statusPayload.activityState === "needs_attention" ? "needs_attention" : "active_long_running";
+        const transition = transitionStepHealth(flatIndex, { type: "active_long_running" });
+        if (!transition.activeLongRunningNotice)
+            return false;
         const event = buildControlEvent({
             type: "active_long_running",
             from: previous,
@@ -2657,6 +2800,7 @@ async function runSubagentWithInput(config, plan) {
         const step = statusPayload.steps[flatIndex];
         if (!step)
             return;
+        resetStepHealth(flatIndex);
         runtimeModelContexts[flatIndex] = undefined;
         activeConfiguredModels[flatIndex] = attempt.model;
         step.model = attempt.model;
@@ -2677,6 +2821,13 @@ async function runSubagentWithInput(config, plan) {
         if (!step)
             return;
         const now = Date.now();
+        transitionStepHealth(flatIndex, { type: "validated_activity" });
+        if (event.type === "compaction_start") {
+            transitionStepHealth(flatIndex, { type: "compaction_start", reason: event.reason });
+        }
+        else if (event.type === "compaction_end") {
+            transitionStepHealth(flatIndex, { type: "compaction_end" });
+        }
         statusPayload.currentStep = flatIndex;
         if (event.type === "tool_execution_start" && event.toolName) {
             const supervisorPause = resolveSupervisorPauseMetadata({
@@ -2750,11 +2901,9 @@ async function runSubagentWithInput(config, plan) {
                     ts: now,
                 }, mutatingFailureWindowMs);
                 if (controlConfig.enabled &&
-                    shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention) &&
-                    step.activityState !== "needs_attention") {
+                    shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention)) {
                     const previous = step.activityState;
-                    step.activityState = "needs_attention";
-                    statusPayload.activityState = "needs_attention";
+                    transitionStepHealth(flatIndex, { type: "durable_attention", reason: "tool_failures" });
                     appendControlEvent(buildControlEvent({
                         type: "needs_attention",
                         from: previous,
@@ -2823,8 +2972,10 @@ async function runSubagentWithInput(config, plan) {
                 writeStatusPayload();
                 if (controlConfig.enabled) {
                     const previousActivityState = step.activityState;
-                    step.activityState = "needs_attention";
-                    statusPayload.activityState = "needs_attention";
+                    transitionStepHealth(flatIndex, {
+                        type: "durable_attention",
+                        reason: "context_pressure",
+                    });
                     appendControlEvent(buildControlEvent({
                         type: "needs_attention",
                         from: previousActivityState,
@@ -2869,6 +3020,7 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.lastActivityAt = now;
         statusPayload.lastUpdate = now;
         maybeEmitActiveLongRunning(flatIndex, now);
+        syncTopLevelHealthProjection();
         writeStatusPayload();
     };
     const updateRunnerActivityState = (now) => {
@@ -2886,26 +3038,32 @@ async function runSubagentWithInput(config, plan) {
                 step.lastActivityAt = lastActivityAt;
                 changed = true;
             }
-            const idleState = deriveActivityState({
-                config: controlConfig,
-                startedAt: step.startedAt ?? overallStartTime,
-                lastActivityAt,
-                toolCallInFlight: Boolean(step.currentTool),
-                now,
-            });
+            const healthState = ensureStepHealthState(index);
+            const idleState = healthState.compaction
+                ? undefined
+                : deriveActivityState({
+                    config: controlConfig,
+                    startedAt: step.startedAt ?? overallStartTime,
+                    lastActivityAt,
+                    toolCallInFlight: Boolean(step.currentTool),
+                    now,
+                });
             if (idleState === "needs_attention") {
                 const previous = step.activityState;
-                step.activityState = "needs_attention";
-                if (previous !== "needs_attention") {
-                    appendControlEvent(buildControlEvent({
-                        from: previous,
-                        to: "needs_attention",
-                        runId: id,
-                        agent: step.agent,
-                        index,
-                        ts: now,
-                        lastActivityAt,
-                    }));
+                const transition = transitionStepHealth(index, { type: "enter_idle" });
+                if (transition.idleEpisodeStarted) {
+                    if (transition.idleAttentionEligible) {
+                        appendControlEvent(buildControlEvent({
+                            from: previous,
+                            to: "needs_attention",
+                            runId: id,
+                            agent: step.agent,
+                            index,
+                            ts: now,
+                            lastActivityAt,
+                            idleEpisodeId: transition.state.idleEpisodeId,
+                        }));
+                    }
                     changed = true;
                 }
             }
@@ -2917,16 +3075,8 @@ async function runSubagentWithInput(config, plan) {
             statusPayload.lastActivityAt = runLastActivityAt;
             changed = true;
         }
-        const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
-            ? "needs_attention"
-            : statusPayload.steps.some((step) => step.activityState === "active_long_running")
-                ? "active_long_running"
-                : undefined;
-        if (nextRunState !== currentActivityState) {
-            currentActivityState = nextRunState;
-            statusPayload.activityState = nextRunState;
+        if (syncTopLevelHealthProjection())
             changed = true;
-        }
         statusPayload.lastUpdate = now;
         if (changed)
             writeStatusPayload();
@@ -2955,7 +3105,9 @@ async function runSubagentWithInput(config, plan) {
             return;
         interrupted = true;
         const now = Date.now();
+        endAllStepCompactions();
         checkpointActiveRuntime(now, true);
+        clearRunningStepHealth();
         statusPayload.state = "paused";
         currentActivityState = undefined;
         statusPayload.activityState = undefined;
@@ -2965,6 +3117,8 @@ async function runSubagentWithInput(config, plan) {
             if (step.status === "running") {
                 step.status = "paused";
                 step.activityState = undefined;
+                step.idleEpisodeId = undefined;
+                step.compaction = undefined;
                 step.endedAt = now;
                 step.durationMs = step.startedAt ? now - step.startedAt : undefined;
                 step.lastActivityAt = now;
@@ -2991,7 +3145,13 @@ async function runSubagentWithInput(config, plan) {
             return;
         timedOut = true;
         const now = Date.now();
+        endAllStepCompactions();
         checkpointActiveRuntime(now, true);
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            const step = statusPayload.steps[index];
+            if (step?.status === "running" || step?.status === "pending")
+                clearStepHealth(index);
+        }
         const message = timeoutMessage ?? "Subagent timed out.";
         statusPayload.state = "failed";
         statusPayload.timedOut = true;
@@ -3008,6 +3168,8 @@ async function runSubagentWithInput(config, plan) {
             step.timedOut = true;
             step.terminationReason = "timed_out";
             step.activityState = undefined;
+            step.idleEpisodeId = undefined;
+            step.compaction = undefined;
             step.endedAt = now;
             step.durationMs = step.startedAt ? now - step.startedAt : 0;
             step.lastActivityAt = now;
@@ -3103,6 +3265,10 @@ async function runSubagentWithInput(config, plan) {
                 contextPressure: pr.contextPressure,
                 contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
                 terminationReason: pr.terminationReason,
+                activityState: statusPayload.steps[fi]?.activityState,
+                idleEpisodeId: statusPayload.steps[fi]?.idleEpisodeId,
+                durableAttentionReasons: statusPayload.steps[fi]?.durableAttentionReasons,
+                compaction: statusPayload.steps[fi]?.compaction,
                 sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
                 model: pr.model,
                 modelIdentity: pr.modelIdentity,
@@ -3169,6 +3335,10 @@ async function runSubagentWithInput(config, plan) {
             contextPressure: singleResult.contextPressure,
             contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
             terminationReason: singleResult.terminationReason,
+            activityState: statusPayload.steps[flatIndex]?.activityState,
+            idleEpisodeId: statusPayload.steps[flatIndex]?.idleEpisodeId,
+            durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
+            compaction: statusPayload.steps[flatIndex]?.compaction,
             activeRuntimeMs: singleResult.activeRuntimeMs,
         });
         const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
@@ -3268,6 +3438,25 @@ async function runSubagentWithInput(config, plan) {
         const sequentialAggregateRuntime = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
         statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, sequentialAggregateRuntime);
         statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(stepEndTime) ?? 0);
+        const completionGuardActive = singleResult.completionGuardTriggered === true &&
+            !singleResult.interrupted &&
+            !singleResult.timedOut &&
+            !timedOut &&
+            !pausedStep;
+        const completionGuardPreviousActivityState = statusPayload.steps[flatIndex].activityState;
+        if (completionGuardActive) {
+            transitionStepHealth(flatIndex, {
+                type: "durable_attention",
+                reason: "completion_guard",
+            });
+        }
+        if (settledResult) {
+            const healthStep = statusPayload.steps[flatIndex];
+            settledResult.activityState = healthStep?.activityState;
+            settledResult.idleEpisodeId = healthStep?.idleEpisodeId;
+            settledResult.durableAttentionReasons = healthStep?.durableAttentionReasons;
+            settledResult.compaction = healthStep?.compaction;
+        }
         statusPayload.lastUpdate = stepEndTime;
         writeStatusPayload();
         appendJsonl(eventsPath, JSON.stringify({
@@ -3286,9 +3475,9 @@ async function runSubagentWithInput(config, plan) {
             durationMs: stepEndTime - stepStartTime,
             tokens: stepTokens,
         }));
-        if (singleResult.completionGuardTriggered) {
+        if (completionGuardActive) {
             const event = buildControlEvent({
-                from: statusPayload.steps[flatIndex].activityState,
+                from: completionGuardPreviousActivityState,
                 to: "needs_attention",
                 runId: id,
                 agent: seqStep.agent,
@@ -3323,6 +3512,8 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.steps[fi].status = "running";
                 statusPayload.steps[fi].error = undefined;
                 statusPayload.steps[fi].activityState = undefined;
+                statusPayload.steps[fi].idleEpisodeId = undefined;
+                statusPayload.steps[fi].compaction = undefined;
                 resetStepLiveDetail(statusPayload.steps[fi]);
                 statusPayload.steps[fi].startedAt = taskStartTime;
                 statusPayload.steps[fi].activeRuntimeMs = boundedActiveRuntimeMs(statusPayload.steps[fi].activeRuntimeMs);
@@ -3339,6 +3530,7 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.lastActivityAt = taskStartTime;
                 statusPayload.lastUpdate = taskStartTime;
                 appendRecentStepOutput(statusPayload.steps[fi], task.attemptNotes ?? []);
+                syncTopLevelHealthProjection();
                 writeStatusPayload();
                 appendJsonl(eventsPath, JSON.stringify({
                     type: "subagent.step.started",
@@ -3373,6 +3565,7 @@ async function runSubagentWithInput(config, plan) {
                     startedAt: taskStartTime,
                     onAttemptStart: (attempt) => updateStepModel(fi, attempt),
                     onChildEvent: (event) => updateStepFromChildEvent(fi, event),
+                    onAttemptEnd: () => endStepCompaction(fi),
                     onChildProtocolOutputLimit,
                     skipAcceptance: () => timedOut,
                     runtimeTracker: activeRuntimeTrackers.get(fi),
@@ -3449,6 +3642,18 @@ async function runSubagentWithInput(config, plan) {
                 const parallelAggregateRuntime = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
                 statusPayload.activeRuntimeMs = Math.max(normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs) ?? 0, parallelAggregateRuntime);
                 statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(taskEndTime) ?? 0);
+                const completionGuardActive = singleResult.completionGuardTriggered === true &&
+                    !singleResult.interrupted &&
+                    !singleResult.timedOut &&
+                    !timedOut &&
+                    !pausedStep;
+                const completionGuardPreviousActivityState = statusPayload.steps[fi].activityState;
+                if (completionGuardActive) {
+                    transitionStepHealth(fi, {
+                        type: "durable_attention",
+                        reason: "completion_guard",
+                    });
+                }
                 statusPayload.lastUpdate = taskEndTime;
                 writeStatusPayload();
                 appendJsonl(eventsPath, JSON.stringify({
@@ -3466,9 +3671,9 @@ async function runSubagentWithInput(config, plan) {
                     exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
                     durationMs: taskDuration,
                 }));
-                if (singleResult.completionGuardTriggered) {
+                if (completionGuardActive) {
                     const event = buildControlEvent({
-                        from: statusPayload.steps[fi].activityState,
+                        from: completionGuardPreviousActivityState,
                         to: "needs_attention",
                         runId: id,
                         agent: task.agent,
@@ -3502,7 +3707,8 @@ async function runSubagentWithInput(config, plan) {
             statusPayload.currentStep = flatIndex;
             statusPayload.steps[flatIndex].status = "running";
             statusPayload.steps[flatIndex].activityState = undefined;
-            statusPayload.activityState = undefined;
+            statusPayload.steps[flatIndex].idleEpisodeId = undefined;
+            statusPayload.steps[flatIndex].compaction = undefined;
             resetStepLiveDetail(statusPayload.steps[flatIndex]);
             statusPayload.steps[flatIndex].skills = seqStep.skills;
             statusPayload.steps[flatIndex].startedAt = stepStartTime;
@@ -3518,6 +3724,7 @@ async function runSubagentWithInput(config, plan) {
             statusPayload.lastUpdate = stepStartTime;
             statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
             appendRecentStepOutput(statusPayload.steps[flatIndex], seqStep.attemptNotes ?? []);
+            syncTopLevelHealthProjection();
             writeStatusPayload();
             appendJsonl(eventsPath, JSON.stringify({
                 type: "subagent.step.started",
@@ -3552,6 +3759,7 @@ async function runSubagentWithInput(config, plan) {
                 startedAt: stepStartTime,
                 onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt),
                 onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
+                onAttemptEnd: () => endStepCompaction(flatIndex),
                 onChildProtocolOutputLimit,
                 skipAcceptance: () => timedOut,
                 runtimeTracker: activeRuntimeTrackers.get(flatIndex),
@@ -3904,6 +4112,10 @@ async function runSubagentWithInput(config, plan) {
                     contextPressure: r.contextPressure,
                     contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
                     terminationReason: r.terminationReason,
+                    activityState: r.activityState,
+                    idleEpisodeId: r.idleEpisodeId,
+                    durableAttentionReasons: r.durableAttentionReasons,
+                    compaction: r.compaction,
                     sessionFile: r.sessionFile,
                     model: r.model,
                     modelIdentity: r.modelIdentity,

@@ -514,6 +514,9 @@ async function main() {
       if (typeof step?.stderr === "string" && step.stderr.length > 0) {
         await writeStderr(step.stderr);
       }
+      if (typeof step?.writeMarkerAfter === "string" && step.writeMarkerAfter.length > 0) {
+        writeMarkerFile(step.writeMarkerAfter);
+      }
     }
   } else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
     await writeResponseEntries(response.jsonl, jsonMode, args);
@@ -536,6 +539,9 @@ async function main() {
   }
   if (typeof response.stderr === "string" && response.stderr.length > 0) {
     await writeStderr(response.stderr);
+  }
+  if (typeof response.writeMarkerAfter === "string" && response.writeMarkerAfter.length > 0) {
+    writeMarkerFile(response.writeMarkerAfter);
   }
 
   if (

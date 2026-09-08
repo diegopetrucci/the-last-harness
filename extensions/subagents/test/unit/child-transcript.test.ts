@@ -187,6 +187,78 @@ describe("createChildTranscriptWriter", () => {
     );
   });
 
+  it("retains recognized compaction envelopes and their unconsumed fields", () => {
+    const dir = tmpDir();
+    const transcriptPath = path.join(dir, "transcript.jsonl");
+    const writer = createChildTranscriptWriter({
+      transcriptPath,
+      source: "async",
+      runId: "run-compaction",
+      agent: "worker",
+      cwd: "/repo",
+    });
+    writer.writeChildEvent({
+      type: "compaction_start",
+      reason: "threshold",
+      extra: { retained: "start" },
+    });
+    writer.writeChildEvent({
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: { retained: "success" },
+    });
+    writer.writeChildEvent({
+      type: "compaction_end",
+      reason: "manual",
+      aborted: true,
+      willRetry: true,
+      extra: { retained: "aborted" },
+    });
+    writer.writeChildEvent({
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compaction failed",
+      extra: { retained: "failed" },
+    });
+
+    const records = readRecords(transcriptPath);
+    assert.deepEqual(
+      records.map((record) => record.recordType),
+      ["stdout", "stdout", "stdout", "stdout"],
+    );
+    assert.deepEqual(JSON.parse(String(records[0]!.text)), {
+      type: "compaction_start",
+      reason: "threshold",
+      extra: { retained: "start" },
+    });
+    assert.deepEqual(JSON.parse(String(records[1]!.text)), {
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: { retained: "success" },
+    });
+    assert.deepEqual(JSON.parse(String(records[2]!.text)), {
+      type: "compaction_end",
+      reason: "manual",
+      aborted: true,
+      willRetry: true,
+      extra: { retained: "aborted" },
+    });
+    assert.deepEqual(JSON.parse(String(records[3]!.text)), {
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compaction failed",
+      extra: { retained: "failed" },
+    });
+  });
+
   it("skips blank stdout/stderr lines and splits multi-line stderr text", () => {
     const dir = tmpDir();
     const transcriptPath = path.join(dir, "transcript.jsonl");

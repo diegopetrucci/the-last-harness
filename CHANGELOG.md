@@ -15,6 +15,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
+- Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.
 
 ## [0.40.0] - 2026-09-06
 

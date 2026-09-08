@@ -762,6 +762,25 @@ function getForegroundControl(state, runId) {
     }
     return newest;
 }
+function resetForegroundControlHealth(control) {
+    control.currentActivityState = undefined;
+    control.idleEpisodeId = undefined;
+    control.durableAttentionReasons = undefined;
+    control.compaction = undefined;
+}
+function updateForegroundControlProgress(control, progress) {
+    control.currentActivityState = progress?.activityState;
+    control.idleEpisodeId = progress?.idleEpisodeId;
+    control.durableAttentionReasons = progress?.durableAttentionReasons
+        ? [...progress.durableAttentionReasons]
+        : undefined;
+    control.compaction = progress?.compaction ? { ...progress.compaction } : undefined;
+}
+function clearForegroundControlEphemeralHealth(control) {
+    control.currentActivityState = undefined;
+    control.idleEpisodeId = undefined;
+    control.compaction = undefined;
+}
 function formatForegroundActivity(control) {
     const facts = [];
     if (control.currentTool && control.currentToolStartedAt)
@@ -908,6 +927,12 @@ function rememberForegroundRun(state, input) {
                 ...(result.acceptance ? { acceptance: result.acceptance } : {}),
                 ...(result.pause ? { pause: result.pause } : {}),
                 ...(result.cancel ? { cancel: result.cancel } : {}),
+                ...(result.progress?.activityState ? { activityState: result.progress.activityState } : {}),
+                ...(result.progress?.idleEpisodeId ? { idleEpisodeId: result.progress.idleEpisodeId } : {}),
+                ...(result.progress?.durableAttentionReasons
+                    ? { durableAttentionReasons: [...result.progress.durableAttentionReasons] }
+                    : {}),
+                ...(result.progress?.compaction ? { compaction: { ...result.progress.compaction } } : {}),
                 ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
                 ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
                 ...(result.contextPressureCrossedThresholds
@@ -966,6 +991,14 @@ function updateRememberedForegroundChild(state, input) {
         ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
         ...(input.result.pause ? { pause: input.result.pause } : {}),
         ...(input.result.cancel ? { cancel: input.result.cancel } : {}),
+        activityState: input.result.progress?.activityState,
+        idleEpisodeId: input.result.progress?.idleEpisodeId,
+        durableAttentionReasons: input.result.progress?.durableAttentionReasons
+            ? [...input.result.progress.durableAttentionReasons]
+            : undefined,
+        compaction: input.result.progress?.compaction
+            ? { ...input.result.progress.compaction }
+            : undefined,
         ...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
         ...(input.result.contextPressure
             ? { contextPressure: { ...input.result.contextPressure } }
@@ -1069,6 +1102,12 @@ function resolveForegroundResumeTarget(params, state) {
                 contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds),
             }
             : {}),
+        ...(child.activityState ? { activityState: child.activityState } : {}),
+        ...(child.idleEpisodeId ? { idleEpisodeId: child.idleEpisodeId } : {}),
+        ...(child.durableAttentionReasons
+            ? { durableAttentionReasons: [...child.durableAttentionReasons] }
+            : {}),
+        ...(child.compaction ? { compaction: { ...child.compaction } } : {}),
         ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
             ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
             : {}),
@@ -1494,7 +1533,7 @@ function requestForegroundInterrupt(control) {
     const interrupted = control.interrupt();
     if (interrupted) {
         control.updatedAt = Date.now();
-        control.currentActivityState = undefined;
+        clearForegroundControlEphemeralHealth(control);
     }
     return interrupted;
 }
@@ -3695,6 +3734,10 @@ async function runForegroundParallelTasks(input) {
                     thinking: result?.thinking,
                     modelIdentity: result?.modelIdentity,
                     modelResolution: result?.modelResolution,
+                    activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+                    idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+                    durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+                    compaction: result?.progress?.compaction ?? liveProgress?.compaction,
                     contextUsage: result?.contextUsage,
                     contextPressure: result?.contextPressure,
                     contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -3711,6 +3754,10 @@ async function runForegroundParallelTasks(input) {
                 thinking: result?.thinking,
                 modelIdentity: result?.modelIdentity,
                 modelResolution: result?.modelResolution,
+                activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+                idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+                durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+                compaction: result?.progress?.compaction ?? liveProgress?.compaction,
                 contextUsage: result?.contextUsage,
                 contextPressure: result?.contextPressure,
                 contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -3780,14 +3827,14 @@ async function runForegroundParallelTasks(input) {
         if (input.foregroundControl) {
             input.foregroundControl.currentAgent = task.agent;
             input.foregroundControl.currentIndex = index;
-            input.foregroundControl.currentActivityState = undefined;
+            resetForegroundControlHealth(input.foregroundControl);
             input.foregroundControl.updatedAt = Date.now();
             registerForegroundInterrupt(input.foregroundControl, index, () => {
                 interrupted = true;
                 if (interruptController.signal.aborted)
                     return false;
                 interruptController.abort();
-                input.foregroundControl.currentActivityState = undefined;
+                clearForegroundControlEphemeralHealth(input.foregroundControl);
                 input.foregroundControl.updatedAt = Date.now();
                 return true;
             });
@@ -3852,7 +3899,7 @@ async function runForegroundParallelTasks(input) {
                         const current = stepProgress[0];
                         input.foregroundControl.currentAgent = task.agent;
                         input.foregroundControl.currentIndex = index;
-                        input.foregroundControl.currentActivityState = current?.activityState;
+                        updateForegroundControlProgress(input.foregroundControl, current);
                         input.foregroundControl.lastActivityAt = current?.lastActivityAt;
                         input.foregroundControl.currentTool = current?.currentTool;
                         input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
@@ -4190,13 +4237,13 @@ async function runSinglePath(data, deps) {
     if (foregroundControl) {
         foregroundControl.currentAgent = params.agent;
         foregroundControl.currentIndex = 0;
-        foregroundControl.currentActivityState = undefined;
+        resetForegroundControlHealth(foregroundControl);
         foregroundControl.updatedAt = Date.now();
         registerForegroundInterrupt(foregroundControl, 0, () => {
             if (interruptController.signal.aborted)
                 return false;
             interruptController.abort();
-            foregroundControl.currentActivityState = undefined;
+            clearForegroundControlEphemeralHealth(foregroundControl);
             foregroundControl.updatedAt = Date.now();
             return true;
         });
@@ -4207,7 +4254,7 @@ async function runSinglePath(data, deps) {
                 const firstProgress = update.details?.progress?.[0];
                 foregroundControl.currentAgent = params.agent;
                 foregroundControl.currentIndex = firstProgress?.index ?? 0;
-                foregroundControl.currentActivityState = firstProgress?.activityState;
+                updateForegroundControlProgress(foregroundControl, firstProgress);
                 foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
                 foregroundControl.currentTool = firstProgress?.currentTool;
                 foregroundControl.currentToolStartedAt = firstProgress?.currentToolStartedAt;
@@ -4294,7 +4341,7 @@ async function runSinglePath(data, deps) {
     }
     if (foregroundControl) {
         clearForegroundInterrupt(foregroundControl, 0);
-        foregroundControl.currentActivityState = r.progress?.activityState;
+        updateForegroundControlProgress(foregroundControl, r.progress);
         foregroundControl.lastActivityAt = r.progress?.lastActivityAt;
         foregroundControl.currentTool = r.progress?.currentTool;
         foregroundControl.currentToolStartedAt = r.progress?.currentToolStartedAt;

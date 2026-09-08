@@ -84,6 +84,22 @@ export type ActivityState = "active_long_running" | "needs_attention";
 export type ControlEventType = "active_long_running" | "needs_attention";
 export type ControlNotificationChannel = "event" | "async";
 
+export type ControlEventReason =
+  | "idle"
+  | "completion_guard"
+  | "active_long_running"
+  | "tool_failures"
+  | "time_threshold"
+  | "turn_threshold"
+  | "token_threshold"
+  | "context_pressure";
+
+/** Attention causes that activity recovery cannot clear within the run lifecycle. */
+export type DurableAttentionReason = "context_pressure" | "tool_failures" | "completion_guard";
+
+/** Reasons reported by the pinned coding-agent compaction lifecycle events. */
+export type CompactionReason = "manual" | "threshold" | "overflow";
+
 export type ContextPressureSeverity = "warning" | "critical";
 export type ContextPressureThreshold = ContextPressureSeverity;
 
@@ -153,15 +169,9 @@ export interface ControlEvent {
   /** Context-pressure diagnostics are carried through every control channel. */
   contextPressureSeverity?: ContextPressureSeverity;
   contextPressureThreshold?: ContextPressureThreshold;
-  reason?:
-    | "idle"
-    | "completion_guard"
-    | "active_long_running"
-    | "tool_failures"
-    | "time_threshold"
-    | "turn_threshold"
-    | "token_threshold"
-    | "context_pressure";
+  /** Stable identity for the current validated idle episode, when applicable. */
+  idleEpisodeId?: string;
+  reason?: ControlEventReason;
   turns?: number;
   tokens?: number;
   toolCount?: number;
@@ -360,6 +370,12 @@ export interface AgentProgress {
   agent: string;
   status: "pending" | "running" | "completed" | "failed";
   activityState?: ActivityState;
+  /** Stable identity for the currently active idle episode, when any. */
+  idleEpisodeId?: string;
+  /** Durable health causes retained independently of recoverable idle attention. */
+  durableAttentionReasons?: DurableAttentionReason[];
+  /** Compaction is an active operation independent of tool-call state. */
+  compaction?: { reason: CompactionReason };
   task: string;
   skills?: string[];
   lastActivityAt?: number;
@@ -894,6 +910,12 @@ export interface AsyncStatus {
     transcriptPath?: string;
     transcriptError?: string;
     activityState?: ActivityState;
+    /** Stable identity for the currently active idle episode, when any. */
+    idleEpisodeId?: string;
+    /** Durable health causes retained independently of recoverable idle attention. */
+    durableAttentionReasons?: DurableAttentionReason[];
+    /** Compaction is an active operation independent of tool-call state. */
+    compaction?: { reason: CompactionReason };
     lastActivityAt?: number;
     currentTool?: string;
     currentToolArgs?: string;
@@ -989,6 +1011,11 @@ export interface AsyncResultArtifactResultItem {
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
   model?: string;
+  /** Per-child liveness projection retained for result-only async resume recovery. */
+  activityState?: ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: DurableAttentionReason[];
+  compaction?: { reason: CompactionReason };
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
   attemptedModels?: string[];
@@ -1125,6 +1152,10 @@ export interface ForegroundResumeChild {
   acceptance?: AcceptanceLedger;
   pause?: ForegroundPauseMetadata;
   cancel?: AsyncCancellationMetadata;
+  activityState?: ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: DurableAttentionReason[];
+  compaction?: { reason: CompactionReason };
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
@@ -1151,6 +1182,12 @@ export interface ForegroundRunControl {
   currentAgent?: string;
   currentIndex?: number;
   currentActivityState?: ActivityState;
+  /** Stable identity for the currently active idle episode, when any. */
+  idleEpisodeId?: string;
+  /** Durable health causes retained independently of recoverable idle attention. */
+  durableAttentionReasons?: DurableAttentionReason[];
+  /** Compaction is an active operation independent of tool-call state. */
+  compaction?: { reason: CompactionReason };
   lastActivityAt?: number;
   currentTool?: string;
   currentToolStartedAt?: number;

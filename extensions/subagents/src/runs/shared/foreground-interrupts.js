@@ -12,6 +12,8 @@ export function registerForegroundInterrupt(control, key, interrupt) {
             interrupted = callback() || interrupted;
         if (interrupted) {
             control.currentActivityState = undefined;
+            control.idleEpisodeId = undefined;
+            control.compaction = undefined;
             control.updatedAt = Date.now();
         }
         return interrupted;
