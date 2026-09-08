@@ -27,7 +27,7 @@ type ChildTranscriptMessage = Message & {
   usage?: unknown;
 };
 
-interface ChildTranscriptEvent {
+interface ChildTranscriptEvent extends Record<string, unknown> {
   type?: string;
   message?: ChildTranscriptMessage;
   toolName?: string;
@@ -258,6 +258,13 @@ export function createChildTranscriptWriter(
           sourceEventType: event.type,
           ...(event.toolName ? { toolName: event.toolName } : {}),
         });
+      }
+      if (event.type === "compaction_start" || event.type === "compaction_end") {
+        // Keep recognized compaction envelopes in the same raw stdout projection
+        // used for unknown protocol objects. The shared writer still applies the
+        // existing debug-only artifact policy and byte cap.
+        const rawEvent = JSON.stringify(event);
+        if (rawEvent) writeRecord({ ...baseRecord("stdout"), text: rawEvent });
       }
     },
     writeStdoutLine(line: string) {

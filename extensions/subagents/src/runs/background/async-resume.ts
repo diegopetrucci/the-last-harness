@@ -12,6 +12,7 @@ import {
   normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
+import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
 import {
   normalizeProjectAgentRunCapture,
   type ProjectAgentRunCapture,
@@ -24,8 +25,11 @@ import {
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
 import type {
+  ActivityState,
+  CompactionReason,
   ContextPressureProjection,
   ContextUsageDiagnostics,
+  DurableAttentionReason,
   SubagentModelIdentity,
   SubagentModelResolution,
   SubagentTerminationReason,
@@ -158,6 +162,11 @@ type AsyncResumeTarget = {
   tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
+  /** Source child health projection; never used to restore an in-flight operation. */
+  activityState?: ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: DurableAttentionReason[];
+  compaction?: { reason: CompactionReason };
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
@@ -226,6 +235,80 @@ type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
 type AsyncResultStep = NonNullable<AsyncResultFile["results"]>[number];
 
 type AsyncResumeModelMetadata = Pick<AsyncResumeTarget, "modelIdentity" | "modelResolution">;
+type AsyncResumeHealthMetadata = Pick<
+  AsyncResumeTarget,
+  "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+>;
+
+type HealthProjectionSource = {
+  activityState?: unknown;
+  idleEpisodeId?: unknown;
+  durableAttentionReasons?: unknown;
+  compaction?: unknown;
+};
+
+const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
+  "context_pressure",
+  "tool_failures",
+  "completion_guard",
+]);
+const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+]);
+
+function normalizeHealthActivityState(value: unknown): ActivityState | undefined {
+  return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+}
+
+function normalizeHealthDurableAttentionReasons(
+  value: unknown,
+): DurableAttentionReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = Array.from(
+    new Set(
+      value.filter(
+        (reason): reason is DurableAttentionReason =>
+          typeof reason === "string" &&
+          DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+      ),
+    ),
+  );
+  return reasons.length > 0 ? reasons : undefined;
+}
+
+function normalizeHealthCompaction(value: unknown): { reason: CompactionReason } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reason = (value as { reason?: unknown }).reason;
+  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
+    ? { reason: reason as CompactionReason }
+    : undefined;
+}
+
+function resolveResumeHealthMetadata(
+  primary?: HealthProjectionSource,
+  fallback?: HealthProjectionSource,
+): AsyncResumeHealthMetadata {
+  const activityState =
+    normalizeHealthActivityState(primary?.activityState) ??
+    normalizeHealthActivityState(fallback?.activityState);
+  const idleEpisodeId =
+    normalizeIdleEpisodeId(primary?.idleEpisodeId) ??
+    normalizeIdleEpisodeId(fallback?.idleEpisodeId);
+  const durableAttentionReasons =
+    normalizeHealthDurableAttentionReasons(primary?.durableAttentionReasons) ??
+    normalizeHealthDurableAttentionReasons(fallback?.durableAttentionReasons);
+  const compaction =
+    normalizeHealthCompaction(primary?.compaction) ??
+    normalizeHealthCompaction(fallback?.compaction);
+  return {
+    ...(activityState ? { activityState } : {}),
+    ...(idleEpisodeId ? { idleEpisodeId } : {}),
+    ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
+    ...(compaction ? { compaction } : {}),
+  };
+}
 
 type AsyncResumeDiagnosticMetadata = Pick<
   AsyncResumeTarget,
@@ -376,6 +459,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
         child.contextPressureCrossedThresholds,
       );
+      const healthMetadata = resolveResumeHealthMetadata(child);
       const terminationReason = parseSubagentTerminationReason(child.terminationReason);
       const success = child.success;
       if (success !== undefined && typeof success !== "boolean")
@@ -427,6 +511,12 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(contextUsage ? { contextUsage } : {}),
         ...(contextPressure ? { contextPressure } : {}),
         ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+        ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+        ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+        ...(healthMetadata.durableAttentionReasons
+          ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+          : {}),
+        ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(terminationReason ? { terminationReason } : {}),
         ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
@@ -926,6 +1016,7 @@ function buildLiveAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const healthMetadata = resolveResumeHealthMetadata(statusStep, context.resultSteps[index]);
   const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
   return {
     ...target,
@@ -933,6 +1024,12 @@ function buildLiveAsyncResumeTarget(
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
     ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
+    ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+    ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+    ...(healthMetadata.durableAttentionReasons
+      ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+      : {}),
+    ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
   };
 }
@@ -1050,6 +1147,10 @@ function buildTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const healthMetadata = resolveResumeHealthMetadata(
+    selectedStatusStep,
+    context.resultSteps[index],
+  );
   const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
@@ -1057,6 +1158,12 @@ function buildTerminalAsyncResumeTarget(
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
     ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+    ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+    ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+    ...(healthMetadata.durableAttentionReasons
+      ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+      : {}),
+    ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
     ...(selectedStatusStep?.pause?.kind
       ? { pauseKind: selectedStatusStep.pause.kind }

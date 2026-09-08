@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { lifecycleContinuationForIndex, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
+import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
@@ -54,6 +55,50 @@ function resolvePausedContinuationAcceptance(runId, acceptance) {
     }
     const persistedStatus = typeof ledger.status === "string" ? ledger.status : "unknown";
     throw new Error(`Async run '${runId}' is paused but its persisted acceptance ledger status '${persistedStatus}' is incompatible with continuation resume; expected 'skipped' or 'not-required'.`);
+}
+const DURABLE_ATTENTION_REASONS = new Set([
+    "context_pressure",
+    "tool_failures",
+    "completion_guard",
+]);
+const COMPACTION_REASONS = new Set([
+    "manual",
+    "threshold",
+    "overflow",
+]);
+function normalizeHealthActivityState(value) {
+    return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+}
+function normalizeHealthDurableAttentionReasons(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const reasons = Array.from(new Set(value.filter((reason) => typeof reason === "string" &&
+        DURABLE_ATTENTION_REASONS.has(reason))));
+    return reasons.length > 0 ? reasons : undefined;
+}
+function normalizeHealthCompaction(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const reason = value.reason;
+    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
+        ? { reason: reason }
+        : undefined;
+}
+function resolveResumeHealthMetadata(primary, fallback) {
+    const activityState = normalizeHealthActivityState(primary?.activityState) ??
+        normalizeHealthActivityState(fallback?.activityState);
+    const idleEpisodeId = normalizeIdleEpisodeId(primary?.idleEpisodeId) ??
+        normalizeIdleEpisodeId(fallback?.idleEpisodeId);
+    const durableAttentionReasons = normalizeHealthDurableAttentionReasons(primary?.durableAttentionReasons) ??
+        normalizeHealthDurableAttentionReasons(fallback?.durableAttentionReasons);
+    const compaction = normalizeHealthCompaction(primary?.compaction) ??
+        normalizeHealthCompaction(fallback?.compaction);
+    return {
+        ...(activityState ? { activityState } : {}),
+        ...(idleEpisodeId ? { idleEpisodeId } : {}),
+        ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
+        ...(compaction ? { compaction } : {}),
+    };
 }
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
 function getErrorMessage(error) {
@@ -125,6 +170,7 @@ function validateResultFile(value, resultPath) {
             const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
             const contextPressure = parseContextPressureProjection(child.contextPressure);
             const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
+            const healthMetadata = resolveResumeHealthMetadata(child);
             const terminationReason = parseSubagentTerminationReason(child.terminationReason);
             const success = child.success;
             if (success !== undefined && typeof success !== "boolean")
@@ -158,6 +204,12 @@ function validateResultFile(value, resultPath) {
                 ...(contextUsage ? { contextUsage } : {}),
                 ...(contextPressure ? { contextPressure } : {}),
                 ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+                ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+                ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+                ...(healthMetadata.durableAttentionReasons
+                    ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+                    : {}),
+                ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
                 ...(terminationReason ? { terminationReason } : {}),
                 ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
                 ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
@@ -540,6 +592,7 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         sessionFile: statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
     };
     const metadata = resolveResumeModelMetadata(index, statusStep, context.resultSteps, context.result);
+    const healthMetadata = resolveResumeHealthMetadata(statusStep, context.resultSteps[index]);
     const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
     return {
         ...target,
@@ -547,6 +600,12 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
         ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
         ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
+        ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+        ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+        ...(healthMetadata.durableAttentionReasons
+            ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+            : {}),
+        ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
     };
 }
@@ -622,6 +681,7 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
     };
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
+    const healthMetadata = resolveResumeHealthMetadata(selectedStatusStep, context.resultSteps[index]);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
     const targetWithModelMetadata = {
         ...target,
@@ -629,6 +689,12 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
         ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
         ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+        ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
+        ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
+        ...(healthMetadata.durableAttentionReasons
+            ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+            : {}),
+        ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
         ...(selectedStatusStep?.pause?.kind
             ? { pauseKind: selectedStatusStep.pause.kind }

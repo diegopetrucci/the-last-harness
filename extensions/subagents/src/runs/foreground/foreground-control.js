@@ -156,13 +156,32 @@ export function selectInterruptTarget(params, state) {
         params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
     };
 }
+export function resetForegroundControlHealth(control) {
+    control.currentActivityState = undefined;
+    control.idleEpisodeId = undefined;
+    control.durableAttentionReasons = undefined;
+    control.compaction = undefined;
+}
+export function updateForegroundControlProgress(control, progress) {
+    control.currentActivityState = progress?.activityState;
+    control.idleEpisodeId = progress?.idleEpisodeId;
+    control.durableAttentionReasons = progress?.durableAttentionReasons
+        ? [...progress.durableAttentionReasons]
+        : undefined;
+    control.compaction = progress?.compaction ? { ...progress.compaction } : undefined;
+}
+export function clearForegroundControlEphemeralHealth(control) {
+    control.currentActivityState = undefined;
+    control.idleEpisodeId = undefined;
+    control.compaction = undefined;
+}
 export function requestForegroundInterrupt(control) {
     if (!control?.interrupt)
         return false;
     const interrupted = control.interrupt();
     if (interrupted) {
         control.updatedAt = Date.now();
-        control.currentActivityState = undefined;
+        clearForegroundControlEphemeralHealth(control);
     }
     return interrupted;
 }

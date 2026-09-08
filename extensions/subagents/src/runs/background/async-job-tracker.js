@@ -21,6 +21,9 @@ const COMPLETION_RETENTION_STATES = new Set([
     "cancelled",
     "continued",
 ]);
+function isRecordValue(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function hasUsableProjectSessionFile(sessionFile) {
     if (typeof sessionFile !== "string" || sessionFile.trim().length === 0)
         return false;
@@ -279,21 +282,24 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
                     return;
                 }
-                if (!parsed ||
-                    typeof parsed !== "object" ||
-                    parsed.type !== "subagent.control")
+                if (!isRecordValue(parsed) || parsed.type !== "subagent.control")
                     return;
-                const record = parsed;
-                const event = parseControlEvent(record.event);
-                if (!event || !Array.isArray(record.channels))
+                const channels = parsed.channels;
+                const event = parseControlEvent(parsed.event);
+                if (!event ||
+                    !Array.isArray(channels) ||
+                    channels.some((channel) => typeof channel !== "string"))
                     return;
+                const noticeText = typeof parsed.noticeText === "string"
+                    ? parsed.noticeText
+                    : formatControlNoticeMessage(event);
                 const payload = {
                     event,
                     source: "async",
                     asyncDir: job.asyncDir,
-                    noticeText: record.noticeText ?? formatControlNoticeMessage(event),
+                    noticeText,
                 };
-                if (record.channels.includes("event")) {
+                if (channels.includes("event")) {
                     pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
                 }
             };

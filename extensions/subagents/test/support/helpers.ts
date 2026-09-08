@@ -481,14 +481,24 @@ export async function tryImport<T>(specifier: string): Promise<T> {
 }
 
 export const events = {
-  assistantMessage(text: string, model = "mock/test-model"): object {
+  assistantMessage(
+    text: string,
+    model = "mock/test-model",
+    stopReason: "stop" | "tool_use" = "stop",
+  ): object {
     return {
       type: "message_end",
       message: {
         role: "assistant",
-        content: [{ type: "text", text }],
+        content:
+          stopReason === "tool_use"
+            ? [
+                { type: "text", text },
+                { type: "toolCall", name: "bash", arguments: { command: "echo test" } },
+              ]
+            : [{ type: "text", text }],
         model,
-        stopReason: "stop",
+        stopReason,
         usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
       },
     };
@@ -511,6 +521,23 @@ export const events = {
         isError,
         content: [{ type: "text", text }],
       },
+    };
+  },
+
+  compactionStart(reason: "manual" | "threshold" | "overflow" = "manual"): object {
+    return { type: "compaction_start", reason };
+  },
+
+  compactionEnd(
+    reason: "manual" | "threshold" | "overflow" = "manual",
+    options: { aborted?: boolean; willRetry?: boolean; errorMessage?: string } = {},
+  ): object {
+    return {
+      type: "compaction_end",
+      reason,
+      aborted: options.aborted ?? false,
+      willRetry: options.willRetry ?? false,
+      ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     };
   },
 };

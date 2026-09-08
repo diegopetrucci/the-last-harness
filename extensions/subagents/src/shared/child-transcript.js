@@ -185,6 +185,11 @@ export function createChildTranscriptWriter(input) {
                     ...(event.toolName ? { toolName: event.toolName } : {}),
                 });
             }
+            if (event.type === "compaction_start" || event.type === "compaction_end") {
+                const rawEvent = JSON.stringify(event);
+                if (rawEvent)
+                    writeRecord({ ...baseRecord("stdout"), text: rawEvent });
+            }
         },
         writeStdoutLine(line) {
             if (!line.trim())

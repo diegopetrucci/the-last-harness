@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { invalidateStatusCache } from "../../shared/utils.js";
+import { normalizeIdleEpisodeId } from "./health-transition.js";
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
 export const ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS = 30_000;
@@ -19,6 +20,31 @@ export function normalizeActiveRuntimeMs(value) {
 export function normalizeActiveRuntimeCheckpointAt(value) {
     return typeof value === "number" && Number.isFinite(value) && value >= 0
         ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+        : undefined;
+}
+const DURABLE_ATTENTION_REASONS = new Set([
+    "context_pressure",
+    "tool_failures",
+    "completion_guard",
+]);
+const COMPACTION_REASONS = new Set([
+    "manual",
+    "threshold",
+    "overflow",
+]);
+function normalizeDurableAttentionReasons(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const reasons = value.filter((reason) => typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason));
+    const unique = [...new Set(reasons)];
+    return unique.length > 0 ? unique : undefined;
+}
+function normalizeCompactionProjection(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const reason = value.reason;
+    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
+        ? { reason: reason }
         : undefined;
 }
 export function boundedActiveRuntimeMs(value, fallback = 0) {
@@ -354,11 +380,19 @@ export function normalizeAsyncLifecycleStatus(status) {
     const steps = status.steps?.map((step) => {
         const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
         const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
-        const { activeRuntimeMs: _stepActiveRuntimeMs, activeRuntimeCheckpointAt: _stepCheckpointAt, ...stepRest } = step;
+        const stepIdleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
+        const stepDurableAttentionReasons = normalizeDurableAttentionReasons(step.durableAttentionReasons);
+        const stepCompaction = normalizeCompactionProjection(step.compaction);
+        const { activeRuntimeMs: _stepActiveRuntimeMs, activeRuntimeCheckpointAt: _stepCheckpointAt, idleEpisodeId: _stepIdleEpisodeId, durableAttentionReasons: _stepDurableAttentionReasons, compaction: _stepCompaction, ...stepRest } = step;
         return {
             ...stepRest,
             ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
             ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
+            ...(stepIdleEpisodeId !== undefined ? { idleEpisodeId: stepIdleEpisodeId } : {}),
+            ...(stepDurableAttentionReasons
+                ? { durableAttentionReasons: [...stepDurableAttentionReasons] }
+                : {}),
+            ...(stepCompaction ? { compaction: { ...stepCompaction } } : {}),
         };
     });
     return {

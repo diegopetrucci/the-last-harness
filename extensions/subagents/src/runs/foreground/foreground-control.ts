@@ -17,6 +17,7 @@ import {
 import { readStatus } from "../../shared/utils.ts";
 import {
   type AsyncStatus,
+  type AgentProgress,
   type ControlEvent,
   type Details,
   type ResolvedControlConfig,
@@ -225,14 +226,40 @@ export function selectInterruptTarget(
   };
 }
 
-export function requestForegroundInterrupt(
-  control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
-): boolean {
+type ForegroundControl =
+  SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
+
+export function resetForegroundControlHealth(control: ForegroundControl): void {
+  control.currentActivityState = undefined;
+  control.idleEpisodeId = undefined;
+  control.durableAttentionReasons = undefined;
+  control.compaction = undefined;
+}
+
+export function updateForegroundControlProgress(
+  control: ForegroundControl,
+  progress: AgentProgress | undefined,
+): void {
+  control.currentActivityState = progress?.activityState;
+  control.idleEpisodeId = progress?.idleEpisodeId;
+  control.durableAttentionReasons = progress?.durableAttentionReasons
+    ? [...progress.durableAttentionReasons]
+    : undefined;
+  control.compaction = progress?.compaction ? { ...progress.compaction } : undefined;
+}
+
+export function clearForegroundControlEphemeralHealth(control: ForegroundControl): void {
+  control.currentActivityState = undefined;
+  control.idleEpisodeId = undefined;
+  control.compaction = undefined;
+}
+
+export function requestForegroundInterrupt(control: ForegroundControl): boolean {
   if (!control?.interrupt) return false;
   const interrupted = control.interrupt();
   if (interrupted) {
     control.updatedAt = Date.now();
-    control.currentActivityState = undefined;
+    clearForegroundControlEphemeralHealth(control);
   }
   return interrupted;
 }

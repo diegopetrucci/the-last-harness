@@ -243,4 +243,83 @@ describe("subagent control notice delivery", () => {
     assert.equal(recorder.sent.length, 0);
     assert.equal(recorder.nudges.length, 0);
   });
+
+  it("does not deliver an idle timer after its episode recovers into a durable warning", async () => {
+    const state = makeState();
+    state.foregroundControls.set("run-1", {
+      runId: "run-1",
+      mode: "single",
+      startedAt: 0,
+      updatedAt: 0,
+      currentAgent: "worker",
+      currentIndex: 0,
+      currentActivityState: "needs_attention",
+      idleEpisodeId: "attempt-1~idle~1",
+    });
+    const recorder = makeRecorder();
+    const visible = new Set<string>();
+
+    handleSubagentControlNotice({
+      pi: recorder.pi,
+      state,
+      visibleControlNotices: visible,
+      details: {
+        source: "foreground",
+        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~1" }),
+      },
+      foregroundDelayMs: 10,
+    });
+    const control = state.foregroundControls.get("run-1")!;
+    control.idleEpisodeId = undefined;
+    control.durableAttentionReasons = ["context_pressure"];
+    control.currentActivityState = "needs_attention";
+
+    await wait(25);
+    assert.equal(recorder.sent.length, 0);
+    assert.equal(visible.size, 0);
+  });
+
+  it("delivers distinct foreground idle episodes independently", async () => {
+    const state = makeState();
+    const control = {
+      runId: "run-1",
+      mode: "single" as const,
+      startedAt: 0,
+      updatedAt: 0,
+      currentAgent: "worker",
+      currentIndex: 0,
+      currentActivityState: "needs_attention" as const,
+      idleEpisodeId: "attempt-1~idle~1",
+    };
+    state.foregroundControls.set("run-1", control);
+    const recorder = makeRecorder();
+    const visible = new Set<string>();
+
+    handleSubagentControlNotice({
+      pi: recorder.pi,
+      state,
+      visibleControlNotices: visible,
+      details: {
+        source: "foreground",
+        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~1" }),
+      },
+      foregroundDelayMs: 5,
+    });
+    await wait(15);
+    control.idleEpisodeId = "attempt-1~idle~2";
+    handleSubagentControlNotice({
+      pi: recorder.pi,
+      state,
+      visibleControlNotices: visible,
+      details: {
+        source: "foreground",
+        event: needsAttentionEvent({ idleEpisodeId: "attempt-1~idle~2" }),
+      },
+      foregroundDelayMs: 5,
+    });
+    await wait(15);
+
+    assert.equal(recorder.sent.length, 2);
+    assert.equal(visible.size, 2);
+  });
 });

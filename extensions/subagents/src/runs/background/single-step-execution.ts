@@ -137,6 +137,8 @@ interface SingleStepContext {
   nestedRoute?: NestedRouteInfo;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
   onChildEvent?: (event: ChildEvent) => void;
+  /** Called after each child attempt has fully settled, including failures. */
+  onAttemptEnd?: () => void;
   onChildProtocolOutputLimit?: (limit: ProtocolOutputLimit) => void;
   skipAcceptance?: () => boolean;
   /** Shared runner-owned tracker used by checkpoints and final settlement. */
@@ -1107,60 +1109,67 @@ export async function runSingleStep(
       };
       break;
     }
-    // Keep this await in runSingleStep: settling a child attempt must not gain a
-    // promise continuation from an extracted async helper.
-    const run = await runPiStreaming(
-      attempt.args!,
-      step.cwd ?? stepCtx.cwd,
-      stepCtx.outputFile,
-      appendDiagnosticJsonl,
-      attempt.env,
-      stepCtx.piPackageRoot,
-      stepCtx.piArgv1,
-      step.maxSubagentDepth,
-      {
-        eventsPath: setup.eventsPath,
-        runId: stepCtx.id,
-        stepIndex: stepCtx.flatIndex,
-        agent: step.agent,
-        includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
-      },
-      stepCtx.registerInterrupt,
-      stepCtx.onChildEvent,
-      setup.transcriptWriter,
-      stepCtx.registerTimeout,
-      stepCtx.timeoutMessage,
-      stepCtx.onChildProtocolOutputLimit,
-      {
-        restored: setup.restoredSession,
-        configuredModel: candidate,
-        contextWindow: contextWindowForModel(candidate, step.contextWindows),
-        contextWindows: step.contextWindows,
-      },
-    );
-    const assessment = assessSingleStepAttempt({
-      step,
-      state,
-      run,
-      candidate,
-      outputSnapshot: attempt.outputSnapshot,
-      tempDir: attempt.tempDir,
-      taskForCompletionGuard: setup.taskForCompletionGuard,
-    });
-    if (
-      shouldStopSingleStepAttempt({
+    let stopAttempt = false;
+    try {
+      // Keep this await in runSingleStep: settling a child attempt must not gain
+      // a promise continuation from an extracted async helper.
+      const run = await runPiStreaming(
+        attempt.args!,
+        step.cwd ?? stepCtx.cwd,
+        stepCtx.outputFile,
+        appendDiagnosticJsonl,
+        attempt.env,
+        stepCtx.piPackageRoot,
+        stepCtx.piArgv1,
+        step.maxSubagentDepth,
+        {
+          eventsPath: setup.eventsPath,
+          runId: stepCtx.id,
+          stepIndex: stepCtx.flatIndex,
+          agent: step.agent,
+          includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
+        },
+        stepCtx.registerInterrupt,
+        stepCtx.onChildEvent,
+        setup.transcriptWriter,
+        stepCtx.registerTimeout,
+        stepCtx.timeoutMessage,
+        stepCtx.onChildProtocolOutputLimit,
+        {
+          restored: setup.restoredSession,
+          configuredModel: candidate,
+          contextWindow: contextWindowForModel(candidate, step.contextWindows),
+          contextWindows: step.contextWindows,
+        },
+      );
+      const assessment = assessSingleStepAttempt({
+        step,
+        state,
+        run,
+        candidate,
+        outputSnapshot: attempt.outputSnapshot,
+        tempDir: attempt.tempDir,
+        taskForCompletionGuard: setup.taskForCompletionGuard,
+      });
+      stopAttempt = shouldStopSingleStepAttempt({
         run,
         ctx: stepCtx,
         attempt: assessment.attempt,
         completionGuardTriggered: assessment.completionGuardTriggered,
         index,
         candidateCount: state.candidates.length,
-      })
-    )
-      break;
-    state.attemptNotes.push(
-      formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]),
-    );
+      });
+      if (!stopAttempt) {
+        state.attemptNotes.push(
+          formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]),
+        );
+      }
+    } finally {
+      // End operation-scoped health state before a fallback can start or the
+      // step settles. The runner owns the transition and persistence callback.
+      stepCtx.onAttemptEnd?.();
+    }
+    if (stopAttempt) break;
   }
 
   const output = finalizeSingleStepOutput({ step, ctx: stepCtx, state });

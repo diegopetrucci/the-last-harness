@@ -19,7 +19,12 @@ import {
   parseChildProtocolInput,
 } from "../../src/runs/shared/child-protocol.ts";
 import type { Message } from "@earendil-works/pi-ai";
-import type { ProtocolOutputLimit } from "../../src/shared/types.ts";
+import type { CompactionReason, ProtocolOutputLimit } from "../../src/shared/types.ts";
+
+function parseKnownEvent(line: string) {
+  const parsed = parseChildProtocolInput(line);
+  return parsed.kind === "event" ? parsed.event : undefined;
+}
 
 describe("child protocol validation", () => {
   it("accepts consumed event shapes and preserves unknown fields", () => {
@@ -59,6 +64,57 @@ describe("child protocol validation", () => {
       isChildProtocolEvent({ type: "tool_execution_start", toolName: "read", args: {} }),
       true,
     );
+  });
+
+  it("accepts pinned compaction lifecycle events and retains unconsumed fields", () => {
+    const reasons = [
+      "manual",
+      "threshold",
+      "overflow",
+    ] as const satisfies readonly CompactionReason[];
+
+    for (const reason of reasons) {
+      const start = parseKnownEvent(
+        JSON.stringify({ type: "compaction_start", reason, futureField: { retained: true } }),
+      );
+      assert.ok(start);
+      assert.equal(start.type, "compaction_start");
+      assert.equal(start.reason, reason);
+      assert.deepEqual(start.futureField, { retained: true });
+
+      const end = parseKnownEvent(
+        JSON.stringify({
+          type: "compaction_end",
+          reason,
+          aborted: reason === "overflow",
+          willRetry: reason === "threshold",
+          errorMessage: reason === "overflow" ? "compaction failed" : undefined,
+          result: { retained: true },
+        }),
+      );
+      assert.ok(end);
+      assert.equal(end.type, "compaction_end");
+      assert.equal(end.reason, reason);
+      assert.deepEqual(end.result, { retained: true });
+    }
+  });
+
+  it("rejects malformed compaction lifecycle envelopes without inventing aliases", () => {
+    const malformed = [
+      { type: "compaction_start", reason: "auto_compaction" },
+      { type: "compaction_start", extra: "missing reason" },
+      { type: "compaction_end", reason: "manual" as const, aborted: "false", willRetry: false },
+      { type: "compaction_end", reason: "manual" as const, aborted: false, willRetry: 0 },
+      {
+        type: "compaction_end",
+        reason: "manual" as const,
+        aborted: false,
+        willRetry: false,
+        errorMessage: 42,
+      },
+    ];
+
+    for (const value of malformed) assert.equal(parseKnownEvent(JSON.stringify(value)), undefined);
   });
 
   it("rejects malformed and unknown protocol objects without throwing", () => {

@@ -8,6 +8,7 @@ import {
   type ControlNotificationChannel,
   type ResolvedControlConfig,
 } from "../../shared/types.ts";
+import { normalizeIdleEpisodeId } from "./health-transition.ts";
 
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS: ControlNotificationChannel[] = ["event", "async"];
@@ -140,10 +141,16 @@ export function buildControlEvent(input: {
   currentPath?: string;
   elapsedMs?: number;
   recentFailureSummary?: string;
+  idleEpisodeId?: string;
 }): ControlEvent {
   const ts = input.ts ?? Date.now();
   const type =
     input.type ?? (input.to === "active_long_running" ? "active_long_running" : "needs_attention");
+  const reason = input.reason ?? (type === "active_long_running" ? "active_long_running" : "idle");
+  const idleEpisodeId =
+    type === "needs_attention" && input.to === "needs_attention" && reason === "idle"
+      ? normalizeIdleEpisodeId(input.idleEpisodeId)
+      : undefined;
   const elapsedMs =
     input.elapsedMs ?? (input.lastActivityAt ? Math.max(0, ts - input.lastActivityAt) : undefined);
   const elapsedSeconds = elapsedMs !== undefined ? Math.floor(elapsedMs / 1000) : undefined;
@@ -169,7 +176,8 @@ export function buildControlEvent(input: {
     ...(input.contextPressureThreshold
       ? { contextPressureThreshold: input.contextPressureThreshold }
       : {}),
-    reason: input.reason ?? (type === "active_long_running" ? "active_long_running" : "idle"),
+    ...(idleEpisodeId ? { idleEpisodeId } : {}),
+    reason,
     ...(input.turns !== undefined ? { turns: input.turns } : {}),
     ...(input.tokens !== undefined ? { tokens: input.tokens } : {}),
     ...(input.toolCount !== undefined ? { toolCount: input.toolCount } : {}),
@@ -216,6 +224,11 @@ export function parseControlEvent(value: unknown): ControlEvent | undefined {
   const toolCount = parseFiniteNumber(raw.toolCount);
   const currentToolDurationMs = parseFiniteNumber(raw.currentToolDurationMs);
   const elapsedMs = parseFiniteNumber(raw.elapsedMs);
+  const reason = isControlEventReason(raw.reason) ? raw.reason : undefined;
+  const idleEpisodeId =
+    raw.type === "needs_attention" && raw.to === "needs_attention" && reason === "idle"
+      ? normalizeIdleEpisodeId(raw.idleEpisodeId)
+      : undefined;
   return {
     type: raw.type,
     ...(raw.from === "active_long_running" || raw.from === "needs_attention"
@@ -229,7 +242,8 @@ export function parseControlEvent(value: unknown): ControlEvent | undefined {
     message: raw.message,
     ...(severity ? { contextPressureSeverity: severity } : {}),
     ...(threshold ? { contextPressureThreshold: threshold } : {}),
-    ...(isControlEventReason(raw.reason) ? { reason: raw.reason } : {}),
+    ...(idleEpisodeId ? { idleEpisodeId } : {}),
+    ...(reason ? { reason } : {}),
     ...(turns !== undefined ? { turns } : {}),
     ...(tokens !== undefined ? { tokens } : {}),
     ...(toolCount !== undefined ? { toolCount } : {}),
@@ -249,7 +263,11 @@ export function controlNotificationKey(event: ControlEvent): string {
     event.reason === "context_pressure"
       ? `:${event.contextPressureSeverity ?? ""}:${event.contextPressureThreshold ?? ""}`
       : "";
-  return `${childKey}:${event.type}:${event.reason ?? "idle"}${pressureKey}`;
+  const idleEpisodeKey =
+    event.type === "needs_attention" && event.reason === "idle"
+      ? normalizeIdleEpisodeId(event.idleEpisodeId)
+      : undefined;
+  return `${childKey}:${event.type}:${event.reason ?? "idle"}${pressureKey}${idleEpisodeKey ? `:${idleEpisodeKey}` : ""}`;
 }
 
 export function claimControlNotification(

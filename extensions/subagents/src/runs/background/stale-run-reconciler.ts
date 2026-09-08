@@ -3,11 +3,14 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
   RESULTS_DIR,
+  type ActivityState,
   type AsyncResultArtifact,
   type AsyncStatus,
+  type CompactionReason,
   type ContextPressureProjection,
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
+  type DurableAttentionReason,
   type NestedRunSummary,
   type SubagentModelIdentity,
   type SubagentModelResolution,
@@ -42,6 +45,7 @@ import {
 } from "../shared/model-fallback.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
+import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
@@ -155,6 +159,7 @@ function readStatusFile(asyncDir: string): AsyncStatus | null {
 interface ResultChildOutcome {
   agent?: string;
   success?: boolean;
+  durableAttentionReasons?: DurableAttentionReason[];
   error?: string;
   sessionFile?: string;
   model?: string;
@@ -181,6 +186,38 @@ interface ResultRepairData {
 
 type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
 
+const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
+  "context_pressure",
+  "tool_failures",
+  "completion_guard",
+]);
+const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+]);
+
+function parseHealthDurableAttentionReasons(value: unknown): DurableAttentionReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.filter(
+    (reason): reason is DurableAttentionReason =>
+      typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+  );
+  return reasons.length > 0 ? [...new Set(reasons)] : undefined;
+}
+
+function parseHealthCompaction(value: unknown): { reason: CompactionReason } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reason = (value as { reason?: unknown }).reason;
+  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
+    ? { reason: reason as CompactionReason }
+    : undefined;
+}
+
+function parseHealthActivityState(value: unknown): ActivityState | undefined {
+  return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+}
+
 function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
   const {
     modelIdentity: _modelIdentity,
@@ -188,6 +225,10 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
     thinking: _thinking,
     activeRuntimeMs: _activeRuntimeMs,
     activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt,
+    activityState: _activityState,
+    idleEpisodeId: _idleEpisodeId,
+    durableAttentionReasons: _durableAttentionReasons,
+    compaction: _compaction,
     ...rest
   } = step;
   const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
@@ -197,11 +238,19 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
   const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
   const modelResolution = sanitizeSubagentModelResolution(step.modelResolution);
   const thinking = parseThinkingLevel(step.thinking);
+  const activityState = parseHealthActivityState(step.activityState);
+  const idleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
+  const durableAttentionReasons = parseHealthDurableAttentionReasons(step.durableAttentionReasons);
+  const compaction = parseHealthCompaction(step.compaction);
   return {
     ...rest,
     ...(modelIdentity ? { modelIdentity } : {}),
     ...(modelResolution ? { modelResolution } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(activityState ? { activityState } : {}),
+    ...(idleEpisodeId ? { idleEpisodeId } : {}),
+    ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
+    ...(compaction ? { compaction } : {}),
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
   };
@@ -258,6 +307,9 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
             child.contextPressureCrossedThresholds,
           );
           const terminationReason = parseSubagentTerminationReason(child.terminationReason);
+          const durableAttentionReasons = parseHealthDurableAttentionReasons(
+            child.durableAttentionReasons,
+          );
           const modelIdentity = sanitizeSubagentModelIdentity(child.modelIdentity);
           const modelResolution = sanitizeSubagentModelResolution(child.modelResolution);
           const attemptedModels = Array.isArray(child.attemptedModels)
@@ -271,6 +323,7 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
             ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
             ...(projectAgent ? { projectAgent } : {}),
             ...(typeof child.success === "boolean" ? { success: child.success } : {}),
+            ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
             ...(typeof child.error === "string" ? { error: child.error } : {}),
             ...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
             ...(typeof child.model === "string" ? { model: child.model } : {}),
@@ -328,9 +381,17 @@ function terminalStatusFromResult(
     const childActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
       child?.activeRuntimeCheckpointAt,
     );
-    if (step.status !== "running" && step.status !== "pending") {
+    const durableAttentionReasons = [
+      ...new Set([
+        ...(sanitizedStep.durableAttentionReasons ?? []),
+        ...(child?.durableAttentionReasons ?? []),
+      ]),
+    ];
+    const durableHealth = durableAttentionReasons.length > 0 ? { durableAttentionReasons } : {};
+    if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
       return {
         ...sanitizedStep,
+        ...durableHealth,
         ...(persistedActiveRuntimeMs !== undefined || childActiveRuntimeMs !== undefined
           ? {
               activeRuntimeMs: Math.max(persistedActiveRuntimeMs ?? 0, childActiveRuntimeMs ?? 0),
@@ -350,6 +411,12 @@ function terminalStatusFromResult(
     const state = childState(repair.state, child);
     return {
       ...sanitizedStep,
+      // A stale result closes the detached live segment. Clear only ephemeral
+      // projection metadata; durable attention reasons remain useful evidence.
+      activityState: undefined,
+      idleEpisodeId: undefined,
+      compaction: undefined,
+      ...durableHealth,
       status:
         state === "complete"
           ? ("complete" as const)
@@ -480,35 +547,40 @@ function buildFailedRepair(
     status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }]
   ).map(sanitizeStatusStep);
   const repairedSteps = steps
-    .map((step) =>
-      step.status === "running" || step.status === "pending" || step.status === "pausing"
-        ? {
-            ...step,
-            status: "failed" as const,
-            activityState: undefined,
-            endedAt: step.endedAt ?? now,
-            durationMs:
-              step.startedAt !== undefined && step.durationMs === undefined
-                ? Math.max(0, now - step.startedAt)
-                : step.durationMs,
-            // Legacy records without a checkpoint intentionally retain only
-            // their persisted evidence; the offline wall-clock gap is unknown.
-            ...(normalizeActiveRuntimeMs(step.activeRuntimeMs) !== undefined
-              ? { activeRuntimeMs: normalizeActiveRuntimeMs(step.activeRuntimeMs) }
-              : {}),
-            ...(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) !== undefined
-              ? {
-                  activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
-                    step.activeRuntimeCheckpointAt,
-                  ),
-                }
-              : {}),
-            exitCode: step.exitCode ?? 1,
-            error: step.error ?? message,
-            terminationReason: step.terminationReason ?? "process_exit",
-          }
-        : step,
-    )
+    .map((step) => {
+      if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
+        return step;
+      }
+      return {
+        ...step,
+        // A killed child cannot keep live health metadata in the failed repair;
+        // completed siblings retain their historical projections unchanged.
+        activityState: undefined,
+        idleEpisodeId: undefined,
+        compaction: undefined,
+        status: "failed" as const,
+        endedAt: step.endedAt ?? now,
+        durationMs:
+          step.startedAt !== undefined && step.durationMs === undefined
+            ? Math.max(0, now - step.startedAt)
+            : step.durationMs,
+        // Legacy records without a checkpoint intentionally retain only
+        // their persisted evidence; the offline wall-clock gap is unknown.
+        ...(normalizeActiveRuntimeMs(step.activeRuntimeMs) !== undefined
+          ? { activeRuntimeMs: normalizeActiveRuntimeMs(step.activeRuntimeMs) }
+          : {}),
+        ...(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) !== undefined
+          ? {
+              activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(
+                step.activeRuntimeCheckpointAt,
+              ),
+            }
+          : {}),
+        exitCode: step.exitCode ?? 1,
+        error: step.error ?? message,
+        terminationReason: step.terminationReason ?? "process_exit",
+      };
+    })
     .map((step) =>
       step.status === "failed" && !step.terminationReason
         ? { ...step, terminationReason: "process_exit" as const }
@@ -573,6 +645,10 @@ function buildFailedRepair(
         contextUsage: step.contextUsage,
         contextPressure: step.contextPressure,
         contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
+        activityState: step.activityState,
+        idleEpisodeId: step.idleEpisodeId,
+        durableAttentionReasons: step.durableAttentionReasons,
+        compaction: step.compaction,
         ...(step.terminationReason
           ? { terminationReason: step.terminationReason }
           : step.status !== "complete" && step.status !== "completed"

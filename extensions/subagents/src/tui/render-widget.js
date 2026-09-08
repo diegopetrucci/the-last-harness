@@ -75,6 +75,8 @@ function projectContinuedWidgetStep(job, step) {
         ...step,
         status,
         activityState: undefined,
+        idleEpisodeId: undefined,
+        compaction: undefined,
         lastActivityAt: undefined,
         currentTool: undefined,
         currentToolArgs: undefined,

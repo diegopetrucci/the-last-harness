@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import { getArtifactPaths } from "../../shared/artifacts.ts";
 import {
+  type ActivityState,
   type AsyncStatus,
   type NestedRouteInfo,
   type ResolvedArtifactConfig,
@@ -48,10 +50,27 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.ts";
 import { readStatus } from "../../shared/utils.ts";
+import {
+  createHealthTransitionState,
+  resetHealthTransitionState,
+  transitionHealth,
+  type HealthTransitionAction,
+  type HealthTransitionResult,
+  type HealthTransitionState,
+} from "../shared/health-transition.ts";
 
 export type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
   exitCode?: number | null;
 };
+
+function applyHealthStatusProjection(step: RunnerStatusStep, state: HealthTransitionState): void {
+  step.activityState = state.activityState;
+  step.idleEpisodeId = state.idleEpisodeId;
+  step.durableAttentionReasons = state.durableAttentionReasons.length
+    ? [...state.durableAttentionReasons]
+    : undefined;
+  step.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
 
 export type RunnerStatusPayload = Omit<
   AsyncStatus,
@@ -146,6 +165,14 @@ export interface BackgroundRunStatusOwner {
   resolveTrackedSessionFile(flatIndex: number, fallback?: string): string | undefined;
   writeStatusPayload(options?: { projectNested?: boolean; lifecycleLocked?: boolean }): void;
   checkpointActiveRuntime(now?: number, freeze?: boolean): boolean;
+  healthStateForStep(flatIndex: number): HealthTransitionState;
+  transitionStepHealth(flatIndex: number, action: HealthTransitionAction): HealthTransitionResult;
+  resetStepHealth(flatIndex: number): HealthTransitionResult;
+  clearStepHealth(flatIndex: number): HealthTransitionResult;
+  clearRunningStepHealth(): void;
+  endStepCompaction(flatIndex: number, options?: { publish?: boolean }): void;
+  endAllStepCompactions(options?: { publish?: boolean }): void;
+  syncTopLevelHealthProjection(): boolean;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
   pausedAcceptanceLedger(
     acceptance: SubagentStep["effectiveAcceptance"],
@@ -391,6 +418,16 @@ export function createBackgroundRunStatusOwner(
   writeNormalizedLifecycleStatus(asyncDir, statusPayload);
 
   const activeRuntimeTrackers = new Map<number, ActiveRuntimeTracker>();
+  // Health transitions are independent from active-runtime accounting: the
+  // former describes user-visible liveness and durable attention, while the
+  // latter measures execution time for continuation budgets.
+  const healthStates: Array<HealthTransitionState | undefined> = initialStatusSteps.map(
+    () => undefined,
+  );
+  // Lifecycle cleanup closes an ephemeral health segment. Child callbacks may
+  // still arrive while a process drains, so retain that closure in memory.
+  const closedHealthSteps = new Set<number>();
+  let currentActivityState: ActivityState | undefined;
   const flatStepAcceptances = flatSteps.map((step) => step.effectiveAcceptance);
   const terminalReason: ChildTerminalReasonLatch = {};
   const controlHooks: BackgroundStatusControlHooks = {
@@ -606,6 +643,120 @@ export function createBackgroundRunStatusOwner(
     });
   }
 
+  function syncTopLevelHealthProjection(): boolean {
+    const nextRunState = statusPayload.steps.some(
+      (step) => step.activityState === "needs_attention",
+    )
+      ? "needs_attention"
+      : statusPayload.steps.some((step) => step.activityState === "active_long_running")
+        ? "active_long_running"
+        : undefined;
+    const changed = nextRunState !== currentActivityState;
+    currentActivityState = nextRunState;
+    statusPayload.activityState = nextRunState;
+    return changed;
+  }
+
+  function healthStateForStep(flatIndex: number): HealthTransitionState {
+    const current = healthStates[flatIndex];
+    if (current) return current;
+    const persistedReasons = statusPayload.steps[flatIndex]?.durableAttentionReasons;
+    const created = createHealthTransitionState(randomUUID());
+    healthStates[flatIndex] = persistedReasons?.length
+      ? { ...created, durableAttentionReasons: [...persistedReasons] }
+      : created;
+    return healthStates[flatIndex]!;
+  }
+
+  function ignoredHealthTransition(state: HealthTransitionState): HealthTransitionResult {
+    return {
+      state,
+      changed: false,
+      projectionChanged: false,
+      projection: state.activityState,
+      idleEpisodeStarted: false,
+      idleEpisodeEnded: false,
+      activeLongRunningNotice: false,
+      idleAttentionEligible: false,
+    };
+  }
+
+  function transitionStepHealth(
+    flatIndex: number,
+    action: HealthTransitionAction,
+  ): HealthTransitionResult {
+    const current = healthStateForStep(flatIndex);
+    const closed = closedHealthSteps.has(flatIndex);
+    // Lifecycle cleanup closes ephemeral projections, but a validated durable
+    // producer may still arrive while child output drains. Keep that evidence
+    // without re-projecting activity or compaction onto the closed record.
+    if (closed && action.type !== "durable_attention") return ignoredHealthTransition(current);
+    const transition = transitionHealth(current, action);
+    const publishedState = closed
+      ? {
+          ...transition.state,
+          activityState: undefined,
+          idleEpisodeId: undefined,
+          compaction: undefined,
+        }
+      : transition.state;
+    const publishedTransition = closed
+      ? {
+          ...transition,
+          state: publishedState,
+          projection: undefined,
+          projectionChanged: false,
+        }
+      : transition;
+    healthStates[flatIndex] = publishedState;
+    const step = statusPayload.steps[flatIndex];
+    if (step) applyHealthStatusProjection(step, publishedState);
+    syncTopLevelHealthProjection();
+    return publishedTransition;
+  }
+
+  function resetStepHealth(flatIndex: number): HealthTransitionResult {
+    closedHealthSteps.delete(flatIndex);
+    const transition = resetHealthTransitionState(healthStateForStep(flatIndex), randomUUID());
+    healthStates[flatIndex] = transition.state;
+    const step = statusPayload.steps[flatIndex];
+    if (step) applyHealthStatusProjection(step, transition.state);
+    syncTopLevelHealthProjection();
+    return transition;
+  }
+
+  function clearStepHealth(flatIndex: number): HealthTransitionResult {
+    const current = healthStateForStep(flatIndex);
+    if (closedHealthSteps.has(flatIndex)) return ignoredHealthTransition(current);
+    const transition = transitionHealth(current, { type: "clear_ephemeral" });
+    healthStates[flatIndex] = transition.state;
+    closedHealthSteps.add(flatIndex);
+    const step = statusPayload.steps[flatIndex];
+    if (step) applyHealthStatusProjection(step, transition.state);
+    syncTopLevelHealthProjection();
+    return transition;
+  }
+
+  function clearRunningStepHealth(): void {
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      if (statusPayload.steps[index]?.status === "running") clearStepHealth(index);
+    }
+  }
+
+  function endStepCompaction(flatIndex: number, options?: { publish?: boolean }): void {
+    const transition = transitionStepHealth(flatIndex, { type: "compaction_end" });
+    if (!transition.changed) return;
+    const now = Date.now();
+    statusPayload.lastUpdate = now;
+    if (options?.publish !== false) writeStatusPayload();
+  }
+
+  function endAllStepCompactions(options?: { publish?: boolean }): void {
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      if (healthStates[index]?.compaction) endStepCompaction(index, options);
+    }
+  }
+
   function adoptConcurrentTerminalStatus(): RunnerStatusPayload | undefined {
     const persisted = readStatus(asyncDir) as RunnerStatusPayload | null;
     if (!persisted || persisted.state === "running" || persisted.state === "pausing")
@@ -679,6 +830,30 @@ export function createBackgroundRunStatusOwner(
         : {}),
     };
     Object.assign(statusPayload, adoptedStatus);
+    // A child can continue draining after another lifecycle owner publishes a
+    // terminal record. Close local ephemeral health segments so late events do
+    // not re-project liveness over the adopted lifecycle state. Durable reasons
+    // come from the adopted status and remain available for result reporting.
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      const adoptedStep = statusPayload.steps[index];
+      if (
+        !adoptedStep ||
+        adoptedStep.status === "running" ||
+        adoptedStep.status === "pending" ||
+        adoptedStep.status === "pausing"
+      )
+        continue;
+      const currentHealth = healthStateForStep(index);
+      healthStates[index] = {
+        ...currentHealth,
+        activityState: undefined,
+        idleEpisodeId: undefined,
+        compaction: undefined,
+        durableAttentionReasons: [...(adoptedStep.durableAttentionReasons ?? [])],
+      };
+      closedHealthSteps.add(index);
+    }
+    syncTopLevelHealthProjection();
     // A paused adoption must keep subsequent writes locked so a continuation
     // reservation cannot be erased. Non-paused adoption leaves `interrupted`
     // false, so the orchestrator also checks `concurrentTerminalStatusAdopted`
@@ -701,8 +876,12 @@ export function createBackgroundRunStatusOwner(
       return;
     if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
     const now = Date.now();
-    // Output limits are terminal for this segment. Freeze before publishing the
-    // failure so child teardown time cannot enter a continuation budget.
+    // Output limits are terminal for this segment. End any in-flight compaction
+    // before publishing the failure so cleanup cannot leak operation state.
+    endAllStepCompactions({ publish: false });
+    clearRunningStepHealth();
+    // Freeze before publishing the failure so child teardown time cannot enter
+    // a continuation budget.
     checkpointActiveRuntime(now, true);
     const message = boundChildError(formatProtocolOutputLimit(limit));
     statusPayload.state = "failed";
@@ -769,9 +948,12 @@ export function createBackgroundRunStatusOwner(
       requestedAt: pause.requestedAt ?? Date.now(),
     };
     const now = Date.now();
-    // Freeze each live segment before publishing the pausing lifecycle state.
-    // The transition below copies this checkpoint; it must not add another wall
-    // time interval to the later continuation budget.
+    // End operation projections and close ephemeral health before freezing and
+    // publishing the pausing lifecycle state. The transition below copies this
+    // checkpoint; it must not add another wall-time interval to the later
+    // continuation budget.
+    endAllStepCompactions({ publish: false });
+    clearRunningStepHealth();
     checkpointActiveRuntime(now, true);
     if (concurrentTerminalStatusAdopted) {
       interrupted = true;
@@ -805,6 +987,8 @@ export function createBackgroundRunStatusOwner(
               activeRuntimeMs,
               activeRuntimeCheckpointAt: now,
               activityState: undefined,
+              idleEpisodeId: undefined,
+              compaction: undefined,
               interruptRequestedAt: now,
               ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
               ...(index === requesterIndex
@@ -853,9 +1037,11 @@ export function createBackgroundRunStatusOwner(
     if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
     interrupted = true;
     const now = Date.now();
-    // Persist the active segment before changing lifecycle state. Paused wall
+    // End operation projections before changing lifecycle state. Paused wall
     // time is excluded because no tracker remains live after this checkpoint.
+    endAllStepCompactions({ publish: false });
     checkpointActiveRuntime(now, true);
+    clearRunningStepHealth();
     statusPayload.state = "paused";
     controlHooks.clearActivityState();
     statusPayload.activityState = undefined;
@@ -865,6 +1051,8 @@ export function createBackgroundRunStatusOwner(
       if (step.status !== "running") continue;
       step.status = "paused";
       step.activityState = undefined;
+      step.idleEpisodeId = undefined;
+      step.compaction = undefined;
       step.endedAt = now;
       step.durationMs = step.startedAt ? now - step.startedAt : undefined;
       step.lastActivityAt = now;
@@ -888,7 +1076,13 @@ export function createBackgroundRunStatusOwner(
     if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
     timedOut = true;
     const now = Date.now();
+    // End operation projections before publishing the terminal timeout state.
+    endAllStepCompactions({ publish: false });
     checkpointActiveRuntime(now, true);
+    for (let index = 0; index < statusPayload.steps.length; index++) {
+      const step = statusPayload.steps[index];
+      if (step?.status === "running" || step?.status === "pending") clearStepHealth(index);
+    }
     const message = timeoutMessage ?? "Subagent timed out.";
     statusPayload.state = "failed";
     statusPayload.timedOut = true;
@@ -904,6 +1098,8 @@ export function createBackgroundRunStatusOwner(
       step.timedOut = true;
       step.terminationReason = "timed_out";
       step.activityState = undefined;
+      step.idleEpisodeId = undefined;
+      step.compaction = undefined;
       step.endedAt = now;
       step.durationMs = step.startedAt ? now - step.startedAt : 0;
       step.lastActivityAt = now;
@@ -1081,6 +1277,14 @@ export function createBackgroundRunStatusOwner(
     resolveTrackedSessionFile,
     writeStatusPayload,
     checkpointActiveRuntime,
+    healthStateForStep,
+    transitionStepHealth,
+    resetStepHealth,
+    clearStepHealth,
+    clearRunningStepHealth,
+    endStepCompaction,
+    endAllStepCompactions,
+    syncTopLevelHealthProjection,
     onChildProtocolOutputLimit,
     pausedAcceptanceLedger,
     pausedStepResult,

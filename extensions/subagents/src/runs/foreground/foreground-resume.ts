@@ -87,6 +87,7 @@ import {
 import {
   indexedLifecycleContinuation,
   isClaimedPausedLifecycle,
+  pausedForegroundHealthFromResult,
   pausedForegroundStatusPath,
 } from "./foreground-pause-state.ts";
 import {
@@ -461,6 +462,7 @@ export function enrichPersistedPausedForegroundSingleRun(input: {
                     }
                   : {}),
                 ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                ...pausedForegroundHealthFromResult(input.result, true),
                 ...(activeRuntimeMs !== undefined
                   ? {
                       activeRuntimeMs: Math.max(

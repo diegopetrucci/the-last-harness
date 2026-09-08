@@ -10,8 +10,60 @@ import { formatSavedOutputReference, resolveSingleOutput, } from "../shared/sing
 import { appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, resolveSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { transitionHealth, } from "../shared/health-transition.js";
 const artifactOutputByResult = new WeakMap();
 const acceptanceOutputByResult = new WeakMap();
+function ignoredHealthTransition(state) {
+    return {
+        state,
+        changed: false,
+        projectionChanged: false,
+        projection: state.activityState,
+        idleEpisodeStarted: false,
+        idleEpisodeEnded: false,
+        activeLongRunningNotice: false,
+        idleAttentionEligible: false,
+    };
+}
+export function applyHealthProgressProjection(progress, state) {
+    progress.activityState = state.activityState;
+    progress.idleEpisodeId = state.idleEpisodeId;
+    progress.durableAttentionReasons = state.durableAttentionReasons.length
+        ? [...state.durableAttentionReasons]
+        : undefined;
+    progress.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
+export function transitionHealthForProgress(box, progress, action) {
+    const closed = box.closed;
+    if (closed && action.type !== "durable_attention")
+        return ignoredHealthTransition(box.value);
+    const transition = transitionHealth(box.value, action);
+    const publishedState = closed
+        ? {
+            ...transition.state,
+            activityState: undefined,
+            idleEpisodeId: undefined,
+            compaction: undefined,
+        }
+        : transition.state;
+    const publishedTransition = closed
+        ? {
+            ...transition,
+            state: publishedState,
+            projection: undefined,
+            projectionChanged: false,
+        }
+        : transition;
+    box.value = publishedState;
+    applyHealthProgressProjection(progress, publishedState);
+    return publishedTransition;
+}
+export function clearHealthForProgress(box, progress) {
+    if (box.closed)
+        return;
+    transitionHealthForProgress(box, progress, { type: "clear_ephemeral" });
+    box.closed = true;
+}
 function finalAssistantStopReason(messages) {
     for (let index = (messages?.length ?? 0) - 1; index >= 0; index--) {
         const stopReason = assistantStopReason(messages[index]);
@@ -120,6 +172,10 @@ export function snapshotProgress(progress) {
     return {
         ...progress,
         skills: progress.skills ? [...progress.skills] : undefined,
+        durableAttentionReasons: progress.durableAttentionReasons
+            ? [...progress.durableAttentionReasons]
+            : undefined,
+        compaction: progress.compaction ? { ...progress.compaction } : undefined,
         recentTools: progress.recentTools.map((tool) => ({ ...tool })),
         recentOutput: [...progress.recentOutput],
     };
@@ -266,8 +322,13 @@ function finalizeSingleAttemptOutput(input) {
             "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
         progress.status = "failed";
         progress.error = result.error;
+        const previousActivityState = progress.activityState;
+        transitionHealthForProgress(input.healthState, progress, {
+            type: "durable_attention",
+            reason: "completion_guard",
+        });
         emitControlEvent(buildControlEvent({
-            from: progress.activityState,
+            from: previousActivityState,
             to: "needs_attention",
             runId: options.runId ?? agent.name,
             agent: agent.name,
@@ -347,7 +408,7 @@ export function finalizeSingleAttempt(input) {
                     requestSummary: result.pause?.summary,
                 });
         result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-        progress.activityState = undefined;
+        clearHealthForProgress(input.healthState, progress);
         progress.durationMs = Date.now() - startTime;
         result.progressSummary = {
             toolCount: progress.toolCount,
@@ -363,7 +424,7 @@ export function finalizeSingleAttempt(input) {
         result.error = undefined;
         result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
         result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
-        progress.activityState = undefined;
+        clearHealthForProgress(input.healthState, progress);
         progress.durationMs = Date.now() - startTime;
         result.progressSummary = {
             toolCount: progress.toolCount,

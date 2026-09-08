@@ -272,10 +272,20 @@ describe("async execution model restoration and fallback", () => {
           status.state === "paused" &&
           status.lifecycle?.continuation?.claimToken === claimToken &&
           status.steps?.[0]?.contextPressure?.severity === "warning" &&
-          status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning"
+          status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning" &&
+          status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true &&
+          status.activityState === undefined &&
+          status.steps?.[0]?.activityState === undefined &&
+          status.steps?.[0]?.idleEpisodeId === undefined &&
+          status.steps?.[0]?.compaction === undefined
         );
       });
       const observedStatus = observed.status;
+      assert.deepEqual(observedStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(observedStatus.activityState, undefined);
+      assert.equal(observedStatus.steps?.[0]?.activityState, undefined);
+      assert.equal(observedStatus.steps?.[0]?.idleEpisodeId, undefined);
+      assert.equal(observedStatus.steps?.[0]?.compaction, undefined);
       const pressureNotice = observed.eventText
         .split("\n")
         .map((line) => {
@@ -309,6 +319,15 @@ describe("async execution model restoration and fallback", () => {
       assert.equal(finalStatus.lifecycle?.continuation?.claimToken, claimToken);
       assert.equal(finalStatus.steps?.[0]?.contextPressure?.severity, "warning");
       assert.deepEqual(finalStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+      assert.deepEqual(finalStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(finalStatus.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
+      assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
+      assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
+      assert.deepEqual(resultPayload.results?.[0]?.durableAttentionReasons, ["context_pressure"]);
+      assert.equal(resultPayload.results?.[0]?.activityState, undefined);
+      assert.equal(resultPayload.results?.[0]?.idleEpisodeId, undefined);
+      assert.equal(resultPayload.results?.[0]?.compaction, undefined);
       const controlEvents = observed.eventText
         .split("\n")
         .filter(Boolean)

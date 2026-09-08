@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { clearForegroundMessageInbox, emitControlNotification, enrichPersistedPausedForegroundSingleRun, getRequestedModeLabel, providerFallbackModelsForTarget, readModelRegistrySnapshot, recoverFailedPausedForegroundTransition, registerForegroundMessageInbox, rememberForegroundRun, resolveSingleRunOutputBaseDir, updateRememberedForegroundChild, } from "./foreground-control.js";
+import { clearForegroundMessageInbox, emitControlNotification, enrichPersistedPausedForegroundSingleRun, getRequestedModeLabel, providerFallbackModelsForTarget, readModelRegistrySnapshot, recoverFailedPausedForegroundTransition, registerForegroundMessageInbox, rememberForegroundRun, resetForegroundControlHealth, resolveSingleRunOutputBaseDir, updateForegroundControlProgress, updateRememberedForegroundChild, clearForegroundControlEphemeralHealth, } from "./foreground-control.js";
 import { buildCohortPauseStep, buildPausedStepFromResult, isTerminalForegroundResultSnapshot, persistPausedForegroundCohortRun, persistPausedForegroundSingleRun, } from "./foreground-pause-state.js";
 import { resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { clearForegroundInterrupt, registerForegroundInterrupt, } from "../shared/foreground-interrupts.js";
@@ -211,6 +211,10 @@ async function runForegroundParallelTasks(input) {
                     thinking: result?.thinking,
                     modelIdentity: result?.modelIdentity,
                     modelResolution: result?.modelResolution,
+                    activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+                    idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+                    durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+                    compaction: result?.progress?.compaction ?? liveProgress?.compaction,
                     contextUsage: result?.contextUsage,
                     contextPressure: result?.contextPressure,
                     contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -227,6 +231,10 @@ async function runForegroundParallelTasks(input) {
                 thinking: result?.thinking,
                 modelIdentity: result?.modelIdentity,
                 modelResolution: result?.modelResolution,
+                activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+                idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+                durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+                compaction: result?.progress?.compaction ?? liveProgress?.compaction,
                 contextUsage: result?.contextUsage,
                 contextPressure: result?.contextPressure,
                 contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -296,14 +304,14 @@ async function runForegroundParallelTasks(input) {
         if (input.foregroundControl) {
             input.foregroundControl.currentAgent = task.agent;
             input.foregroundControl.currentIndex = index;
-            input.foregroundControl.currentActivityState = undefined;
+            resetForegroundControlHealth(input.foregroundControl);
             input.foregroundControl.updatedAt = Date.now();
             registerForegroundInterrupt(input.foregroundControl, index, () => {
                 interrupted = true;
                 if (interruptController.signal.aborted)
                     return false;
                 interruptController.abort();
-                input.foregroundControl.currentActivityState = undefined;
+                clearForegroundControlEphemeralHealth(input.foregroundControl);
                 input.foregroundControl.updatedAt = Date.now();
                 return true;
             });
@@ -368,7 +376,7 @@ async function runForegroundParallelTasks(input) {
                         const current = stepProgress[0];
                         input.foregroundControl.currentAgent = task.agent;
                         input.foregroundControl.currentIndex = index;
-                        input.foregroundControl.currentActivityState = current?.activityState;
+                        updateForegroundControlProgress(input.foregroundControl, current);
                         input.foregroundControl.lastActivityAt = current?.lastActivityAt;
                         input.foregroundControl.currentTool = current?.currentTool;
                         input.foregroundControl.currentToolStartedAt = current?.currentToolStartedAt;
@@ -583,7 +591,7 @@ export async function runParallelPath(data, deps) {
             sessionId: deps.state.currentSessionId,
             mode: "parallel",
             stage: "paused",
-            results: details.results,
+            results,
             startedAt: foregroundControl?.startedAt,
         });
     }
@@ -706,13 +714,13 @@ export async function runSinglePath(data, deps) {
     if (foregroundControl) {
         foregroundControl.currentAgent = params.agent;
         foregroundControl.currentIndex = 0;
-        foregroundControl.currentActivityState = undefined;
+        resetForegroundControlHealth(foregroundControl);
         foregroundControl.updatedAt = Date.now();
         registerForegroundInterrupt(foregroundControl, 0, () => {
             if (interruptController.signal.aborted)
                 return false;
             interruptController.abort();
-            foregroundControl.currentActivityState = undefined;
+            clearForegroundControlEphemeralHealth(foregroundControl);
             foregroundControl.updatedAt = Date.now();
             return true;
         });
@@ -723,7 +731,7 @@ export async function runSinglePath(data, deps) {
                 const firstProgress = update.details?.progress?.[0];
                 foregroundControl.currentAgent = params.agent;
                 foregroundControl.currentIndex = firstProgress?.index ?? 0;
-                foregroundControl.currentActivityState = firstProgress?.activityState;
+                updateForegroundControlProgress(foregroundControl, firstProgress);
                 foregroundControl.lastActivityAt = firstProgress?.lastActivityAt;
                 foregroundControl.currentTool = firstProgress?.currentTool;
                 foregroundControl.currentToolStartedAt = firstProgress?.currentToolStartedAt;
@@ -810,7 +818,7 @@ export async function runSinglePath(data, deps) {
     }
     if (foregroundControl) {
         clearForegroundInterrupt(foregroundControl, 0);
-        foregroundControl.currentActivityState = r.progress?.activityState;
+        updateForegroundControlProgress(foregroundControl, r.progress);
         foregroundControl.lastActivityAt = r.progress?.lastActivityAt;
         foregroundControl.currentTool = r.progress?.currentTool;
         foregroundControl.currentToolStartedAt = r.progress?.currentToolStartedAt;
