@@ -197,6 +197,26 @@ class LifecycleLockExhaustedError extends Error {
   }
 }
 
+/**
+ * Thrown when a lifecycle CAS reaches the lock but the persisted generation has
+ * already advanced. Callers can treat this as benign contention without relying
+ * on the human-readable error message.
+ */
+export class LifecycleGenerationConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "LifecycleGenerationConflictError";
+  }
+}
+
+/** Recognize only the lifecycle errors that represent expected contention. */
+export function isLifecycleTransitionContentionError(error: unknown): boolean {
+  return (
+    error instanceof LifecycleGenerationConflictError ||
+    error instanceof LifecycleLockExhaustedError
+  );
+}
+
 interface LifecycleLockOptions {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
@@ -1009,7 +1029,7 @@ export function transitionLifecycleStatus(
       const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
       const currentGeneration = lifecycleGeneration(normalizedCurrent);
       if (currentGeneration !== options.expectedGeneration) {
-        throw new Error(
+        throw new LifecycleGenerationConflictError(
           `Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`,
         );
       }
@@ -1099,7 +1119,7 @@ export function markLifecycleContinuationSpawned(
     });
     return { status: transitioned.status, transitioned: true, final: false, lost: false };
   } catch (error) {
-    if (error instanceof Error && /expected generation/.test(error.message)) {
+    if (error instanceof LifecycleGenerationConflictError) {
       return markLifecycleContinuationSpawned(
         asyncDir,
         index,
@@ -1150,7 +1170,7 @@ export function finalizeLifecycleContinuationLaunch(
     });
     return { status: transitioned.status, finalized: true, lost: false };
   } catch (error) {
-    if (error instanceof Error && /expected generation/.test(error.message)) {
+    if (error instanceof LifecycleGenerationConflictError) {
       return finalizeLifecycleContinuationLaunch(
         asyncDir,
         index,
