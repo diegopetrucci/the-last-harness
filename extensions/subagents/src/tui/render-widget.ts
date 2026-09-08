@@ -22,6 +22,7 @@ import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.ts"
 import { safeTerminalText } from "../shared/display-text.ts";
 import {
   buildLiveStatusLine,
+  childLocationLine,
   compactThinkingPhrase,
   isHealthActivityState,
   fitInlineActivity,
@@ -435,6 +436,10 @@ function widgetParallelAgentDetails(
     } else {
       lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
     }
+    // Child-location line: placed immediately after the step header row so it
+    // survives fitWidgetLineBudget pressure (which drops from the tail).
+    const parallelChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+    if (parallelChildLocLine) lines.push(parallelChildLocLine);
     for (const nestedLine of formatNestedWidgetLines(
       step.children,
       theme,
@@ -776,6 +781,12 @@ function foregroundStyleWidgetStepLines(
           job.updatedAt,
         )
       : [];
+  // Child-location line: placed before activity (static context, adjacent to the
+  // step header) so it survives budget-pressure truncation. fitWidgetLineBudget
+  // drops from the END, so activity — which is transient and regenerates every
+  // tick — absorbs the cut rather than the rare, static location line.
+  const childLocLine = childLocationLine(step.childLocation, theme, "    ");
+  if (childLocLine) lines.push(childLocLine);
   for (const [activityIndex, activity] of activityLines.entries()) {
     const prefix =
       activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
@@ -1164,6 +1175,12 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
     } else {
       lines.push(`${rowPrefix}${activitySuffix}`);
     }
+    // Child-location line: placed immediately after the step row so it survives
+    // fitWidgetLineBudget pressure (which drops from the tail). In the compact
+    // view activity is folded into the row, so there is no before/after-activity
+    // distinction — we just place it on its own line right after.
+    const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+    if (compactChildLocLine) lines.push(compactChildLocLine);
     for (const nestedLine of formatNestedWidgetLines(
       step.children,
       theme,
@@ -1195,7 +1212,7 @@ const RESERVED_NON_WIDGET_ROWS = 19;
 
 let widgetLayoutSession: WidgetLayoutSession | undefined;
 
-function resetWidgetLayoutSession(): void {
+export function resetWidgetLayoutSession(): void {
   widgetLayoutSession = undefined;
 }
 
@@ -1609,7 +1626,7 @@ function liveDetailExpanded(controller: SubagentLiveDetailController | undefined
   return controller?.isExpanded() ?? false;
 }
 
-function buildWidgetComponent(
+export function buildWidgetComponent(
   jobs: AsyncJobState[],
   controller: SubagentLiveDetailController | undefined,
 ): (_tui: unknown, theme: Theme) => Component {
@@ -1664,9 +1681,15 @@ export function buildWidgetLines(
       continue;
     }
     const stats = widgetSummaryStats(job, theme, expanded);
+    // Single-mode jobs: widgetParallelAgentDetails returns [] for mode !== "parallel",
+    // so emit the location line at job level from the first step instead.
+    // Parallel jobs already get per-step location lines from widgetParallelAgentDetails.
+    const jobLocLine =
+      job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
     items.push([
       `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
       ...widgetTkTicketLines(job, theme),
+      ...(jobLocLine ? [jobLocLine] : []),
       ...widgetActivityDetailLines(job, theme, expanded),
       ...widgetParallelAgentDetails(job, theme, expanded, width),
     ]);
@@ -1685,9 +1708,15 @@ export function buildWidgetLines(
       continue;
     }
     const stats = widgetSummaryStats(job, theme, expanded);
+    // Single-mode jobs: widgetParallelAgentDetails returns [] for mode !== "parallel",
+    // so emit the location line at job level from the first step instead.
+    // Parallel jobs already get per-step location lines from widgetParallelAgentDetails.
+    const jobLocLine =
+      job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
     items.push([
       `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
       ...widgetTkTicketLines(job, theme),
+      ...(jobLocLine ? [jobLocLine] : []),
       ...widgetActivityDetailLines(job, theme, expanded),
       ...widgetParallelAgentDetails(job, theme, expanded, width),
     ]);

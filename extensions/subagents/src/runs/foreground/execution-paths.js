@@ -9,6 +9,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.js";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage, } from "../../shared/utils.js";
+import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
 import { aggregateParallelOutputs, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { attachNestedChildrenToResultChildren, formatForegroundNativeSubagentResult, resolveSubagentResultStatus, } from "../../shared/result-formatting.js";
 import { attachRootChildrenToSteps, updateForegroundNestedProjection, } from "../shared/nested-events.js";
@@ -178,6 +179,11 @@ async function runForegroundParallelTasks(input) {
     let supervisorPauseIndex;
     const interruptControllers = new Map();
     const startedIndexes = new Set();
+    const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
+    const taskLocationSnapshots = input.tasks.map((task) => {
+        const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
+        return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
+    });
     const writeParallelPauseCheckpoint = (requesterIndex, requester, ownerPid, options) => {
         const now = Date.now();
         const steps = input.tasks.map((task, index) => {
@@ -199,6 +205,7 @@ async function runForegroundParallelTasks(input) {
             if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
                 return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
             }
+            const cohortChildLocation = result?.childLocation ?? taskLocationSnapshots[index];
             if (startedIndexes.has(index) ||
                 interruptControllers.has(index) ||
                 liveProgress?.status === "running") {
@@ -220,6 +227,7 @@ async function runForegroundParallelTasks(input) {
                     contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
                     projectAgent: result?.projectAgent ??
                         input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+                    childLocation: cohortChildLocation,
                 });
             }
             return buildCohortPauseStep({
@@ -240,6 +248,7 @@ async function runForegroundParallelTasks(input) {
                 contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
                 projectAgent: result?.projectAgent ??
                     input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+                childLocation: cohortChildLocation,
             });
         });
         persistPausedForegroundCohortRun({
@@ -287,6 +296,7 @@ async function runForegroundParallelTasks(input) {
         const behavior = input.behaviors[index];
         const effectiveSkills = behavior?.skills;
         const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
+        const taskChildLocationSnapshot = taskLocationSnapshots[index];
         const readInstructions = behavior
             ? buildExecutionInstructions({ ...behavior, output: false, progress: false }, taskCwd, false)
             : { prefix: "", suffix: "" };
@@ -362,6 +372,7 @@ async function runForegroundParallelTasks(input) {
             preferredModelProvider: input.ctx.model?.provider,
             modelScope: input.modelScope,
             ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
+            ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
             skills: effectiveSkills === false ? [] : effectiveSkills,
             acceptance: task.acceptance,
             acceptanceContext: { mode: "parallel" },
@@ -745,6 +756,7 @@ export async function runSinglePath(data, deps) {
         }
         : undefined;
     const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
+    const childLocationSnapshot = captureChildLocationSnapshot(ctx.cwd, effectiveCwd);
     let r;
     try {
         r = await (data.runSync ?? runSync)(ctx.cwd, agents, params.agent, task, {
@@ -804,6 +816,7 @@ export async function runSinglePath(data, deps) {
             preferredModelProvider: currentProvider,
             modelScope: data.modelScope,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
             skills: effectiveSkills,
             acceptance: params.acceptance,
             acceptanceContext: { mode: "single" },

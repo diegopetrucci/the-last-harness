@@ -11,6 +11,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
+import type { ChildLocationSnapshot } from "./child-location.ts";
 
 // ============================================================================
 // Basic Types
@@ -647,6 +648,12 @@ export interface SingleResult {
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
   tkTicket?: TkTicketMetadata;
+  /**
+   * Dispatch-time snapshot of child-location facts. Present only when the
+   * child cwd differs from the parent session cwd at the time of dispatch;
+   * absent (undefined) for same-cwd runs. Never mutated after initial set.
+   */
+  childLocation?: ChildLocationSnapshot;
   children?: NestedRunSummary[];
 }
 
@@ -965,6 +972,11 @@ export interface AsyncStatus {
     cancel?: AsyncCancellationMetadata;
     /** Exact approved project-agent config/provenance; never includes a capability. */
     projectAgent?: ProjectAgentRunCapture;
+    /**
+     * Dispatch-time snapshot of child location facts. Present only when the
+     * child cwd differs from the parent session cwd; absent for same-cwd steps.
+     */
+    childLocation?: ChildLocationSnapshot;
   }>;
   sessionDir?: string;
   outputFile?: string;
@@ -1321,6 +1333,12 @@ export interface RunSyncOptions {
     mode?: SubagentRunMode;
     async?: boolean;
   };
+  /**
+   * Dispatch-time child-location snapshot computed by the caller before
+   * invoking runSync. When present, it is attached to the initial SingleResult
+   * and survives streaming progress updates via object spread.
+   */
+  childLocation?: ChildLocationSnapshot;
 }
 
 interface TopLevelParallelConfig {

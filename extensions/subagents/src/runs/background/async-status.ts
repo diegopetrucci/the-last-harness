@@ -7,6 +7,7 @@ import {
   shortenPath,
 } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
+import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
 import {
   type ActivityState,
   type AsyncJobStep,
@@ -101,6 +102,12 @@ interface AsyncRunStepSummary {
   timedOut?: boolean;
   children?: NestedRunSummary[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  /**
+   * Dispatch-time snapshot of child location facts. Carried verbatim from the
+   * persisted step so the tracker's restore path exposes it on AsyncJobState
+   * steps before the first poll.
+   */
+  childLocation?: ChildLocationSnapshot;
 }
 
 export interface AsyncRunSummary {
@@ -436,6 +443,7 @@ function statusToSummary(
       ...(step.error ? { error: step.error } : {}),
       ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
       ...(step.children?.length ? { children: step.children } : {}),
+      ...(step.childLocation ? { childLocation: step.childLocation } : {}),
     };
   });
   attachRootChildrenToSteps(

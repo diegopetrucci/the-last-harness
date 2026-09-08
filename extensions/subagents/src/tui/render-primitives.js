@@ -171,3 +171,23 @@ export function modelThinkingBadge(theme, model, thinking) {
     const label = safeTerminalText(formatModelThinking(model ? safeTerminalText(model) : model, thinking));
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
+export function childLocationText(loc) {
+    if (!loc)
+        return undefined;
+    const parts = [`cwd: ${safeTerminalText(loc.displayPath)}`];
+    if (loc.repoName)
+        parts.push(`repo: ${safeTerminalText(loc.repoName)}`);
+    if (loc.linkedWorktree)
+        parts.push("linked worktree");
+    if (loc.detachedHead)
+        parts.push(`branch: detached@${safeTerminalText(loc.detachedHead)}`);
+    else if (loc.branch)
+        parts.push(`branch: ${safeTerminalText(loc.branch)}`);
+    if (loc.notAGitRepo)
+        parts.push("no git repo");
+    return parts.join(" \u00b7 ");
+}
+export function childLocationLine(loc, theme, indent = "  ") {
+    const text = childLocationText(loc);
+    return text ? `${indent}${theme.fg("dim", text)}` : undefined;
+}

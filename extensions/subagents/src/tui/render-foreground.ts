@@ -26,6 +26,7 @@ import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
 import {
   buildLiveStatusLine,
+  childLocationLine,
   compactThinkingPhrase,
   fitCompactToolStatus,
   formatCurrentToolLines,
@@ -411,6 +412,8 @@ function renderSingleCompact(
   );
   const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
   if (ticketLine) lines.push(ticketLine);
+  const childLocLine = childLocationLine(r.childLocation, theme);
+  if (childLocLine) lines.push(childLocLine);
 
   if (isRunning && r.progress) {
     for (const [activityIndex, activity] of compactProgressActivityLines(
@@ -519,6 +522,8 @@ function renderMultiCompact(
     lines.push(`  ${line}`);
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) lines.push(ticketLine);
+    const childLocLineMulti = childLocationLine(r.childLocation, theme, "    ");
+    if (childLocLineMulti) lines.push(childLocLineMulti);
     if (rRunning && liveProgress) {
       hasRunningResult = true;
       for (const [activityIndex, activity] of compactProgressActivityLines(
@@ -614,6 +619,8 @@ function renderExpandedSingleResult(
   );
   const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
   if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
+  const childLocLineSingle = childLocationLine(r.childLocation, theme);
+  if (childLocLineSingle) c.addChild(new Text(childLocLineSingle, 0, 0));
   c.addChild(new Spacer(1));
   c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
   c.addChild(new Spacer(1));
@@ -877,6 +884,8 @@ function renderExpandedMultiResult(
     c.addChild(new Text(stepHeader, 0, 0));
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
+    const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
+    if (childLocLineExpanded) c.addChild(new Text(childLocLineExpanded, 0, 0));
 
     c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalText(r.task)}`), 0, 0));
 

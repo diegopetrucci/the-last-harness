@@ -6,7 +6,7 @@ import { getDisplayItems, getSingleResultOutput } from "../shared/utils.js";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.js";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
 import { safeTerminalText } from "../shared/display-text.js";
-import { buildLiveStatusLine, compactThinkingPhrase, fitCompactToolStatus, formatCurrentToolLines, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, progressRunningSeed, runningGlyph, runningSeed, snapshotNowForProgress, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
+import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, fitCompactToolStatus, formatCurrentToolLines, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, progressRunningSeed, runningGlyph, runningSeed, snapshotNowForProgress, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
 const TK_TICKET_WIDGET_PREFIX = "ticket: ";
 const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
@@ -270,6 +270,9 @@ function renderSingleCompact(d, r, theme, frame) {
     const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
     if (ticketLine)
         lines.push(ticketLine);
+    const childLocLine = childLocationLine(r.childLocation, theme);
+    if (childLocLine)
+        lines.push(childLocLine);
     if (isRunning && r.progress) {
         for (const [activityIndex, activity] of compactProgressActivityLines(r.progress, width, FOREGROUND_ACTIVITY_PREFIX, FOREGROUND_ACTIVITY_CONTINUATION_PREFIX).entries()) {
             const prefix = activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
@@ -351,6 +354,9 @@ function renderMultiCompact(d, entries, theme, frame) {
         const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
         if (ticketLine)
             lines.push(ticketLine);
+        const childLocLineMulti = childLocationLine(r.childLocation, theme, "    ");
+        if (childLocLineMulti)
+            lines.push(childLocLineMulti);
         if (rRunning && liveProgress) {
             hasRunningResult = true;
             for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_CONTINUATION_PREFIX).entries()) {
@@ -413,6 +419,9 @@ function renderExpandedSingleResult(d, r, theme, mdTheme, frame) {
     const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
     if (ticketLine)
         c.addChild(new Text(ticketLine, 0, 0));
+    const childLocLineSingle = childLocationLine(r.childLocation, theme);
+    if (childLocLineSingle)
+        c.addChild(new Text(childLocLineSingle, 0, 0));
     c.addChild(new Spacer(1));
     c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
     c.addChild(new Spacer(1));
@@ -563,6 +572,9 @@ function renderExpandedMultiResult(d, entries, theme, frame) {
         const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
         if (ticketLine)
             c.addChild(new Text(ticketLine, 0, 0));
+        const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
+        if (childLocLineExpanded)
+            c.addChild(new Text(childLocLineExpanded, 0, 0));
         c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalText(r.task)}`), 0, 0));
         const outputTarget = extractOutputTarget(r.task);
         if (outputTarget) {

@@ -788,4 +788,76 @@ describe("async status helpers", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("preserves childLocation in step summaries for parallel runs (status-file round trip)", () => {
+    // Regression guard: statusToSummary must carry childLocation from the
+    // persisted step through to AsyncRunStepSummary. A field-by-field rewrite
+    // of that mapping that drops childLocation would cause the render ticket's
+    // 'line never appears' failure because the tracker's restore path feeds
+    // through this summary before the first poll updates job.steps.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-child-loc-parallel-"));
+    try {
+      const childLocation = {
+        childCwd: "/other/repo",
+        displayPath: "/other/repo",
+        repoName: "repo",
+        branch: "feat/other",
+      };
+      createAsyncDir(root, "run-parallel-loc", {
+        runId: "run-parallel-loc",
+        mode: "parallel",
+        state: "running",
+        startedAt: 100,
+        lastUpdate: 200,
+        steps: [
+          { agent: "scout", status: "complete" },
+          { agent: "worker", status: "running", childLocation },
+        ],
+      });
+      const runs = listAsyncRuns(root, { states: ["running"] });
+      assert.equal(runs.length, 1);
+      const step = runs[0]?.steps[1];
+      assert.ok(step, "expected second step to be present");
+      assert.deepEqual(
+        step.childLocation,
+        childLocation,
+        "childLocation must survive the status-file → summary projection",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves childLocation in step summaries for single runs (status-file round trip)", () => {
+    // Same guard as the parallel test above, but for single-mode runs which
+    // also write childLocation into steps[0] via the single runner plan.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-child-loc-single-"));
+    try {
+      const childLocation = {
+        childCwd: "/work/subproject",
+        displayPath: "subproject",
+        linkedWorktree: true as const,
+        branch: "feat/sub",
+      };
+      createAsyncDir(root, "run-single-loc", {
+        runId: "run-single-loc",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        lastUpdate: 200,
+        steps: [{ agent: "worker", status: "running", childLocation }],
+      });
+      const runs = listAsyncRuns(root, { states: ["running"] });
+      assert.equal(runs.length, 1);
+      const step = runs[0]?.steps[0];
+      assert.ok(step, "expected step to be present");
+      assert.deepEqual(
+        step.childLocation,
+        childLocation,
+        "childLocation must survive the status-file → summary projection for single mode",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

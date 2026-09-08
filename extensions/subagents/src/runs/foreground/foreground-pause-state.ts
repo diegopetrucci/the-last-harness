@@ -195,6 +195,7 @@ export function persistPausedForegroundCohortRun(input: {
         : {}),
       ...(result.cancel ? { cancel: result.cancel } : {}),
       ...cloneForegroundPauseHealth(result.progress),
+      ...(result.childLocation ? { childLocation: result.childLocation } : {}),
     })) ??
     []
   ).map((step) =>
@@ -362,6 +363,7 @@ export function buildPausedStepFromResult(
       : {}),
     ...(result.cancel ? { cancel: result.cancel } : {}),
     ...cloneForegroundPauseHealth(result.progress),
+    ...(result.childLocation ? { childLocation: result.childLocation } : {}),
     ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
     ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
     ...(result.contextPressureCrossedThresholds
@@ -395,6 +397,8 @@ export function buildCohortPauseStep(input: {
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  /** Dispatch-time child-location snapshot; kept for display during cohort pause. */
+  childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }): NonNullable<AsyncStatus["steps"]>[number] {
   const modelIdentity =
     input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
@@ -413,6 +417,7 @@ export function buildCohortPauseStep(input: {
     ...(input.contextPressureCrossedThresholds
       ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
       : {}),
+    ...(input.childLocation ? { childLocation: input.childLocation } : {}),
     ...(input.status === "pausing" || input.status === "paused"
       ? {
           pause: {
@@ -510,6 +515,7 @@ export function persistPausedForegroundSingleRun(input: {
             : {}),
           ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
           ...cloneForegroundPauseHealth(input.result.progress),
+          ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
           ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
           ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         },
@@ -600,6 +606,15 @@ export function persistPausedForegroundSingleRun(input: {
                     ),
                   }
                 : {}),
+              // Carry the dispatch-time child-location snapshot; prefer live
+              // result over any previously stored value, but keep the stored
+              // value when the live result has no snapshot (e.g. a restore path
+              // where the live result was not yet captured).
+              ...(input.result.childLocation
+                ? { childLocation: input.result.childLocation }
+                : step.childLocation
+                  ? { childLocation: step.childLocation }
+                  : {}),
             }
           : step,
       ),

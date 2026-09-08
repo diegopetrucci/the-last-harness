@@ -128,6 +128,7 @@ export function persistPausedForegroundCohortRun(input) {
                 : {}),
             ...(result.cancel ? { cancel: result.cancel } : {}),
             ...cloneForegroundPauseHealth(result.progress),
+            ...(result.childLocation ? { childLocation: result.childLocation } : {}),
         })) ??
         []).map((step) => (step.status === "pausing" || step.status === "paused") && step.pause
         ? { ...step, terminationReason: "paused" }
@@ -263,6 +264,7 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
             : {}),
         ...(result.cancel ? { cancel: result.cancel } : {}),
         ...cloneForegroundPauseHealth(result.progress),
+        ...(result.childLocation ? { childLocation: result.childLocation } : {}),
         ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
         ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
         ...(result.contextPressureCrossedThresholds
@@ -292,6 +294,7 @@ export function buildCohortPauseStep(input) {
         ...(input.contextPressureCrossedThresholds
             ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
             : {}),
+        ...(input.childLocation ? { childLocation: input.childLocation } : {}),
         ...(input.status === "pausing" || input.status === "paused"
             ? {
                 pause: {
@@ -375,6 +378,7 @@ export function persistPausedForegroundSingleRun(input) {
                         : {}),
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
                     ...cloneForegroundPauseHealth(input.result.progress),
+                    ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
                     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
                     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 },
@@ -451,6 +455,11 @@ export function persistPausedForegroundSingleRun(input) {
                             activeRuntimeCheckpointAt: Math.max(normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt) ?? 0, activeRuntimeCheckpointAt),
                         }
                         : {}),
+                    ...(input.result.childLocation
+                        ? { childLocation: input.result.childLocation }
+                        : step.childLocation
+                            ? { childLocation: step.childLocation }
+                            : {}),
                 }
                 : step),
         }),

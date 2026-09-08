@@ -68,6 +68,10 @@ import {
   sumResultsUsage,
 } from "../../shared/utils.ts";
 import {
+  captureChildLocationSnapshot,
+  makeParentGitFactsAccessor,
+} from "../../shared/child-location.ts";
+import {
   aggregateParallelOutputs,
   DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
   Semaphore,
@@ -422,6 +426,17 @@ async function runForegroundParallelTasks(
   let supervisorPauseIndex: number | undefined;
   const interruptControllers = new Map<number, AbortController>();
   const startedIndexes = new Set<number>();
+  // Precompute per-task dispatch-time child-location snapshots sequentially so
+  // writeParallelPauseCheckpoint can carry them for pending/cohort-pause steps
+  // even when a task has not yet produced a live result.
+  // Use a lazy memoizing accessor so the parent git lookup is deferred until
+  // a child cwd is confirmed to differ; when all tasks share the parent cwd
+  // (the common case) the accessor is never called and zero git work is done.
+  const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
+  const taskLocationSnapshots = input.tasks.map((task) => {
+    const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
+    return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
+  });
   const writeParallelPauseCheckpoint = (
     requesterIndex: number,
     requester: SingleResult,
@@ -450,6 +465,10 @@ async function runForegroundParallelTasks(
       if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
         return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
       }
+      // Prefer childLocation from the live result (set by execution.ts at dispatch).
+      // Fall back to the precomputed dispatch snapshot for pending tasks that
+      // have not yet produced a live result.
+      const cohortChildLocation = result?.childLocation ?? taskLocationSnapshots[index];
       if (
         startedIndexes.has(index) ||
         interruptControllers.has(index) ||
@@ -476,6 +495,7 @@ async function runForegroundParallelTasks(
           projectAgent:
             result?.projectAgent ??
             input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+          childLocation: cohortChildLocation,
         });
       }
       return buildCohortPauseStep({
@@ -499,6 +519,7 @@ async function runForegroundParallelTasks(
         projectAgent:
           result?.projectAgent ??
           input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+        childLocation: cohortChildLocation,
       });
     });
     persistPausedForegroundCohortRun({
@@ -552,6 +573,11 @@ async function runForegroundParallelTasks(
       const behavior = input.behaviors[index];
       const effectiveSkills = behavior?.skills;
       const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
+      // Reuse the precomputed snapshot from cohort setup; do NOT re-capture here.
+      // Re-capturing would spawn two additional git processes per task, defeating
+      // the capture-once model and allowing the live snapshot to drift from the
+      // pause snapshot if the repository changes mid-dispatch.
+      const taskChildLocationSnapshot = taskLocationSnapshots[index];
       const readInstructions = behavior
         ? buildExecutionInstructions(
             { ...behavior, output: false, progress: false },
@@ -643,6 +669,7 @@ async function runForegroundParallelTasks(
         preferredModelProvider: input.ctx.model?.provider,
         modelScope: input.modelScope,
         ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
+        ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
         skills: effectiveSkills === false ? [] : effectiveSkills,
         acceptance: task.acceptance,
         acceptanceContext: { mode: "parallel" },
@@ -1132,6 +1159,7 @@ export async function runSinglePath(
 
   const deadlineAt =
     data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
+  const childLocationSnapshot = captureChildLocationSnapshot(ctx.cwd, effectiveCwd);
   let r: SingleResult;
   try {
     r = await (data.runSync ?? runSync)(ctx.cwd, agents, params.agent!, task, {
@@ -1191,6 +1219,7 @@ export async function runSinglePath(
       preferredModelProvider: currentProvider,
       modelScope: data.modelScope,
       ...(tkTicket ? { tkTicket } : {}),
+      ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
       skills: effectiveSkills,
       acceptance: params.acceptance,
       acceptanceContext: { mode: "single" },

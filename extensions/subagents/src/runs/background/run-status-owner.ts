@@ -369,6 +369,7 @@ export function createBackgroundRunStatusOwner(
           : task.model
             ? [task.model]
             : undefined,
+      ...(task.childLocation ? { childLocation: task.childLocation } : {}),
       recentTools: [],
       recentOutput: [],
     };

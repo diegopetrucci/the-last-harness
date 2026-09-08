@@ -19,6 +19,10 @@ export function invalidateStatusCache(asyncDirOrStatusPath) {
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
+export function normalizeComparableCwd(cwd) {
+    const resolved = path.resolve(cwd);
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
 export function resolveChildCwd(baseCwd, childCwd) {
     if (!childCwd)
         return baseCwd;

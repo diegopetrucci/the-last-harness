@@ -451,6 +451,7 @@ async function runSingleAttempt(
     task: shared.originalTask ?? task,
     exitCode: 0,
     ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+    ...(options.childLocation ? { childLocation: options.childLocation } : {}),
     messages: [],
     usage: emptyUsage(),
     model: modelArg,

@@ -1543,5 +1543,129 @@ describe(
         removeTempDir(asyncRoot);
       }
     });
+
+    it("preserves childLocation on AsyncJobState steps via the restore path (summaryToJob)", () => {
+      // Regression guard: the summaryToJob projection spreads AsyncRunStepSummary
+      // entries with { ...step, index }. If statusToSummary's field-by-field
+      // mapping ever drops childLocation, restored jobs will silently lose it
+      // before the first poll, causing the render ticket's 'line never appears'
+      // failure. This test pins the restore-path hop.
+      const asyncRoot = createTempDir("pi-async-tracker-child-loc-restore-");
+      try {
+        const runDir = path.join(asyncRoot, "run-child-loc-restore");
+        fs.mkdirSync(runDir, { recursive: true });
+        const childLocation = {
+          childCwd: "/other/repo",
+          displayPath: "/other/repo",
+          repoName: "repo",
+          branch: "feat/feature-branch",
+        };
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-child-loc-restore",
+            mode: "parallel",
+            state: "running",
+            sessionId: "session-child-loc-restore",
+            startedAt: 1000,
+            lastUpdate: 2000,
+            steps: [
+              { agent: "scout", status: "complete" },
+              { agent: "worker", status: "running", childLocation },
+            ],
+          }),
+          "utf-8",
+        );
+
+        const state = createState();
+        state.currentSessionId = "session-child-loc-restore";
+        const tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+        );
+        tracker.restoreActiveJobs();
+
+        const job = state.asyncJobs.get("run-child-loc-restore");
+        assert.ok(job, "expected job to be restored");
+        const workerStep = job.steps?.find(
+          (step: Record<string, unknown>) => step["agent"] === "worker",
+        );
+        assert.ok(workerStep, "expected worker step to be present on restored job");
+        assert.deepEqual(
+          (workerStep as Record<string, unknown>).childLocation,
+          childLocation,
+          "childLocation must survive the status-file → statusToSummary → summaryToJob projection",
+        );
+      } finally {
+        removeTempDir(asyncRoot);
+      }
+    });
+
+    it("preserves childLocation on AsyncJobState steps via the poll path (status refresh)", async () => {
+      // Regression guard: the tracker's poll loop maps status.steps with
+      // { ...step, index } (async-job-tracker.ts:545). Since this is a raw
+      // spread from readStatus(), childLocation is naturally included — but
+      // this test pins that behavior so a future restructure cannot silently
+      // drop it. It also confirms that both the initial restore step and the
+      // first poll agree on the same status-file location for childLocation.
+      const asyncRoot = createTempDir("pi-async-tracker-child-loc-poll-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const runDir = path.join(asyncRoot, "run-child-loc-poll");
+        fs.mkdirSync(runDir, { recursive: true });
+        const childLocation = {
+          childCwd: "/work/subproject",
+          displayPath: "subproject",
+          linkedWorktree: true as const,
+          branch: "feat/sub",
+        };
+        const statusBase = {
+          runId: "run-child-loc-poll",
+          mode: "single",
+          state: "running",
+          sessionId: "session-child-loc-poll",
+          startedAt: 1000,
+          steps: [{ agent: "worker", status: "running", childLocation }],
+        };
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({ ...statusBase, lastUpdate: 2000 }),
+          "utf-8",
+        );
+
+        const state = createState();
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 10 },
+        );
+        tracker.handleStarted({
+          id: "run-child-loc-poll",
+          asyncDir: runDir,
+          agent: "worker",
+        });
+
+        // Wait for at least one poll cycle to update job.steps from the status file.
+        await waitForCondition(() => {
+          const job = state.asyncJobs.get("run-child-loc-poll");
+          return !!job?.steps?.length && !!(job.steps[0] as Record<string, unknown>).childLocation;
+        }, "childLocation to appear on polled job steps");
+
+        const job = state.asyncJobs.get("run-child-loc-poll");
+        assert.ok(job, "expected job to exist after poll");
+        const workerStep = job.steps?.[0];
+        assert.ok(workerStep, "expected worker step");
+        assert.deepEqual(
+          (workerStep as Record<string, unknown>).childLocation,
+          childLocation,
+          "childLocation must survive the status-file → { ...step, index } poll projection",
+        );
+      } finally {
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
   },
 );

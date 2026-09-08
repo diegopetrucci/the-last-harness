@@ -196,6 +196,7 @@ extensions/subagents/src/runs/shared/tk-ticket.js linguist-generated=true
 extensions/subagents/src/runs/shared/tool-budget.js linguist-generated=true
 extensions/subagents/src/shared/artifacts.js linguist-generated=true
 extensions/subagents/src/shared/atomic-json.js linguist-generated=true
+extensions/subagents/src/shared/child-location.js linguist-generated=true
 extensions/subagents/src/shared/child-transcript.js linguist-generated=true
 extensions/subagents/src/shared/config-dir.js linguist-generated=true
 extensions/subagents/src/shared/context-diagnostics.js linguist-generated=true

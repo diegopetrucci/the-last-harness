@@ -246,6 +246,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.error ? { error: step.error } : {}),
             ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
             ...(step.children?.length ? { children: step.children } : {}),
+            ...(step.childLocation ? { childLocation: step.childLocation } : {}),
         };
     });
     attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
