@@ -139,3 +139,29 @@ test("review UI inlines commit reconciliation before app refresh handling", asyn
   );
   assert.doesNotMatch(html, /__INLINE_REVIEW_STATE_JS__/);
 });
+
+test("assembled review HTML orders navigation before app and preserves inline escaping", async () => {
+  const jiti = createJiti(import.meta.url);
+  const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
+  const html = buildReviewHtml({
+    repoRoot: "</script><script>window.bad=1</script> $&",
+    files: [],
+    commits: [],
+    branchBaseRef: null,
+    branchMergeBaseSha: null,
+    repositoryHasHead: true,
+  });
+  const stateIndex = html.indexOf(
+    "global.__reconcileReviewCommitState = reconcileReviewCommitState",
+  );
+  const navigationIndex = html.indexOf("global.__createReviewNavigation = createReviewNavigation");
+  const appIndex = html.indexOf("const reviewData = JSON.parse(");
+
+  assert.ok(stateIndex >= 0, "assembled HTML must inline review-state.js");
+  assert.ok(navigationIndex > stateIndex, "navigation must load after review-state.js");
+  assert.ok(appIndex > navigationIndex, "app.js must load after navigation");
+  assert.doesNotMatch(html, /__INLINE_REVIEW_(?:STATE|NAVIGATION)_JS__/);
+  assert.ok(html.includes("\\u003c/script\\u003e"));
+  assert.ok(html.includes("\\u003cscript\\u003ewindow.bad=1\\u003c/script\\u003e"));
+  assert.match(html, /\$&/);
+});

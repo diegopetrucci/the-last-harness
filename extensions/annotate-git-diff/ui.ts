@@ -125,6 +125,9 @@ function resolveReviewUiAssets(): ReviewUiAssets {
 
 export function buildReviewHtml(data: ReviewWindowData): string {
   const templateHtml = readFileSync(join(webDir, "index.html"), "utf8");
+  const reviewNavigationJs = escapeInlineScriptSource(
+    readFileSync(join(webDir, "review-navigation.js"), "utf8"),
+  );
   const reviewStateJs = escapeInlineScriptSource(
     readFileSync(join(webDir, "review-state.js"), "utf8"),
   );
@@ -176,6 +179,7 @@ export function buildReviewHtml(data: ReviewWindowData): string {
     escapeInlineScriptSource(assets.monacoBasicLanguagesJs),
   );
   html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
+  html = safeReplace(html, "__INLINE_REVIEW_NAVIGATION_JS__", reviewNavigationJs);
   html = safeReplace(html, "__INLINE_JS__", appJs);
   return html;
 }

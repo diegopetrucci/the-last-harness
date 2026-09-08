@@ -74,7 +74,10 @@ function asDataModule(source) {
 }
 
 export function resolve(specifier, context, nextResolve) {
-  if (context.parentURL?.endsWith("/render.ts")) {
+  const isRenderSource = /\/render(?:-(?:foreground|primitives|widget))?\.ts$/.test(
+    context.parentURL ?? "",
+  );
+  if (isRenderSource) {
     if (specifier === "@earendil-works/pi-coding-agent") {
       return { url: asDataModule(renderPiCodingAgentShim), shortCircuit: true };
     }

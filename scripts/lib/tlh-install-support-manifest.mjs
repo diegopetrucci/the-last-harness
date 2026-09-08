@@ -58,6 +58,20 @@ const BASE_SUPPORT_FILES = Object.freeze([
         installName: "",
     },
     {
+        variable: "TLH_INSTALL_NPM_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/tlh-install-npm.mjs",
+        tempPath: "lib/tlh-install-npm.mjs",
+        installName: "",
+    },
+    {
+        variable: "TLH_INSTALL_PROFILE_CLEANUP_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/tlh-install-profile-cleanup.mjs",
+        tempPath: "lib/tlh-install-profile-cleanup.mjs",
+        installName: "",
+    },
+    {
         variable: "TLH_INSTALL_SUPPORT_FILES_LIB",
         requirement: REQUIRED,
         relativePath: "scripts/lib/tlh-install-support-files.mjs",
