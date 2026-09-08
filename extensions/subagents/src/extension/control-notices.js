@@ -45,7 +45,14 @@ function isForegroundNoticeStillActionable(state, details) {
         return false;
     if (details.event.index !== undefined && control.currentIndex !== details.event.index)
         return false;
-    return control.currentActivityState === "needs_attention";
+    if (control.currentActivityState !== "needs_attention")
+        return false;
+    const isIdleNotice = details.event.reason === undefined || details.event.reason === "idle";
+    if (!isIdleNotice)
+        return true;
+    if (details.event.idleEpisodeId !== undefined)
+        return control.idleEpisodeId === details.event.idleEpisodeId;
+    return control.idleEpisodeId === undefined && !control.durableAttentionReasons?.length;
 }
 export function handleSubagentControlNotice(input) {
     if (!input.details?.event || input.details.event.type === "active_long_running")

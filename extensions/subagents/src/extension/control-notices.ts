@@ -77,7 +77,18 @@ function isForegroundNoticeStillActionable(
   if (control.currentAgent && control.currentAgent !== details.event.agent) return false;
   if (details.event.index !== undefined && control.currentIndex !== details.event.index)
     return false;
-  return control.currentActivityState === "needs_attention";
+  if (control.currentActivityState !== "needs_attention") return false;
+
+  // An idle timer belongs to the episode that scheduled it. A later durable
+  // warning may keep the aggregate state at needs_attention, but it must not
+  // resurrect a stale idle notice after that episode recovered.
+  const isIdleNotice = details.event.reason === undefined || details.event.reason === "idle";
+  if (!isIdleNotice) return true;
+  if (details.event.idleEpisodeId !== undefined)
+    return control.idleEpisodeId === details.event.idleEpisodeId;
+  // Legacy idle events have no episode identity. They remain deliverable only
+  // while the current snapshot is also legacy and has no durable warning.
+  return control.idleEpisodeId === undefined && !control.durableAttentionReasons?.length;
 }
 
 export function handleSubagentControlNotice(input: {

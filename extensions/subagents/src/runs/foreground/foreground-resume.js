@@ -23,7 +23,7 @@ import { remainingExecutionTimeMs, } from "../../agents/execution-ceiling.js";
 import { lookupPrivateProjectActionReference, projectRunAuthorizationError, requirePersistedProjectCaptureForTarget, authorizePersistedProjectAgentRun, rejectMissingPrivateProjectReference, } from "./project-agent-control.js";
 import { resolveForegroundResumeTarget } from "./foreground-run-state.js";
 import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "./foreground-nested-control.js";
-import { indexedLifecycleContinuation, isClaimedPausedLifecycle, pausedForegroundStatusPath, } from "./foreground-pause-state.js";
+import { indexedLifecycleContinuation, isClaimedPausedLifecycle, pausedForegroundHealthFromResult, pausedForegroundStatusPath, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 function formatRevivedAsyncResponse(target, revivedId, details, notice) {
     const privacySafeSupervisorResume = target.kind === "revive" &&
@@ -299,6 +299,7 @@ export function enrichPersistedPausedForegroundSingleRun(input) {
                             }
                             : {}),
                         ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                        ...pausedForegroundHealthFromResult(input.result, true),
                         ...(activeRuntimeMs !== undefined
                             ? {
                                 activeRuntimeMs: Math.max(normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0, activeRuntimeMs),

@@ -220,6 +220,17 @@ export async function waitForAsyncState(
   }
 }
 
+export async function waitForMarker(
+  markerPath: string,
+  timeoutMs: ScaledMs = scaleTestTimeout(10_000),
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(markerPath)) {
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for marker: ${markerPath}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 export async function waitForAsyncStatusPredicate(
   asyncDir: string,
   predicate: (status: AsyncStatusPayload) => boolean,

@@ -28,6 +28,9 @@ export interface ProgressSummary {
   index: number;
   status: string;
   activityState?: string;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: string[];
+  compaction?: { reason?: string };
   lastActivityAt?: number;
   currentTool?: string;
   currentToolArgs?: string;
@@ -85,6 +88,7 @@ export interface RunSyncResult {
     type?: string;
     message: string;
     reason?: string;
+    idleEpisodeId?: string;
     contextPressureSeverity?: string;
     contextPressureThreshold?: string;
     turns?: number;

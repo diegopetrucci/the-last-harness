@@ -701,37 +701,46 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             };
             break;
         }
-        const run = await runPiStreaming(attempt.args, step.cwd ?? stepCtx.cwd, stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
-            eventsPath: setup.eventsPath,
-            runId: stepCtx.id,
-            stepIndex: stepCtx.flatIndex,
-            agent: step.agent,
-            includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
-        }, stepCtx.registerInterrupt, stepCtx.onChildEvent, setup.transcriptWriter, stepCtx.registerTimeout, stepCtx.timeoutMessage, stepCtx.onChildProtocolOutputLimit, {
-            restored: setup.restoredSession,
-            configuredModel: candidate,
-            contextWindow: contextWindowForModel(candidate, step.contextWindows),
-            contextWindows: step.contextWindows,
-        });
-        const assessment = assessSingleStepAttempt({
-            step,
-            state,
-            run,
-            candidate,
-            outputSnapshot: attempt.outputSnapshot,
-            tempDir: attempt.tempDir,
-            taskForCompletionGuard: setup.taskForCompletionGuard,
-        });
-        if (shouldStopSingleStepAttempt({
-            run,
-            ctx: stepCtx,
-            attempt: assessment.attempt,
-            completionGuardTriggered: assessment.completionGuardTriggered,
-            index,
-            candidateCount: state.candidates.length,
-        }))
+        let stopAttempt = false;
+        try {
+            const run = await runPiStreaming(attempt.args, step.cwd ?? stepCtx.cwd, stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
+                eventsPath: setup.eventsPath,
+                runId: stepCtx.id,
+                stepIndex: stepCtx.flatIndex,
+                agent: step.agent,
+                includeChildEventProjections: stepCtx.artifactConfig.includeChildEventProjections,
+            }, stepCtx.registerInterrupt, stepCtx.onChildEvent, setup.transcriptWriter, stepCtx.registerTimeout, stepCtx.timeoutMessage, stepCtx.onChildProtocolOutputLimit, {
+                restored: setup.restoredSession,
+                configuredModel: candidate,
+                contextWindow: contextWindowForModel(candidate, step.contextWindows),
+                contextWindows: step.contextWindows,
+            });
+            const assessment = assessSingleStepAttempt({
+                step,
+                state,
+                run,
+                candidate,
+                outputSnapshot: attempt.outputSnapshot,
+                tempDir: attempt.tempDir,
+                taskForCompletionGuard: setup.taskForCompletionGuard,
+            });
+            stopAttempt = shouldStopSingleStepAttempt({
+                run,
+                ctx: stepCtx,
+                attempt: assessment.attempt,
+                completionGuardTriggered: assessment.completionGuardTriggered,
+                index,
+                candidateCount: state.candidates.length,
+            });
+            if (!stopAttempt) {
+                state.attemptNotes.push(formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]));
+            }
+        }
+        finally {
+            stepCtx.onAttemptEnd?.();
+        }
+        if (stopAttempt)
             break;
-        state.attemptNotes.push(formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]));
     }
     const output = finalizeSingleStepOutput({ step, ctx: stepCtx, state });
     let acceptance;

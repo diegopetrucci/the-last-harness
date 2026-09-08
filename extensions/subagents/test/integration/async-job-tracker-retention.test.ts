@@ -164,7 +164,15 @@ describe(
             tkTicket: { id: "psr-raw4", title: "Show active tk title" },
             steps: [
               { agent: "scout", status: "complete" },
-              { agent: "reviewer", status: "running", currentTool: "read" },
+              {
+                agent: "reviewer",
+                status: "running",
+                currentTool: "read",
+                activityState: "needs_attention",
+                idleEpisodeId: "restored-attempt~idle~2",
+                durableAttentionReasons: ["context_pressure"],
+                compaction: { reason: "threshold" },
+              },
               { agent: "worker", status: "running" },
               { agent: "writer", status: "pending" },
             ],
@@ -211,6 +219,10 @@ describe(
         assert.equal(job.stepsTotal, 4);
         assert.equal(job.runningSteps, 2);
         assert.equal(job.completedSteps, 1);
+        assert.equal(job.steps?.[1]?.activityState, "needs_attention");
+        assert.equal(job.steps?.[1]?.idleEpisodeId, "restored-attempt~idle~2");
+        assert.deepEqual(job.steps?.[1]?.durableAttentionReasons, ["context_pressure"]);
+        assert.deepEqual(job.steps?.[1]?.compaction, { reason: "threshold" });
         assert.ok(state.poller, "expected restored active jobs to start polling");
         assert.ok(ui.widgets.length >= 2, "expected reset and restore to replace the widget");
         assert.equal(

@@ -10,8 +10,11 @@ import type {
   AsyncPauseMetadata,
   AsyncPauseState,
   AsyncStatus,
+  DurableAttentionReason,
+  CompactionReason,
   ForegroundSupervisorRequestMetadata,
 } from "../../shared/types.ts";
+import { normalizeIdleEpisodeId } from "./health-transition.ts";
 
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
@@ -40,6 +43,35 @@ export function normalizeActiveRuntimeMs(value: unknown): number | undefined {
 export function normalizeActiveRuntimeCheckpointAt(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+    : undefined;
+}
+
+const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
+  "context_pressure",
+  "tool_failures",
+  "completion_guard",
+]);
+const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+]);
+
+function normalizeDurableAttentionReasons(value: unknown): DurableAttentionReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.filter(
+    (reason): reason is DurableAttentionReason =>
+      typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+  );
+  const unique = [...new Set(reasons)];
+  return unique.length > 0 ? unique : undefined;
+}
+
+function normalizeCompactionProjection(value: unknown): { reason: CompactionReason } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reason = (value as { reason?: unknown }).reason;
+  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
+    ? { reason: reason as CompactionReason }
     : undefined;
 }
 
@@ -549,15 +581,28 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
   const steps = status.steps?.map((step) => {
     const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
     const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+    const stepIdleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
+    const stepDurableAttentionReasons = normalizeDurableAttentionReasons(
+      step.durableAttentionReasons,
+    );
+    const stepCompaction = normalizeCompactionProjection(step.compaction);
     const {
       activeRuntimeMs: _stepActiveRuntimeMs,
       activeRuntimeCheckpointAt: _stepCheckpointAt,
+      idleEpisodeId: _stepIdleEpisodeId,
+      durableAttentionReasons: _stepDurableAttentionReasons,
+      compaction: _stepCompaction,
       ...stepRest
     } = step;
     return {
       ...stepRest,
       ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
       ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
+      ...(stepIdleEpisodeId !== undefined ? { idleEpisodeId: stepIdleEpisodeId } : {}),
+      ...(stepDurableAttentionReasons
+        ? { durableAttentionReasons: [...stepDurableAttentionReasons] }
+        : {}),
+      ...(stepCompaction ? { compaction: { ...stepCompaction } } : {}),
     };
   });
   return {

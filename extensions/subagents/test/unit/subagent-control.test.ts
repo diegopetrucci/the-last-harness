@@ -271,6 +271,48 @@ describe("subagent control attention state", () => {
     assert.doesNotMatch(message, /What are you blocked on/);
   });
 
+  it("round-trips bounded idle episode identity without changing legacy or non-idle keys", () => {
+    const idle = buildControlEvent({
+      to: "needs_attention",
+      runId: "run-episode",
+      agent: "worker",
+      reason: "idle",
+      idleEpisodeId: "  attempt-a~idle~1  ",
+    });
+    const parsed = parseControlEvent(JSON.parse(JSON.stringify(idle)));
+    assert.ok(parsed);
+    assert.equal(parsed.idleEpisodeId, "attempt-a~idle~1");
+    assert.equal(
+      controlNotificationKey(parsed),
+      "run-episode:needs_attention:idle:attempt-a~idle~1",
+    );
+
+    const invalid = parseControlEvent({
+      ...idle,
+      idleEpisodeId: "\nunsafe",
+    });
+    assert.ok(invalid);
+    assert.equal(invalid.idleEpisodeId, undefined);
+    assert.equal(controlNotificationKey(invalid), "run-episode:needs_attention:idle");
+
+    const legacy = buildControlEvent({
+      to: "needs_attention",
+      runId: "run-legacy",
+      agent: "worker",
+    });
+    assert.equal(controlNotificationKey(legacy), "run-legacy:needs_attention:idle");
+
+    const durable = buildControlEvent({
+      to: "needs_attention",
+      runId: "run-episode",
+      agent: "worker",
+      reason: "context_pressure",
+      idleEpisodeId: "attempt-a~idle~2",
+    });
+    assert.equal(durable.idleEpisodeId, undefined);
+    assert.equal(controlNotificationKey(durable), "run-episode:needs_attention:context_pressure::");
+  });
+
   it("dedupes notifications once per child and attention state", () => {
     const event = buildControlEvent({
       to: "needs_attention",

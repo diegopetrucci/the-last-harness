@@ -39,13 +39,11 @@ export function createBackgroundRunControlOwner(input) {
     const activeChildTimeouts = new Map();
     const pendingStepSteers = [];
     const emittedControlEventKeys = new Set();
-    const activeLongRunningSteps = new Set();
     const mutatingFailureStates = status.initialStatusSteps.map(() => createMutatingFailureState());
     const runtimeModelContexts = status.initialStatusSteps.map(() => undefined);
     const activeConfiguredModels = status.initialStatusSteps.map(() => undefined);
     const pendingToolResults = status.initialStatusSteps.map(() => undefined);
     const mutatingFailureWindowMs = 5 * 60_000;
-    let currentActivityState;
     let activityTimer;
     function registerStepInterrupt(flatIndex, interrupt) {
         if (!interrupt) {
@@ -195,10 +193,10 @@ export function createBackgroundRunControlOwner(input) {
         statusPayload.currentPath = activeStep?.currentPath;
     }
     function maybeEmitActiveLongRunning(flatIndex, now) {
-        if (!controlConfig.enabled || activeLongRunningSteps.has(flatIndex))
+        if (!controlConfig.enabled)
             return false;
         const step = statusPayload.steps[flatIndex];
-        if (!step || step.status !== "running" || step.activityState === "needs_attention")
+        if (!step || step.status !== "running")
             return false;
         const reason = nextLongRunningTrigger(controlConfig, {
             startedAt: step.startedAt ?? overallStartTime,
@@ -208,11 +206,10 @@ export function createBackgroundRunControlOwner(input) {
         });
         if (!reason)
             return false;
-        activeLongRunningSteps.add(flatIndex);
         const previous = step.activityState;
-        step.activityState = "active_long_running";
-        statusPayload.activityState =
-            statusPayload.activityState === "needs_attention" ? "needs_attention" : "active_long_running";
+        const transition = status.transitionStepHealth(flatIndex, { type: "active_long_running" });
+        if (!transition.activeLongRunningNotice)
+            return false;
         appendControlEvent(buildControlEvent({
             type: "active_long_running",
             from: previous,
@@ -304,6 +301,7 @@ export function createBackgroundRunControlOwner(input) {
         const step = statusPayload.steps[flatIndex];
         if (!step)
             return;
+        status.resetStepHealth(flatIndex);
         runtimeModelContexts[flatIndex] = undefined;
         activeConfiguredModels[flatIndex] = attempt.model;
         step.model = attempt.model;
@@ -324,6 +322,13 @@ export function createBackgroundRunControlOwner(input) {
         if (!step)
             return;
         const now = Date.now();
+        status.transitionStepHealth(flatIndex, { type: "validated_activity" });
+        if (event.type === "compaction_start") {
+            status.transitionStepHealth(flatIndex, { type: "compaction_start", reason: event.reason });
+        }
+        else if (event.type === "compaction_end") {
+            status.transitionStepHealth(flatIndex, { type: "compaction_end" });
+        }
         statusPayload.currentStep = flatIndex;
         if (event.type === "tool_execution_start" && event.toolName) {
             const supervisorPause = resolveSupervisorPauseMetadata({
@@ -396,11 +401,12 @@ export function createBackgroundRunControlOwner(input) {
                     ts: now,
                 }, mutatingFailureWindowMs);
                 if (controlConfig.enabled &&
-                    shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention) &&
-                    step.activityState !== "needs_attention") {
+                    shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention)) {
                     const previous = step.activityState;
-                    step.activityState = "needs_attention";
-                    statusPayload.activityState = "needs_attention";
+                    status.transitionStepHealth(flatIndex, {
+                        type: "durable_attention",
+                        reason: "tool_failures",
+                    });
                     appendControlEvent(buildControlEvent({
                         type: "needs_attention",
                         from: previous,
@@ -469,8 +475,10 @@ export function createBackgroundRunControlOwner(input) {
                 status.writeStatusPayload();
                 if (controlConfig.enabled) {
                     const previousActivityState = step.activityState;
-                    step.activityState = "needs_attention";
-                    statusPayload.activityState = "needs_attention";
+                    status.transitionStepHealth(flatIndex, {
+                        type: "durable_attention",
+                        reason: "context_pressure",
+                    });
                     appendControlEvent(buildControlEvent({
                         type: "needs_attention",
                         from: previousActivityState,
@@ -515,6 +523,7 @@ export function createBackgroundRunControlOwner(input) {
         statusPayload.lastActivityAt = now;
         statusPayload.lastUpdate = now;
         maybeEmitActiveLongRunning(flatIndex, now);
+        status.syncTopLevelHealthProjection();
         status.writeStatusPayload();
     }
     function appendRecentStepOutput(step, lines) {
@@ -554,26 +563,32 @@ export function createBackgroundRunControlOwner(input) {
                 step.lastActivityAt = lastActivityAt;
                 changed = true;
             }
-            const idleState = deriveActivityState({
-                config: controlConfig,
-                startedAt: step.startedAt ?? overallStartTime,
-                lastActivityAt,
-                toolCallInFlight: Boolean(step.currentTool),
-                now,
-            });
+            const healthState = status.healthStateForStep(index);
+            const idleState = healthState.compaction
+                ? undefined
+                : deriveActivityState({
+                    config: controlConfig,
+                    startedAt: step.startedAt ?? overallStartTime,
+                    lastActivityAt,
+                    toolCallInFlight: Boolean(step.currentTool),
+                    now,
+                });
             if (idleState === "needs_attention") {
                 const previous = step.activityState;
-                step.activityState = "needs_attention";
-                if (previous !== "needs_attention") {
-                    appendControlEvent(buildControlEvent({
-                        from: previous,
-                        to: "needs_attention",
-                        runId: id,
-                        agent: step.agent,
-                        index,
-                        ts: now,
-                        lastActivityAt,
-                    }));
+                const transition = status.transitionStepHealth(index, { type: "enter_idle" });
+                if (transition.idleEpisodeStarted) {
+                    if (transition.idleAttentionEligible) {
+                        appendControlEvent(buildControlEvent({
+                            from: previous,
+                            to: "needs_attention",
+                            runId: id,
+                            agent: step.agent,
+                            index,
+                            ts: now,
+                            lastActivityAt,
+                            idleEpisodeId: transition.state.idleEpisodeId,
+                        }));
+                    }
                     changed = true;
                 }
             }
@@ -584,23 +599,14 @@ export function createBackgroundRunControlOwner(input) {
             statusPayload.lastActivityAt = runLastActivityAt;
             changed = true;
         }
-        const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
-            ? "needs_attention"
-            : statusPayload.steps.some((step) => step.activityState === "active_long_running")
-                ? "active_long_running"
-                : undefined;
-        if (nextRunState !== currentActivityState) {
-            currentActivityState = nextRunState;
-            statusPayload.activityState = nextRunState;
+        if (status.syncTopLevelHealthProjection())
             changed = true;
-        }
         statusPayload.lastUpdate = now;
         if (changed)
             status.writeStatusPayload();
         return changed;
     }
     function clearActivityState() {
-        currentActivityState = undefined;
         statusPayload.activityState = undefined;
     }
     function startActivityTimer() {

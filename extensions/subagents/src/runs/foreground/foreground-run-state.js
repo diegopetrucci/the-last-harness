@@ -174,6 +174,12 @@ export function rememberForegroundRun(state, input) {
                 ...(result.acceptance ? { acceptance: result.acceptance } : {}),
                 ...(result.pause ? { pause: result.pause } : {}),
                 ...(result.cancel ? { cancel: result.cancel } : {}),
+                ...(result.progress?.activityState ? { activityState: result.progress.activityState } : {}),
+                ...(result.progress?.idleEpisodeId ? { idleEpisodeId: result.progress.idleEpisodeId } : {}),
+                ...(result.progress?.durableAttentionReasons
+                    ? { durableAttentionReasons: [...result.progress.durableAttentionReasons] }
+                    : {}),
+                ...(result.progress?.compaction ? { compaction: { ...result.progress.compaction } } : {}),
                 ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
                 ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
                 ...(result.contextPressureCrossedThresholds
@@ -232,6 +238,14 @@ export function updateRememberedForegroundChild(state, input) {
         ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
         ...(input.result.pause ? { pause: input.result.pause } : {}),
         ...(input.result.cancel ? { cancel: input.result.cancel } : {}),
+        activityState: input.result.progress?.activityState,
+        idleEpisodeId: input.result.progress?.idleEpisodeId,
+        durableAttentionReasons: input.result.progress?.durableAttentionReasons
+            ? [...input.result.progress.durableAttentionReasons]
+            : undefined,
+        compaction: input.result.progress?.compaction
+            ? { ...input.result.progress.compaction }
+            : undefined,
         ...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
         ...(input.result.contextPressure
             ? { contextPressure: { ...input.result.contextPressure } }
@@ -335,6 +349,12 @@ export function resolveForegroundResumeTarget(params, state) {
                 contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds),
             }
             : {}),
+        ...(child.activityState ? { activityState: child.activityState } : {}),
+        ...(child.idleEpisodeId ? { idleEpisodeId: child.idleEpisodeId } : {}),
+        ...(child.durableAttentionReasons
+            ? { durableAttentionReasons: [...child.durableAttentionReasons] }
+            : {}),
+        ...(child.compaction ? { compaction: { ...child.compaction } } : {}),
         ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
             ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
             : {}),

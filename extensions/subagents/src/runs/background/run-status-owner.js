@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactPaths } from "../../shared/artifacts.js";
@@ -10,6 +11,15 @@ import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
 import { readStatus } from "../../shared/utils.js";
+import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
+function applyHealthStatusProjection(step, state) {
+    step.activityState = state.activityState;
+    step.idleEpisodeId = state.idleEpisodeId;
+    step.durableAttentionReasons = state.durableAttentionReasons.length
+        ? [...state.durableAttentionReasons]
+        : undefined;
+    step.compaction = state.compaction ? { ...state.compaction } : undefined;
+}
 const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
 function lifecycleTransitionErrorDetail(error, depth = 0) {
     try {
@@ -148,6 +158,9 @@ export function createBackgroundRunStatusOwner(input) {
     fs.mkdirSync(asyncDir, { recursive: true });
     writeNormalizedLifecycleStatus(asyncDir, statusPayload);
     const activeRuntimeTrackers = new Map();
+    const healthStates = initialStatusSteps.map(() => undefined);
+    const closedHealthSteps = new Set();
+    let currentActivityState;
     const flatStepAcceptances = flatSteps.map((step) => step.effectiveAcceptance);
     const terminalReason = {};
     const controlHooks = {
@@ -323,6 +336,113 @@ export function createBackgroundRunStatusOwner(input) {
             },
         });
     }
+    function syncTopLevelHealthProjection() {
+        const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
+            ? "needs_attention"
+            : statusPayload.steps.some((step) => step.activityState === "active_long_running")
+                ? "active_long_running"
+                : undefined;
+        const changed = nextRunState !== currentActivityState;
+        currentActivityState = nextRunState;
+        statusPayload.activityState = nextRunState;
+        return changed;
+    }
+    function healthStateForStep(flatIndex) {
+        const current = healthStates[flatIndex];
+        if (current)
+            return current;
+        const persistedReasons = statusPayload.steps[flatIndex]?.durableAttentionReasons;
+        const created = createHealthTransitionState(randomUUID());
+        healthStates[flatIndex] = persistedReasons?.length
+            ? { ...created, durableAttentionReasons: [...persistedReasons] }
+            : created;
+        return healthStates[flatIndex];
+    }
+    function ignoredHealthTransition(state) {
+        return {
+            state,
+            changed: false,
+            projectionChanged: false,
+            projection: state.activityState,
+            idleEpisodeStarted: false,
+            idleEpisodeEnded: false,
+            activeLongRunningNotice: false,
+            idleAttentionEligible: false,
+        };
+    }
+    function transitionStepHealth(flatIndex, action) {
+        const current = healthStateForStep(flatIndex);
+        const closed = closedHealthSteps.has(flatIndex);
+        if (closed && action.type !== "durable_attention")
+            return ignoredHealthTransition(current);
+        const transition = transitionHealth(current, action);
+        const publishedState = closed
+            ? {
+                ...transition.state,
+                activityState: undefined,
+                idleEpisodeId: undefined,
+                compaction: undefined,
+            }
+            : transition.state;
+        const publishedTransition = closed
+            ? {
+                ...transition,
+                state: publishedState,
+                projection: undefined,
+                projectionChanged: false,
+            }
+            : transition;
+        healthStates[flatIndex] = publishedState;
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, publishedState);
+        syncTopLevelHealthProjection();
+        return publishedTransition;
+    }
+    function resetStepHealth(flatIndex) {
+        closedHealthSteps.delete(flatIndex);
+        const transition = resetHealthTransitionState(healthStateForStep(flatIndex), randomUUID());
+        healthStates[flatIndex] = transition.state;
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, transition.state);
+        syncTopLevelHealthProjection();
+        return transition;
+    }
+    function clearStepHealth(flatIndex) {
+        const current = healthStateForStep(flatIndex);
+        if (closedHealthSteps.has(flatIndex))
+            return ignoredHealthTransition(current);
+        const transition = transitionHealth(current, { type: "clear_ephemeral" });
+        healthStates[flatIndex] = transition.state;
+        closedHealthSteps.add(flatIndex);
+        const step = statusPayload.steps[flatIndex];
+        if (step)
+            applyHealthStatusProjection(step, transition.state);
+        syncTopLevelHealthProjection();
+        return transition;
+    }
+    function clearRunningStepHealth() {
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            if (statusPayload.steps[index]?.status === "running")
+                clearStepHealth(index);
+        }
+    }
+    function endStepCompaction(flatIndex, options) {
+        const transition = transitionStepHealth(flatIndex, { type: "compaction_end" });
+        if (!transition.changed)
+            return;
+        const now = Date.now();
+        statusPayload.lastUpdate = now;
+        if (options?.publish !== false)
+            writeStatusPayload();
+    }
+    function endAllStepCompactions(options) {
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            if (healthStates[index]?.compaction)
+                endStepCompaction(index, options);
+        }
+    }
     function adoptConcurrentTerminalStatus() {
         const persisted = readStatus(asyncDir);
         if (!persisted || persisted.state === "running" || persisted.state === "pausing")
@@ -368,6 +488,24 @@ export function createBackgroundRunStatusOwner(input) {
                 : {}),
         };
         Object.assign(statusPayload, adoptedStatus);
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            const adoptedStep = statusPayload.steps[index];
+            if (!adoptedStep ||
+                adoptedStep.status === "running" ||
+                adoptedStep.status === "pending" ||
+                adoptedStep.status === "pausing")
+                continue;
+            const currentHealth = healthStateForStep(index);
+            healthStates[index] = {
+                ...currentHealth,
+                activityState: undefined,
+                idleEpisodeId: undefined,
+                compaction: undefined,
+                durableAttentionReasons: [...(adoptedStep.durableAttentionReasons ?? [])],
+            };
+            closedHealthSteps.add(index);
+        }
+        syncTopLevelHealthProjection();
         interrupted = persisted.state === "paused";
         if (persisted.state === "paused")
             pausedCheckpointCommitted = true;
@@ -385,6 +523,8 @@ export function createBackgroundRunStatusOwner(input) {
         if (!claimChildTerminalReason(terminalReason, "output_limit"))
             return;
         const now = Date.now();
+        endAllStepCompactions({ publish: false });
+        clearRunningStepHealth();
         checkpointActiveRuntime(now, true);
         const message = boundChildError(formatProtocolOutputLimit(limit));
         statusPayload.state = "failed";
@@ -439,6 +579,8 @@ export function createBackgroundRunStatusOwner(input) {
             requestedAt: pause.requestedAt ?? Date.now(),
         };
         const now = Date.now();
+        endAllStepCompactions({ publish: false });
+        clearRunningStepHealth();
         checkpointActiveRuntime(now, true);
         if (concurrentTerminalStatusAdopted) {
             interrupted = true;
@@ -473,6 +615,8 @@ export function createBackgroundRunStatusOwner(input) {
                             activeRuntimeMs,
                             activeRuntimeCheckpointAt: now,
                             activityState: undefined,
+                            idleEpisodeId: undefined,
+                            compaction: undefined,
                             interruptRequestedAt: now,
                             ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
                             ...(index === requesterIndex
@@ -516,7 +660,9 @@ export function createBackgroundRunStatusOwner(input) {
             return;
         interrupted = true;
         const now = Date.now();
+        endAllStepCompactions({ publish: false });
         checkpointActiveRuntime(now, true);
+        clearRunningStepHealth();
         statusPayload.state = "paused";
         controlHooks.clearActivityState();
         statusPayload.activityState = undefined;
@@ -527,6 +673,8 @@ export function createBackgroundRunStatusOwner(input) {
                 continue;
             step.status = "paused";
             step.activityState = undefined;
+            step.idleEpisodeId = undefined;
+            step.compaction = undefined;
             step.endedAt = now;
             step.durationMs = step.startedAt ? now - step.startedAt : undefined;
             step.lastActivityAt = now;
@@ -548,7 +696,13 @@ export function createBackgroundRunStatusOwner(input) {
             return;
         timedOut = true;
         const now = Date.now();
+        endAllStepCompactions({ publish: false });
         checkpointActiveRuntime(now, true);
+        for (let index = 0; index < statusPayload.steps.length; index++) {
+            const step = statusPayload.steps[index];
+            if (step?.status === "running" || step?.status === "pending")
+                clearStepHealth(index);
+        }
         const message = timeoutMessage ?? "Subagent timed out.";
         statusPayload.state = "failed";
         statusPayload.timedOut = true;
@@ -565,6 +719,8 @@ export function createBackgroundRunStatusOwner(input) {
             step.timedOut = true;
             step.terminationReason = "timed_out";
             step.activityState = undefined;
+            step.idleEpisodeId = undefined;
+            step.compaction = undefined;
             step.endedAt = now;
             step.durationMs = step.startedAt ? now - step.startedAt : 0;
             step.lastActivityAt = now;
@@ -721,6 +877,14 @@ export function createBackgroundRunStatusOwner(input) {
         resolveTrackedSessionFile,
         writeStatusPayload,
         checkpointActiveRuntime,
+        healthStateForStep,
+        transitionStepHealth,
+        resetStepHealth,
+        clearStepHealth,
+        clearRunningStepHealth,
+        endStepCompaction,
+        endAllStepCompactions,
+        syncTopLevelHealthProjection,
         onChildProtocolOutputLimit,
         pausedAcceptanceLedger,
         pausedStepResult,

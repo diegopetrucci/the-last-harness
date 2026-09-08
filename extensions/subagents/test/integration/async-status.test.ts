@@ -275,6 +275,52 @@ describe("async status helpers", () => {
     }
   });
 
+  it("preserves valid health projections and drops malformed health metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-health-metadata-"));
+    try {
+      createAsyncDir(root, "run-health-metadata", {
+        runId: "run-health-metadata",
+        mode: "parallel",
+        state: "running",
+        activityState: "needs_attention",
+        idleEpisodeId: "run-health~idle~1",
+        durableAttentionReasons: ["context_pressure", "not-a-reason"],
+        compaction: { reason: "threshold" },
+        startedAt: 100,
+        lastUpdate: 200,
+        steps: [
+          {
+            agent: "recovered",
+            status: "running",
+            activityState: "not-a-state",
+            idleEpisodeId: "\u0000bad",
+            durableAttentionReasons: ["tool_failures", "bad"],
+            compaction: { reason: "bad" },
+          },
+          {
+            agent: "attention",
+            status: "running",
+            activityState: "needs_attention",
+            idleEpisodeId: "run-health~idle~2",
+            durableAttentionReasons: ["completion_guard"],
+            compaction: { reason: "overflow" },
+          },
+        ],
+      });
+
+      const run = listAsyncRuns(root, { states: ["running"] })[0]!;
+      assert.equal(run.activityState, "needs_attention");
+      assert.equal(run.steps[0]?.activityState, undefined);
+      assert.equal(run.steps[0]?.idleEpisodeId, undefined);
+      assert.deepEqual(run.steps[0]?.durableAttentionReasons, ["tool_failures"]);
+      assert.equal(run.steps[0]?.compaction, undefined);
+      assert.deepEqual(run.steps[1]?.durableAttentionReasons, ["completion_guard"]);
+      assert.deepEqual(run.steps[1]?.compaction, { reason: "overflow" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("hides protected paused lifecycle paths from async run lists", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-paused-privacy-"));
     try {

@@ -280,6 +280,11 @@ function compactCompletedProgress(progress: AgentProgress): AgentProgress {
     agent: progress.agent,
     status: progress.status,
     activityState: progress.activityState,
+    idleEpisodeId: progress.idleEpisodeId,
+    durableAttentionReasons: progress.durableAttentionReasons
+      ? [...progress.durableAttentionReasons]
+      : undefined,
+    compaction: progress.compaction ? { ...progress.compaction } : undefined,
     task: progress.task,
     skills: progress.skills,
     toolCount: progress.toolCount,
