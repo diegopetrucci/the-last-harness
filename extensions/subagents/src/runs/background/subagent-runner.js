@@ -34,7 +34,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
 import { cleanupOwnedProcessGroup, formatOwnedProcessGroupCleanup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
-import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundSupervisorSummary, boundedActiveRuntimeMs, createActiveRuntimeTracker, finalizeLifecycleContinuationLaunch, lifecycleGeneration, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundSupervisorSummary, boundedActiveRuntimeMs, createActiveRuntimeTracker, finalizeLifecycleContinuationLaunch, isLifecycleTransitionContentionError, lifecycleGeneration, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
@@ -133,6 +133,37 @@ function appendDiagnosticJsonl(filePath, line, droppedEventType) {
         appendJsonl(filePath, marker);
     }
     state.diagnosticsTruncated = true;
+}
+const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+function lifecycleTransitionErrorDetail(error, depth = 0) {
+    try {
+        if (!(error instanceof Error))
+            return boundChildError(String(error), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown";
+        const errnoError = error;
+        const code = typeof errnoError.code === "string" ? `code=${errnoError.code}` : undefined;
+        const cause = error.cause !== undefined && depth < 2
+            ? `cause=${lifecycleTransitionErrorDetail(error.cause, depth + 1)}`
+            : undefined;
+        return (boundChildError([error.name ? `name=${error.name}` : undefined, code, `message=${error.message}`, cause]
+            .filter((part) => part !== undefined)
+            .join("; "), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown");
+    }
+    catch {
+        return "unavailable";
+    }
+}
+function appendLifecycleTransitionDiagnostic(eventsPath, runId, phase, error) {
+    try {
+        appendDiagnosticJsonl(eventsPath, JSON.stringify({
+            type: "subagent.run.lifecycle_transition_failed",
+            ts: Date.now(),
+            runId,
+            phase,
+            cause: lifecycleTransitionErrorDetail(error),
+        }), "subagent.run.lifecycle_transition_failed");
+    }
+    catch {
+    }
 }
 function shouldPersistChildEvent(event) {
     return event.type !== "message_update";
@@ -2420,7 +2451,9 @@ async function runSubagentWithInput(config, plan) {
             durablePausingCheckpointPersisted = true;
             pausedCheckpointCommitted = true;
         }
-        catch {
+        catch (error) {
+            if (!isLifecycleTransitionContentionError(error))
+                appendLifecycleTransitionDiagnostic(eventsPath, id, "running->pausing", error);
             supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
         }
         interrupted = true;
@@ -3671,7 +3704,9 @@ async function runSubagentWithInput(config, plan) {
                     });
                     Object.assign(statusPayload, transition.status);
                 }
-                catch {
+                catch (error) {
+                    if (!isLifecycleTransitionContentionError(error))
+                        appendLifecycleTransitionDiagnostic(eventsPath, id, "pausing->paused", error);
                     adoptConcurrentTerminalStatus();
                 }
                 const nestedDescendantsStoppedAfterFinalization = await waitForNestedAsyncDescendantsToStop();

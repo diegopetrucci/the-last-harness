@@ -170,6 +170,7 @@ import {
   boundedActiveRuntimeMs,
   createActiveRuntimeTracker,
   finalizeLifecycleContinuationLaunch,
+  isLifecycleTransitionContentionError,
   lifecycleGeneration,
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
@@ -349,6 +350,55 @@ function appendDiagnosticJsonl(filePath: string, line: string, droppedEventType?
     appendJsonl(filePath, marker);
   }
   state.diagnosticsTruncated = true;
+}
+
+const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+type LifecycleTransitionPhase = "running->pausing" | "pausing->paused";
+
+function lifecycleTransitionErrorDetail(error: unknown, depth = 0): string {
+  try {
+    if (!(error instanceof Error))
+      return boundChildError(String(error), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown";
+    const errnoError = error as NodeJS.ErrnoException;
+    const code = typeof errnoError.code === "string" ? `code=${errnoError.code}` : undefined;
+    const cause =
+      error.cause !== undefined && depth < 2
+        ? `cause=${lifecycleTransitionErrorDetail(error.cause, depth + 1)}`
+        : undefined;
+    return (
+      boundChildError(
+        [error.name ? `name=${error.name}` : undefined, code, `message=${error.message}`, cause]
+          .filter((part): part is string => part !== undefined)
+          .join("; "),
+        LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES,
+      ) ?? "unknown"
+    );
+  } catch {
+    return "unavailable";
+  }
+}
+
+function appendLifecycleTransitionDiagnostic(
+  eventsPath: string,
+  runId: string,
+  phase: LifecycleTransitionPhase,
+  error: unknown,
+): void {
+  try {
+    appendDiagnosticJsonl(
+      eventsPath,
+      JSON.stringify({
+        type: "subagent.run.lifecycle_transition_failed",
+        ts: Date.now(),
+        runId,
+        phase,
+        cause: lifecycleTransitionErrorDetail(error),
+      }),
+      "subagent.run.lifecycle_transition_failed",
+    );
+  } catch {
+    // Lifecycle diagnostics are best effort and must not interrupt teardown.
+  }
 }
 
 function shouldPersistChildEvent(event: Record<string, unknown>): boolean {
@@ -3479,7 +3529,9 @@ async function runSubagentWithInput(
       supervisorPauseTransitionFailed = false;
       durablePausingCheckpointPersisted = true;
       pausedCheckpointCommitted = true;
-    } catch {
+    } catch (error) {
+      if (!isLifecycleTransitionContentionError(error))
+        appendLifecycleTransitionDiagnostic(eventsPath, id, "running->pausing", error);
       supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
     }
     interrupted = true;
@@ -4908,7 +4960,9 @@ async function runSubagentWithInput(
             }),
           });
           Object.assign(statusPayload, transition.status);
-        } catch {
+        } catch (error) {
+          if (!isLifecycleTransitionContentionError(error))
+            appendLifecycleTransitionDiagnostic(eventsPath, id, "pausing->paused", error);
           adoptConcurrentTerminalStatus();
         }
         const nestedDescendantsStoppedAfterFinalization =
