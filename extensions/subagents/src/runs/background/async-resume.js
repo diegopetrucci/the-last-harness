@@ -391,69 +391,6 @@ function ownObjectProperty(value, key) {
     const record = value;
     return { present: Object.hasOwn(record, key), value: record[key] };
 }
-function hasPersistedProjectAgentMarker(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return false;
-    const record = value;
-    if (Object.hasOwn(record, "projectAgent") || Object.hasOwn(record, "projectAgents")) {
-        return true;
-    }
-    for (const field of ["steps", "results", "children", "nestedChildren"]) {
-        const children = record[field];
-        if (Array.isArray(children) &&
-            children.some((child) => hasPersistedProjectAgentMarker(child))) {
-            return true;
-        }
-    }
-    return false;
-}
-function persistedProjectAgentMarkerFromFile(filePath) {
-    let content;
-    try {
-        content = fs.readFileSync(filePath, "utf8");
-    }
-    catch (error) {
-        return error.code === "ENOENT" ? "absent" : "unavailable";
-    }
-    try {
-        return hasPersistedProjectAgentMarker(JSON.parse(content)) ? "present" : "absent";
-    }
-    catch {
-        return /["']projectAgents?["']\s*:/.test(content) ? "present" : "unavailable";
-    }
-}
-export function probeAsyncRunForProjectAgentMarker(params, deps = {}) {
-    let location;
-    try {
-        location = resolveAsyncRunLocation(params, deps.asyncDirRoot ?? ASYNC_DIR, deps.resultsDir ?? RESULTS_DIR);
-    }
-    catch {
-        return { status: "unavailable" };
-    }
-    try {
-        resolveAsyncResumeTarget(params, {
-            asyncDirRoot: deps.asyncDirRoot ?? ASYNC_DIR,
-            resultsDir: deps.resultsDir ?? RESULTS_DIR,
-        }, { requireSessionFile: false, readOnly: true });
-    }
-    catch {
-    }
-    const files = [
-        location.asyncDir ? path.join(location.asyncDir, "status.json") : undefined,
-        location.resultPath ?? undefined,
-    ].filter((filePath) => Boolean(filePath));
-    if (files.length === 0)
-        return { status: "absent" };
-    let unavailable = false;
-    for (const filePath of files) {
-        const result = persistedProjectAgentMarkerFromFile(filePath);
-        if (result === "present")
-            return { status: "present" };
-        if (result === "unavailable")
-            unavailable = true;
-    }
-    return { status: unavailable ? "unavailable" : "absent" };
-}
 function persistedModelIdentity(input) {
     return (sanitizeSubagentModelIdentity(input.identity) ??
         canonicalSubagentModelIdentity(input.model, parseThinkingLevel(input.thinking)));

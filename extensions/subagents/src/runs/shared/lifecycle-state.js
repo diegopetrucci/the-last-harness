@@ -122,6 +122,16 @@ class LifecycleLockExhaustedError extends Error {
         this.name = "LifecycleLockExhaustedError";
     }
 }
+export class LifecycleGenerationConflictError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "LifecycleGenerationConflictError";
+    }
+}
+export function isLifecycleTransitionContentionError(error) {
+    return (error instanceof LifecycleGenerationConflictError ||
+        error instanceof LifecycleLockExhaustedError);
+}
 function replaceControlCharacters(value) {
     return [...value]
         .map((character) => {
@@ -692,7 +702,7 @@ export function transitionLifecycleStatus(options) {
         const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
         const currentGeneration = lifecycleGeneration(normalizedCurrent);
         if (currentGeneration !== options.expectedGeneration) {
-            throw new Error(`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`);
+            throw new LifecycleGenerationConflictError(`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`);
         }
         const mutated = normalizeAsyncLifecycleStatus(options.mutate(normalizedCurrent));
         const nextStatus = {
@@ -762,7 +772,7 @@ export function markLifecycleContinuationSpawned(asyncDir, index, claimToken, co
         return { status: transitioned.status, transitioned: true, final: false, lost: false };
     }
     catch (error) {
-        if (error instanceof Error && /expected generation/.test(error.message)) {
+        if (error instanceof LifecycleGenerationConflictError) {
             return markLifecycleContinuationSpawned(asyncDir, index, claimToken, continuationRunId, options);
         }
         throw error;
@@ -792,7 +802,7 @@ export function finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken,
         return { status: transitioned.status, finalized: true, lost: false };
     }
     catch (error) {
-        if (error instanceof Error && /expected generation/.test(error.message)) {
+        if (error instanceof LifecycleGenerationConflictError) {
             return finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken, continuationRunId, options);
         }
         throw error;

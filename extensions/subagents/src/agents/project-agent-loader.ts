@@ -25,7 +25,6 @@ import type { AgentConfig } from "./agents.ts";
 
 /** The only project-owned directory considered by the TLH project-agent loader. */
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
-export const PROJECT_AGENT_PARENT_DIRECTORY = path.join(".tlh", "agents");
 export const PROJECT_AGENT_PACKAGE = "embedded";
 
 /** Bounds are deliberately finite because this loader runs before project code is trusted. */

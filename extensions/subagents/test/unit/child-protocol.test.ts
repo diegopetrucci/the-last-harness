@@ -16,14 +16,19 @@ import {
   formatStderrTailOverflow,
   isChildProtocolEvent,
   MAX_CHILD_ERROR_BYTES,
-  parseChildProtocolLine,
+  parseChildProtocolInput,
 } from "../../src/runs/shared/child-protocol.ts";
 import type { Message } from "@earendil-works/pi-ai";
 import type { CompactionReason, ProtocolOutputLimit } from "../../src/shared/types.ts";
 
+function parseKnownEvent(line: string) {
+  const parsed = parseChildProtocolInput(line);
+  return parsed.kind === "event" ? parsed.event : undefined;
+}
+
 describe("child protocol validation", () => {
   it("accepts consumed event shapes and preserves unknown fields", () => {
-    const event = parseChildProtocolLine(
+    const parsed = parseChildProtocolInput(
       JSON.stringify({
         type: "message_end",
         message: {
@@ -46,6 +51,9 @@ describe("child protocol validation", () => {
         futureField: { retained: true },
       }),
     );
+    assert.equal(parsed.kind, "event");
+    assert.ok(parsed.kind === "event");
+    const event = parsed.event;
 
     assert.ok(event);
     assert.equal(event.type, "message_end");
@@ -66,7 +74,7 @@ describe("child protocol validation", () => {
     ] as const satisfies readonly CompactionReason[];
 
     for (const reason of reasons) {
-      const start = parseChildProtocolLine(
+      const start = parseKnownEvent(
         JSON.stringify({ type: "compaction_start", reason, futureField: { retained: true } }),
       );
       assert.ok(start);
@@ -74,7 +82,7 @@ describe("child protocol validation", () => {
       assert.equal(start.reason, reason);
       assert.deepEqual(start.futureField, { retained: true });
 
-      const end = parseChildProtocolLine(
+      const end = parseKnownEvent(
         JSON.stringify({
           type: "compaction_end",
           reason,
@@ -106,8 +114,7 @@ describe("child protocol validation", () => {
       },
     ];
 
-    for (const value of malformed)
-      assert.equal(parseChildProtocolLine(JSON.stringify(value)), undefined);
+    for (const value of malformed) assert.equal(parseKnownEvent(JSON.stringify(value)), undefined);
   });
 
   it("rejects malformed and unknown protocol objects without throwing", () => {
@@ -188,7 +195,8 @@ describe("child protocol validation", () => {
       }),
     ];
 
-    for (const line of malformed) assert.equal(parseChildProtocolLine(line), undefined, line);
+    for (const line of malformed)
+      assert.notEqual(parseChildProtocolInput(line).kind, "event", line);
   });
 });
 

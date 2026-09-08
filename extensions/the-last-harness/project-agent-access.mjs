@@ -262,11 +262,6 @@ export async function releaseTlhProjectAgentRunReferencesForSession(sessionId) {
 }
 
 /** @param {string} runId */
-export async function getTlhProjectAgentRunReferenceMetadata(runId) {
-  return requireSnapshotOperation("getRunReferenceMetadata")(runId);
-}
-
-/** @param {string} runId */
 export async function lookupTlhProjectAgentRunReference(runId) {
   return requireSnapshotOperation("lookupRunReference")(runId);
 }

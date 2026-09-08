@@ -11,7 +11,6 @@ import {
   evaluateAcceptance,
   formatAcceptancePrompt,
   mergeContinuationAcceptance,
-  parseAcceptanceReport,
   parseAndStripAcceptanceReport,
   isEffectivelyEmpty,
   resolveEffectiveAcceptance,
@@ -369,19 +368,19 @@ describe("acceptance gates", () => {
   });
 
   it("parses acceptance-report fences and ignores unrelated json fences", () => {
-    const parsed = parseAcceptanceReport(report());
+    const parsed = parseAndStripAcceptanceReport(report());
 
     assert.ok(parsed.report);
     assert.deepEqual(parsed.report.changedFiles, ["src/file.ts"]);
     assert.equal(parsed.error, undefined);
 
-    const genericJson = parseAcceptanceReport(`done\n\
+    const genericJson = parseAndStripAcceptanceReport(`done\n\
 \
 \`\`\`json\n{"notes":"not an acceptance report"}\n\`\`\``);
     assert.equal(genericJson.report, undefined);
     assert.match(genericJson.error ?? "", /Structured acceptance report not found/);
 
-    const criteriaOnlyJson = parseAcceptanceReport(`done\n\
+    const criteriaOnlyJson = parseAndStripAcceptanceReport(`done\n\
 \
 \`\`\`json\n{"criteriaSatisfied":[{"id":"criterion-1","status":"satisfied","evidence":"example"}]}\n\`\`\``);
     assert.equal(criteriaOnlyJson.report, undefined);
@@ -390,7 +389,7 @@ describe("acceptance gates", () => {
     const invalidSignalJson = `done\n\
 \
 \`\`\`json\n{"criteriaSatisfied":[{"id":"criterion-1","status":"satisfied","evidence":"example"}],"changedFiles":false}\n\`\`\``;
-    const genericJsonWithInvalidSignal = parseAcceptanceReport(invalidSignalJson);
+    const genericJsonWithInvalidSignal = parseAndStripAcceptanceReport(invalidSignalJson);
     assert.equal(genericJsonWithInvalidSignal.report, undefined);
     assert.match(
       genericJsonWithInvalidSignal.error ?? "",
@@ -401,7 +400,7 @@ describe("acceptance gates", () => {
     const partialWrapperJson = `done\n\
 \
 \`\`\`json\n{"acceptance":{"changedFiles":["src/file.ts"]}}\n\`\`\``;
-    const genericJsonWithPartialWrapper = parseAcceptanceReport(partialWrapperJson);
+    const genericJsonWithPartialWrapper = parseAndStripAcceptanceReport(partialWrapperJson);
     assert.equal(genericJsonWithPartialWrapper.report, undefined);
     assert.match(
       genericJsonWithPartialWrapper.error ?? "",
@@ -412,12 +411,12 @@ describe("acceptance gates", () => {
     const reportPayloadJson = `done\n\
 \
 \`\`\`json\n{"changedFiles":["src/file.ts"]}\n\`\`\``;
-    const genericReportPayloadJson = parseAcceptanceReport(reportPayloadJson);
+    const genericReportPayloadJson = parseAndStripAcceptanceReport(reportPayloadJson);
     assert.equal(genericReportPayloadJson.report, undefined);
     assert.match(genericReportPayloadJson.error ?? "", /Structured acceptance report not found/);
     assert.equal(parseAndStripAcceptanceReport(reportPayloadJson).stripped, reportPayloadJson);
 
-    const malformed = parseAcceptanceReport("```acceptance-report\n{bad-json\n```");
+    const malformed = parseAndStripAcceptanceReport("```acceptance-report\n{bad-json\n```");
     assert.equal(malformed.report, undefined);
     assert.match(malformed.error ?? "", /Failed to parse acceptance-report/);
   });
@@ -425,7 +424,7 @@ describe("acceptance gates", () => {
   it("parses acceptance reports from json-family fences", () => {
     for (const fence of ["json", "jsonc", "json5"]) {
       const output = report({}, fence);
-      const parsed = parseAcceptanceReport(output);
+      const parsed = parseAndStripAcceptanceReport(output);
 
       assert.ok(parsed.report);
       assert.deepEqual(parsed.report.changedFiles, ["src/file.ts"]);
@@ -445,7 +444,7 @@ describe("acceptance gates", () => {
       JSON.stringify(reportData()),
       "```",
     ].join("\n");
-    const parsed = parseAcceptanceReport(output);
+    const parsed = parseAndStripAcceptanceReport(output);
 
     assert.ok(parsed.report);
     assert.equal(
@@ -467,7 +466,7 @@ describe("acceptance gates", () => {
       JSON.stringify({ "acceptance-report": reportData() }),
       "```",
     ].join("\n");
-    const parsed = parseAcceptanceReport(output);
+    const parsed = parseAndStripAcceptanceReport(output);
 
     assert.ok(parsed.report);
     assert.deepEqual(parsed.report.testsAddedOrUpdated, ["test/file.test.ts"]);
@@ -475,7 +474,7 @@ describe("acceptance gates", () => {
   });
 
   it("reports field-level validation errors for malformed acceptance-report fields", () => {
-    const invalidReviewerReport = parseAcceptanceReport(
+    const invalidReviewerReport = parseAndStripAcceptanceReport(
       report({
         reviewFindings: [{ id: "B-1", severity: "blocker", finding: "Missing evidence" }],
       }),
@@ -486,7 +485,7 @@ describe("acceptance gates", () => {
       /reviewFindings\[0\]: expected string; got object/,
     );
 
-    const invalidCommandReport = parseAcceptanceReport(
+    const invalidCommandReport = parseAndStripAcceptanceReport(
       report({
         commandsRun: [{ command: "npm test", exitCode: 0 }],
       }),
@@ -501,7 +500,7 @@ describe("acceptance gates", () => {
       /commandsRun\[0\]\.summary: expected string; got missing/,
     );
 
-    const invalidCriteriaReport = parseAcceptanceReport(
+    const invalidCriteriaReport = parseAndStripAcceptanceReport(
       report({
         criteriaSatisfied: [{ id: 7, status: "done", evidence: "" }],
       }),
@@ -524,7 +523,7 @@ describe("acceptance gates", () => {
   it('commandsRun[].result accepts annotated strings like "failed as expected"', () => {
     // Regression: the field was previously a closed enum that rejected correct
     // work when agents wrote honest annotations. Validate the incident value.
-    const parsed = parseAcceptanceReport(
+    const parsed = parseAndStripAcceptanceReport(
       report({
         commandsRun: [
           { command: "npm test", result: "failed as expected", summary: "negative control" },
@@ -537,7 +536,7 @@ describe("acceptance gates", () => {
   });
 
   it("normalizes empty and whitespace-only report string-array entries", () => {
-    const parsed = parseAcceptanceReport(
+    const parsed = parseAndStripAcceptanceReport(
       report({
         changedFiles: ["", "src/file.ts", "  "],
         testsAddedOrUpdated: ["\t", "test/file.test.ts"],
@@ -583,7 +582,7 @@ describe("acceptance gates", () => {
 
   it("commandsRun[].result rejects non-string values (number, null, object)", () => {
     for (const badResult of [42, null, { status: "ok" }]) {
-      const parsed = parseAcceptanceReport(
+      const parsed = parseAndStripAcceptanceReport(
         report({ commandsRun: [{ command: "npm test", result: badResult, summary: "x" }] }),
       );
       assert.equal(
@@ -607,7 +606,7 @@ describe("acceptance gates", () => {
     const annotatedResult = "failed as expected";
 
     // Tagged fence: permissive validation — must succeed.
-    const tagged = parseAcceptanceReport(
+    const tagged = parseAndStripAcceptanceReport(
       report({ commandsRun: [{ command: "cmd", result: annotatedResult, summary: "ok" }] }),
     );
     assert.notEqual(tagged.report, undefined, "tagged fence with annotated result must parse");
@@ -623,7 +622,7 @@ describe("acceptance gates", () => {
       }),
       "```",
     ].join("\n");
-    const untagged = parseAcceptanceReport(untaggedOnly);
+    const untagged = parseAndStripAcceptanceReport(untaggedOnly);
     // No tagged fence present, so falls through to untagged detection;
     // commandsRun with annotated result is the only signal → not detected.
     assert.equal(
@@ -633,7 +632,7 @@ describe("acceptance gates", () => {
     );
 
     // Positive control: the same shape with a strict literal IS detected.
-    const untaggedLiteral = parseAcceptanceReport(
+    const untaggedLiteral = parseAndStripAcceptanceReport(
       untaggedOnly.replace(`"result":"${annotatedResult}"`, '"result":"passed"'),
     );
     assert.notEqual(
@@ -1177,10 +1176,9 @@ describe("buildAcceptanceReportDigest", () => {
   });
 
   it("parse and strip agree on the trailing candidate — they cannot diverge by construction", () => {
-    // When two valid acceptance-report fences are present, the old unpaired
-    // parseAcceptanceReport (first-valid rule) + stripAcceptanceReport (trailing
-    // rule) would act on DIFFERENT fences. parseAndStripAcceptanceReport uses the
-    // trailing rule for both, so parse and strip always agree.
+    // When two valid acceptance-report fences are present, an unpaired first-valid
+    // parser and trailing strip rule could act on DIFFERENT fences. The live parser
+    // uses the trailing rule for both, so parse and strip always agree.
     const firstReport = reportData({ notes: "first" });
     const secondReport = reportData({ notes: "second" });
     const output = [
@@ -1246,7 +1244,7 @@ describe("buildAcceptanceReportDigest", () => {
 
 describe("appendAcceptanceReportDigest", () => {
   function parsedReport(): AcceptanceReport {
-    const parsed = parseAcceptanceReport(report());
+    const parsed = parseAndStripAcceptanceReport(report());
     assert.ok(parsed.report);
     return parsed.report;
   }

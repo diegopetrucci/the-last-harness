@@ -3,6 +3,29 @@ import { ASYNC_DIR, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { lifecycleContinuationForIndex, lifecycleGeneration, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.js";
+function cloneForegroundPauseHealth(source, clearMissing = false) {
+    return {
+        ...(clearMissing || source?.activityState !== undefined
+            ? { activityState: source?.activityState }
+            : {}),
+        ...(clearMissing || source?.idleEpisodeId !== undefined
+            ? { idleEpisodeId: source?.idleEpisodeId }
+            : {}),
+        ...(clearMissing || source?.durableAttentionReasons !== undefined
+            ? {
+                durableAttentionReasons: source?.durableAttentionReasons
+                    ? [...source.durableAttentionReasons]
+                    : source?.durableAttentionReasons,
+            }
+            : {}),
+        ...(clearMissing || source?.compaction !== undefined
+            ? { compaction: source?.compaction ? { ...source.compaction } : source?.compaction }
+            : {}),
+    };
+}
+export function pausedForegroundHealthFromResult(result, clearMissing = false) {
+    return cloneForegroundPauseHealth(result.progress, clearMissing);
+}
 export function indexedLifecycleContinuation(status, index = 0) {
     return lifecycleContinuationForIndex(status, index);
 }
@@ -104,6 +127,7 @@ export function persistPausedForegroundCohortRun(input) {
                 }
                 : {}),
             ...(result.cancel ? { cancel: result.cancel } : {}),
+            ...cloneForegroundPauseHealth(result.progress),
         })) ??
         []).map((step) => (step.status === "pausing" || step.status === "paused") && step.pause
         ? { ...step, terminationReason: "paused" }
@@ -238,12 +262,7 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
             }
             : {}),
         ...(result.cancel ? { cancel: result.cancel } : {}),
-        ...(result.progress?.activityState ? { activityState: result.progress.activityState } : {}),
-        ...(result.progress?.idleEpisodeId ? { idleEpisodeId: result.progress.idleEpisodeId } : {}),
-        ...(result.progress?.durableAttentionReasons
-            ? { durableAttentionReasons: [...result.progress.durableAttentionReasons] }
-            : {}),
-        ...(result.progress?.compaction ? { compaction: { ...result.progress.compaction } } : {}),
+        ...cloneForegroundPauseHealth(result.progress),
         ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
         ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
         ...(result.contextPressureCrossedThresholds
@@ -267,12 +286,7 @@ export function buildCohortPauseStep(input) {
         ...(input.thinking ? { thinking: input.thinking } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(input.modelResolution ? { modelResolution: input.modelResolution } : {}),
-        ...(input.activityState ? { activityState: input.activityState } : {}),
-        ...(input.idleEpisodeId ? { idleEpisodeId: input.idleEpisodeId } : {}),
-        ...(input.durableAttentionReasons
-            ? { durableAttentionReasons: [...input.durableAttentionReasons] }
-            : {}),
-        ...(input.compaction ? { compaction: { ...input.compaction } } : {}),
+        ...cloneForegroundPauseHealth(input),
         ...(input.contextUsage ? { contextUsage: input.contextUsage } : {}),
         ...(input.contextPressure ? { contextPressure: { ...input.contextPressure } } : {}),
         ...(input.contextPressureCrossedThresholds
@@ -360,6 +374,7 @@ export function persistPausedForegroundSingleRun(input) {
                         ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                         : {}),
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                    ...cloneForegroundPauseHealth(input.result.progress),
                     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
                     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
                 },
@@ -425,6 +440,7 @@ export function persistPausedForegroundSingleRun(input) {
                         ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                         : {}),
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+                    ...cloneForegroundPauseHealth(input.result.progress, true),
                     ...(activeRuntimeMs !== undefined
                         ? {
                             activeRuntimeMs: Math.max(normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0, activeRuntimeMs),

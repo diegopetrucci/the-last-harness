@@ -422,6 +422,8 @@ required|scripts/lib/tlh-safe-profile-write.mjs
 required|scripts/lib/tlh-install-utils.mjs
 required|scripts/lib/tlh-install-git.mjs
 required|scripts/lib/tlh-install-subagents.mjs
+required|scripts/lib/tlh-install-npm.mjs
+required|scripts/lib/tlh-install-profile-cleanup.mjs
 required|scripts/lib/tlh-install-support-files.mjs
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
