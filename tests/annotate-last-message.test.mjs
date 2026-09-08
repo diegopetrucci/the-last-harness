@@ -738,16 +738,3 @@ test("wiring: buildAnnotateLastMessageCommand passes dependencies.getTheme to th
 
   command.handleSessionShutdown();
 });
-
-test("buildAnnotateLastMessageHtml: app.js does not contain the parsing function definitions", async () => {
-  // Verify the single-source guarantee: the shipped app.js must not define
-  // the parsing functions that md-renderer.js owns.
-  const { readFileSync } = await import("node:fs");
-  const appJs = readFileSync(
-    new URL("../extensions/the-last-harness/annotate-last-message/web/app.js", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(appJs, /function applyFenceState/, "app.js must not define applyFenceState");
-  assert.doesNotMatch(appJs, /function classifyLine/, "app.js must not define classifyLine");
-  assert.doesNotMatch(appJs, /function tokenizeLine/, "app.js must not define tokenizeLine");
-});

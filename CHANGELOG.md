@@ -12,6 +12,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. OpenAI Codex and OpenRouter defaults are unchanged.
 
+### Fixed
+
+- Switching an isolated profile from a local TLH package source back to a canonical source now removes only local registrations confirmed by a valid TLH `package.json` manifest.
+- Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
+
 ## [0.40.0] - 2026-09-06
 
 ### Built-in, and custom, agents

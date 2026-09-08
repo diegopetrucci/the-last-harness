@@ -52,9 +52,6 @@ const {
 const { loadProjectAgentSnapshot } =
   await import("../extensions/the-last-harness/project-agent-loader-bridge.mjs");
 const { ASYNC_DIR } = await jiti.import("../extensions/subagents/src/shared/types.ts");
-const { probeAsyncRunForProjectAgentMarker } = await jiti.import(
-  "../extensions/subagents/src/runs/background/async-resume.ts",
-);
 const { createSubagentExecutor } = await jiti.import(
   "../extensions/subagents/src/runs/foreground/subagent-executor.ts",
 );
@@ -279,8 +276,8 @@ Bridge smoke prompt.
   );
 });
 
-test("native project-agent marker probe stays semantically aligned with the canonical probe", async (t) => {
-  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-probe-parity-"));
+test("native project-agent marker probe returns every expected persisted outcome", async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-probe-"));
   const tempRoot = join(fixture, "temp");
   const asyncRoot = join(tempRoot, "async-subagent-runs");
   const resultsRoot = join(tempRoot, "async-subagent-results");
@@ -416,13 +413,8 @@ test("native project-agent marker probe stays semantically aligned with the cano
   for (const testCase of cases) {
     resetRoots();
     testCase.setup();
-    const canonical = probeAsyncRunForProjectAgentMarker(testCase.input, {
-      asyncDirRoot: asyncRoot,
-      resultsDir: resultsRoot,
-    });
     const native = await probeTlhProjectAgentRunMarker(testCase.input);
-    assert.deepEqual(canonical, { status: testCase.expected }, `${testCase.name}: canonical`);
-    assert.deepEqual(native, canonical, `${testCase.name}: native parity`);
+    assert.deepEqual(native, { status: testCase.expected }, testCase.name);
   }
 });
 

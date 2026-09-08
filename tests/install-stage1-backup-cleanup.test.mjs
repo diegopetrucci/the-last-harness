@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -31,6 +39,25 @@ function recentBackupName(base, daysAgo = 2) {
 
 function makeConfig(agentDir, extra = {}) {
   return { agentDir, dryRun: false, quiet: true, verbose: false, ...extra };
+}
+
+const seededInstallBackups = Object.freeze({
+  "settings.json.backup-2000-01-01T00-00-00Z": "old backup content\n",
+  "settings.json.backup-2026-08-01T00-00-00Z": "newer backup one\n",
+  "settings.json.backup-2026-08-02T00-00-00Z": "newer backup two\n",
+});
+
+function metadataReaderWithFailures(failures, visits = []) {
+  return (path) => {
+    visits.push(path);
+    const failure = failures.get(path);
+    if (failure) {
+      const error = new Error(failure.message);
+      error.code = failure.code;
+      throw error;
+    }
+    return lstatSync(path);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -207,19 +234,41 @@ test("cleanupOldSettingsBackups is skipped when agentDir is a symlink", (t) => {
   assert.match(stderr, /agentDir is a symlink/);
 });
 
-test("--no-settings skips stale backup cleanup on install", (t) => {
-  const { result } = runStage1LocalPackageInstall(t, { noSettings: true });
+test("--no-settings preserves eligible stale backups during install", (t) => {
+  const oldBackup = Object.keys(seededInstallBackups)[0];
+  const { result, agentDir } = runStage1LocalPackageInstall(t, {
+    noSettings: true,
+    existingAgentFiles: seededInstallBackups,
+  });
 
   assert.equal(result.status, 0, `install failed:\n${result.stderr}`);
-
-  // Create an old backup after the fact to check that it was not touched.
-  // (In --no-settings mode cleanupOldSettingsBackups should never be called.)
-  // We verify the function is not called by observing that no log output mentions backup cleanup.
+  assert.equal(
+    readFileSync(join(agentDir, oldBackup), "utf8"),
+    seededInstallBackups[oldBackup],
+    "--no-settings must leave the eligible old backup untouched",
+  );
   assert.doesNotMatch(
     result.stdout + result.stderr,
     /Would remove stale settings backup|Removed stale settings backup/,
     "--no-settings install must not log stale backup cleanup",
   );
+});
+
+test("normal install removes eligible stale backups while retaining the newest two", (t) => {
+  const oldBackup = Object.keys(seededInstallBackups)[0];
+  const { result, agentDir } = runStage1LocalPackageInstall(t, {
+    existingAgentFiles: seededInstallBackups,
+  });
+
+  assert.equal(result.status, 0, `install failed:\n${result.stderr}`);
+  assert.equal(existsSync(join(agentDir, oldBackup)), false, "normal install removes old backups");
+  for (const newerBackup of Object.keys(seededInstallBackups).slice(1)) {
+    assert.equal(
+      existsSync(join(agentDir, newerBackup)),
+      true,
+      `${newerBackup} remains within the newest-two floor`,
+    );
+  }
 });
 
 test("cleanupOldSettingsBackups is idempotent when agentDir is empty", (t) => {
@@ -299,6 +348,27 @@ test("cleanupOldSettingsBackups does not delete user files with no parseable tim
   );
 });
 
+test("cleanupOldSettingsBackups does not delete backup-named file with an impossible calendar day", (t) => {
+  const root = makeTempDir("tlh-backup-cleanup-invalid-day-");
+  const agentDir = join(root, "agent");
+  mkdirSync(agentDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const invalidDayFile = "settings.json.backup-2026-02-30T00-00-00Z";
+  const invalidContent = '{"custom": true}';
+  writeFileSync(join(agentDir, invalidDayFile), invalidContent, "utf8");
+  const newer1 = recentBackupName("settings.json", 1);
+  const newer2 = recentBackupName("settings.json", 2);
+  writeFileSync(join(agentDir, newer1), "{}", "utf8");
+  writeFileSync(join(agentDir, newer2), "{}", "utf8");
+
+  cleanupOldSettingsBackups(makeConfig(agentDir));
+
+  assert.equal(readFileSync(join(agentDir, invalidDayFile), "utf8"), invalidContent);
+  assert.ok(existsSync(join(agentDir, newer1)), "newest TLH backup should be retained");
+  assert.ok(existsSync(join(agentDir, newer2)), "second-newest TLH backup should be retained");
+});
+
 test("cleanupOldSettingsBackups does not delete user file with shape-valid but semantically invalid timestamp (PR-376 regression)", (t) => {
   // Regression: a filename like `settings.json.backup-2026-99-99T99-99-99Z` passes
   // the BACKUP_TIMESTAMP_FULL shape regex but parseBackupTimestamp returns undefined
@@ -330,6 +400,54 @@ test("cleanupOldSettingsBackups does not delete user file with shape-valid but s
   );
   assert.ok(existsSync(join(agentDir, newer1)), "newest TLH backup should be retained");
   assert.ok(existsSync(join(agentDir, newer2)), "second-newest TLH backup should be retained");
+});
+
+test("cleanupOldSettingsBackups skips missing and unreadable metadata while processing later entries", (t) => {
+  const root = makeTempDir("tlh-backup-cleanup-metadata-errors-");
+  const agentDir = join(root, "agent");
+  mkdirSync(agentDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const missingName = "settings.json.backup-2000-01-01T00-00-00Z";
+  const unreadableName = "settings.json.backup-2000-01-02T00-00-00Z";
+  const laterName = "settings.json.backup-1999-12-31T00-00-00Z";
+  const newer1 = "settings.json.backup-2026-08-01T00-00-00Z";
+  const newer2 = "settings.json.backup-2026-08-02T00-00-00Z";
+  for (const name of [missingName, unreadableName, laterName, newer1, newer2]) {
+    writeFileSync(join(agentDir, name), name, "utf8");
+  }
+
+  const metadataVisits = [];
+  const metadataReader = metadataReaderWithFailures(
+    new Map([
+      [join(agentDir, missingName), { code: "ENOENT", message: "simulated missing entry" }],
+      [join(agentDir, unreadableName), { code: "EIO", message: "simulated metadata failure" }],
+    ]),
+    metadataVisits,
+  );
+  const stderr = captureConsole("error", () => {
+    assert.doesNotThrow(() =>
+      cleanupOldSettingsBackups(makeConfig(agentDir, { cleanupMetadata: metadataReader })),
+    );
+  });
+
+  assert.ok(existsSync(join(agentDir, missingName)), "missing metadata entry must be skipped");
+  assert.ok(
+    existsSync(join(agentDir, unreadableName)),
+    "unreadable metadata entry must be skipped",
+  );
+  assert.equal(
+    existsSync(join(agentDir, laterName)),
+    false,
+    "later eligible entries must still be processed",
+  );
+  assert.deepEqual(metadataVisits, [
+    join(agentDir, unreadableName),
+    join(agentDir, missingName),
+    join(agentDir, laterName),
+  ]);
+  assert.doesNotMatch(stderr, /simulated missing entry/);
+  assert.match(stderr, /simulated metadata failure/);
 });
 
 test("cleanupOldSettingsBackups does not delete user file with unknown marker and parseable trailing timestamp (Finding 1 regression)", (t) => {

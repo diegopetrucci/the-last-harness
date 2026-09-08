@@ -5,11 +5,47 @@ import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { buildSkippedAcceptanceLedger } from "../shared/acceptance.js";
-import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundedActiveRuntimeMs, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundedActiveRuntimeMs, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, isLifecycleTransitionContentionError, } from "../shared/lifecycle-state.js";
 import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
 import { readStatus } from "../../shared/utils.js";
+const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+function lifecycleTransitionErrorDetail(error, depth = 0) {
+    try {
+        if (!(error instanceof Error))
+            return boundChildError(String(error), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown";
+        const errnoError = error;
+        const code = typeof errnoError.code === "string" ? `code=${errnoError.code}` : undefined;
+        const cause = error.cause !== undefined && depth < 2
+            ? `cause=${lifecycleTransitionErrorDetail(error.cause, depth + 1)}`
+            : undefined;
+        return (boundChildError([error.name ? `name=${error.name}` : undefined, code, `message=${error.message}`, cause]
+            .filter((part) => part !== undefined)
+            .join("; "), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown");
+    }
+    catch {
+        return "unavailable";
+    }
+}
+export function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
+    try {
+        appendDiagnosticEvent(JSON.stringify({
+            type: "subagent.run.lifecycle_transition_failed",
+            ts: Date.now(),
+            runId,
+            phase,
+            cause: lifecycleTransitionErrorDetail(error),
+        }), "subagent.run.lifecycle_transition_failed");
+    }
+    catch {
+    }
+}
+export function appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
+    if (isLifecycleTransitionContentionError(error))
+        return;
+    appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error);
+}
 function projectInitialModelFallbackFilterNotice(notice) {
     const sanitized = sanitizeModelFallbackNotice(notice);
     return sanitized ? { modelFallbackNotice: sanitized } : {};
@@ -22,7 +58,7 @@ function resolveAsyncStepTranscriptPath(input) {
     return getArtifactPaths(input.artifactsDir, input.runId, input.agent, input.flatStepCount > 1 ? input.flatIndex : undefined).transcriptPath;
 }
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
     for (const step of flatSteps) {
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
@@ -452,7 +488,8 @@ export function createBackgroundRunStatusOwner(input) {
             durablePausingCheckpointPersisted = true;
             pausedCheckpointCommitted = true;
         }
-        catch {
+        catch (error) {
+            appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent ?? appendEvent, id, "running->pausing", error);
             supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
         }
         interrupted = true;

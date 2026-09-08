@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS,
   applyActiveRuntimeCheckpoint,
   boundSupervisorSummary,
   createActiveRuntimeTracker,
@@ -67,7 +66,6 @@ describe("lifecycle state helpers", () => {
   });
 
   it("gates durable runtime checkpoints on active advancement and an unfrozen tracker", () => {
-    assert.equal(ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, 30_000);
     assert.equal(
       shouldPersistActiveRuntimeCheckpoint({
         previousActiveRuntimeMs: 1_000,

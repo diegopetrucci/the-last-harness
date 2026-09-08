@@ -283,6 +283,17 @@ describe(
         makeMinimalCtx(tempDir),
       );
       assert.equal(revived.isError, undefined);
+      const revivedId = revived.details?.asyncId;
+      assert.ok(revivedId, "expected revived run id");
+      assert.equal(
+        revived.content[0]?.text,
+        [
+          `Revived foreground subagent from ${runId}.`,
+          `Revived run: ${revivedId}`,
+          "Agent: a",
+          `Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
+        ].join("\n"),
+      );
       await waitForRevivedAsyncResult(revived);
       const reviveArgs = await readMockCallArgs(1);
       const joinedArgs = reviveArgs.join(" ");

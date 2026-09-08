@@ -20,11 +20,20 @@ import {
   selectExpiredBackups,
 } from "./tlh-install-utils.mjs";
 
+interface CleanupMetadata {
+  isSymbolicLink(): boolean;
+  isFile(): boolean;
+}
+
+type CleanupMetadataReader = (path: string) => CleanupMetadata | undefined;
+
 export interface ProfileCleanupConfig extends InstallerPathConfig {
   agentDir: string;
   dryRun: boolean;
   quiet: boolean;
   verbose: boolean;
+  /** Narrow seam for deterministic metadata-failure tests; production uses lstatSync. */
+  cleanupMetadata?: CleanupMetadataReader;
 }
 
 export interface RetiredExtensionCleanupConfig extends ProfileCleanupConfig {
@@ -37,6 +46,32 @@ export interface ProfileCleanupIo {
   warn(message: string): void;
   absolutePiCmd(): string;
   runPiRemove(commandArgs: readonly string[]): void;
+}
+
+function isMissingCleanupMetadataError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function readCleanupMetadata(
+  config: ProfileCleanupConfig,
+  target: string,
+  label: string,
+  io: ProfileCleanupIo,
+): CleanupMetadata | undefined {
+  try {
+    return config.cleanupMetadata ? config.cleanupMetadata(target) : lstatSync(target);
+  } catch (error) {
+    if (isMissingCleanupMetadataError(error)) return undefined;
+    io.warn(
+      `Skipping ${label}: cannot inspect ${target}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
 }
 
 // Retired files that TLH seeded in older isolated profiles.
@@ -183,9 +218,8 @@ function cleanupRelativeProfileFiles(
       continue;
     }
 
-    if (isSymlink(target)) continue;
-    if (!existsSync(target)) continue;
-    if (!lstatSync(target).isFile()) continue;
+    const metadata = readCleanupMetadata(config, target, "retired profile file cleanup", io);
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isFile()) continue;
     if (config.dryRun) {
       io.log(`Would remove retired profile file: ${target}`);
       continue;
@@ -322,9 +356,8 @@ export function cleanupOldSettingsBackups(
       continue;
     }
 
-    if (isSymlink(target)) continue; // Conservative: never remove or follow symlinks
-    if (!existsSync(target)) continue; // Idempotent: absent is fine
-    if (!lstatSync(target).isFile()) continue; // Conservative: only regular files
+    const metadata = readCleanupMetadata(config, target, "stale settings backup", io);
+    if (!metadata || metadata.isSymbolicLink() || !metadata.isFile()) continue;
 
     if (config.dryRun) {
       io.log(`Would remove stale settings backup: ${target}`);

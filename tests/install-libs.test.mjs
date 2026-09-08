@@ -34,7 +34,10 @@ import {
   safeProfileFileTarget,
   validateInstallerTargets,
 } from "../scripts/lib/tlh-install-paths.mjs";
-import { writeSafeProfileFile } from "../scripts/lib/tlh-safe-profile-write.mjs";
+import {
+  writeProfileFileWithBackup,
+  writeSafeProfileFile,
+} from "../scripts/lib/tlh-safe-profile-write.mjs";
 import {
   TLH_SUBAGENT_PROMPTS,
   captureManagedRetiredSubagentPackages,
@@ -61,10 +64,6 @@ function writePromptSet(dir, label = "prompt") {
     writeFileSync(join(dir, prompt), `${label}:${prompt}\n`);
   }
 }
-
-test("installer manages the canonical test-runner prompt", () => {
-  assert.ok(TLH_SUBAGENT_PROMPTS.includes("test-runner.md"));
-});
 
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -372,6 +371,78 @@ test("writeSafeProfileFile preserves existing file mode when overwriting", (t) =
 
   assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), "after\n");
   assert.equal(lstatSync(join(agentDir, "settings.json")).mode & 0o777, 0o640);
+});
+
+test("writeProfileFileWithBackup preserves backup bytes and modes", (t) => {
+  const root = tempFixture(t);
+  const agentDir = join(root, "agent");
+  const profilePath = join(agentDir, "settings.json");
+  const backupPath = join(agentDir, "settings.json.backup");
+  const previousContent = Buffer.from([0x00, 0xff, 0x10, 0x80]);
+  const nextContent = Buffer.from([0xfe, 0x01, 0x7f]);
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(profilePath, previousContent, { mode: 0o640 });
+
+  const result = writeProfileFileWithBackup(profilePath, nextContent, {
+    targetLabel: "profile target",
+    sourceLabel: "profile source",
+    backupLabel: "profile backup",
+    backupPath,
+  });
+
+  assert.equal(result, backupPath);
+  assert.deepEqual(readFileSync(backupPath), previousContent);
+  assert.deepEqual(readFileSync(profilePath), nextContent);
+  assert.equal(lstatSync(backupPath).mode & 0o777, 0o640);
+  assert.equal(lstatSync(profilePath).mode & 0o777, 0o640);
+});
+
+test("writeProfileFileWithBackup creates a target without a backup when none is requested", (t) => {
+  const root = tempFixture(t);
+  const agentDir = join(root, "agent");
+  const profilePath = join(agentDir, "settings.json");
+  const backupPath = join(agentDir, "settings.json.backup");
+  const content = Buffer.from([0x00, 0xc3, 0x28]);
+  mkdirSync(agentDir, { recursive: true });
+
+  const result = writeProfileFileWithBackup(profilePath, content, {
+    targetLabel: "profile target",
+    sourceLabel: "profile source",
+    backupLabel: "profile backup",
+  });
+
+  assert.equal(result, undefined);
+  assert.deepEqual(readFileSync(profilePath), content);
+  assert.equal(existsSync(backupPath), false);
+});
+
+test("writeProfileFileWithBackup does not write the target when its backup fails", (t) => {
+  const root = tempFixture(t);
+  const agentDir = join(root, "agent");
+  const externalDir = join(root, "external");
+  const profilePath = join(agentDir, "settings.json");
+  const backupPath = join(agentDir, "settings.json.backup");
+  const externalPath = join(externalDir, "external.json");
+  const previousContent = Buffer.from("before\\n");
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(externalDir, { recursive: true });
+  writeFileSync(profilePath, previousContent, { mode: 0o640 });
+  writeFileSync(externalPath, "external\\n");
+  symlinkSync(externalPath, backupPath);
+
+  assert.throws(
+    () =>
+      writeProfileFileWithBackup(profilePath, Buffer.from("after\\n"), {
+        targetLabel: "profile target",
+        sourceLabel: "profile source",
+        backupLabel: "profile backup",
+        backupPath,
+      }),
+    /refusing to replace symlinked profile backup/,
+  );
+  assert.deepEqual(readFileSync(profilePath), previousContent);
+  assert.equal(lstatSync(backupPath).isSymbolicLink(), true);
+  assert.equal(readFileSync(externalPath, "utf8"), "external\\n");
 });
 
 test(

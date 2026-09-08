@@ -25,7 +25,7 @@
     }
   ],
   "rules": {
-    "complexity": ["error", { "max": 85, "variant": "classic" }],
+    "complexity": ["error", { "max": 80, "variant": "classic" }],
     "max-lines": ["error", { "max": 2000, "skipBlankLines": false, "skipComments": false }],
     // Anti-slop rules are adopted one at a time after reviewing their diagnostics.
     "anti-slop/no-chained-type-assertions": "error",

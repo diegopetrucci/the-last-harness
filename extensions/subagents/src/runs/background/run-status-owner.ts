@@ -30,6 +30,7 @@ import {
   normalizeActiveRuntimeMs,
   transitionLifecycleStatus,
   writeNormalizedLifecycleStatus,
+  isLifecycleTransitionContentionError,
   type ActiveRuntimeCheckpointUpdate,
   type ActiveRuntimeTracker,
 } from "../shared/lifecycle-state.ts";
@@ -94,6 +95,7 @@ export interface BackgroundStatusOwnerInput {
   nestedSelf?: NestedSelf;
   timeoutMessage?: string;
   appendEvent: (line: string) => void;
+  appendDiagnosticEvent?: (line: string, droppedEventType?: string) => void;
 }
 
 /**
@@ -178,6 +180,64 @@ export interface BackgroundRunStatusOwner {
   emitNestedSelfEvent(type: "subagent.nested.updated" | "subagent.nested.completed"): void;
 }
 
+const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+type LifecycleTransitionPhase = "running->pausing" | "pausing->paused";
+
+function lifecycleTransitionErrorDetail(error: unknown, depth = 0): string {
+  try {
+    if (!(error instanceof Error))
+      return boundChildError(String(error), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown";
+    const errnoError = error as NodeJS.ErrnoException;
+    const code = typeof errnoError.code === "string" ? `code=${errnoError.code}` : undefined;
+    const cause =
+      error.cause !== undefined && depth < 2
+        ? `cause=${lifecycleTransitionErrorDetail(error.cause, depth + 1)}`
+        : undefined;
+    return (
+      boundChildError(
+        [error.name ? `name=${error.name}` : undefined, code, `message=${error.message}`, cause]
+          .filter((part): part is string => part !== undefined)
+          .join("; "),
+        LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES,
+      ) ?? "unknown"
+    );
+  } catch {
+    return "unavailable";
+  }
+}
+
+export function appendLifecycleTransitionDiagnostic(
+  appendDiagnosticEvent: (line: string, droppedEventType?: string) => void,
+  runId: string,
+  phase: LifecycleTransitionPhase,
+  error: unknown,
+): void {
+  try {
+    appendDiagnosticEvent(
+      JSON.stringify({
+        type: "subagent.run.lifecycle_transition_failed",
+        ts: Date.now(),
+        runId,
+        phase,
+        cause: lifecycleTransitionErrorDetail(error),
+      }),
+      "subagent.run.lifecycle_transition_failed",
+    );
+  } catch {
+    // Lifecycle diagnostics are best effort and must not interrupt teardown.
+  }
+}
+
+export function appendUnexpectedLifecycleTransitionDiagnostic(
+  appendDiagnosticEvent: (line: string, droppedEventType?: string) => void,
+  runId: string,
+  phase: LifecycleTransitionPhase,
+  error: unknown,
+): void {
+  if (isLifecycleTransitionContentionError(error)) return;
+  appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error);
+}
+
 function projectInitialModelFallbackFilterNotice(notice: string | undefined): {
   modelFallbackNotice?: string;
 } {
@@ -229,6 +289,7 @@ export function createBackgroundRunStatusOwner(
     nestedSelf,
     timeoutMessage,
     appendEvent,
+    appendDiagnosticEvent,
   } = input;
   const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
   for (const step of flatSteps) {
@@ -758,7 +819,13 @@ export function createBackgroundRunStatusOwner(
       supervisorPauseTransitionFailed = false;
       durablePausingCheckpointPersisted = true;
       pausedCheckpointCommitted = true;
-    } catch {
+    } catch (error) {
+      appendUnexpectedLifecycleTransitionDiagnostic(
+        appendDiagnosticEvent ?? appendEvent,
+        id,
+        "running->pausing",
+        error,
+      );
       supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
     }
     interrupted = true;

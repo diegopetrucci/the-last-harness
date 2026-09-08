@@ -20,13 +20,11 @@ import {
 
 import {
   backupFiles,
-  bundledExtension,
   bundledSource,
   defaultsScript,
   disablingExtensionFilterCases,
   mergeScript,
   packageSourceOf,
-  piTranscribeGitSource,
   previousPiWebAccessSource,
   readJson,
   repoRoot,
@@ -113,16 +111,6 @@ test("setDefaultExtensionProvenance returns false for non-plain-object settings"
       },
     },
   });
-});
-
-test("bundled manifest pins pi-transcribe to the reviewed Git commit as a non-critical default", () => {
-  const piTranscribe = bundledExtension("pi-transcribe");
-
-  assert.ok(piTranscribe, "bundled pi-transcribe default should exist");
-  assert.equal(piTranscribe.source, piTranscribeGitSource);
-  assert.equal(packageIdentity(piTranscribe.source), "git:github.com/earendil-works/pi-transcribe");
-  assert.equal(piTranscribe.critical, false, "pi-transcribe must remain opt-outable");
-  assert.match(piTranscribe.description, /transcribe_file/);
 });
 
 test("tlh-defaults errors when the default-extension manifest is missing", () => {

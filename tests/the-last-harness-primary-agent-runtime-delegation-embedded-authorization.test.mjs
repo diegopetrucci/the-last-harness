@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import test from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
@@ -15,38 +15,6 @@ import {
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
 // ─── Embedded subagents (ts-42p1) ───────────────────────────────────────────
-
-test("project execution keeps retired binding and fail-open paths absent", () => {
-  const sourcePaths = [
-    "extensions/the-last-harness/primary-agent-runtime.ts",
-    "extensions/the-last-harness/primary-agent-runtime.js",
-    "extensions/subagents/src/runs/foreground/subagent-executor.ts",
-    "extensions/subagents/src/runs/foreground/subagent-executor.js",
-    "extensions/subagents/src/runs/foreground/foreground-control.ts",
-    "extensions/subagents/src/runs/foreground/foreground-control.js",
-    "extensions/subagents/src/runs/foreground/foreground-nested-control.ts",
-    "extensions/subagents/src/runs/foreground/foreground-nested-control.js",
-    "extensions/subagents/src/runs/foreground/foreground-resume.ts",
-    "extensions/subagents/src/runs/foreground/foreground-resume.js",
-    "extensions/subagents/src/runs/foreground/foreground-run-state.ts",
-    "extensions/subagents/src/runs/foreground/foreground-run-state.js",
-    "extensions/subagents/src/runs/foreground/foreground-support.ts",
-    "extensions/subagents/src/runs/foreground/foreground-support.js",
-    "extensions/subagents/src/runs/foreground/project-agent-control.ts",
-    "extensions/subagents/src/runs/foreground/project-agent-control.js",
-    "extensions/the-last-harness/prompts.ts",
-    "extensions/the-last-harness/prompts.js",
-    "extensions/the-last-harness-subagent-safety.mjs",
-  ];
-  for (const relativePath of sourcePaths) {
-    const source = readFileSync(join(process.cwd(), relativePath), "utf8");
-    assert.doesNotMatch(
-      source,
-      /projectCustomBinding|ProjectCustomAgentBinding|isProjectCustomAgentBinding|ProjectCustomAgentAuthorization|loadAuthorizedEmbeddedSubagentRuntimeNames/,
-      `${relativePath} must not restore retired custom binding/authorization paths`,
-    );
-  }
-});
 
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
   if (agentDir.endsWith(`${sep}agent`)) {

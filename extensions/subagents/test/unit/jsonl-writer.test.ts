@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -17,12 +18,12 @@ class MockSource implements DrainableSource {
   }
 }
 
-class MockStream implements JsonlWriteStream {
+class MockStream extends EventEmitter implements JsonlWriteStream {
   writes: string[] = [];
   ended = false;
-  private drainHandler?: () => void;
   private readonly writeResults: boolean[];
   constructor(writeResults: boolean[] = []) {
+    super();
     this.writeResults = writeResults;
   }
   write(chunk: string): boolean {
@@ -30,16 +31,15 @@ class MockStream implements JsonlWriteStream {
     if (this.writeResults.length === 0) return true;
     return this.writeResults.shift() ?? true;
   }
-  once(event: "drain", listener: () => void): JsonlWriteStream {
-    if (event === "drain") this.drainHandler = listener;
-    return this;
-  }
   end(callback?: () => void): void {
     this.ended = true;
     callback?.();
   }
   emitDrain(): void {
-    this.drainHandler?.();
+    this.emit("drain");
+  }
+  emitError(): void {
+    this.emit("error", new Error("artifact stream failed"));
   }
 }
 
@@ -80,6 +80,54 @@ describe("createJsonlWriter", () => {
     assert.equal(stream.ended, true);
     await writer.close();
     assert.equal(stream.ended, true);
+  });
+
+  it("handles errors before close and releases failed-writer backpressure", async () => {
+    const source = new MockSource();
+    const stream = new MockStream([false]);
+    const writer = createJsonlWriter("/tmp/out.jsonl", source, {
+      createWriteStream: () => stream,
+    });
+
+    writer.writeLine('{"type":"a"}');
+    assert.equal(source.paused, 1);
+    assert.equal(source.resumed, 0);
+
+    assert.doesNotThrow(() => stream.emitError());
+    assert.equal(source.resumed, 1);
+
+    writer.writeLine('{"type":"b"}');
+    stream.emitDrain();
+    assert.equal(source.paused, 1);
+    assert.equal(source.resumed, 1);
+    assert.deepEqual(stream.writes, ['{"type":"a"}\n']);
+
+    const p1 = writer.close();
+    const p2 = writer.close();
+    assert.strictEqual(p1, p2);
+    await p1;
+  });
+
+  it("settles memoized close when the stream errors during close", async () => {
+    const source = new MockSource();
+    const stream = new (class extends MockStream {
+      override end(): void {
+        this.ended = true;
+      }
+    })();
+    const writer = createJsonlWriter("/tmp/out.jsonl", source, {
+      createWriteStream: () => stream,
+    });
+
+    const p1 = writer.close();
+    const p2 = writer.close();
+    assert.strictEqual(p1, p2);
+    assert.equal(stream.ended, true);
+
+    assert.doesNotThrow(() => stream.emitError());
+    await p1;
+    const p3 = writer.close();
+    assert.strictEqual(p1, p3);
   });
 
   it("returns no-op writer when file path is undefined", async () => {

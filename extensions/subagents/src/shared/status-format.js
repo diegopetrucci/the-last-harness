@@ -31,17 +31,6 @@ export function formatActivityLabel(lastActivityAt, activityState, now = Date.no
 function isCompletedStepStatus(status) {
     return status === "complete" || status === "completed";
 }
-export function aggregateStepStatus(steps) {
-    if (steps.some((step) => step.status === "running"))
-        return "running";
-    if (steps.some((step) => step.status === "failed"))
-        return "failed";
-    if (steps.some((step) => step.status === "paused"))
-        return "paused";
-    if (steps.length > 0 && steps.every((step) => isCompletedStepStatus(step.status)))
-        return "complete";
-    return "pending";
-}
 function formatAgentRunningLabel(count) {
     return count === 1 ? "1 agent running" : `${count} agents running`;
 }

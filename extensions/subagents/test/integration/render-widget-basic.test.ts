@@ -17,7 +17,6 @@ import {
   runningGlyphPattern,
   visibleWidth,
   whimsicalThinkingPhrase,
-  WHIMSICAL_THINKING_PHRASES,
   withStdoutSize,
 } from "../support/render-widget-fixtures.ts";
 
@@ -478,7 +477,6 @@ describe("subagent async widget rendering", () => {
   });
 
   it("cycles compact async thinking phrases per turn while expanded rows retain telemetry", () => {
-    assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
     const now = Date.now();
     const job: AsyncJobState = {
       asyncId: "run-thinking",

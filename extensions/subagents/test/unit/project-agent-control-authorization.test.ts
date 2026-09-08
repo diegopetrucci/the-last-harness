@@ -77,10 +77,11 @@ describe("project-agent control authorization and rebind", () => {
       } as any,
       {
         executeAsyncSingle: (continuedId: string, params: any) => {
-          dispatched = { continuedId, params };
+          const details = { asyncId: continuedId, results: [] };
+          dispatched = { continuedId, params, details };
           return {
             content: [{ type: "text", text: "continued" }],
-            details: { asyncId: continuedId, results: [] },
+            details,
           };
         },
       },
@@ -94,6 +95,17 @@ describe("project-agent control authorization and rebind", () => {
         makeContext(root),
       );
       assert.equal(result.isError, undefined);
+      assert.equal(result.details, dispatched.details);
+      assert.equal(
+        text(result),
+        [
+          `Revived async subagent from ${runId}.`,
+          `Revived run: ${dispatched.continuedId}`,
+          "Agent: embedded.worker",
+          `Session: ${path.join(asyncDir, "worker.jsonl")}`,
+          `Status if needed: subagent({ action: "status", id: "${dispatched.continuedId}" })`,
+        ].join("\n"),
+      );
       assert.match(dispatched.params.agentConfig.systemPrompt, /^Original prompt/);
       assert.equal(dispatched.params.projectAgent.provenance.generationId, "generation-one");
       assert.equal(dispatched.params.projectAgent.provenance.digest, "digest-one");
@@ -156,7 +168,7 @@ describe("project-agent control authorization and rebind", () => {
       },
     } as ProjectAgentRunCapture;
     const runId = `project-rebind-${Date.now().toString(36)}`;
-    writeStatus(runId, root, persisted, { cwd: persistedCwd });
+    const asyncDir = writeStatus(runId, root, persisted, { cwd: persistedCwd });
     let rebindRequest: unknown;
     let dispatched: any;
     const executor = makeExecutor(
@@ -175,10 +187,15 @@ describe("project-agent control authorization and rebind", () => {
       },
       {
         executeAsyncSingle: (continuedId: string, params: any) => {
-          dispatched = { continuedId, params };
+          const details = {
+            asyncId: continuedId,
+            asyncDir: path.join(root, "continued-async"),
+            results: [],
+          };
+          dispatched = { continuedId, params, details };
           return {
             content: [{ type: "text", text: "rebound" }],
-            details: { asyncId: continuedId, results: [] },
+            details,
           };
         },
       },
@@ -192,6 +209,19 @@ describe("project-agent control authorization and rebind", () => {
         makeContext(root),
       );
       assert.equal(result.isError, undefined);
+      assert.equal(result.details, dispatched.details);
+      assert.equal(
+        text(result),
+        [
+          `Revived async subagent from ${runId}.`,
+          `Revived run: ${dispatched.continuedId}`,
+          "Agent: embedded.worker",
+          "Notice: Project agent 'embedded.worker' changed since the original run (digest digest-old → digest-new). The resumed child uses the current validated definition; review the change if it was unexpected.",
+          `Session: ${path.join(asyncDir, "worker.jsonl")}`,
+          `Async dir: ${path.join(root, "continued-async")}`,
+          `Status if needed: subagent({ action: "status", id: "${dispatched.continuedId}" })`,
+        ].join("\n"),
+      );
       assert.deepEqual(rebindRequest, {
         projectRoot: root,
         cwd: canonicalCwd,

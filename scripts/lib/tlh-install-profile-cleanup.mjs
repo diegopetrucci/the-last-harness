@@ -4,6 +4,23 @@ import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIR
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, isSymlink, validateProfileRelativePath, } from "./tlh-install-paths.mjs";
 import { backupPathWithTimestamp, isTlhOwnedBackupFilename, selectExpiredBackups, } from "./tlh-install-utils.mjs";
+function isMissingCleanupMetadataError(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
+}
+function readCleanupMetadata(config, target, label, io) {
+    try {
+        return config.cleanupMetadata ? config.cleanupMetadata(target) : lstatSync(target);
+    }
+    catch (error) {
+        if (isMissingCleanupMetadataError(error))
+            return undefined;
+        io.warn(`Skipping ${label}: cannot inspect ${target}: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+    }
+}
 // Retired files that TLH seeded in older isolated profiles.
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent files are silently skipped.
@@ -114,11 +131,8 @@ function cleanupRelativeProfileFiles(config, relativePaths, io) {
             io.warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
             continue;
         }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isFile())
+        const metadata = readCleanupMetadata(config, target, "retired profile file cleanup", io);
+        if (!metadata || metadata.isSymbolicLink() || !metadata.isFile())
             continue;
         if (config.dryRun) {
             io.log(`Would remove retired profile file: ${target}`);
@@ -226,12 +240,9 @@ export function cleanupOldSettingsBackups(config, io) {
             io.warn(`Skipping stale settings backup cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
             continue;
         }
-        if (isSymlink(target))
-            continue; // Conservative: never remove or follow symlinks
-        if (!existsSync(target))
-            continue; // Idempotent: absent is fine
-        if (!lstatSync(target).isFile())
-            continue; // Conservative: only regular files
+        const metadata = readCleanupMetadata(config, target, "stale settings backup", io);
+        if (!metadata || metadata.isSymbolicLink() || !metadata.isFile())
+            continue;
         if (config.dryRun) {
             io.log(`Would remove stale settings backup: ${target}`);
             continue;

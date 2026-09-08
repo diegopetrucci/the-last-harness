@@ -61,7 +61,11 @@ import {
 } from "../shared/lifecycle-state.ts";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.ts";
 import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.ts";
-import { createBackgroundRunStatusOwner, type RunnerStatusStep } from "./run-status-owner.ts";
+import {
+  appendUnexpectedLifecycleTransitionDiagnostic,
+  createBackgroundRunStatusOwner,
+  type RunnerStatusStep,
+} from "./run-status-owner.ts";
 import { createBackgroundRunControlOwner } from "./run-control-owner.ts";
 
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
@@ -622,6 +626,8 @@ async function runSubagentWithInput(
   const interruptAbortController = new AbortController();
   let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
   const appendEvent = (line: string): void => appendJsonl(eventsPath, line);
+  const appendDiagnosticEvent = (line: string, droppedEventType?: string): void =>
+    appendDiagnosticJsonl(eventsPath, line, droppedEventType);
   const statusOwner = createBackgroundRunStatusOwner({
     id,
     asyncDir,
@@ -641,6 +647,7 @@ async function runSubagentWithInput(
     nestedSelf: config.nestedSelf,
     timeoutMessage,
     appendEvent,
+    appendDiagnosticEvent,
   });
   const { sessionEnabled, statusPayload, activeRuntimeTrackers, flatStepAcceptances } = statusOwner;
   const controlOwner = createBackgroundRunControlOwner({
@@ -1562,7 +1569,13 @@ async function runSubagentWithInput(
             }),
           });
           Object.assign(statusPayload, transition.status);
-        } catch {
+        } catch (error) {
+          appendUnexpectedLifecycleTransitionDiagnostic(
+            appendDiagnosticEvent,
+            id,
+            "pausing->paused",
+            error,
+          );
           statusOwner.adoptConcurrentTerminalStatus();
         }
         const nestedDescendantsStoppedAfterFinalization =

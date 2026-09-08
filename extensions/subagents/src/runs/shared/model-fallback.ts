@@ -561,22 +561,6 @@ export function buildModelCandidatePlan(
   };
 }
 
-export function buildModelCandidates(
-  primaryModel: string | undefined,
-  fallbackModels: string[] | undefined,
-  availableModels: readonly AvailableModelInfo[] | undefined,
-  preferredProvider?: string,
-  options?: BuildModelCandidatesOptions,
-): string[] {
-  return buildModelCandidatePlan(
-    primaryModel,
-    fallbackModels,
-    availableModels,
-    preferredProvider,
-    options,
-  ).candidates;
-}
-
 function replaceModelNoticeControlCharacters(value: string): string {
   return [...value]
     .map((character) => {

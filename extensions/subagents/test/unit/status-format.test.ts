@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { formatModelThinking } from "../../src/shared/formatters.ts";
-import {
-  aggregateStepStatus,
-  formatActivityLabel,
-  formatParallelOutcome,
-} from "../../src/shared/status-format.ts";
+import { formatActivityLabel, formatParallelOutcome } from "../../src/shared/status-format.ts";
 import type { AsyncJobStep } from "../../src/shared/types.ts";
 
 describe("status format helpers", () => {
@@ -59,7 +55,6 @@ describe("status format helpers", () => {
       { status: "running" },
       { status: "failed" },
     ] satisfies Array<Pick<AsyncJobStep, "status">>;
-    assert.equal(aggregateStepStatus(steps), "running");
     assert.equal(formatParallelOutcome(steps, 3), "1 agent running · 1/3 done · 1 failed");
     assert.equal(formatParallelOutcome(steps, 3, { showRunning: false }), "1/3 done · 1 failed");
   });

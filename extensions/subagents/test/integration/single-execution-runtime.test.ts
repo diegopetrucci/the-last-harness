@@ -21,6 +21,7 @@ import {
   createSubagentExecutor,
   type ExecutionModule,
   type ExecuteAsyncSingleOverride,
+  type ExecutorToolResult,
 } from "../support/single-execution-fixtures.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
@@ -183,6 +184,85 @@ describe(
           assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
         }
         assert.equal(mockPi.callCount(), 0);
+      },
+    );
+
+    it(
+      "formats a foreground resume after launch effects and falls back to the continuation id",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const sourceRunId = `resume-format-order-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${sourceRunId}.jsonl`);
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${sourceRunId}"}\n`, "utf-8");
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(sourceRunId, {
+          runId: sourceRunId,
+          mode: "single",
+          state: "complete",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [{ agent: "echo", status: "completed", sessionFile }],
+        });
+        const effects: string[] = [];
+        const details: NonNullable<ExecutorToolResult["details"]> = { results: [] };
+        Object.defineProperty(details, "asyncDir", {
+          get() {
+            effects.push(
+              state.foregroundRuns.has(sourceRunId)
+                ? "format:before-delete"
+                : "format:after-delete",
+            );
+            return undefined;
+          },
+        });
+        let continuedId = "";
+        const executeAsyncSingle: ExecuteAsyncSingleOverride = (id) => {
+          continuedId = id;
+          effects.push("launch");
+          return { content: [{ text: "stubbed continuation" }], details };
+        };
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo")],
+            {},
+            state,
+            runSync,
+            executeAsyncSingle,
+          ).execute(
+            "resume-format-order-call",
+            { action: "resume", id: sourceRunId, message: "Continue." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.equal(result.details, details);
+          assert.equal(
+            result.content[0]?.text,
+            [
+              `Revived foreground subagent from ${sourceRunId}.`,
+              `Revived run: ${continuedId}`,
+              "Agent: echo",
+              `Session: ${sessionFile}`,
+              `Status if needed: subagent({ action: "status", id: "${continuedId}" })`,
+            ].join("\n"),
+          );
+          assert.deepEqual(effects, ["launch", "format:after-delete"]);
+          assert.equal(state.foregroundRuns.has(sourceRunId), false);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
       },
     );
 

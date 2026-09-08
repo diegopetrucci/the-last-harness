@@ -27,7 +27,7 @@ import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { boundedActiveRuntimeMs, createActiveRuntimeTracker, finalizeLifecycleContinuationLaunch, lifecycleGeneration, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.js";
-import { createBackgroundRunStatusOwner } from "./run-status-owner.js";
+import { appendUnexpectedLifecycleTransitionDiagnostic, createBackgroundRunStatusOwner, } from "./run-status-owner.js";
 import { createBackgroundRunControlOwner } from "./run-control-owner.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -449,6 +449,7 @@ async function runSubagentWithInput(config, plan) {
     const interruptAbortController = new AbortController();
     let previousCumulativeTokens = { input: 0, output: 0, total: 0 };
     const appendEvent = (line) => appendJsonl(eventsPath, line);
+    const appendDiagnosticEvent = (line, droppedEventType) => appendDiagnosticJsonl(eventsPath, line, droppedEventType);
     const statusOwner = createBackgroundRunStatusOwner({
         id,
         asyncDir,
@@ -468,6 +469,7 @@ async function runSubagentWithInput(config, plan) {
         nestedSelf: config.nestedSelf,
         timeoutMessage,
         appendEvent,
+        appendDiagnosticEvent,
     });
     const { sessionEnabled, statusPayload, activeRuntimeTrackers, flatStepAcceptances } = statusOwner;
     const controlOwner = createBackgroundRunControlOwner({
@@ -1228,7 +1230,8 @@ async function runSubagentWithInput(config, plan) {
                     });
                     Object.assign(statusPayload, transition.status);
                 }
-                catch {
+                catch (error) {
+                    appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent, id, "pausing->paused", error);
                     statusOwner.adoptConcurrentTerminalStatus();
                 }
                 const nestedDescendantsStoppedAfterFinalization = await waitForNestedAsyncDescendantsToStop();

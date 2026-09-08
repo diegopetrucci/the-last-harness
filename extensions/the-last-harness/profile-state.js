@@ -1,5 +1,4 @@
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync, } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -78,23 +77,6 @@ export function readTlhInstallState() {
         return {};
     }
     try {
-        const parsed = JSON.parse(content);
-        return parsed && typeof parsed === "object" ? parsed : {};
-    }
-    catch {
-        return {};
-    }
-}
-export async function readTlhInstallStateAsync() {
-    const statePath = tlhInstallStatePath();
-    if (!statePath) {
-        return {};
-    }
-    try {
-        const content = await readFile(statePath, "utf8");
-        if (!content) {
-            return {};
-        }
         const parsed = JSON.parse(content);
         return parsed && typeof parsed === "object" ? parsed : {};
     }
