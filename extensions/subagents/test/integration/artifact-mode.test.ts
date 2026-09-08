@@ -60,6 +60,10 @@ describe("artifact resolver production wiring", () => {
       path.join(projectRoot, "src", "runs", "foreground", "subagent-executor.ts"),
       "utf8",
     );
+    const executionPathsSource = fs.readFileSync(
+      path.join(projectRoot, "src", "runs", "foreground", "execution-paths.ts"),
+      "utf8",
+    );
     const runnerSource = fs.readFileSync(
       path.join(projectRoot, "src", "runs", "background", "subagent-runner.ts"),
       "utf8",
@@ -67,12 +71,12 @@ describe("artifact resolver production wiring", () => {
 
     assert.match(extensionSource, /resolveArtifactConfig\(config\.artifacts\)/);
     assert.match(extensionSource, /artifactConfig,/);
-    assert.match(executorSource, /artifactConfig: input\.artifactConfig/);
+    assert.match(executionPathsSource, /artifactConfig: input\.artifactConfig/);
     assert.match(
       runnerSource,
       /resolveArtifactConfig\(config\.artifactConfig, \{ legacy: true \}\)/,
     );
-    for (const source of [extensionSource, executorSource, runnerSource]) {
+    for (const source of [extensionSource, executorSource, executionPathsSource, runnerSource]) {
       assert.doesNotMatch(source, /DEFAULT_ARTIFACT_CONFIG/);
     }
 

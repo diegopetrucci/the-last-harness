@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, parseGitSource, } from "./lib/tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, realpathForCompare, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
-import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, disabledDefaultExtensionIds, packageIdentity, packageSourceOf, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
-import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, readJsonFile, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
+import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, realpathForCompare, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
+import { LEGACY_MANAGED_PROFILE_ARTIFACTS, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl, cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, } from "./lib/tlh-install-profile-cleanup.mjs";
+import { preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
+import { assignRequiredEqualsValue, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -841,264 +842,32 @@ function installPiIfNeeded(config) {
     writeRuntimeMarker(config, prefix, origin);
     return { installed: true, piCmd: piBin };
 }
-// Retired files that TLH seeded in older isolated profiles.
-// Each path is relative to config.agentDir and must not contain '..' components.
-// The cleanup is idempotent: absent files are silently skipped.
-export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze(["bin/rtk", "tlh/tlh-rtk.mjs"]);
-export const RETIRED_PROFILE_FILES = Object.freeze(["extensions/librarian.json"]);
-// Retired state directories left by retired default extensions.
-// Each path is relative to config.agentDir and must not contain '..' components.
-// The cleanup is idempotent: absent directories are silently skipped.
-export const RETIRED_PROFILE_DIRECTORIES = Object.freeze(["intercom"]);
-/**
- * Walk agentDir → relativePath, guarding against symlinks at agentDir and at
- * every existing intermediate directory component.
- *
- * Returns the resolved target path when safe, or null when blocked:
- *   - agentDir is a symlink → null with a warning
- *   - agentDir exists but is not a directory → null with a warning
- *   - an intermediate component is a symlink → null with a warning
- *   - an intermediate component does not exist → null (silent; target absent)
- *
- * The caller is responsible for any assertProfilePathWithinAgent call on the
- * returned target and for any type / existence check on the target itself.
- */
-function resolveGuardedProfilePath(agentDir, relativePath, label) {
-    if (isSymlink(agentDir)) {
-        warn(`Skipping ${label}: agentDir is a symlink: ${agentDir}`);
-        return null;
-    }
-    if (existsSync(agentDir) && !lstatSync(agentDir).isDirectory()) {
-        warn(`Skipping ${label}: agentDir is not a directory: ${agentDir}`);
-        return null;
-    }
-    const components = relativePath.split("/");
-    const parentComponents = components.slice(0, -1);
-    const lastName = components[components.length - 1];
-    let cursor = agentDir;
-    for (const component of parentComponents) {
-        cursor = join(cursor, component);
-        if (isSymlink(cursor)) {
-            warn(`Skipping ${label} through symlinked parent: ${cursor}`);
-            return null;
-        }
-        if (!existsSync(cursor)) {
-            return null; // silent: target simply does not exist
-        }
-        if (!lstatSync(cursor).isDirectory()) {
-            return null; // non-directory intermediate: treat as absent, never descend
-        }
-    }
-    return join(cursor, lastName);
-}
-function cleanupRelativeProfileDirs(config, relativePaths) {
-    for (const relativePath of relativePaths) {
-        try {
-            validateProfileRelativePath(relativePath, "retired profile directory path");
-        }
-        catch {
-            warn(`Skipping invalid retired profile directory path: ${relativePath}`);
-            continue;
-        }
-        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile directory cleanup");
-        if (target === null)
-            continue;
-        try {
-            assertProfilePathWithinAgent(config, target, "retired profile directory");
-        }
-        catch (error) {
-            warn(`Skipping retired profile directory cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
-        }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isDirectory())
-            continue;
-        if (config.dryRun) {
-            log(config, `Would remove retired profile directory: ${target}`);
-            continue;
-        }
-        try {
-            rmSync(target, { recursive: true });
-            detailLog(config, `Removed retired profile directory: ${target}`);
-        }
-        catch (error) {
-            warn(`failed to remove retired profile directory ${target}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
+function profileCleanupIo(config, runtimeConfig) {
+    return {
+        log: (message) => log(config, message),
+        detailLog: (message) => detailLog(config, message),
+        warn,
+        absolutePiCmd: () => (runtimeConfig ? absolutePiCmd(runtimeConfig) : ""),
+        runPiRemove: (commandArgs) => {
+            if (runtimeConfig)
+                spawnCaptureIsolatedPi(runtimeConfig, commandArgs);
+        },
+    };
 }
 export function cleanupRetiredProfileDirectories(config) {
-    cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES);
-}
-function cleanupRelativeProfileFiles(config, relativePaths) {
-    for (const relativePath of relativePaths) {
-        try {
-            validateProfileRelativePath(relativePath, "retired profile path");
-        }
-        catch {
-            warn(`Skipping invalid retired profile path: ${relativePath}`);
-            continue;
-        }
-        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile file cleanup");
-        if (target === null)
-            continue;
-        try {
-            assertProfilePathWithinAgent(config, target, "retired profile file");
-        }
-        catch (error) {
-            warn(`Skipping retired profile file cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
-        }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isFile())
-            continue;
-        if (config.dryRun) {
-            log(config, `Would remove retired profile file: ${target}`);
-            continue;
-        }
-        try {
-            rmSync(target);
-            detailLog(config, `Removed retired profile file: ${target}`);
-        }
-        catch (error) {
-            warn(`failed to remove retired profile file ${target}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
+    cleanupRetiredProfileDirectoriesImpl(config, profileCleanupIo(config));
 }
 export function cleanupLegacyManagedProfileArtifacts(config) {
-    cleanupRelativeProfileFiles(config, LEGACY_MANAGED_PROFILE_ARTIFACTS);
+    cleanupLegacyManagedProfileArtifactsImpl(config, profileCleanupIo(config));
 }
 export function cleanupRetiredProfileFiles(config) {
-    // FIX 2: Read post-merge settings to decide whether to keep managed files.
-    // Fail safe: if settings cannot be read, skip file removal rather than risk wrong deletion.
-    let postMergePackages = []; // default empty → proceed with removal when no settings present
-    if (config.settingsPath && existsSync(config.settingsPath)) {
-        try {
-            const raw = readFileSync(config.settingsPath, "utf8");
-            const parsed = JSON.parse(raw);
-            if (parsed !== null &&
-                typeof parsed === "object" &&
-                !Array.isArray(parsed) &&
-                Array.isArray(parsed.packages)) {
-                postMergePackages = parsed.packages;
-            }
-        }
-        catch {
-            postMergePackages = null; // fail safe: unreadable settings → skip removal
-        }
-    }
-    for (const relativePath of RETIRED_PROFILE_FILES) {
-        if (relativePath === "extensions/librarian.json") {
-            if (postMergePackages === null) {
-                if (config.dryRun)
-                    log(config, `Would skip removal of retired profile file (settings unreadable, fail safe): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-            const librarianIdentity = packageIdentity("npm:@diegopetrucci/pi-librarian");
-            const librarianPresent = postMergePackages.some((entry) => packageIdentity(entry) === librarianIdentity);
-            if (librarianPresent) {
-                if (config.dryRun)
-                    log(config, `Skipping retired profile file removal (user-added package preserved): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-        }
-        cleanupRelativeProfileFiles(config, [relativePath]);
-    }
+    cleanupRetiredProfileFilesImpl(config, profileCleanupIo(config));
 }
 export function cleanupOldSettingsBackups(config) {
-    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupRetiredProfileFiles.
-    if (isSymlink(config.agentDir)) {
-        warn(`Skipping stale settings backup cleanup: agentDir is a symlink: ${config.agentDir}`);
-        return;
-    }
-    // Gather candidate filenames from the agent-dir root (non-recursive).
-    if (!existsSync(config.agentDir))
-        return;
-    let entries;
-    try {
-        entries = readdirSync(config.agentDir);
-    }
-    catch (error) {
-        warn(`Skipping stale settings backup cleanup: cannot read agentDir: ${error instanceof Error ? error.message : String(error)}`);
-        return;
-    }
-    // Keep only filenames that match TLH backup patterns AND carry a parseable
-    // TLH timestamp. Files like `settings.json.backup-mynotes` share the prefix
-    // but have no timestamp, so they must never be treated as deletion candidates.
-    const settingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "settings.json"));
-    const keybindingsCandidates = entries.filter((name) => isTlhOwnedBackupFilename(name, "keybindings.json"));
-    if (settingsCandidates.length === 0 && keybindingsCandidates.length === 0)
-        return;
-    // Determine which candidates are eligible for removal.
-    // Each file type (settings vs keybindings) gets its own independent keepNewest:2
-    // floor so that two recent settings backups cannot consume the floor and cause
-    // the only keybindings backup (however old) to be deleted.
-    // All candidates have a parseable timestamp, so mtimeFallback is a defensive
-    // safety net only — it should never be reached in normal operation.
-    const mtimeFallback = (filename) => {
-        try {
-            const stat = lstatSync(join(config.agentDir, filename));
-            return stat.mtimeMs;
-        }
-        catch {
-            return undefined;
-        }
-    };
-    const toDelete = [
-        ...selectExpiredBackups(settingsCandidates, { mtimeFallback }),
-        ...selectExpiredBackups(keybindingsCandidates, { mtimeFallback }),
-    ];
-    for (const filename of toDelete) {
-        const target = join(config.agentDir, filename);
-        // Assert target stays within the isolated agent dir and outside ~/.pi.
-        try {
-            assertProfilePathWithinAgent(config, target, "stale settings backup");
-        }
-        catch (error) {
-            warn(`Skipping stale settings backup cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
-        }
-        if (isSymlink(target))
-            continue; // Conservative: never remove or follow symlinks
-        if (!existsSync(target))
-            continue; // Idempotent: absent is fine
-        if (!lstatSync(target).isFile())
-            continue; // Conservative: only regular files
-        if (config.dryRun) {
-            log(config, `Would remove stale settings backup: ${target}`);
-            continue;
-        }
-        try {
-            rmSync(target);
-            detailLog(config, `Removed stale settings backup: ${target}`);
-        }
-        catch (error) {
-            warn(`failed to remove stale settings backup ${target}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
+    cleanupOldSettingsBackupsImpl(config, profileCleanupIo(config));
 }
 function backupExistingSettingsBeforePiInstall(config) {
-    assertSafeSettingsTarget(config);
-    if (!existsSync(config.settingsPath))
-        return;
-    const backupPath = backupPathWithTimestamp(config.settingsPath, {
-        marker: "before-install",
-        includeMilliseconds: false,
-    });
-    if (config.dryRun) {
-        log(config, `Would back up existing isolated settings to: ${backupPath}`);
-        return;
-    }
-    if (existsSync(backupPath) || isSymlink(backupPath)) {
-        throw new Error(`refusing to overwrite existing settings backup: ${backupPath}`);
-    }
-    copyFileSync(config.settingsPath, backupPath);
-    detailLog(config, `Backed up existing isolated settings to: ${backupPath}`);
+    backupExistingSettingsBeforePiInstallImpl(config, profileCleanupIo(config, config));
 }
 function refreshHarnessPackageCheckout(config) {
     let packageRoot = config.packageRoot;
@@ -1488,293 +1257,17 @@ function installDefaultExtensions(config) {
     if (failures === 0)
         verboseLog(config, "Bundled default extensions installed.");
 }
-const EXACT_NPM_VERSION_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const NPM_PREINSTALL_STAGE_PREFIX = ".tlh-npm-defaults-";
-function isJsonRecord(value) {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+function npmPreinstallIo(config) {
+    return {
+        log: (message) => log(config, message),
+        verboseLog: (message) => verboseLog(config, message),
+        warn,
+        runCommand: (commandArgs) => runCommand(config, commandArgs),
+        inheritedCommandEnv: () => inheritedCommandEnv(config),
+    };
 }
-function npmPinnedSpec(source) {
-    const trimmed = source.trim();
-    if (!trimmed.startsWith("npm:"))
-        return undefined;
-    const spec = trimmed.slice("npm:".length).trim();
-    const separator = spec.startsWith("@") ? spec.indexOf("@", 1) : spec.lastIndexOf("@");
-    if (separator <= 0)
-        return undefined;
-    const version = spec.slice(separator + 1);
-    if (!EXACT_NPM_VERSION_RE.test(version))
-        return undefined;
-    return spec;
-}
-function readNpmPreinstallSettings(config) {
-    try {
-        const parsed = readJsonFile(config.settingsPath, { emptyValue: null });
-        if (!isJsonRecord(parsed))
-            throw new Error("settings must be a JSON object");
-        if (parsed.packages !== undefined && !Array.isArray(parsed.packages)) {
-            throw new Error("settings.packages must be an array when present");
-        }
-        return parsed;
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const prefix = config.dryRun ? "Would skip" : "Skipping";
-        log(config, `${prefix} pinned npm default-extension pre-install because merged settings are unreadable or malformed (${message}).`);
-        return undefined;
-    }
-}
-function configuredPlainNpmCommand(settings) {
-    if (!Object.hasOwn(settings, "npmCommand"))
-        return ["npm"];
-    const value = settings.npmCommand;
-    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-        return undefined;
-    }
-    if (value.length === 0)
-        return ["npm"];
-    if (value.length !== 1)
-        return undefined;
-    const command = value[0];
-    if (!command)
-        return undefined;
-    const commandName = command.split(/[\\/]/).at(-1)?.toLowerCase() || "";
-    if (commandName !== "npm" && commandName !== "npm.cmd" && commandName !== "npm.exe") {
-        return undefined;
-    }
-    return [command];
-}
-function truthyEnvironmentValue(value) {
-    return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
-}
-function npmDestinationExists(path) {
-    try {
-        lstatSync(path);
-        return true;
-    }
-    catch (error) {
-        if (spawnErrorCode(error) === "ENOENT")
-            return false;
-        throw error;
-    }
-}
-function ensureNpmStageParent(config) {
-    const agentDir = resolve(config.agentDir);
-    if (isSymlink(agentDir)) {
-        throw new Error(`refusing to create npm staging root through symlinked TLH profile path: ${agentDir}`);
-    }
-    if (existsSync(agentDir) && !lstatSync(agentDir).isDirectory()) {
-        throw new Error(`refusing to use non-directory TLH profile root for npm staging: ${agentDir}`);
-    }
-    assertProfilePathWithinAgent(config, agentDir, "npm staging root parent");
-    if (!existsSync(agentDir))
-        mkdirSync(agentDir, { recursive: true });
-    return agentDir;
-}
-function markNpmStageIgnoredByCloudSync(config, stagePath) {
-    const attributes = process.platform === "darwin"
-        ? ["com.dropbox.ignored", "com.apple.fileprovider.ignore#P"]
-        : process.platform === "linux"
-            ? ["user.com.dropbox.ignored"]
-            : [];
-    if (attributes.length === 0)
-        return;
-    const command = process.platform === "darwin" ? "xattr" : "setfattr";
-    for (const attribute of attributes) {
-        try {
-            spawnSync(command, process.platform === "darwin"
-                ? ["-w", attribute, "1", stagePath]
-                : ["-n", attribute, "-v", "1", stagePath], { env: inheritedCommandEnv(config), stdio: "ignore" });
-        }
-        catch {
-            // Cloud-sync metadata is an optional parity improvement. npm installation
-            // remains safe when xattr/setfattr is unavailable or rejects the path.
-        }
-    }
-}
-function assertNpmStageDirectory(config, stagePath, phase) {
-    const stats = lstatSync(stagePath);
-    if (!stats.isDirectory() || stats.isSymbolicLink()) {
-        throw new Error(`npm staging root is not a regular directory ${phase}: ${stagePath}`);
-    }
-    assertProfilePathWithinAgent(config, stagePath, `npm staging root ${phase}`);
-}
-function prepareNpmStage(config, stagePath) {
-    assertNpmStageDirectory(config, stagePath, "before install");
-    markNpmStageIgnoredByCloudSync(config, stagePath);
-    writeFileSync(join(stagePath, ".gitignore"), "*\n!.gitignore\n", {
-        encoding: "utf8",
-        flag: "wx",
-    });
-    writeFileSync(join(stagePath, "package.json"), JSON.stringify({ name: "pi-extensions", private: true }, null, 2), { encoding: "utf8", flag: "wx" });
-}
-function cleanupNpmStage(config, stagePath) {
-    if (!stagePath)
-        return;
-    try {
-        const stats = lstatSync(stagePath);
-        if (stats.isSymbolicLink() || !stats.isDirectory()) {
-            unlinkSync(stagePath);
-            return;
-        }
-        assertProfilePathWithinAgent(config, stagePath, "npm staging cleanup");
-        rmSync(stagePath, { recursive: true, force: true });
-    }
-    catch (error) {
-        if (spawnErrorCode(error) === "ENOENT")
-            return;
-        warn(`could not clean npm staging root ${stagePath}: ${String(error)}`);
-    }
-}
-function promoteNpmStage(stagePath, npmRoot) {
-    if (npmDestinationExists(npmRoot)) {
-        warn(`npm pre-install destination appeared during staging; leaving the existing npm root untouched: ${npmRoot}`);
-        return false;
-    }
-    try {
-        renameSync(stagePath, npmRoot);
-        return true;
-    }
-    catch (error) {
-        const destinationAppeared = (() => {
-            try {
-                return npmDestinationExists(npmRoot);
-            }
-            catch {
-                return false;
-            }
-        })();
-        const code = spawnErrorCode(error);
-        if (destinationAppeared || code === "EEXIST" || code === "ENOTEMPTY" || code === "EISDIR") {
-            warn(`npm pre-install destination appeared during promotion; leaving the existing npm root untouched: ${npmRoot}`);
-            return false;
-        }
-        throw error;
-    }
-}
-/**
- * Pre-install enabled, pinned npm defaults into a fresh staging root and
- * atomically promote that root to the profile's npm project after npm exits
- * successfully. Pi's startup package manager remains the fallback for every
- * skipped, offline, failed, or raced install.
- */
 function preInstallNpmDefaultExtensions(config) {
-    if (config.noSettings) {
-        log(config, "Skipping pinned npm default-extension pre-install (--no-settings).");
-        return;
-    }
-    if (truthyEnvironmentValue(config.env?.PI_OFFLINE)) {
-        log(config, "Skipping pinned npm default-extension pre-install (PI_OFFLINE is set).");
-        return;
-    }
-    if (!config.supportFilePaths.DEFAULT_EXTENSIONS_FILE ||
-        !existsSync(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE)) {
-        if (config.dryRun) {
-            log(config, "Would pre-install pinned npm default extensions after settings merge.");
-        }
-        return;
-    }
-    const settingsExists = existsSync(config.settingsPath);
-    const settings = settingsExists || !config.dryRun ? readNpmPreinstallSettings(config) : undefined;
-    if (settingsExists && !settings)
-        return;
-    if (!settingsExists && !config.dryRun)
-        return;
-    let defaultExtensions;
-    try {
-        defaultExtensions = readDefaultExtensions(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE);
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`could not read bundled default extensions for npm pre-install: ${message}`);
-        return;
-    }
-    const disabledIds = settings
-        ? disabledDefaultExtensionIds(settings, defaultExtensions)
-        : new Set();
-    const configuredEntries = settings && Array.isArray(settings.packages) ? settings.packages : [];
-    const configuredSources = configuredEntries
-        .map(packageSourceOf)
-        .filter((source) => typeof source === "string")
-        .map((source) => source.trim());
-    const configuredIdentities = new Set(configuredEntries
-        .map(packageIdentity)
-        .filter((identity) => typeof identity === "string"));
-    const npmSpecs = [];
-    for (const extension of defaultExtensions) {
-        if (disabledIds.has(extension.id))
-            continue;
-        const spec = npmPinnedSpec(extension.source);
-        if (!spec)
-            continue;
-        const sourceMatches = configuredSources.some((source) => source === extension.source);
-        const identity = packageIdentity(extension.source);
-        const dryRunMergeWouldAddDefault = config.dryRun && identity !== undefined && !configuredIdentities.has(identity);
-        if (!sourceMatches && !dryRunMergeWouldAddDefault)
-            continue;
-        npmSpecs.push(spec);
-    }
-    if (npmSpecs.length === 0) {
-        verboseLog(config, "No enabled pinned npm default extensions match merged settings.");
-        return;
-    }
-    const npmCommand = configuredPlainNpmCommand(settings || {});
-    if (!npmCommand) {
-        log(config, "Skipping pinned npm default-extension pre-install because Pi's configured npmCommand is not plain npm.");
-        return;
-    }
-    const npmRoot = join(config.agentDir, "npm");
-    try {
-        if (npmDestinationExists(npmRoot)) {
-            verboseLog(config, `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`);
-            return;
-        }
-    }
-    catch (error) {
-        warn(`could not inspect the npm root safely; skipping pinned npm default-extension pre-install: ${String(error)}`);
-        return;
-    }
-    const displayStagePath = join(config.agentDir, `${NPM_PREINSTALL_STAGE_PREFIX}<fresh>`);
-    const installArgs = [
-        ...npmCommand,
-        "install",
-        ...npmSpecs,
-        "--prefix",
-        config.dryRun ? displayStagePath : "<staging-root>",
-        "--legacy-peer-deps",
-    ];
-    log(config, `Pre-installing ${npmSpecs.length} pinned npm default extension(s) in a fresh staging root...`);
-    if (config.dryRun) {
-        log(config, `Would create a fresh npm staging root under ${config.agentDir}; existing npm roots are not read or changed.`);
-        runCommand(config, installArgs.map((arg) => (arg === "<staging-root>" ? displayStagePath : arg)));
-        log(config, `Would atomically promote the successful staging root to ${npmRoot}.`);
-        return;
-    }
-    let stagePath;
-    try {
-        const stageParent = ensureNpmStageParent(config);
-        stagePath = mkdtempSync(join(stageParent, NPM_PREINSTALL_STAGE_PREFIX));
-        assertProfilePathWithinAgent(config, stagePath, "npm staging root");
-        prepareNpmStage(config, stagePath);
-        const commandArgs = [
-            ...npmCommand,
-            "install",
-            ...npmSpecs,
-            "--prefix",
-            stagePath,
-            "--legacy-peer-deps",
-        ];
-        runCommand(config, commandArgs);
-        assertNpmStageDirectory(config, stagePath, "after npm install");
-        if (promoteNpmStage(stagePath, npmRoot))
-            stagePath = undefined;
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`npm pre-install of pinned default extensions failed: ${message}; Pi will install missing packages on first launch.`);
-    }
-    finally {
-        cleanupNpmStage(config, stagePath);
-    }
+    preInstallNpmDefaultExtensionsImpl(config, npmPreinstallIo(config));
 }
 function gnosisInstallSkippedByEnv(config) {
     const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
@@ -1943,115 +1436,8 @@ function printSummary(config) {
         detailLog(config, `Uninstall: rm -rf "${config.agentDir}"`);
     }
 }
-function retiredSourceIsOnDisk(source, agentDir) {
-    const trimmed = source.trim();
-    let relativePath;
-    if (trimmed.startsWith("npm:")) {
-        const identity = packageIdentity(trimmed);
-        if (!identity || !identity.startsWith("npm:"))
-            return false;
-        const pkgName = identity.slice("npm:".length);
-        if (!pkgName)
-            return false;
-        relativePath = `npm/node_modules/${pkgName}`;
-    }
-    else {
-        const parsed = parseGitSource(trimmed);
-        if (!parsed)
-            return false;
-        relativePath = `git/${parsed.host}/${parsed.path}`;
-    }
-    const target = resolveGuardedProfilePath(agentDir, relativePath, "retired extension residue probe");
-    if (target === null)
-        return false;
-    if (isSymlink(target))
-        return false;
-    if (!existsSync(target))
-        return false;
-    if (!lstatSync(target).isDirectory())
-        return false;
-    return true;
-}
 export function reclaimRetiredExtensionResidues(config) {
-    // Read post-merge settings. Fail-safe: if settings are unreadable or have
-    // an invalid schema, skip all removals rather than risk removing a user-owned
-    // package. Valid JSON with a non-object root (null, array, etc.) or a present
-    // non-array packages field is treated as an invalid schema.
-    let postMergePackages;
-    if (existsSync(config.settingsPath)) {
-        try {
-            const raw = readFileSync(config.settingsPath, "utf8");
-            const parsed = JSON.parse(raw);
-            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-                warn("skipping retired extension disk reclaim: settings file has invalid schema");
-                return;
-            }
-            const obj = parsed;
-            if ("packages" in obj && !Array.isArray(obj.packages)) {
-                warn("skipping retired extension disk reclaim: settings file has invalid schema");
-                return;
-            }
-            postMergePackages = Array.isArray(obj.packages) ? obj.packages : [];
-        }
-        catch {
-            warn("skipping retired extension disk reclaim: settings file is unreadable");
-            return;
-        }
-    }
-    else {
-        postMergePackages = [];
-    }
-    // FORCE_REMOVED sources are unconditionally removed from settings by the
-    // merge step, so we do not gate on the pre-merge settings file for them —
-    // the settings check would yield a false preserve in dry-run (where the
-    // merge step prints changes without writing).
-    for (const source of FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES) {
-        if (!retiredSourceIsOnDisk(source, config.agentDir))
-            continue;
-        spawnCaptureIsolatedPi(config, [absolutePiCmd(config), "remove", source]);
-        if (!config.dryRun) {
-            // Determine success by verifying the residue is gone, not by exit code:
-            // Pi exits 1 when no settings entry remains (already removed by merge),
-            // but it deletes the files first, so a missing residue means success.
-            if (retiredSourceIsOnDisk(source, config.agentDir)) {
-                warn(`failed to remove retired extension residue ${source}: residue still present after pi remove`);
-            }
-            else {
-                detailLog(config, `Removed retired extension residue: ${source}`);
-            }
-        }
-    }
-    // RETIRED_TLH_DEFAULT_PACKAGE_SOURCES may be kept by users; skip removal
-    // when the identity is still in the post-merge settings file.
-    //
-    // Known dry-run limitation: these sources are provenance-gated, so we cannot
-    // tell whether the merge WOULD have removed the entry without replicating the
-    // merge's provenance decision here. In --dry-run the merge does not write, so
-    // this gate reads pre-merge settings and a TLH-managed copy still listed there
-    // is treated as preserved, omitting a `pi remove` line that a real run would
-    // print. This under-reports (never over-reports) and was accepted over
-    // duplicating provenance logic in the installer, which would risk diverging
-    // from merge-settings. FORCE_REMOVED sources above are unaffected because
-    // their removal is unconditional and needs no settings gate.
-    for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
-        const identity = packageIdentity(source);
-        if (!identity)
-            continue;
-        // Skip when user has this identity in their post-merge settings.
-        if (postMergePackages.some((entry) => packageIdentity(entry) === identity))
-            continue;
-        if (!retiredSourceIsOnDisk(source, config.agentDir))
-            continue;
-        spawnCaptureIsolatedPi(config, [absolutePiCmd(config), "remove", source]);
-        if (!config.dryRun) {
-            if (retiredSourceIsOnDisk(source, config.agentDir)) {
-                warn(`failed to remove retired extension residue ${source}: residue still present after pi remove`);
-            }
-            else {
-                detailLog(config, `Removed retired extension residue: ${source}`);
-            }
-        }
-    }
+    reclaimRetiredExtensionResiduesImpl(config, profileCleanupIo(config, config));
 }
 async function runInstallFlow(config) {
     verboseLog(config, "The Last Harness installer");
@@ -2147,4 +1533,4 @@ if (isMainModule()) {
         process.exitCode = 1;
     });
 }
-export { MIN_NODE_VERSION, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };
+export { LEGACY_MANAGED_PROFILE_ARTIFACTS, MIN_NODE_VERSION, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };

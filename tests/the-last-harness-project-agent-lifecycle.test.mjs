@@ -23,6 +23,8 @@ const jiti = createJiti(import.meta.url);
 const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
 );
+const { createTlhPrimaryAgentResourceLifecycle, retireTlhPrimaryAgentResourceRuntime } =
+  await jiti.import("../extensions/the-last-harness/primary-agent-runtime-lifecycle.ts");
 const { PRIMARY_AGENT_SESSION_STATE_ENTRY } = await jiti.import(
   "../extensions/the-last-harness-primary-agent.mjs",
 );
@@ -228,6 +230,14 @@ function revokeSnapshotSafely(capability) {
   } catch {
     // A run reference or lifecycle cleanup may already have collected it.
   }
+}
+
+function deferredValue() {
+  let resolve;
+  const promise = new Promise((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 test("the default bridge loads a generated project-agent snapshot from a real Git worktree", async (t) => {
@@ -1215,6 +1225,234 @@ test("primary runtime rejects stale rebinds across reload and shutdown awaits", 
     /invalid|does not match/i,
     "shutdown must release the reloaded active generation",
   );
+});
+
+test("primary lifecycle keeps no-reference shutdown cleanup before an immediate new session", async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-shutdown-order-"));
+  const home = join(fixture, "home");
+  const agentDir = join(fixture, "agent");
+  const projectRoot = join(fixture, "project");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(projectRoot, { recursive: true });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  retireTlhPrimaryAgentResourceRuntime();
+  t.after(() => {
+    setTlhProjectAgentAccessProvider(undefined);
+    rmSync(fixture, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+  });
+
+  const lifecycle = createTlhPrimaryAgentResourceLifecycle({
+    getPrimaryAgentSelection: () => "architect",
+    hasActivePrimaryAgent: () => true,
+    projectAgentLoader: async () => ({ status: "unavailable" }),
+    projectDefaultsLoader: async () => ({ status: "unavailable", warnings: [] }),
+  });
+  const context = createContext(projectRoot, "lifecycle-session");
+  const initial = lifecycle.beginSessionStart();
+  await lifecycle.loadSessionResources(context, initial);
+
+  const order = [];
+  const shutdown = lifecycle.shutdown(() => order.push("old facade cleanup"));
+  const replacement = lifecycle.beginSessionStart();
+  order.push("new session start");
+
+  assert.equal(await shutdown, true);
+  assert.deepEqual(
+    order,
+    ["old facade cleanup", "new session start"],
+    "without a reference release await, old facade cleanup must retain its original synchronous order",
+  );
+  assert.equal(lifecycle.isCurrentSessionStartOperation(replacement), true);
+});
+
+test("primary lifecycle suppresses facade cleanup when a newer shutdown wins during reference release", async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-shutdown-race-"));
+  const home = join(fixture, "home");
+  const agentDir = join(fixture, "agent");
+  const projectRoot = join(fixture, "project");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(projectRoot, { recursive: true });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  retireTlhPrimaryAgentResourceRuntime();
+
+  const snapshot = {
+    ...makeSnapshot(projectRoot, "primary-shutdown-race-generation"),
+    trust: { kind: "project-agent", trusted: true, source: "test" },
+  };
+  const releaseStarted = deferredValue();
+  const cleanup = [];
+  let releaseCalls = 0;
+  let lifecycle;
+  let replacementShutdown;
+  setTlhProjectAgentSnapshotOperations({
+    retainSnapshotReference: retainProjectAgentSnapshotReference,
+    releaseSnapshotReference: (referenceId) => {
+      releaseCalls += 1;
+      if (releaseCalls === 1) {
+        releaseStarted.resolve();
+        replacementShutdown = lifecycle.shutdown(() => cleanup.push("replacement facade cleanup"));
+      }
+      releaseProjectAgentSnapshotReference(referenceId);
+    },
+    releaseRunReferencesForSession: releaseProjectAgentRunReferencesForSession,
+    getRunReferenceMetadata: getProjectAgentRunReferenceMetadata,
+    lookupRunReference: lookupProjectAgentRunReference,
+  });
+  t.after(() => {
+    setTlhProjectAgentAccessProvider(undefined);
+    setTlhProjectAgentSnapshotOperations(undefined);
+    revokeSnapshotSafely(snapshot.capability);
+    rmSync(fixture, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+  });
+
+  lifecycle = createTlhPrimaryAgentResourceLifecycle({
+    getPrimaryAgentSelection: () => "architect",
+    hasActivePrimaryAgent: () => true,
+    projectAgentLoader: async () => snapshot,
+    projectDefaultsLoader: async () => ({ status: "unavailable", warnings: [] }),
+  });
+  const context = createContext(projectRoot, "lifecycle-session");
+  const initial = lifecycle.beginSessionStart();
+  await lifecycle.loadSessionResources(context, initial);
+  assert.ok(
+    getTlhProjectAgentAccess({ cwd: projectRoot, sessionId: "lifecycle-session" }),
+    "initial lifecycle load must install an active project owner",
+  );
+
+  assert.equal(releaseCalls, 0, "initial load must not release its adopted owner");
+  const shutdown = lifecycle.shutdown(() => cleanup.push("old facade cleanup"));
+  await releaseStarted.promise;
+  assert.ok(replacementShutdown, "reference release must start the replacement shutdown");
+  assert.equal(releaseCalls, 2, "replacement shutdown must begin during reference release");
+
+  assert.equal(await shutdown, false, "a newer shutdown must invalidate old cleanup");
+  assert.equal(await replacementShutdown, true);
+  assert.deepEqual(
+    cleanup,
+    ["replacement facade cleanup"],
+    "stale reference cleanup must not clear the replacement facade",
+  );
+  assert.equal(releaseCalls, 2, "the old and replacement owners must both release safely");
+});
+
+test("primary tool_call reads the live project snapshot after deferred lookup across reload and shutdown", async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-tool-race-"));
+  const home = join(fixture, "home");
+  const agentDir = join(fixture, "agent");
+  const projectRoot = join(fixture, "project");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(projectRoot, { recursive: true });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+
+  const initialSnapshot = {
+    ...makeSnapshot(projectRoot, "primary-tool-race-initial"),
+    trust: { kind: "project-agent", trusted: true, source: "test" },
+  };
+  const snapshots = [initialSnapshot];
+  const markerId = "primary-tool-race-marker";
+  const markerCapture = createProjectAgentRunCapture(
+    initialSnapshot.manifest,
+    initialSnapshot.manifest.entries[0].agent,
+  );
+  const markerDir = writeRunningControlStatus(markerId, markerCapture);
+  const lookups = [];
+  setTlhProjectAgentSnapshotOperations({
+    retainSnapshotReference: retainProjectAgentSnapshotReference,
+    releaseSnapshotReference: releaseProjectAgentSnapshotReference,
+    releaseRunReferencesForSession: releaseProjectAgentRunReferencesForSession,
+    getRunReferenceMetadata: getProjectAgentRunReferenceMetadata,
+    lookupRunReference: () => {
+      const pending = deferredValue();
+      lookups.push(pending);
+      return pending.promise;
+    },
+  });
+  t.after(() => {
+    setTlhProjectAgentAccessProvider(undefined);
+    setTlhProjectAgentSnapshotOperations(undefined);
+    rmSync(markerDir, { recursive: true, force: true });
+    snapshots.forEach((candidate) => revokeSnapshotSafely(candidate.capability));
+    rmSync(fixture, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+  });
+
+  // Resolve each deferred lookup only after the owner has crossed the requested
+  // generation boundary. Both a reload and a shutdown must deny the persisted
+  // marker once their live snapshot is gone.
+  let loadCount = 0;
+  const pi = createPiHarness();
+  const runtime = registerTlhPrimaryAgentRuntime(pi, {
+    env: {},
+    primaryAgents: primaryAgents(),
+    subagentMetadata: [],
+    projectAgentLoader: async () => {
+      loadCount += 1;
+      if (loadCount === 1) return initialSnapshot;
+      if (loadCount === 2) return { status: "unavailable" };
+      const replacement = {
+        ...makeSnapshot(projectRoot, "primary-tool-race-replacement"),
+        trust: { kind: "project-agent", trusted: true, source: "test" },
+      };
+      snapshots.push(replacement);
+      return replacement;
+    },
+    projectDefaultsLoader: async () => ({ status: "unavailable", warnings: [] }),
+  });
+  const toolCall = pi.events.find((entry) => entry.name === "tool_call")?.handler;
+  const shutdown = pi.events.find((entry) => entry.name === "session_shutdown")?.handler;
+  assert.equal(typeof toolCall, "function");
+  assert.equal(typeof shutdown, "function");
+  const context = createContext(projectRoot, "lifecycle-session", primaryBranch("architect"));
+  const control = () => ({
+    toolName: "subagent",
+    input: { action: "resume", id: markerId, message: "Continue the project run." },
+  });
+
+  await runtime.applySessionStart(context);
+  let pendingToolCall = toolCall(control(), context);
+  await Promise.resolve();
+  assert.equal(lookups.length, 1);
+  await runtime.applySessionStart(context);
+  lookups.shift().resolve({ status: "missing" });
+  const afterReload = await pendingToolCall;
+  assert.equal(afterReload?.block, true, "reload must revoke the stale snapshot authorization");
+  assert.match(afterReload?.reason ?? "", /private|snapshot|fallback/i);
+
+  await runtime.applySessionStart(context);
+  pendingToolCall = toolCall(control(), context);
+  await Promise.resolve();
+  assert.equal(lookups.length, 1);
+  await shutdown({}, context);
+  lookups.shift().resolve({ status: "missing" });
+  const afterShutdown = await pendingToolCall;
+  assert.equal(afterShutdown?.block, true, "shutdown must revoke the stale snapshot authorization");
+  assert.match(afterShutdown?.reason ?? "", /private|snapshot|fallback/i);
 });
 
 test("primary tool authorization gates retained project controls while leaving status and interrupt available", async (t) => {
