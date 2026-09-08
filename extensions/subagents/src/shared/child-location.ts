@@ -96,6 +96,45 @@ export type ChildLocationSnapshot = {
 };
 
 /**
+ * Validate and narrow a persisted {@link ChildLocationSnapshot} read from
+ * status.json.
+ *
+ * Returns `undefined` when the value is absent, not a plain object, is
+ * missing required string fields, or contains optional fields with unexpected
+ * types.  A partially-valid snapshot is never forwarded: the whole object is
+ * dropped on any shape violation so the renderer's invariant
+ * (displayPath is a string) is always maintained.
+ */
+export function parsePersistedChildLocationSnapshot(
+  value: unknown,
+): ChildLocationSnapshot | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  // Required string fields.
+  if (typeof v["childCwd"] !== "string") return undefined;
+  if (typeof v["displayPath"] !== "string") return undefined;
+  // Optional string fields: present but wrong type → drop the whole snapshot.
+  if (v["branch"] !== undefined && typeof v["branch"] !== "string") return undefined;
+  if (v["detachedHead"] !== undefined && typeof v["detachedHead"] !== "string") return undefined;
+  if (v["repoName"] !== undefined && typeof v["repoName"] !== "string") return undefined;
+  // Optional boolean fields — the type only allows the literal `true`.
+  if (v["linkedWorktree"] !== undefined && v["linkedWorktree"] !== true) return undefined;
+  if (v["notAGitRepo"] !== undefined && v["notAGitRepo"] !== true) return undefined;
+
+  const snapshot: ChildLocationSnapshot = {
+    childCwd: v["childCwd"],
+    displayPath: v["displayPath"],
+  };
+  if (typeof v["branch"] === "string") snapshot.branch = v["branch"];
+  if (typeof v["detachedHead"] === "string") snapshot.detachedHead = v["detachedHead"];
+  if (typeof v["repoName"] === "string") snapshot.repoName = v["repoName"];
+  if (v["linkedWorktree"] === true) snapshot.linkedWorktree = true;
+  if (v["notAGitRepo"] === true) snapshot.notAGitRepo = true;
+  return snapshot;
+}
+
+/**
  * Injectable git-runner seam.
  *
  * Receives the absolute normalized cwd to inspect. Returns the raw multi-line

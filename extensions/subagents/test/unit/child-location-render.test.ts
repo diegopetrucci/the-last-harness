@@ -14,14 +14,13 @@
 
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
-import {
-  buildWidgetComponent,
-  buildWidgetLines,
-  renderSubagentResult,
-  resetWidgetLayoutSession,
-} from "../../src/tui/render.ts";
+import { buildWidgetLines, renderSubagentResult } from "../../src/tui/render.ts";
+import { buildWidgetComponent, resetWidgetLayoutSession } from "../../src/tui/render-widget.ts";
 import type { AsyncJobState, Details, SubagentToolResult } from "../../src/shared/types.ts";
-import type { ChildLocationSnapshot } from "../../src/shared/child-location.ts";
+import {
+  parsePersistedChildLocationSnapshot,
+  type ChildLocationSnapshot,
+} from "../../src/shared/child-location.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal theme (no ANSI escape sequences so assertions are on plain text)
@@ -675,22 +674,61 @@ function makeManyStepJob(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Terminal-dimension pinning helpers
+//
+// Mirrors the pattern in tests/integration/render-widget.test.ts (lines 120-144).
+// process.stdout.rows may be a getter on a TTY, so we must restore the original
+// property descriptor rather than writing back a plain value.
+// ---------------------------------------------------------------------------
+
+function restoreDescriptor(
+  target: NodeJS.WriteStream,
+  key: string,
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor) {
+    Object.defineProperty(target, key, descriptor);
+    return;
+  }
+  Reflect.deleteProperty(target, key);
+}
+
+function withStdoutSize<T>(rows: number, columns: number, fn: () => T): T {
+  const stdout = process.stdout as NodeJS.WriteStream & { rows?: number; columns?: number };
+  const rowsDescriptor = Object.getOwnPropertyDescriptor(stdout, "rows");
+  const columnsDescriptor = Object.getOwnPropertyDescriptor(stdout, "columns");
+  Object.defineProperty(stdout, "rows", { configurable: true, value: rows });
+  Object.defineProperty(stdout, "columns", { configurable: true, value: columns });
+  try {
+    return fn();
+  } finally {
+    restoreDescriptor(stdout, "rows", rowsDescriptor);
+    restoreDescriptor(stdout, "columns", columnsDescriptor);
+  }
+}
+
 /**
  * Render a job through buildWidgetComponent and return the text lines.
  * `expanded` controls whether a live-detail controller reports expanded.
+ * Terminal dimensions are pinned to 30 rows × 120 columns so that the
+ * adaptive widget tier selection is deterministic regardless of the
+ * caller's terminal height.
  */
 function renderThroughWidgetComponent(
   jobs: AsyncJobState[],
   expanded = false,
   width = 120,
 ): string[] {
-  const controller = expanded
-    ? { isExpanded: () => true, toggle: () => {}, handleKeyPress: () => false }
-    : undefined;
-  const factory = buildWidgetComponent(jobs, controller as any);
-  const component = factory(null, theme as any);
-  // Use the provided width so wrap/truncation is deterministic in tests.
-  return component.render(width);
+  return withStdoutSize(30, width, () => {
+    const controller = expanded
+      ? { isExpanded: () => true, toggle: () => {}, handleKeyPress: () => false }
+      : undefined;
+    const factory = buildWidgetComponent(jobs, controller as any);
+    const component = factory(null, theme as any);
+    // Use the provided width so wrap/truncation is deterministic in tests.
+    return component.render(width);
+  });
 }
 
 describe("buildWidgetComponent — collapsed single job (compactSingleWidgetLines)", () => {
@@ -933,6 +971,91 @@ describe("buildWidgetComponent — multi-job: parallel job does not duplicate lo
       count,
       2,
       `expected exactly 2 cwd lines (one per parallel step, no job-level duplicate), got ${count}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Newline safety: location line must never emit more than one physical row
+// (ts-o2mn / PR 623 item 2)
+// ---------------------------------------------------------------------------
+
+describe("childLocationLine — newline in displayPath", () => {
+  it("location line produces exactly one physical row when displayPath contains a newline", () => {
+    // A directory name containing \n is legal on Unix.  Without the fix the
+    // location text "cwd: bad\ndir" would split into two lines and corrupt
+    // widget height accounting.
+    const newlinePath: ChildLocationSnapshot = {
+      childCwd: "/tmp/bad\ndir",
+      displayPath: "bad\ndir",
+    };
+    const lines = buildWidgetLines([makeJob(newlinePath)], theme as any, 120, false);
+    const locationLines = lines.filter((l) => l.includes("cwd:"));
+    assert.equal(
+      locationLines.length,
+      1,
+      `expected exactly one location line but got ${locationLines.length}: ${JSON.stringify(locationLines)}`,
+    );
+    // The newline must be rendered as the visible escaped form, not passed through.
+    const locationLine = locationLines[0];
+    assert.ok(locationLine !== undefined);
+    assert.match(locationLine, /\\n/, "newline must appear as the visible escape \\n");
+    assert.ok(
+      !locationLine.includes("\n"),
+      "location line must not contain a literal newline character",
+    );
+  });
+
+  it("location line with CR in displayPath also produces exactly one physical row", () => {
+    const crPath: ChildLocationSnapshot = {
+      childCwd: "/tmp/bad\rdir",
+      displayPath: "bad\rdir",
+    };
+    const lines = buildWidgetLines([makeJob(crPath)], theme as any, 120, false);
+    const locationLines = lines.filter((l) => l.includes("cwd:"));
+    assert.equal(locationLines.length, 1, "CR in displayPath must not emit extra rows");
+    const locationLine = locationLines[0];
+    assert.ok(locationLine !== undefined);
+    // safeTerminalText normalises \r to \n before our CR/LF replacement runs,
+    // so the final escaped form in the output is \\n rather than \\r.
+    // Either way, the line must not contain a raw CR or LF.
+    assert.ok(
+      !locationLine.includes("\r") && !locationLine.includes("\n"),
+      "location line must not contain a literal CR or LF character",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Boundary validation: malformed persisted childLocation must not reach the
+// renderer (ts-o2mn / PR 623 item 1)
+// ---------------------------------------------------------------------------
+
+describe("childLocation boundary validation — render safety", () => {
+  it("passing a non-string displayPath directly to the renderer throws (demonstrating the threat)", () => {
+    // This confirms the vulnerability: if a malformed object bypasses the
+    // boundary validator and reaches the renderer, safeTerminalText will call
+    // string methods on a non-string and throw.
+    // Use JSON.parse for a single any-typed assertion, avoiding a chained
+    // `as unknown as T` which the linter rejects.
+    const malformedLoc = JSON.parse(
+      JSON.stringify({ childCwd: "/repo", displayPath: {} }),
+    ) as ChildLocationSnapshot;
+    assert.throws(
+      () => buildWidgetLines([makeJob(malformedLoc)], theme as any, 120, false),
+      "renderer must throw when displayPath is not a string",
+    );
+  });
+
+  it("boundary validator rejects malformed displayPath and renderer receives undefined", () => {
+    // Simulate the boundary: parsePersistedChildLocationSnapshot drops the
+    // object, so the renderer never sees a non-string displayPath.
+    const validated = parsePersistedChildLocationSnapshot({ childCwd: "/repo", displayPath: {} });
+    assert.equal(validated, undefined, "boundary must reject non-string displayPath");
+    // With undefined propagated, the renderer skips the location line entirely.
+    assert.doesNotThrow(
+      () => buildWidgetLines([makeJob(undefined)], theme as any, 120, false),
+      "renderer must not throw when childLocation is undefined",
     );
   });
 });

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
+import { parsePersistedChildLocationSnapshot, } from "../../shared/child-location.js";
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
@@ -178,6 +179,7 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
         step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
         step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+        step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
     }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {

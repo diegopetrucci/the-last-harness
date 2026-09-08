@@ -12,8 +12,11 @@
  * - Consumer-level assertion: the field is present on the SingleResult that
  *   reaches the render layer (Details["results"][number]).
  *
- * No subprocess is spawned; runSync is replaced with an injectable seam that
- * captures received options and emits controlled onUpdate events.
+ * No subprocess is spawned in the dispatch tests; runSync is replaced with an
+ * injectable seam that captures received options and emits controlled onUpdate
+ * events. The setup-failure regression block (ts-1496) calls the real runSync
+ * with an agent whose invalid tool policy causes buildPiArgs to throw before
+ * any subprocess is spawned.
  */
 
 import assert from "node:assert/strict";
@@ -21,6 +24,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
 import type { RunSyncOptions, SingleResult, Details } from "../../src/shared/types.ts";
 import type { SubagentToolResult } from "../../src/shared/types.ts";
 import type { ChildLocationSnapshot } from "../../src/shared/child-location.ts";
@@ -577,6 +582,87 @@ describe("child-location pause round-trip (ITEM 2)", () => {
       step.childLocation!.branch,
       snapshot.branch,
       "persisted branch must match dispatch-time snapshot",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ITEM 2 (ts-1496) — Setup-failure path must preserve childLocation
+//
+// A setup failure (buildPiArgs throwing before any subprocess is spawned) is
+// disproportionately likely to stem from a bad working directory. The terminal
+// card for a single-path failure is rendered directly from the SingleResult, so
+// childLocation must survive the early-return path in runSingleAttempt.
+// ---------------------------------------------------------------------------
+
+describe("setup-failure result preserves childLocation (ts-1496)", () => {
+  /**
+   * An agent whose tool policy is deliberately invalid: inheritSkills=true
+   * combined with extension-path-only tools. buildPiArgs rejects this
+   * combination before spawning any subprocess, exercising the catch block
+   * in runSingleAttempt that we patched to carry childLocation.
+   */
+  const badAgent: AgentConfig = {
+    name: "bad-agent",
+    description: "agent with invalid tool policy for setup-failure test",
+    systemPromptMode: "replace",
+    inheritProjectContext: false,
+    inheritSkills: true, // requires read tool
+    tools: ["/some/extension.ts"], // extension-path-only → triggers buildPiArgs error
+    systemPrompt: "",
+    source: "user",
+    filePath: "",
+  };
+
+  const testChildLocation: ChildLocationSnapshot = {
+    childCwd: path.join(os.tmpdir(), "tlh-setup-failure-child-loc"),
+    displayPath: "tlh-setup-failure-child-loc",
+    branch: "feat-setup-failure",
+  };
+
+  it("single-path setup failure carries dispatch-time childLocation on the terminal result", async () => {
+    const options: RunSyncOptions = {
+      runId: "tlh-test-setup-failure-1",
+      childLocation: testChildLocation,
+      // No artifactsDir → setupForegroundArtifacts is a no-op (no filesystem side-effects).
+    };
+
+    const result = await runSync(os.tmpdir(), [badAgent], "bad-agent", "test task", options);
+
+    // The result must represent a setup failure.
+    assert.equal(result.exitCode, 1, "setup failure must produce exitCode 1");
+    assert.ok(result.error, "setup failure must carry an error message");
+
+    // The childLocation passed at dispatch time must survive the early-return path.
+    assert.ok(
+      result.childLocation !== undefined,
+      "setup-failure SingleResult must carry the dispatch-time childLocation",
+    );
+    assert.equal(
+      result.childLocation!.childCwd,
+      testChildLocation.childCwd,
+      "childCwd must match the dispatch-time snapshot",
+    );
+    assert.equal(
+      result.childLocation!.branch,
+      testChildLocation.branch,
+      "branch must match the dispatch-time snapshot",
+    );
+  });
+
+  it("setup failure without a childLocation does not add a childLocation field", async () => {
+    const options: RunSyncOptions = {
+      runId: "tlh-test-setup-failure-2",
+      // No childLocation — same-cwd scenario.
+    };
+
+    const result = await runSync(os.tmpdir(), [badAgent], "bad-agent", "test task", options);
+
+    assert.equal(result.exitCode, 1, "setup failure must produce exitCode 1");
+    assert.equal(
+      result.childLocation,
+      undefined,
+      "setup-failure result must not add childLocation when none was provided",
     );
   });
 });

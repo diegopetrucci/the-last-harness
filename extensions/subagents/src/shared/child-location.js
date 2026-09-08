@@ -2,6 +2,42 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { normalizeComparableCwd } from "./utils.js";
 import { shortenPath } from "./formatters.js";
+export function parsePersistedChildLocationSnapshot(value) {
+    if (value === undefined || value === null)
+        return undefined;
+    if (typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const v = value;
+    if (typeof v["childCwd"] !== "string")
+        return undefined;
+    if (typeof v["displayPath"] !== "string")
+        return undefined;
+    if (v["branch"] !== undefined && typeof v["branch"] !== "string")
+        return undefined;
+    if (v["detachedHead"] !== undefined && typeof v["detachedHead"] !== "string")
+        return undefined;
+    if (v["repoName"] !== undefined && typeof v["repoName"] !== "string")
+        return undefined;
+    if (v["linkedWorktree"] !== undefined && v["linkedWorktree"] !== true)
+        return undefined;
+    if (v["notAGitRepo"] !== undefined && v["notAGitRepo"] !== true)
+        return undefined;
+    const snapshot = {
+        childCwd: v["childCwd"],
+        displayPath: v["displayPath"],
+    };
+    if (typeof v["branch"] === "string")
+        snapshot.branch = v["branch"];
+    if (typeof v["detachedHead"] === "string")
+        snapshot.detachedHead = v["detachedHead"];
+    if (typeof v["repoName"] === "string")
+        snapshot.repoName = v["repoName"];
+    if (v["linkedWorktree"] === true)
+        snapshot.linkedWorktree = true;
+    if (v["notAGitRepo"] === true)
+        snapshot.notAGitRepo = true;
+    return snapshot;
+}
 const GIT_TIMEOUT_MS = 500;
 function parseGitRevParseOutput(stdout) {
     const lines = stdout.split("\n");

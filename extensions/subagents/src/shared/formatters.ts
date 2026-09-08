@@ -2,6 +2,7 @@
  * Formatting utilities for display output
  */
 
+import * as path from "node:path";
 import type { Usage } from "./types.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
@@ -91,11 +92,14 @@ export function formatToolCall(
 }
 
 /**
- * Shorten a path by replacing home directory with ~
+ * Shorten a path by replacing the home directory with ~.
+ * Abbreviation only happens when the path equals $HOME exactly, or starts
+ * with $HOME followed by a path separator, so that a sibling directory
+ * (e.g. /home/ann-other when HOME=/home/ann) is never incorrectly abbreviated.
  */
 export function shortenPath(p: string): string {
   const home = process.env.HOME;
-  if (home && p.startsWith(home)) {
+  if (home && (p === home || p.startsWith(home + path.sep))) {
     return `~${p.slice(home.length)}`;
   }
   return p;

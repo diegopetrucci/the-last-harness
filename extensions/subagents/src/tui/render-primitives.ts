@@ -275,7 +275,11 @@ export function childLocationText(loc: ChildLocationSnapshot | undefined): strin
   if (loc.detachedHead) parts.push(`branch: detached@${safeTerminalText(loc.detachedHead)}`);
   else if (loc.branch) parts.push(`branch: ${safeTerminalText(loc.branch)}`);
   if (loc.notAGitRepo) parts.push("no git repo");
-  return parts.join(" \u00b7 ");
+  // Prevent an embedded newline in any path component from emitting extra
+  // physical rows and corrupting widget height accounting.  Replace CR and LF
+  // with visible escaped forms here, in the location line only, without
+  // touching the shared safeTerminalText helper used by other callers.
+  return parts.join(" \u00b7 ").replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n"));
 }
 
 export function childLocationLine(

@@ -7,7 +7,10 @@ import {
   shortenPath,
 } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
+import {
+  parsePersistedChildLocationSnapshot,
+  type ChildLocationSnapshot,
+} from "../../shared/child-location.ts";
 import {
   type ActivityState,
   type AsyncJobStep,
@@ -365,6 +368,11 @@ export function validatePersistedAsyncStatus(
       step.contextPressureCrossedThresholds,
     );
     step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+    // Validate the persisted childLocation object before it crosses the I/O
+    // boundary.  A malformed value (missing displayPath, wrong-typed field) is
+    // dropped here so it can never reach the renderer, which dereferences
+    // loc.displayPath and passes it to safeTerminalText.
+    step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
   }
 }
 

@@ -185,7 +185,7 @@ export function childLocationText(loc) {
         parts.push(`branch: ${safeTerminalText(loc.branch)}`);
     if (loc.notAGitRepo)
         parts.push("no git repo");
-    return parts.join(" \u00b7 ");
+    return parts.join(" \u00b7 ").replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n"));
 }
 export function childLocationLine(loc, theme, indent = "  ") {
     const text = childLocationText(loc);
