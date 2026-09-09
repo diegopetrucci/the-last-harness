@@ -155,6 +155,14 @@ export function buildParallelModeError(message) {
 function resolveParallelTaskCwd(task, paramsCwd) {
     return resolveChildCwd(paramsCwd, task.cwd);
 }
+function cohortPauseHealth(result, liveProgress) {
+    return {
+        activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+        idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+        durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+        compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+    };
+}
 function findDuplicateParallelOutputPath(input) {
     const seen = new Map();
     for (let index = 0; index < input.tasks.length; index++) {
@@ -218,10 +226,7 @@ async function runForegroundParallelTasks(input) {
                     thinking: result?.thinking,
                     modelIdentity: result?.modelIdentity,
                     modelResolution: result?.modelResolution,
-                    activityState: result?.progress?.activityState ?? liveProgress?.activityState,
-                    idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
-                    durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
-                    compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+                    ...cohortPauseHealth(result, liveProgress),
                     contextUsage: result?.contextUsage,
                     contextPressure: result?.contextPressure,
                     contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -239,10 +244,7 @@ async function runForegroundParallelTasks(input) {
                 thinking: result?.thinking,
                 modelIdentity: result?.modelIdentity,
                 modelResolution: result?.modelResolution,
-                activityState: result?.progress?.activityState ?? liveProgress?.activityState,
-                idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
-                durableAttentionReasons: result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
-                compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+                ...cohortPauseHealth(result, liveProgress),
                 contextUsage: result?.contextUsage,
                 contextPressure: result?.contextPressure,
                 contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
