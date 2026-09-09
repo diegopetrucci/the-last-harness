@@ -203,6 +203,44 @@ function explicitAcceptanceCanDisable(explicit) {
         typeof explicit.reason === "string" &&
         explicit.reason.trim().length > 0);
 }
+function validateAcceptanceCriteria(value, pathLabel, errors) {
+    if (value.criteria !== undefined && !Array.isArray(value.criteria))
+        errors.push(`${pathLabel}.criteria must be an array.`);
+    if (Array.isArray(value.criteria)) {
+        for (const [index, criterion] of value.criteria.entries()) {
+            if (typeof criterion === "string")
+                continue;
+            const criterionPath = `${pathLabel}.criteria[${index}]`;
+            if (!criterion || typeof criterion !== "object" || Array.isArray(criterion)) {
+                errors.push(`${criterionPath} must be a string or an object.`);
+                continue;
+            }
+            const gate = criterion;
+            for (const key of Object.keys(gate)) {
+                if (!ACCEPTANCE_GATE_KEYS.has(key))
+                    errors.push(`${criterionPath}.${key} is not supported.`);
+            }
+            if (typeof gate.id !== "string" || !gate.id.trim())
+                errors.push(`${criterionPath}.id is required.`);
+            if (typeof gate.must !== "string" || !gate.must.trim())
+                errors.push(`${criterionPath}.must is required.`);
+            if (gate.evidence !== undefined && !Array.isArray(gate.evidence))
+                errors.push(`${criterionPath}.evidence must be an array.`);
+            if (Array.isArray(gate.evidence)) {
+                for (const [evidenceIndex, item] of gate.evidence.entries()) {
+                    if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {
+                        errors.push(`${criterionPath}.evidence[${evidenceIndex}] is not a supported evidence kind.`);
+                    }
+                }
+            }
+            if (gate.severity !== undefined &&
+                gate.severity !== "required" &&
+                gate.severity !== "recommended") {
+                errors.push(`${criterionPath}.severity must be required or recommended.`);
+            }
+        }
+    }
+}
 function validateAcceptanceReview(reviewInput, pathLabel, errors) {
     if (reviewInput === undefined || reviewInput === false)
         return;
@@ -251,42 +289,7 @@ export function validateAcceptanceInput(input, pathLabel = "acceptance") {
     }
     if (value.reason !== undefined && typeof value.reason !== "string")
         errors.push(`${pathLabel}.reason must be a string.`);
-    if (value.criteria !== undefined && !Array.isArray(value.criteria))
-        errors.push(`${pathLabel}.criteria must be an array.`);
-    if (Array.isArray(value.criteria)) {
-        for (const [index, criterion] of value.criteria.entries()) {
-            if (typeof criterion === "string")
-                continue;
-            const criterionPath = `${pathLabel}.criteria[${index}]`;
-            if (!criterion || typeof criterion !== "object" || Array.isArray(criterion)) {
-                errors.push(`${criterionPath} must be a string or an object.`);
-                continue;
-            }
-            const gate = criterion;
-            for (const key of Object.keys(gate)) {
-                if (!ACCEPTANCE_GATE_KEYS.has(key))
-                    errors.push(`${criterionPath}.${key} is not supported.`);
-            }
-            if (typeof gate.id !== "string" || !gate.id.trim())
-                errors.push(`${criterionPath}.id is required.`);
-            if (typeof gate.must !== "string" || !gate.must.trim())
-                errors.push(`${criterionPath}.must is required.`);
-            if (gate.evidence !== undefined && !Array.isArray(gate.evidence))
-                errors.push(`${criterionPath}.evidence must be an array.`);
-            if (Array.isArray(gate.evidence)) {
-                for (const [evidenceIndex, item] of gate.evidence.entries()) {
-                    if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {
-                        errors.push(`${criterionPath}.evidence[${evidenceIndex}] is not a supported evidence kind.`);
-                    }
-                }
-            }
-            if (gate.severity !== undefined &&
-                gate.severity !== "required" &&
-                gate.severity !== "recommended") {
-                errors.push(`${criterionPath}.severity must be required or recommended.`);
-            }
-        }
-    }
+    validateAcceptanceCriteria(value, pathLabel, errors);
     if (Array.isArray(value.evidence)) {
         for (const [index, item] of value.evidence.entries()) {
             if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {

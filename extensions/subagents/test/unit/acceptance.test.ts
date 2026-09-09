@@ -952,6 +952,42 @@ describe("acceptance gates", () => {
     ]);
   });
 
+  it("preserves exact criteria validation error order before later sections", () => {
+    assert.deepEqual(
+      validateAcceptanceInput(
+        {
+          criteria: [
+            null,
+            {
+              unsupported: true,
+              id: " ",
+              must: "",
+              evidence: ["bogus"],
+              severity: "unexpected",
+            },
+            123,
+          ],
+          evidence: ["bogus"],
+          verify: [{ unsupported: true }],
+        },
+        "custom.acceptance",
+      ),
+      [
+        "custom.acceptance.criteria[0] must be a string or an object.",
+        "custom.acceptance.criteria[1].unsupported is not supported.",
+        "custom.acceptance.criteria[1].id is required.",
+        "custom.acceptance.criteria[1].must is required.",
+        "custom.acceptance.criteria[1].evidence[0] is not a supported evidence kind.",
+        "custom.acceptance.criteria[1].severity must be required or recommended.",
+        "custom.acceptance.criteria[2] must be a string or an object.",
+        "custom.acceptance.evidence[0] is not a supported evidence kind.",
+        "custom.acceptance.verify[0].unsupported is not supported.",
+        "custom.acceptance.verify[0].id is required.",
+        "custom.acceptance.verify[0].command is required.",
+      ],
+    );
+  });
+
   it("validates invalid disable and verify shapes", () => {
     assert.deepEqual(validateAcceptanceInput({ level: "none" }), [
       "acceptance.reason is required when level is none.",
@@ -967,9 +1003,15 @@ describe("acceptance gates", () => {
     );
     assert.deepEqual(validateAcceptanceInput(false), []);
     assert.deepEqual(validateAcceptanceInput("checked"), []);
+    assert.deepEqual(validateAcceptanceInput({ criteria: "ship the fix" }), [
+      "acceptance.criteria must be an array.",
+    ]);
     assert.deepEqual(
       validateAcceptanceInput({
-        criteria: ["ship the fix"],
+        criteria: [
+          "ship the fix",
+          { id: "criterion-2", must: "ship the second fix", evidence: ["changed-files"] },
+        ],
         review: false,
         stopRules: ["stay scoped"],
       }),
