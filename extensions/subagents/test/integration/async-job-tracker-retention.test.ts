@@ -1660,7 +1660,77 @@ describe(
         assert.deepEqual(
           (workerStep as Record<string, unknown>).childLocation,
           childLocation,
-          "childLocation must survive the status-file → { ...step, index } poll projection",
+          "childLocation must survive the status-file \u2192 { ...step, index } poll projection",
+        );
+      } finally {
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
+    it("drops a malformed childLocation from polled status steps without throwing (poll-path boundary guard)", async () => {
+      // Regression for ts-y7q9 item 1: the poll loop spreads status.steps with
+      // { ...step, index } and then normalizes childLocation through
+      // parsePersistedChildLocationSnapshot.  Before the fix, a malformed value
+      // (e.g. childLocation: { childCwd: 42 }) was spread raw into
+      // renderer-facing job state, causing repeated throws on every poll tick.
+      const asyncRoot = createTempDir("pi-async-tracker-child-loc-malformed-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const runDir = path.join(asyncRoot, "run-child-loc-malformed");
+        fs.mkdirSync(runDir, { recursive: true });
+        // Write a status file whose step has a childLocation with the wrong type
+        // for a required field (childCwd is a number, not a string). The
+        // validator must drop the whole snapshot rather than forward a bad shape.
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-child-loc-malformed",
+            mode: "single",
+            state: "running",
+            sessionId: "session-child-loc-malformed",
+            startedAt: 1000,
+            lastUpdate: 2000,
+            steps: [
+              {
+                agent: "worker",
+                status: "running",
+                // Malformed: childCwd must be a string.
+                childLocation: { childCwd: 42, displayPath: "subproject" },
+              },
+            ],
+          }),
+          "utf-8",
+        );
+
+        const state = createState();
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 10 },
+        );
+        tracker.handleStarted({
+          id: "run-child-loc-malformed",
+          asyncDir: runDir,
+          agent: "worker",
+        });
+
+        // Wait for at least one poll cycle to populate job.steps.
+        await waitForCondition(() => {
+          const job = state.asyncJobs.get("run-child-loc-malformed");
+          return !!job?.steps?.length;
+        }, "steps to appear on polled job");
+
+        const job = state.asyncJobs.get("run-child-loc-malformed");
+        assert.ok(job, "expected job to exist after poll");
+        const workerStep = job.steps?.[0];
+        assert.ok(workerStep, "expected worker step");
+        // The malformed childLocation must be dropped (undefined), not forwarded.
+        assert.equal(
+          (workerStep as Record<string, unknown>).childLocation,
+          undefined,
+          "malformed childLocation must be dropped by the poll-path boundary guard",
         );
       } finally {
         tracker?.resetJobs();

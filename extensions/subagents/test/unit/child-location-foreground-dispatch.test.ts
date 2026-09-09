@@ -29,6 +29,7 @@ import type { AgentConfig } from "../../src/agents/agents.ts";
 import type { RunSyncOptions, SingleResult, Details } from "../../src/shared/types.ts";
 import type { SubagentToolResult } from "../../src/shared/types.ts";
 import type { ChildLocationSnapshot } from "../../src/shared/child-location.ts";
+import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 
@@ -587,6 +588,142 @@ describe("child-location pause round-trip (ITEM 2)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ITEM 3 (ts-y7q9) — Queued-task pause result must carry its location snapshot
+//
+// When a parallel run pauses (one task triggers a supervisor pause), subsequent
+// tasks that never started are returned as synthetic "Interrupted before
+// starting queued task." SingleResults. The finalization path writes the final
+// "paused" status from details.results, so any location snapshot attached to
+// those synthetic results must be present — otherwise the persisted paused
+// status overwrites the intermediate checkpoint and the location line
+// disappears.
+// ---------------------------------------------------------------------------
+
+describe("queued-task pause result carries childLocation into final persisted state (ITEM 3)", () => {
+  it("childLocation survives into the FINAL persisted paused status for a queued task in a parallel run", async () => {
+    // Set up two tasks with concurrency=1 so they run sequentially:
+    //   index 0 — same cwd as parent (no childLocation)
+    //   index 1 — different cwd (childLocation must be captured)
+    // Task 0's runSync triggers a supervisor pause. Because concurrency=1,
+    // task 1 is queued and never starts; it returns the synthetic
+    // "Interrupted before starting" result. Without the fix, that synthetic
+    // result lacks childLocation, so the finalization call to
+    // persistPausedForegroundCohortRun(results:) drops it from the persisted
+    // status file.
+    const queuedTaskCwd = path.join(os.tmpdir(), "tlh-unit-test-fg-queued-loc");
+
+    const runSync = async (
+      _runtimeCwd: string,
+      _agents: unknown[],
+      _agentName: string,
+      _task: string,
+      opts: RunSyncOptions,
+    ): Promise<SingleResult> => {
+      const result: SingleResult = {
+        agent: "worker",
+        task: "pause trigger task",
+        exitCode: 0,
+        messages: [],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+        finalOutput: "paused",
+        pause: {
+          kind: "awaiting_supervisor" as const,
+          summary: "Pause requested for test.",
+          requestedAt: Date.now(),
+          pausedAt: Date.now() + 50,
+        },
+      };
+
+      // Fire the supervisor-pause lifecycle so requestCohortPause is invoked,
+      // which sets interrupted=true and prevents task 1 from starting.
+      if (opts.onSupervisorPauseTransition) {
+        opts.onSupervisorPauseTransition({ stage: "pausing", ownerPid: process.pid, result });
+        opts.onSupervisorPauseTransition({ stage: "paused", result });
+      }
+      return result;
+    };
+
+    const state = makeState();
+    const executor = createSubagentExecutor({
+      pi: {
+        events: {
+          emit() {},
+          on() {
+            return () => {};
+          },
+        },
+        getSessionName() {
+          return "parent";
+        },
+      } as any,
+      state,
+      // concurrency: 1 ensures tasks run sequentially so task 1 is queued
+      // when task 0 triggers the supervisor pause.
+      config: { maxSubagentDepth: 2, control: {}, parallel: { concurrency: 1 } } as any,
+      tempArtifactsDir: os.tmpdir(),
+      getSubagentSessionRoot: () => os.tmpdir(),
+      expandTilde: (v: string) => v,
+      discoverAgents: (_cwd: string) => ({
+        agents: [
+          {
+            name: "worker",
+            description: "test agent",
+            systemPrompt: "",
+            systemPromptMode: "replace" as const,
+            inheritProjectContext: false,
+            inheritSkills: false,
+            source: "user" as const,
+            filePath: "",
+          },
+        ],
+      }),
+      runSync: runSync as any,
+    });
+
+    // Run a parallel cohort:
+    //   task 0 — parent cwd (no childLocation)
+    //   task 1 — queuedTaskCwd (childLocation must be captured and survive)
+    // Concurrency=1 (set in config.parallel.concurrency above) ensures task 1
+    // is queued when task 0 triggers the supervisor pause.
+    await executor.execute(
+      "run",
+      {
+        tasks: [
+          { agent: "worker", task: "pause trigger task" },
+          { agent: "worker", task: "queued task", cwd: queuedTaskCwd },
+        ],
+      },
+      new AbortController().signal,
+      undefined,
+      makeCtx(parentCwd),
+    );
+
+    // Find the run ID from state.foregroundRuns.
+    const runEntry = [...state.foregroundRuns.values()][0];
+    const runId = runEntry?.runId;
+    assert.ok(runId, "foregroundRuns must have an entry with a runId after pause");
+
+    // Read the final persisted paused status file.
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const status = readStatus(asyncDir);
+    assert.ok(status, `paused status file must exist at ${asyncDir}`);
+    assert.ok(status.steps && status.steps.length >= 2, "paused status must have at least 2 steps");
+
+    // Step at index 1 corresponds to the queued task (different cwd).
+    const queuedStep = status.steps![1]!;
+    assert.ok(
+      queuedStep.childLocation !== undefined,
+      "childLocation must be present in the final persisted paused step for the queued task",
+    );
+    assert.equal(
+      queuedStep.childLocation!.childCwd,
+      queuedTaskCwd,
+      "persisted childCwd must match the queued task's cwd",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ITEM 2 (ts-1496) — Setup-failure path must preserve childLocation
 //
 // A setup failure (buildPiArgs throwing before any subprocess is spawned) is
@@ -632,6 +769,10 @@ describe("setup-failure result preserves childLocation (ts-1496)", () => {
     // The result must represent a setup failure.
     assert.equal(result.exitCode, 1, "setup failure must produce exitCode 1");
     assert.ok(result.error, "setup failure must carry an error message");
+    assert.ok(
+      result.error.includes(INVALID_LAZY_SKILL_TOOL_POLICY_ERROR),
+      `error must be the invalid lazy-skill/tool-policy error; got: ${result.error}`,
+    );
 
     // The childLocation passed at dispatch time must survive the early-return path.
     assert.ok(
@@ -659,6 +800,11 @@ describe("setup-failure result preserves childLocation (ts-1496)", () => {
     const result = await runSync(os.tmpdir(), [badAgent], "bad-agent", "test task", options);
 
     assert.equal(result.exitCode, 1, "setup failure must produce exitCode 1");
+    assert.ok(result.error, "setup failure must carry an error message");
+    assert.ok(
+      result.error.includes(INVALID_LAZY_SKILL_TOOL_POLICY_ERROR),
+      `error must be the invalid lazy-skill/tool-policy error; got: ${result.error}`,
+    );
     assert.equal(
       result.childLocation,
       undefined,

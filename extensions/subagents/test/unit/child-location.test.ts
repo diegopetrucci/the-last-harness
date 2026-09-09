@@ -305,6 +305,42 @@ describe("captureChildLocationSnapshot", () => {
     assert.ok(result.displayPath.length > 0, "displayPath must be set regardless of git failure");
   });
 
+  it("does NOT set notAGitRepo when parent git lookup reports a process error even if stdout yielded a toplevel (timeout/truncated read)", () => {
+    // spawnSync can return partial stdout on timeout: the toplevel line may
+    // have been written before the process was killed, so parentGit.toplevel
+    // is non-undefined while processError is true.
+    // The old guard required only parentGit.toplevel !== undefined, which
+    // would accept this partial read as positive evidence. The tightened guard
+    // requires !parentGit.processError && exitStatus === 0 as well.
+    const parentToplevelLine = PARENT_CWD + "\n"; // partial stdout, only toplevel was written
+    const responses = new Map([
+      [
+        PARENT_CWD,
+        {
+          stdout: parentToplevelLine,
+          processError: true, // OS-level failure (e.g. timeout); partial stdout retained
+          exitStatus: null,
+          stderr: "",
+        },
+      ],
+      // Child positively has no git repo.
+      [CHILD_NO_GIT, notARepoResponse()],
+    ]);
+    const { runner } = makeGitRunner(responses);
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, CHILD_NO_GIT, runner);
+
+    assert.ok(result !== undefined, "snapshot must still be returned");
+    assert.equal(
+      result.notAGitRepo,
+      undefined,
+      "must NOT set notAGitRepo when parent lookup had a process error, even if toplevel was partially read",
+    );
+    assert.equal(result.branch, undefined);
+    assert.equal(result.repoName, undefined);
+    assert.ok(result.displayPath.length > 0, "displayPath must be set");
+  });
+
   it("treats an unborn repo (partial stdout, nonzero exit) as having a toplevel but no branch", () => {
     // Simulates `git init` with no commits: --show-toplevel and --git-common-dir
     // are emitted but HEAD and --abbrev-ref HEAD fail (no HEAD).
@@ -782,6 +818,170 @@ describe("captureChildLocationSnapshot", () => {
     assert.equal(result.branch, undefined, "branch must not be set");
     assert.equal(result.repoName, undefined, "repoName must not be set (relational field)");
     assert.ok(result.displayPath.length > 0, "displayPath must be set");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item 2 (ts-y7q9): process error with partial stdout must not use the
+// truncated toplevel — render only the cwd, no repoName.
+// ---------------------------------------------------------------------------
+
+describe("captureChildLocationSnapshot — child process error with partial toplevel", () => {
+  it("returns only the cwd when the child runner reports a process error, even if stdout contains a partial toplevel", () => {
+    // A timeout or spawn failure can truncate stdout mid-line, so the
+    // toplevel string in stdout may be incomplete or coincidentally match
+    // a real path. parseGitRevParseOutput will parse it, but the caller
+    // must discard it when processError=true.
+    const responses = new Map([
+      [
+        PARENT_CWD,
+        okResponse({
+          toplevel: PARENT_CWD,
+          commonDir: PARENT_COMMON_DIR,
+          abbrevRef: "main",
+          fullSha: "abc1234000000000000000000000000000000000",
+        }),
+      ],
+      [
+        CHILD_OTHER_REPO,
+        {
+          // Partial stdout that looks like a valid toplevel, produced by a
+          // truncated write before the process was killed.
+          stdout: CHILD_OTHER_REPO + "\n" + OTHER_COMMON_DIR + "\n",
+          processError: true, // OS-level failure (timeout/kill)
+          exitStatus: null,
+          stderr: "",
+        },
+      ],
+    ]);
+    const { runner } = makeGitRunner(responses);
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, CHILD_OTHER_REPO, runner);
+
+    assert.ok(result !== undefined, "snapshot must be returned (cwd is always shown)");
+    // With processError=true the truncated stdout must be discarded.
+    assert.equal(
+      result.repoName,
+      undefined,
+      "repoName must NOT be set when child lookup had a process error",
+    );
+    assert.equal(
+      result.branch,
+      undefined,
+      "branch must NOT be set when child lookup had a process error",
+    );
+    assert.equal(
+      result.notAGitRepo,
+      undefined,
+      "notAGitRepo must NOT be set when child lookup had a process error",
+    );
+    assert.ok(result.displayPath.length > 0, "displayPath must still be set");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item 4a (ts-y7q9): git stdout with an implausible line count (newline in a
+// path) must be treated as indeterminate at the parser level.
+// ---------------------------------------------------------------------------
+
+describe("captureChildLocationSnapshot — implausible git stdout line count", () => {
+  it("returns no git facts when stdout has more than 4 lines (newline in toplevel path)", () => {
+    // Real git emits exactly 4 lines for a full repo (toplevel, common-dir,
+    // SHA, branch).  If a directory name contains a newline the output shifts
+    // to 5+ lines, mis-assigning fields (e.g. SHA as branch).  The parser
+    // must detect this and return no git facts so the renderer shows only the
+    // cwd without confidently wrong metadata.
+    //
+    // This test exercises the real parseGitRevParseOutput logic by providing
+    // a runner that returns exactly what git would emit for such a path.
+    const CHILD_NEWLINE_PATH = path.join(os.tmpdir(), "tlh-test-newline-child");
+    const topLevelWithNewline = CHILD_NEWLINE_PATH + "\ninjected";
+    const responses = new Map([
+      [
+        PARENT_CWD,
+        okResponse({
+          toplevel: PARENT_CWD,
+          commonDir: PARENT_COMMON_DIR,
+          abbrevRef: "main",
+          fullSha: "abc1234000000000000000000000000000000000",
+        }),
+      ],
+      [
+        CHILD_NEWLINE_PATH,
+        {
+          // git would emit topLevelWithNewline as the first "line", which
+          // causes the split to produce 5 lines (the newline inside the path
+          // shifts all subsequent fields).
+          stdout:
+            [
+              topLevelWithNewline,
+              CHILD_NEWLINE_PATH + "/.git",
+              "abc1234000000000000000000000000000000000",
+              "main",
+            ].join("\n") + "\n",
+          processError: false,
+          exitStatus: 0,
+          stderr: "",
+        },
+      ],
+    ]);
+    const { runner } = makeGitRunner(responses);
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, CHILD_NEWLINE_PATH, runner);
+
+    assert.ok(result !== undefined, "snapshot must be returned (cwd is always shown)");
+    // When the line count is implausible all git-derived facts must be absent.
+    assert.equal(
+      result.repoName,
+      undefined,
+      "repoName must be absent when stdout has an implausible line count",
+    );
+    assert.equal(
+      result.branch,
+      undefined,
+      "branch must be absent when stdout has an implausible line count",
+    );
+    assert.equal(
+      result.detachedHead,
+      undefined,
+      "detachedHead must be absent when stdout has an implausible line count",
+    );
+    assert.ok(result.displayPath.length > 0, "displayPath must still be set");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item 4b (ts-y7q9): cwd containing CR or LF must skip git entirely.
+// ---------------------------------------------------------------------------
+
+describe("captureChildLocationSnapshot — cwd contains CR or LF", () => {
+  it("skips git lookup and returns only cwd when the child cwd contains a LF", () => {
+    // A child cwd with an embedded newline would corrupt git's line-oriented
+    // output.  The function must short-circuit before any git invocation.
+    const { runner, state } = makeGitRunner(new Map());
+    // Use a raw string with a LF in it.  The normalizeComparableCwd call uses
+    // path.resolve which preserves the character on Unix.
+    const childWithLf = path.join(os.tmpdir(), "tlh-test-parent") + "\nsubdir";
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, childWithLf, runner);
+
+    // Because the child path contains LF, the function must return immediately
+    // without calling the git runner at all.
+    assert.equal(state.callCount, 0, "git must not be invoked when child cwd contains LF");
+    assert.ok(result !== undefined, "snapshot must be returned");
+    assert.equal(result.repoName, undefined, "repoName must be absent");
+    assert.equal(result.branch, undefined, "branch must be absent");
+  });
+
+  it("skips git lookup and returns only cwd when the child cwd contains a CR", () => {
+    const { runner, state } = makeGitRunner(new Map());
+    const childWithCr = path.join(os.tmpdir(), "tlh-test-parent") + "\rsubdir";
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, childWithCr, runner);
+
+    assert.equal(state.callCount, 0, "git must not be invoked when child cwd contains CR");
+    assert.ok(result !== undefined, "snapshot must be returned");
+    assert.equal(result.repoName, undefined, "repoName must be absent");
   });
 });
 

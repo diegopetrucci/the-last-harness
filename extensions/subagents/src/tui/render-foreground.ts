@@ -13,6 +13,7 @@ import {
   type Component,
 } from "@earendil-works/pi-tui";
 import { type AgentProgress, type Details, type SubagentToolResult } from "../shared/types.ts";
+import { parsePersistedChildLocationSnapshot } from "../shared/child-location.ts";
 import {
   formatDuration,
   formatTokens,
@@ -317,9 +318,17 @@ function isRenderableResult(value: unknown): value is RenderResult {
 
 function indexedRenderableResults(results: unknown): IndexedResultEntry[] {
   if (!Array.isArray(results)) return [];
-  return results.flatMap((result, index) =>
-    isRenderableResult(result) ? [{ index, result }] : [],
-  );
+  return results.flatMap((result, index) => {
+    if (!isRenderableResult(result)) return [];
+    // Normalise childLocation through the same persisted-snapshot parser used
+    // by the status.json path. A malformed value (e.g. { displayPath: {} }) is
+    // dropped — only the field, never the whole result card.
+    const normalized: RenderResult = {
+      ...result,
+      childLocation: parsePersistedChildLocationSnapshot(result.childLocation),
+    };
+    return [{ index, result: normalized }];
+  });
 }
 
 interface MultiProgressLabel {

@@ -1058,4 +1058,36 @@ describe("childLocation boundary validation — render safety", () => {
       "renderer must not throw when childLocation is undefined",
     );
   });
+
+  it("renderSubagentResult with malformed childLocation does not throw and omits location line (regression for PR 623 item 1)", () => {
+    // Build a details.results entry whose childLocation has a non-string
+    // displayPath — the shape that would reach indexedRenderableResults from
+    // a host-persisted and replayed tool result.
+    const malformedResult = JSON.parse(
+      JSON.stringify({
+        agent: "test-agent",
+        task: "do something",
+        exitCode: 0,
+        usage: ZERO_USAGE,
+        childLocation: { childCwd: "/repo", displayPath: {} },
+      }),
+    );
+    const toolResult: SubagentToolResult<Details> = {
+      content: [{ type: "text" as const, text: "done" }],
+      details: { mode: "single", results: [malformedResult] },
+    };
+
+    let component: ReturnType<typeof renderSubagentResult> | undefined;
+    assert.doesNotThrow(() => {
+      component = renderSubagentResult(toolResult, { expanded: false }, theme as any);
+    }, "renderSubagentResult must not throw when childLocation is malformed");
+
+    assert.ok(component !== undefined, "a Component must be returned");
+    const out = component.render(120).join("\n");
+    assert.doesNotMatch(
+      out,
+      /cwd:/,
+      "location line must be omitted when childLocation is malformed",
+    );
+  });
 });

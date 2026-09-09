@@ -568,6 +568,15 @@ async function runForegroundParallelTasks(
           messages: [],
           usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
           finalOutput: "Interrupted before starting queued task.",
+          // Attach the precomputed dispatch-time snapshot so the finalization
+          // path (persistPausedForegroundCohortRun with results:) includes
+          // the child location in the final persisted paused status. Without
+          // this the checkpoint written by writeParallelPauseCheckpoint
+          // (which uses taskLocationSnapshots directly) is overwritten by
+          // the finalization call that rebuilds steps from results.
+          ...(taskLocationSnapshots[index] !== undefined
+            ? { childLocation: taskLocationSnapshots[index] }
+            : {}),
         } as SingleResult;
       }
       const behavior = input.behaviors[index];

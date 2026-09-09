@@ -1,6 +1,7 @@
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, stripTerminalSequences, visibleWidth, } from "@earendil-works/pi-tui";
 import {} from "../shared/types.js";
+import { parsePersistedChildLocationSnapshot } from "../shared/child-location.js";
 import { formatDuration, formatTokens, formatToolCall, formatUsage, shortenPath, } from "../shared/formatters.js";
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.js";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.js";
@@ -208,7 +209,15 @@ function isRenderableResult(value) {
 function indexedRenderableResults(results) {
     if (!Array.isArray(results))
         return [];
-    return results.flatMap((result, index) => isRenderableResult(result) ? [{ index, result }] : []);
+    return results.flatMap((result, index) => {
+        if (!isRenderableResult(result))
+            return [];
+        const normalized = {
+            ...result,
+            childLocation: parsePersistedChildLocationSnapshot(result.childLocation),
+        };
+        return [{ index, result: normalized }];
+    });
 }
 function buildMultiProgressLabel(details, entries, hasRunning) {
     const itemTitle = details.mode === "parallel" ? "Agent" : "Step";

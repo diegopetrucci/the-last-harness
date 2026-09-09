@@ -165,7 +165,20 @@ export type GitRunner = (normalizedCwd: string) => {
 const GIT_TIMEOUT_MS = 500;
 
 function parseGitRevParseOutput(stdout: string): GitInfo {
-  const lines = stdout.split("\n");
+  const rawLines = stdout.split("\n");
+  // Strip at most one trailing empty element produced by the newline git appends
+  // after the last field. Stripping more than one would mask a newline embedded
+  // in a path (which shifts all subsequent field positions).
+  const lines =
+    rawLines.length > 0 && rawLines[rawLines.length - 1] === "" ? rawLines.slice(0, -1) : rawLines;
+  // Implausible line count: normal output is 4 lines (full repo), unborn HEAD
+  // is 2 (toplevel + common-dir), non-repo is 0–1 (error message or empty).
+  // More than 4 lines means a newline appears inside a path, which shifts every
+  // subsequent field — a SHA could be rendered as a branch name, or a truncated
+  // path as a repo name. Treat as indeterminate.
+  if (lines.length > 4) {
+    return { toplevel: undefined, commonDir: undefined, abbrevRef: undefined, shortSha: undefined };
+  }
   // Output order matches argument order:
   //   [0] --show-toplevel
   //   [1] --git-common-dir
@@ -399,6 +412,14 @@ export function captureChildLocationSnapshot(
   const displayPath = buildDisplayPath(normalizedChild, normalizedParent);
   const snapshot: ChildLocationSnapshot = { childCwd, displayPath };
 
+  // If either cwd contains CR or LF, git's line-oriented output would be
+  // unparseable: a newline in --show-toplevel shifts all subsequent field
+  // positions, potentially misassigning a SHA as a branch name. Render only
+  // the cwd and skip all git lookups.
+  if (/[\r\n]/.test(normalizedChild) || /[\r\n]/.test(normalizedParent)) {
+    return snapshot;
+  }
+
   // Invoke the parent accessor now that we know the cwds differ. When an
   // accessor is provided it is memoized, so across a parallel dispatch the
   // parent git process is started at most once (and never when all children
@@ -414,20 +435,26 @@ export function captureChildLocationSnapshot(
   // "not a git repository" message (LC_ALL=C ensures the message is stable).
   // Any other nonzero exit (dubious-ownership refusal, config error, corrupt
   // repo, etc.) is indeterminate: we render only what we actually know.
+  //
+  // Parent gate: require no process error and a defined toplevel (the parent is
+  // in a git repo). exitStatus === 0 is NOT required: an unborn parent repo
+  // emits a valid toplevel with exit 128 + ambiguous-HEAD stderr.
   if (
     childGit.toplevel === undefined &&
     !childGit.processError &&
     childGit.exitStatus === 128 &&
     /not a git repository/i.test(childGit.stderr) &&
+    !parentGit.processError &&
     parentGit.toplevel !== undefined
   ) {
     snapshot.notAGitRepo = true;
     return snapshot;
   }
 
-  // Child git info is indeterminate (process error or no repo with parent also
-  // not in git) — return with only the cwd: display path.
-  if (childGit.toplevel === undefined) {
+  // Child git info is indeterminate: process error (stdout may be truncated
+  // mid-line from a timeout) or no toplevel available. Return with only the
+  // cwd display path.
+  if (childGit.processError || childGit.toplevel === undefined) {
     return snapshot;
   }
 

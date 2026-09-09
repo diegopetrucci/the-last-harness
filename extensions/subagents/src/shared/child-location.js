@@ -40,7 +40,11 @@ export function parsePersistedChildLocationSnapshot(value) {
 }
 const GIT_TIMEOUT_MS = 500;
 function parseGitRevParseOutput(stdout) {
-    const lines = stdout.split("\n");
+    const rawLines = stdout.split("\n");
+    const lines = rawLines.length > 0 && rawLines[rawLines.length - 1] === "" ? rawLines.slice(0, -1) : rawLines;
+    if (lines.length > 4) {
+        return { toplevel: undefined, commonDir: undefined, abbrevRef: undefined, shortSha: undefined };
+    }
     const toplevel = lines[0]?.trim() || undefined;
     const rawCommonDir = lines[1]?.trim() || undefined;
     const fullSha = lines[2]?.trim() || undefined;
@@ -107,6 +111,9 @@ export function captureChildLocationSnapshot(parentCwd, childCwd, gitRunner = pr
         return undefined;
     const displayPath = buildDisplayPath(normalizedChild, normalizedParent);
     const snapshot = { childCwd, displayPath };
+    if (/[\r\n]/.test(normalizedChild) || /[\r\n]/.test(normalizedParent)) {
+        return snapshot;
+    }
     const parentGit = parentFactsAccessor !== undefined
         ? parentFactsAccessor()._rawInfo
         : runGitForCwd(normalizedParent, gitRunner);
@@ -115,11 +122,12 @@ export function captureChildLocationSnapshot(parentCwd, childCwd, gitRunner = pr
         !childGit.processError &&
         childGit.exitStatus === 128 &&
         /not a git repository/i.test(childGit.stderr) &&
+        !parentGit.processError &&
         parentGit.toplevel !== undefined) {
         snapshot.notAGitRepo = true;
         return snapshot;
     }
-    if (childGit.toplevel === undefined) {
+    if (childGit.processError || childGit.toplevel === undefined) {
         return snapshot;
     }
     const parentPositivelyKnown = !parentGit.processError &&
