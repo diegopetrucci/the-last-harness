@@ -112,6 +112,7 @@ import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
   type AcceptanceInput,
+  type AsyncStatus,
   type ControlConfig,
   type Details,
   type ExtensionConfig,
@@ -947,6 +948,12 @@ async function executeSteerAction(
   });
 }
 
+function isPersistedCancellationState(status: AsyncStatus | null | undefined): boolean {
+  return (
+    status?.state === "paused" || status?.state === "continued" || status?.state === "cancelled"
+  );
+}
+
 async function executeInterruptAction(
   params: SubagentParamsLike,
   ctx: ExtensionContext,
@@ -1170,11 +1177,7 @@ async function executeInterruptAction(
     } else {
       const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
       const persistedStatus = readStatus(pausedAsyncDir);
-      if (
-        persistedStatus?.state === "paused" ||
-        persistedStatus?.state === "continued" ||
-        persistedStatus?.state === "cancelled"
-      ) {
+      if (isPersistedCancellationState(persistedStatus)) {
         return cancelPersistedPausedForegroundRun(
           deps.state,
           pausedAsyncDir,
@@ -1218,11 +1221,7 @@ async function executeInterruptAction(
     asyncInterruptTarget.location.asyncDir
   ) {
     const persistedStatus = readStatus(asyncInterruptTarget.location.asyncDir);
-    if (
-      persistedStatus?.state === "paused" ||
-      persistedStatus?.state === "continued" ||
-      persistedStatus?.state === "cancelled"
-    ) {
+    if (isPersistedCancellationState(persistedStatus)) {
       return cancelPersistedPausedForegroundRun(
         deps.state,
         asyncInterruptTarget.location.asyncDir,

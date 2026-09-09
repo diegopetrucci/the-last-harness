@@ -589,6 +589,9 @@ async function executeSteerAction(params, ctx, deps) {
         projectLookup: privateProjectLookup,
     });
 }
+function isPersistedCancellationState(status) {
+    return (status?.state === "paused" || status?.state === "continued" || status?.state === "cancelled");
+}
 async function executeInterruptAction(params, ctx, deps) {
     deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
     const requestedProjectLookup = lookupPrivateProjectActionReference(params);
@@ -783,9 +786,7 @@ async function executeInterruptAction(params, ctx, deps) {
         else {
             const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
             const persistedStatus = readStatus(pausedAsyncDir);
-            if (persistedStatus?.state === "paused" ||
-                persistedStatus?.state === "continued" ||
-                persistedStatus?.state === "cancelled") {
+            if (isPersistedCancellationState(persistedStatus)) {
                 return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, resolved.id, params.index);
             }
         }
@@ -817,9 +818,7 @@ async function executeInterruptAction(params, ctx, deps) {
         targetRunId?.trim() &&
         asyncInterruptTarget.location.asyncDir) {
         const persistedStatus = readStatus(asyncInterruptTarget.location.asyncDir);
-        if (persistedStatus?.state === "paused" ||
-            persistedStatus?.state === "continued" ||
-            persistedStatus?.state === "cancelled") {
+        if (isPersistedCancellationState(persistedStatus)) {
             return cancelPersistedPausedForegroundRun(deps.state, asyncInterruptTarget.location.asyncDir, asyncInterruptTarget.id, params.index);
         }
     }
