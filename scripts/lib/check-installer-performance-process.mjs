@@ -254,12 +254,16 @@ export async function runProcess(command, args, options) {
         void requestStop("SIGTERM");
     }, options.timeoutMs);
     const close = await closePromise;
+    const closedAtMs = performance.now() - startedAt;
     clearTimeout(timeoutHandle);
-    if (!stopPromise && (close.code !== 0 || close.signal !== null)) {
+    if (!stopPromise)
         stopPromise = stopProcessTree(child, "SIGTERM");
+    try {
+        await stopPromise;
     }
-    await stopPromise;
-    unregisterStop?.();
+    finally {
+        unregisterStop?.();
+    }
     return {
         command,
         args: [...args],
@@ -267,7 +271,7 @@ export async function runProcess(command, args, options) {
         signal: close.signal,
         stdout,
         stderr,
-        elapsedMs: performance.now() - startedAt,
+        elapsedMs: closedAtMs,
         timedOut,
         stoppedByCondition,
         error: spawnError,

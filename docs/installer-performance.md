@@ -63,6 +63,8 @@ cold`. The corrected command above removes only that flag.
   a remote installer are setup work and are excluded from measured sample
   timings. Setup provenance and cache conditions must remain visible when
   comparing results.
+- Samples with non-empty failure diagnostics remain visible individually but are
+  excluded from aggregate, phase, and per-scenario timing summaries.
 
 ## Recorded attempts and incidents
 

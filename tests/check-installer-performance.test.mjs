@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import test from "node:test";
@@ -35,6 +36,7 @@ import {
   parseBundledNpmPins,
   parseRemoteRevision,
   printTextResult,
+  prepareSource,
   readInstalledPackageRevision,
   readPiVersion,
   readRemoteRefFile,
@@ -324,6 +326,84 @@ test("package ref resolution uses the remote source independently of support che
   }
 });
 
+test("moving symbolic refs resolve once and remote setup uses the resolved commit", async () => {
+  const workspace = createBenchmarkWorkspace();
+  const cleanup = createCleanupController();
+  const requestedRef = "moving";
+  const resolvedRevision = "6".repeat(40);
+  const laterRevision = "7".repeat(40);
+  let resolutionCalls = 0;
+  const sourceCalls = [];
+  try {
+    const resolved = await resolveRemoteRefRevision(
+      requestedRef,
+      workspace,
+      fixtureEnvironment(),
+      cleanup,
+      async (command, args) => {
+        resolutionCalls += 1;
+        return {
+          command,
+          args: [...args],
+          code: 0,
+          signal: null,
+          stdout: `${resolutionCalls === 1 ? resolvedRevision : laterRevision}\trefs/heads/${requestedRef}\n`,
+          stderr: "",
+          elapsedMs: 0,
+          timedOut: false,
+          stoppedByCondition: false,
+        };
+      },
+    );
+    assert.equal(resolved, resolvedRevision);
+
+    const source = await prepareSource(
+      {
+        mode: "remote",
+        ref: requestedRef,
+        upgradeFrom: undefined,
+        runs: 1,
+        scenarios: "cold",
+        json: false,
+        help: false,
+      },
+      workspace.root,
+      workspace,
+      fixtureEnvironment(),
+      cleanup,
+      resolved,
+      async (command, args, options) => {
+        sourceCalls.push({ command, args: [...args], env: options.env });
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, "#!/usr/bin/env bash\nexit 0\n");
+        return {
+          command,
+          args: [...args],
+          code: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          elapsedMs: 0,
+          timedOut: false,
+          stoppedByCondition: false,
+        };
+      },
+    );
+
+    assert.equal(resolutionCalls, 1);
+    assert.equal(sourceCalls.length, 1);
+    const sourceUrl = sourceCalls[0].args.find((arg) => arg.startsWith("https://"));
+    assert.equal(
+      sourceUrl,
+      `https://raw.githubusercontent.com/diegopetrucci/the-last-harness/${resolvedRevision}/install.sh`,
+    );
+    assert.equal(sourceCalls[0].env.TLH_REF, resolvedRevision);
+    assert.equal(source.supportCodeRevision, resolvedRevision);
+  } finally {
+    cleanupWorkspace(workspace);
+  }
+});
+
 test("checkout all is rejected and pin manifests use only remote ref sources", async () => {
   assert.throws(
     () => parseArgs(["--mode", "checkout", "--scenarios", "all", "--upgrade-from", "previous"]),
@@ -422,6 +502,13 @@ test("summary medians exclude failed samples and JSON envelopes round-trip", () 
       launch: null,
       failureDiagnostics: ["failed"],
     },
+    {
+      scenario: "cold-cache-fresh",
+      run: 4,
+      installer: { success: true, wallMs: 100, phases: { bootstrap: { durationMs: 100 } } },
+      launch: { ready: true, wallMs: 100 },
+      failureDiagnostics: ["installed revision mismatch"],
+    },
   ];
   const summary = summarizeSamples(samples);
   assert.deepEqual(summary.installerWallMs, {
@@ -445,7 +532,22 @@ test("summary medians exclude failed samples and JSON envelopes round-trip", () 
     min: 4,
     max: 10,
   });
-  assert.equal(summary.failedSamples, 1);
+  assert.equal(summary.failedSamples, 2);
+  assert.deepEqual(summary.byScenario["cold-cache-fresh"].installerWallMs, {
+    count: 2,
+    median: 20,
+    mean: 20,
+    min: 10,
+    max: 30,
+  });
+  assert.deepEqual(summary.byScenario["cold-cache-fresh"].firstUsableLaunchMs, {
+    count: 2,
+    median: 30,
+    mean: 30,
+    min: 10,
+    max: 50,
+  });
+  assert.equal(summary.byScenario["cold-cache-fresh"].failures, 2);
 
   const envelope = {
     schemaVersion: 1,
@@ -489,7 +591,7 @@ test("summary medians exclude failed samples and JSON envelopes round-trip", () 
   const text = output.join("\\n");
   assert.match(text, /bootstrap: 7\.0ms median/);
   assert.match(text, /observed installed revision: observed-revision/u);
-  assert.match(text, /failed samples: 1/u);
+  assert.match(text, /failed samples: 2/u);
   assert.doesNotMatch(text, /failures: 3/u);
   assert.match(text, /managed-tools: unavailable median/);
   assert.match(text, /setup provenance: setup provenance/);
@@ -549,6 +651,35 @@ test("probe subprocesses register their process trees with cleanup", async () =>
   }
 });
 
+test("cleanup keeps signal handlers installed until stops and roots finish", async () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-installer-performance-signal-order-test-"));
+  const cleanup = createCleanupController();
+  const baselineListeners = process.listenerCount("SIGTERM");
+  let releaseStop;
+  const stopGate = new Promise((resolvePromise) => {
+    releaseStop = resolvePromise;
+  });
+  cleanup.registerStop(async () => {
+    await stopGate;
+  });
+  cleanup.registerWorkspace(root);
+  cleanup.install();
+  try {
+    const pendingCleanup = cleanup.cleanup();
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal(process.listenerCount("SIGTERM"), baselineListeners + 1);
+    assert.equal(existsSync(root), true);
+    releaseStop();
+    await pendingCleanup;
+    assert.equal(existsSync(root), false);
+    assert.equal(process.listenerCount("SIGTERM"), baselineListeners + 1);
+  } finally {
+    cleanup.uninstall();
+    if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+  }
+  assert.equal(process.listenerCount("SIGTERM"), baselineListeners);
+});
+
 test("cleanup removes owned roots and rejects protected roots", async () => {
   const ownedRoot = mkdtempSync(join(tmpdir(), "tlh-installer-performance-owned-cleanup-test-"));
   const protectedRoot = mkdtempSync(join(tmpdir(), "tlh-protected-cleanup-test-"));
@@ -564,6 +695,66 @@ test("cleanup removes owned roots and rejects protected roots", async () => {
     assert.equal(existsSync(protectedRoot), true);
   } finally {
     if (existsSync(protectedRoot)) rmSync(protectedRoot, { recursive: true, force: true });
+  }
+});
+
+test("cleanup continues owned-root removal after stop and root errors", async () => {
+  const ownedRoot = mkdtempSync(join(tmpdir(), "tlh-installer-performance-owned-error-test-"));
+  const protectedRoot = mkdtempSync(join(tmpdir(), "tlh-protected-cleanup-error-test-"));
+  const cleanup = createCleanupController();
+  cleanup.registerStop(() => {
+    throw new Error("synthetic stop failure");
+  });
+  cleanup.registerWorkspace(protectedRoot);
+  cleanup.registerWorkspace(ownedRoot);
+  try {
+    await assert.rejects(cleanup.cleanup(), /unowned benchmark path/);
+    assert.equal(existsSync(ownedRoot), false);
+    assert.equal(existsSync(protectedRoot), true);
+  } finally {
+    if (existsSync(protectedRoot)) rmSync(protectedRoot, { recursive: true, force: true });
+  }
+});
+
+test("clean child exit reports close time before detached descendant cleanup grace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-installer-performance-clean-exit-test-"));
+  const pidFile = join(root, "descendant.pid");
+  const readyFile = join(root, "descendant.ready");
+  const env = { PATH: process.env.PATH, HOME: root, TMPDIR: root };
+  const fixture = [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(${JSON.stringify(readyFile)}, 'ready'); setTimeout(() => {}, 60000);`)}], { stdio: 'ignore' });`,
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));`,
+    `const waitForReady = setInterval(() => { if (fs.existsSync(${JSON.stringify(readyFile)})) { clearInterval(waitForReady); process.exit(0); } }, 1);`,
+  ].join(" ");
+  try {
+    const baselineStartedAt = performance.now();
+    const baseline = await runProcess(
+      process.execPath,
+      ["-e", "setTimeout(() => process.exit(0), 30)"],
+      { cwd: root, env, timeoutMs: 2000 },
+    );
+    const baselineWallMs = performance.now() - baselineStartedAt;
+    assert.equal(baseline.code, 0);
+
+    const startedAt = performance.now();
+    const result = await runProcess(process.execPath, ["-e", fixture], {
+      cwd: root,
+      env,
+      timeoutMs: 2000,
+    });
+    const wallMs = performance.now() - startedAt;
+    assert.equal(result.code, 0);
+    const descendantCleanupOverheadMs = wallMs - result.elapsedMs;
+    const descendantPid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
+    assert.equal(await waitForProcessGone(descendantPid), true);
+    assert.ok(
+      descendantCleanupOverheadMs > baselineWallMs,
+      `expected descendant cleanup overhead (${descendantCleanupOverheadMs.toFixed(1)}ms) to exceed baseline wall time (${baselineWallMs.toFixed(1)}ms)`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

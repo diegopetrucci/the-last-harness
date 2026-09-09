@@ -895,10 +895,11 @@ function numericSummary(values: number[]): JsonRecord {
 }
 
 function summarizeSamples(samples: SampleResult[]): JsonRecord {
-  const installerValues = samples.flatMap((sample) =>
+  const measuredSamples = samples.filter((sample) => sample.failureDiagnostics.length === 0);
+  const installerValues = measuredSamples.flatMap((sample) =>
     sample.installer?.success ? [sample.installer.wallMs] : [],
   );
-  const launchValues = samples.flatMap((sample) =>
+  const launchValues = measuredSamples.flatMap((sample) =>
     sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : [],
   );
   const phaseSummary: JsonRecord = {};
@@ -910,7 +911,7 @@ function summarizeSamples(samples: SampleResult[]): JsonRecord {
     "managed-tools",
     "wrapper",
   ] as const) {
-    const values = samples.flatMap((sample) => {
+    const values = measuredSamples.flatMap((sample) => {
       if (!sample.installer?.success) return [];
       const value = sample.installer.phases[phase]?.durationMs;
       return typeof value === "number" ? [value] : [];
@@ -920,14 +921,17 @@ function summarizeSamples(samples: SampleResult[]): JsonRecord {
   const byScenario: JsonRecord = {};
   for (const scenario of new Set(samples.map((sample) => sample.scenario))) {
     const scenarioSamples = samples.filter((sample) => sample.scenario === scenario);
+    const measuredScenarioSamples = scenarioSamples.filter(
+      (sample) => sample.failureDiagnostics.length === 0,
+    );
     byScenario[scenario] = {
       installerWallMs: numericSummary(
-        scenarioSamples.flatMap((sample) =>
+        measuredScenarioSamples.flatMap((sample) =>
           sample.installer?.success ? [sample.installer.wallMs] : [],
         ),
       ),
       firstUsableLaunchMs: numericSummary(
-        scenarioSamples.flatMap((sample) =>
+        measuredScenarioSamples.flatMap((sample) =>
           sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : [],
         ),
       ),
@@ -960,12 +964,14 @@ export async function npmVersion(
   return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(value) ? value : null;
 }
 
-async function prepareSource(
+export async function prepareSource(
   options: BenchmarkOptions,
   root: string,
   workspace: BenchmarkWorkspace,
   sourceEnv: NodeJS.ProcessEnv,
   cleanup: CleanupController,
+  selectedRevision: string,
+  runner: ProcessRunner = runProcess,
 ) {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   if (options.mode === "checkout") {
@@ -982,7 +988,7 @@ async function prepareSource(
 
   const installScriptPath = join(root, "remote-install.sh");
   assertOwnedWorkspacePath(root, installScriptPath);
-  const result = await runProcess(
+  const result = await runner(
     "curl",
     [
       "--fail",
@@ -991,13 +997,13 @@ async function prepareSource(
       "--location",
       "--max-time",
       String(DOWNLOAD_TIMEOUT_MS / 1000),
-      rawFileUrl(options.ref, "install.sh"),
+      rawFileUrl(selectedRevision, "install.sh"),
       "-o",
       installScriptPath,
     ],
     {
       cwd: workspace.cwd,
-      env: buildChildEnvironment(workspace, sourceEnv, { ref: options.ref }),
+      env: buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }),
       timeoutMs: DOWNLOAD_TIMEOUT_MS + 5_000,
       registerStop: cleanup.registerStop,
     },
@@ -1009,22 +1015,22 @@ async function prepareSource(
   }
   return {
     installScriptPath,
-    supportCodeRevision: await resolveRemoteRefRevision(options.ref, workspace, sourceEnv, cleanup),
+    supportCodeRevision: selectedRevision,
     supportCodeDirty: null,
   };
 }
 
 async function createWarmCacheSeed(
   sourcePath: string,
-  options: BenchmarkOptions,
   root: string,
   sourceEnv: NodeJS.ProcessEnv,
   cleanup: CleanupController,
+  selectedRevision: string,
 ): Promise<WarmCacheSeed> {
   const workspace = createBenchmarkWorkspace(root);
   const setup = await prepareFullyLaunchedSeed(
     sourcePath,
-    options.ref,
+    selectedRevision,
     workspace,
     sourceEnv,
     cleanup,
@@ -1046,6 +1052,7 @@ async function runScenarioSample(
   cleanup: CleanupController,
   warmCacheSeed: WarmCacheSeed | undefined,
   selectedRevision: string,
+  upgradeRevision: string | null,
 ): Promise<SampleResult> {
   const workspace = createBenchmarkWorkspace(root);
   const selectedRef = options.ref;
@@ -1065,8 +1072,15 @@ async function runScenarioSample(
       setup = warmCacheSeed.setup;
     } else if (scenario === "unchanged-reinstall" || scenario === "changed-pin-upgrade") {
       const seedRef = scenario === "changed-pin-upgrade" ? options.upgradeFrom : selectedRef;
-      if (!seedRef) throw new Error("changed-pin-upgrade requires --upgrade-from");
-      setup = await prepareFullyLaunchedSeed(sourcePath, seedRef, workspace, sourceEnv, cleanup);
+      const seedRevision = scenario === "changed-pin-upgrade" ? upgradeRevision : selectedRevision;
+      if (!seedRef || !seedRevision) throw new Error("changed-pin-upgrade requires --upgrade-from");
+      setup = await prepareFullyLaunchedSeed(
+        sourcePath,
+        seedRevision,
+        workspace,
+        sourceEnv,
+        cleanup,
+      );
       if (!setup.ready) {
         failureDiagnostics.push("fully launched seed was not ready", ...setup.diagnostics);
         return {
@@ -1085,7 +1099,13 @@ async function runScenarioSample(
       }
     }
 
-    const installer = await runInstaller(sourcePath, selectedRef, workspace, sourceEnv, cleanup);
+    const installer = await runInstaller(
+      sourcePath,
+      selectedRevision,
+      workspace,
+      sourceEnv,
+      cleanup,
+    );
     if (!installer.success) {
       failureDiagnostics.push(...installer.diagnostics);
       return {
@@ -1106,7 +1126,7 @@ async function runScenarioSample(
     writeCredentialFreeTrustMetadata(workspace);
     const launch = await measureLaunch(
       workspace,
-      buildChildEnvironment(workspace, sourceEnv, { ref: selectedRef }),
+      buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }),
       cleanup,
     );
     if (!launch.ready) failureDiagnostics.push(...launch.diagnostics);
@@ -1171,7 +1191,7 @@ function benchmarkScope(): JsonRecord {
     setup:
       "seed installs, warm-cache seeding, trust metadata, and outer remote installer downloads are excluded from measured sample timings and reported separately",
     setupProvenance:
-      "checkout mode uses this checkout's current support code for both old-ref seeds and selected-ref installs; remote mode stage-0 canonicalizes support files to each requested ref, including old-ref seeds",
+      "checkout mode uses this checkout's current support code for both old-ref seeds and selected-ref installs; remote mode stage-0 canonicalizes support files to each resolved commit, including old-ref seeds",
     environment:
       "temporary HOME/profile/bin/npm cache/cwd with allowlisted environment, isolated npm/git/XDG configuration, and no inherited credentials",
     network:
@@ -1204,15 +1224,16 @@ async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkResult>
     }
     let pinChange: PinChange | null = null;
     if (options.scenarios === "all" && options.upgradeFrom) {
+      if (!upgradeRevision) throw new Error(`unable to resolve upgrade ref ${options.upgradeFrom}`);
       const beforeText = await readRemoteRefFile(
-        options.upgradeFrom,
+        upgradeRevision,
         "config/default-extensions.json",
         workspace,
         sourceEnv,
         cleanup,
       );
       const afterText = await readRemoteRefFile(
-        options.ref,
+        selectedRevision,
         "config/default-extensions.json",
         workspace,
         sourceEnv,
@@ -1229,7 +1250,14 @@ async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkResult>
       }
     }
 
-    const source = await prepareSource(options, root, workspace, sourceEnv, cleanup);
+    const source = await prepareSource(
+      options,
+      root,
+      workspace,
+      sourceEnv,
+      cleanup,
+      selectedRevision,
+    );
     const npm = await npmVersion(workspace, sourceEnv, cleanup);
     const samples: SampleResult[] = [];
     let warmCacheSeed: WarmCacheSeed | undefined;
@@ -1237,10 +1265,10 @@ async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkResult>
       if (scenario === "warm-cache-fresh" && !warmCacheSeed) {
         warmCacheSeed = await createWarmCacheSeed(
           source.installScriptPath,
-          options,
           root,
           sourceEnv,
           cleanup,
+          selectedRevision,
         );
       }
       for (let runNumber = 1; runNumber <= options.runs; runNumber += 1) {
@@ -1255,6 +1283,7 @@ async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkResult>
             cleanup,
             warmCacheSeed,
             selectedRevision,
+            upgradeRevision,
           ),
         );
       }
@@ -1296,10 +1325,11 @@ async function runBenchmark(options: BenchmarkOptions): Promise<BenchmarkResult>
       failureDiagnostics,
     };
   } finally {
-    cleanup.uninstall();
-    await cleanup.cleanup();
-    if (workspace && existsSync(workspace.root)) removeOwnedWorkspace(workspace.root);
-    if (existsSync(root)) removeOwnedWorkspace(root);
+    try {
+      await cleanup.cleanup();
+    } finally {
+      cleanup.uninstall();
+    }
   }
 }
 
@@ -1382,14 +1412,28 @@ function createCleanupController(): CleanupController {
   const cleanup = async (): Promise<void> => {
     if (!cleanupPromise) {
       cleanupPromise = (async () => {
-        await Promise.allSettled(Array.from(stops, (stop) => stop()));
+        await Promise.allSettled(Array.from(stops, (stop) => Promise.resolve().then(() => stop())));
+        let cleanupFailed = false;
+        let cleanupError: unknown;
         for (const root of roots) {
-          if (existsSync(root)) removeOwnedWorkspace(root);
-          roots.delete(root);
+          try {
+            if (existsSync(root)) removeOwnedWorkspace(root);
+          } catch (error) {
+            if (!cleanupFailed) cleanupError = error;
+            cleanupFailed = true;
+          } finally {
+            roots.delete(root);
+          }
         }
+        if (cleanupFailed) throw cleanupError;
       })();
     }
     return cleanupPromise;
+  };
+
+  const uninstall = (): void => {
+    for (const [signal, handler] of handlers) process.off(signal, handler);
+    handlers.clear();
   };
 
   return {
@@ -1399,25 +1443,22 @@ function createCleanupController(): CleanupController {
         const handler = (): void => {
           if (signalInProgress) return;
           signalInProgress = true;
-          void cleanup().finally(() => {
-            for (const [installedSignal, installedHandler] of handlers) {
-              process.off(installedSignal, installedHandler);
-            }
-            try {
-              process.kill(process.pid, signal);
-            } catch {
-              process.exit(signal === "SIGINT" ? 130 : 143);
-            }
-          });
+          void cleanup()
+            .catch(() => undefined)
+            .finally(() => {
+              uninstall();
+              try {
+                process.kill(process.pid, signal);
+              } catch {
+                process.exit(signal === "SIGINT" ? 130 : 143);
+              }
+            });
         };
         handlers.set(signal, handler);
         process.on(signal, handler);
       }
     },
-    uninstall(): void {
-      for (const [signal, handler] of handlers) process.off(signal, handler);
-      handlers.clear();
-    },
+    uninstall,
     registerStop(stop: CleanupStop): () => void {
       stops.add(stop);
       return () => stops.delete(stop);

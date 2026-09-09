@@ -618,8 +618,9 @@ function numericSummary(values) {
     };
 }
 function summarizeSamples(samples) {
-    const installerValues = samples.flatMap((sample) => sample.installer?.success ? [sample.installer.wallMs] : []);
-    const launchValues = samples.flatMap((sample) => sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : []);
+    const measuredSamples = samples.filter((sample) => sample.failureDiagnostics.length === 0);
+    const installerValues = measuredSamples.flatMap((sample) => sample.installer?.success ? [sample.installer.wallMs] : []);
+    const launchValues = measuredSamples.flatMap((sample) => sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : []);
     const phaseSummary = {};
     for (const phase of [
         "bootstrap",
@@ -629,7 +630,7 @@ function summarizeSamples(samples) {
         "managed-tools",
         "wrapper",
     ]) {
-        const values = samples.flatMap((sample) => {
+        const values = measuredSamples.flatMap((sample) => {
             if (!sample.installer?.success)
                 return [];
             const value = sample.installer.phases[phase]?.durationMs;
@@ -640,9 +641,10 @@ function summarizeSamples(samples) {
     const byScenario = {};
     for (const scenario of new Set(samples.map((sample) => sample.scenario))) {
         const scenarioSamples = samples.filter((sample) => sample.scenario === scenario);
+        const measuredScenarioSamples = scenarioSamples.filter((sample) => sample.failureDiagnostics.length === 0);
         byScenario[scenario] = {
-            installerWallMs: numericSummary(scenarioSamples.flatMap((sample) => sample.installer?.success ? [sample.installer.wallMs] : [])),
-            firstUsableLaunchMs: numericSummary(scenarioSamples.flatMap((sample) => sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : [])),
+            installerWallMs: numericSummary(measuredScenarioSamples.flatMap((sample) => sample.installer?.success ? [sample.installer.wallMs] : [])),
+            firstUsableLaunchMs: numericSummary(measuredScenarioSamples.flatMap((sample) => sample.launch?.ready && sample.launch.wallMs !== null ? [sample.launch.wallMs] : [])),
             failures: scenarioSamples.filter((sample) => sample.failureDiagnostics.length > 0).length,
         };
     }
@@ -666,7 +668,7 @@ export async function npmVersion(workspace, sourceEnv, cleanup, runner = runProc
     const value = result.stdout.trim();
     return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(value) ? value : null;
 }
-async function prepareSource(options, root, workspace, sourceEnv, cleanup) {
+export async function prepareSource(options, root, workspace, sourceEnv, cleanup, selectedRevision, runner = runProcess) {
     const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     if (options.mode === "checkout") {
         const installScriptPath = join(repoRoot, "install.sh");
@@ -681,19 +683,19 @@ async function prepareSource(options, root, workspace, sourceEnv, cleanup) {
     }
     const installScriptPath = join(root, "remote-install.sh");
     assertOwnedWorkspacePath(root, installScriptPath);
-    const result = await runProcess("curl", [
+    const result = await runner("curl", [
         "--fail",
         "--silent",
         "--show-error",
         "--location",
         "--max-time",
         String(DOWNLOAD_TIMEOUT_MS / 1000),
-        rawFileUrl(options.ref, "install.sh"),
+        rawFileUrl(selectedRevision, "install.sh"),
         "-o",
         installScriptPath,
     ], {
         cwd: workspace.cwd,
-        env: buildChildEnvironment(workspace, sourceEnv, { ref: options.ref }),
+        env: buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }),
         timeoutMs: DOWNLOAD_TIMEOUT_MS + 5_000,
         registerStop: cleanup.registerStop,
     });
@@ -702,20 +704,20 @@ async function prepareSource(options, root, workspace, sourceEnv, cleanup) {
     }
     return {
         installScriptPath,
-        supportCodeRevision: await resolveRemoteRefRevision(options.ref, workspace, sourceEnv, cleanup),
+        supportCodeRevision: selectedRevision,
         supportCodeDirty: null,
     };
 }
-async function createWarmCacheSeed(sourcePath, options, root, sourceEnv, cleanup) {
+async function createWarmCacheSeed(sourcePath, root, sourceEnv, cleanup, selectedRevision) {
     const workspace = createBenchmarkWorkspace(root);
-    const setup = await prepareFullyLaunchedSeed(sourcePath, options.ref, workspace, sourceEnv, cleanup);
+    const setup = await prepareFullyLaunchedSeed(sourcePath, selectedRevision, workspace, sourceEnv, cleanup);
     if (!setup.ready) {
         removeOwnedWorkspace(workspace.root);
         throw new Error(`warm-cache seed was not fully launched:\n${setup.diagnostics.join("\n")}`);
     }
     return { workspace, setup: { ...setup, kind: "warm-cache-seed" } };
 }
-async function runScenarioSample(sourcePath, options, scenario, runNumber, root, sourceEnv, cleanup, warmCacheSeed, selectedRevision) {
+async function runScenarioSample(sourcePath, options, scenario, runNumber, root, sourceEnv, cleanup, warmCacheSeed, selectedRevision, upgradeRevision) {
     const workspace = createBenchmarkWorkspace(root);
     const selectedRef = options.ref;
     let setup = {
@@ -736,9 +738,10 @@ async function runScenarioSample(sourcePath, options, scenario, runNumber, root,
         }
         else if (scenario === "unchanged-reinstall" || scenario === "changed-pin-upgrade") {
             const seedRef = scenario === "changed-pin-upgrade" ? options.upgradeFrom : selectedRef;
-            if (!seedRef)
+            const seedRevision = scenario === "changed-pin-upgrade" ? upgradeRevision : selectedRevision;
+            if (!seedRef || !seedRevision)
                 throw new Error("changed-pin-upgrade requires --upgrade-from");
-            setup = await prepareFullyLaunchedSeed(sourcePath, seedRef, workspace, sourceEnv, cleanup);
+            setup = await prepareFullyLaunchedSeed(sourcePath, seedRevision, workspace, sourceEnv, cleanup);
             if (!setup.ready) {
                 failureDiagnostics.push("fully launched seed was not ready", ...setup.diagnostics);
                 return {
@@ -756,7 +759,7 @@ async function runScenarioSample(sourcePath, options, scenario, runNumber, root,
                 };
             }
         }
-        const installer = await runInstaller(sourcePath, selectedRef, workspace, sourceEnv, cleanup);
+        const installer = await runInstaller(sourcePath, selectedRevision, workspace, sourceEnv, cleanup);
         if (!installer.success) {
             failureDiagnostics.push(...installer.diagnostics);
             return {
@@ -774,7 +777,7 @@ async function runScenarioSample(sourcePath, options, scenario, runNumber, root,
             };
         }
         writeCredentialFreeTrustMetadata(workspace);
-        const launch = await measureLaunch(workspace, buildChildEnvironment(workspace, sourceEnv, { ref: selectedRef }), cleanup);
+        const launch = await measureLaunch(workspace, buildChildEnvironment(workspace, sourceEnv, { ref: selectedRevision }), cleanup);
         if (!launch.ready)
             failureDiagnostics.push(...launch.diagnostics);
         const observedInstalledRevision = await readInstalledPackageRevision(workspace, sourceEnv, cleanup);
@@ -824,7 +827,7 @@ function benchmarkScope() {
         phaseComposition: "managed-tools is unavailable because default-level output does not isolate it; wrapper creation is reported separately, while defaults may include unmarked managed-tool work",
         firstUsableLaunch: "PTY launch with no prompt or model request; readiness requires observed TLH header and footer markers",
         setup: "seed installs, warm-cache seeding, trust metadata, and outer remote installer downloads are excluded from measured sample timings and reported separately",
-        setupProvenance: "checkout mode uses this checkout's current support code for both old-ref seeds and selected-ref installs; remote mode stage-0 canonicalizes support files to each requested ref, including old-ref seeds",
+        setupProvenance: "checkout mode uses this checkout's current support code for both old-ref seeds and selected-ref installs; remote mode stage-0 canonicalizes support files to each resolved commit, including old-ref seeds",
         environment: "temporary HOME/profile/bin/npm cache/cwd with allowlisted environment, isolated npm/git/XDG configuration, and no inherited credentials",
         network: "remote mode and package installation require network; no live baseline is run by ordinary validation",
         offline: "PI_OFFLINE is intentionally not set for measured first launch",
@@ -850,23 +853,25 @@ async function runBenchmark(options) {
         }
         let pinChange = null;
         if (options.scenarios === "all" && options.upgradeFrom) {
-            const beforeText = await readRemoteRefFile(options.upgradeFrom, "config/default-extensions.json", workspace, sourceEnv, cleanup);
-            const afterText = await readRemoteRefFile(options.ref, "config/default-extensions.json", workspace, sourceEnv, cleanup);
+            if (!upgradeRevision)
+                throw new Error(`unable to resolve upgrade ref ${options.upgradeFrom}`);
+            const beforeText = await readRemoteRefFile(upgradeRevision, "config/default-extensions.json", workspace, sourceEnv, cleanup);
+            const afterText = await readRemoteRefFile(selectedRevision, "config/default-extensions.json", workspace, sourceEnv, cleanup);
             pinChange = compareBundledNpmPins(parseBundledNpmPins(beforeText), parseBundledNpmPins(afterText));
             if (!pinChange.changed) {
                 throw new Error(`--upgrade-from ${options.upgradeFrom} and --ref ${options.ref} do not change a bundled npm pin`);
             }
         }
-        const source = await prepareSource(options, root, workspace, sourceEnv, cleanup);
+        const source = await prepareSource(options, root, workspace, sourceEnv, cleanup, selectedRevision);
         const npm = await npmVersion(workspace, sourceEnv, cleanup);
         const samples = [];
         let warmCacheSeed;
         for (const scenario of selectedScenarios(options.scenarios)) {
             if (scenario === "warm-cache-fresh" && !warmCacheSeed) {
-                warmCacheSeed = await createWarmCacheSeed(source.installScriptPath, options, root, sourceEnv, cleanup);
+                warmCacheSeed = await createWarmCacheSeed(source.installScriptPath, root, sourceEnv, cleanup, selectedRevision);
             }
             for (let runNumber = 1; runNumber <= options.runs; runNumber += 1) {
-                samples.push(await runScenarioSample(source.installScriptPath, options, scenario, runNumber, root, sourceEnv, cleanup, warmCacheSeed, selectedRevision));
+                samples.push(await runScenarioSample(source.installScriptPath, options, scenario, runNumber, root, sourceEnv, cleanup, warmCacheSeed, selectedRevision, upgradeRevision));
             }
         }
         const firstPiVersion = samples.find((sample) => sample.piVersion)?.piVersion || null;
@@ -905,12 +910,12 @@ async function runBenchmark(options) {
         };
     }
     finally {
-        cleanup.uninstall();
-        await cleanup.cleanup();
-        if (workspace && existsSync(workspace.root))
-            removeOwnedWorkspace(workspace.root);
-        if (existsSync(root))
-            removeOwnedWorkspace(root);
+        try {
+            await cleanup.cleanup();
+        }
+        finally {
+            cleanup.uninstall();
+        }
     }
 }
 function formatMs(value) {
@@ -973,15 +978,33 @@ function createCleanupController() {
     const cleanup = async () => {
         if (!cleanupPromise) {
             cleanupPromise = (async () => {
-                await Promise.allSettled(Array.from(stops, (stop) => stop()));
+                await Promise.allSettled(Array.from(stops, (stop) => Promise.resolve().then(() => stop())));
+                let cleanupFailed = false;
+                let cleanupError;
                 for (const root of roots) {
-                    if (existsSync(root))
-                        removeOwnedWorkspace(root);
-                    roots.delete(root);
+                    try {
+                        if (existsSync(root))
+                            removeOwnedWorkspace(root);
+                    }
+                    catch (error) {
+                        if (!cleanupFailed)
+                            cleanupError = error;
+                        cleanupFailed = true;
+                    }
+                    finally {
+                        roots.delete(root);
+                    }
                 }
+                if (cleanupFailed)
+                    throw cleanupError;
             })();
         }
         return cleanupPromise;
+    };
+    const uninstall = () => {
+        for (const [signal, handler] of handlers)
+            process.off(signal, handler);
+        handlers.clear();
     };
     return {
         install() {
@@ -992,10 +1015,10 @@ function createCleanupController() {
                     if (signalInProgress)
                         return;
                     signalInProgress = true;
-                    void cleanup().finally(() => {
-                        for (const [installedSignal, installedHandler] of handlers) {
-                            process.off(installedSignal, installedHandler);
-                        }
+                    void cleanup()
+                        .catch(() => undefined)
+                        .finally(() => {
+                        uninstall();
                         try {
                             process.kill(process.pid, signal);
                         }
@@ -1008,11 +1031,7 @@ function createCleanupController() {
                 process.on(signal, handler);
             }
         },
-        uninstall() {
-            for (const [signal, handler] of handlers)
-                process.off(signal, handler);
-            handlers.clear();
-        },
+        uninstall,
         registerStop(stop) {
             stops.add(stop);
             return () => stops.delete(stop);
