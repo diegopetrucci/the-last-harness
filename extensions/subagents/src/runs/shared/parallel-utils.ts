@@ -7,6 +7,7 @@ import type {
   TkTicketMetadata,
 } from "../../shared/types.ts";
 import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
+import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
 
 export interface RunnerSubagentStep {
   /** Session id of the direct parent session for permission-system ask forwarding. */
@@ -68,6 +69,13 @@ export interface RunnerSubagentStep {
   activeRuntimeMs?: number;
   /** Timestamp of the latest authoritative runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
+  /**
+   * Dispatch-time snapshot of child location facts. Present only when the
+   * child cwd differs from the parent cwd; absent for same-cwd dispatches.
+   * Captured by the parent process and relayed verbatim; the runner must never
+   * recompute or modify it.
+   */
+  childLocation?: ChildLocationSnapshot;
 }
 
 /**

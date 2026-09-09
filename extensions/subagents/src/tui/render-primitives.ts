@@ -10,6 +10,7 @@ import { formatDuration, formatModelThinking, formatTokens } from "../shared/for
 import { formatActivityLabel } from "../shared/status-format.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
 import { whimsicalThinkingPhrase } from "./whimsical-phrases.ts";
+import type { ChildLocationSnapshot } from "../shared/child-location.ts";
 
 export type Theme = ExtensionContext["ui"]["theme"];
 
@@ -254,4 +255,38 @@ export function modelThinkingBadge(theme: Theme, model?: string, thinking?: stri
     formatModelThinking(model ? safeTerminalText(model) : model, thinking),
   );
   return label ? theme.fg("dim", ` (${label})`) : "";
+}
+
+// ---------------------------------------------------------------------------
+// Child-location line helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the display text for a child-location snapshot.
+ * Parts are joined with " · " in broad-to-narrow order:
+ * cwd → repo (different repo only) → linked worktree → branch / detached HEAD → no git repo.
+ * Returns undefined when the snapshot is absent (same-cwd run, the common case).
+ */
+export function childLocationText(loc: ChildLocationSnapshot | undefined): string | undefined {
+  if (!loc) return undefined;
+  const parts: string[] = [`cwd: ${safeTerminalText(loc.displayPath)}`];
+  if (loc.repoName) parts.push(`repo: ${safeTerminalText(loc.repoName)}`);
+  if (loc.linkedWorktree) parts.push("linked worktree");
+  if (loc.detachedHead) parts.push(`branch: detached@${safeTerminalText(loc.detachedHead)}`);
+  else if (loc.branch) parts.push(`branch: ${safeTerminalText(loc.branch)}`);
+  if (loc.notAGitRepo) parts.push("no git repo");
+  // Prevent an embedded newline in any path component from emitting extra
+  // physical rows and corrupting widget height accounting.  Replace CR and LF
+  // with visible escaped forms here, in the location line only, without
+  // touching the shared safeTerminalText helper used by other callers.
+  return parts.join(" \u00b7 ").replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n"));
+}
+
+export function childLocationLine(
+  loc: ChildLocationSnapshot | undefined,
+  theme: Theme,
+  indent = "  ",
+): string | undefined {
+  const text = childLocationText(loc);
+  return text ? `${indent}${theme.fg("dim", text)}` : undefined;
 }

@@ -13,6 +13,7 @@ import {
   type Component,
 } from "@earendil-works/pi-tui";
 import { type AgentProgress, type Details, type SubagentToolResult } from "../shared/types.ts";
+import { parsePersistedChildLocationSnapshot } from "../shared/child-location.ts";
 import {
   formatDuration,
   formatTokens,
@@ -26,6 +27,7 @@ import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
 import {
   buildLiveStatusLine,
+  childLocationLine,
   compactThinkingPhrase,
   fitCompactToolStatus,
   formatCurrentToolLines,
@@ -316,9 +318,17 @@ function isRenderableResult(value: unknown): value is RenderResult {
 
 function indexedRenderableResults(results: unknown): IndexedResultEntry[] {
   if (!Array.isArray(results)) return [];
-  return results.flatMap((result, index) =>
-    isRenderableResult(result) ? [{ index, result }] : [],
-  );
+  return results.flatMap((result, index) => {
+    if (!isRenderableResult(result)) return [];
+    // Normalise childLocation through the same persisted-snapshot parser used
+    // by the status.json path. A malformed value (e.g. { displayPath: {} }) is
+    // dropped — only the field, never the whole result card.
+    const normalized: RenderResult = {
+      ...result,
+      childLocation: parsePersistedChildLocationSnapshot(result.childLocation),
+    };
+    return [{ index, result: normalized }];
+  });
 }
 
 interface MultiProgressLabel {
@@ -411,6 +421,8 @@ function renderSingleCompact(
   );
   const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
   if (ticketLine) lines.push(ticketLine);
+  const childLocLine = childLocationLine(r.childLocation, theme);
+  if (childLocLine) lines.push(childLocLine);
 
   if (isRunning && r.progress) {
     for (const [activityIndex, activity] of compactProgressActivityLines(
@@ -519,6 +531,8 @@ function renderMultiCompact(
     lines.push(`  ${line}`);
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) lines.push(ticketLine);
+    const childLocLineMulti = childLocationLine(r.childLocation, theme, "    ");
+    if (childLocLineMulti) lines.push(childLocLineMulti);
     if (rRunning && liveProgress) {
       hasRunningResult = true;
       for (const [activityIndex, activity] of compactProgressActivityLines(
@@ -614,6 +628,8 @@ function renderExpandedSingleResult(
   );
   const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
   if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
+  const childLocLineSingle = childLocationLine(r.childLocation, theme);
+  if (childLocLineSingle) c.addChild(new Text(childLocLineSingle, 0, 0));
   c.addChild(new Spacer(1));
   c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
   c.addChild(new Spacer(1));
@@ -877,6 +893,8 @@ function renderExpandedMultiResult(
     c.addChild(new Text(stepHeader, 0, 0));
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
+    const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
+    if (childLocLineExpanded) c.addChild(new Text(childLocLineExpanded, 0, 0));
 
     c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalText(r.task)}`), 0, 0));
 

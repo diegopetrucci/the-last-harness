@@ -8,6 +8,10 @@ import {
 } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
 import {
+  parsePersistedChildLocationSnapshot,
+  type ChildLocationSnapshot,
+} from "../../shared/child-location.ts";
+import {
   type ActivityState,
   type AsyncJobStep,
   type AsyncStatus,
@@ -101,6 +105,12 @@ interface AsyncRunStepSummary {
   timedOut?: boolean;
   children?: NestedRunSummary[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  /**
+   * Dispatch-time snapshot of child location facts. Carried verbatim from the
+   * persisted step so the tracker's restore path exposes it on AsyncJobState
+   * steps before the first poll.
+   */
+  childLocation?: ChildLocationSnapshot;
 }
 
 export interface AsyncRunSummary {
@@ -358,6 +368,11 @@ export function validatePersistedAsyncStatus(
       step.contextPressureCrossedThresholds,
     );
     step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+    // Validate the persisted childLocation object before it crosses the I/O
+    // boundary.  A malformed value (missing displayPath, wrong-typed field) is
+    // dropped here so it can never reach the renderer, which dereferences
+    // loc.displayPath and passes it to safeTerminalText.
+    step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
   }
 }
 
@@ -436,6 +451,7 @@ function statusToSummary(
       ...(step.error ? { error: step.error } : {}),
       ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
       ...(step.children?.length ? { children: step.children } : {}),
+      ...(step.childLocation ? { childLocation: step.childLocation } : {}),
     };
   });
   attachRootChildrenToSteps(

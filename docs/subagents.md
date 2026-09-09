@@ -286,6 +286,28 @@ Child stdout is a bounded newline-delimited protocol. Only validated event and m
 
 Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
 
+### Child location line
+
+The TLH footer always reflects the **parent** session's working directory and branch. When a child runs in the same directory as the parent, that footer is sufficient. When it does not — for example, a developer dispatched to a different worktree or an entirely separate repository — the footer alone cannot distinguish the two. To fill that gap, a child location line is captured once, at dispatch time, whenever the child's working directory differs from the parent session's working directory. Same-directory dispatches capture nothing and perform no git work.
+
+The line renders as one dim line per child in the subagent widget (both single and parallel step lines) and in the foreground compact and expanded displays; the live-detail view uses the same expanded render path. It appears in every lifecycle state, including terminal ones, because it is parent-supplied dispatch metadata rather than child-reported telemetry. No git subprocess ever runs in a render or refresh path; the snapshot is taken once and stored, so display updates are free.
+
+Rendered forms, from simplest to most detailed:
+
+```
+cwd: some/path
+cwd: some/path · branch: feature-x
+cwd: some/path · branch: detached@abc1234
+cwd: some/path · repo: other-repo
+cwd: some/path · repo: other-repo · branch: main
+cwd: some/path · linked worktree · branch: feature-x
+cwd: some/path · no git repo
+```
+
+Parts are ordered broad to narrow: the working directory first, then the repository name when the child is in a different repository from the parent, then a linked-worktree marker, then branch or detached HEAD, then a no-git-repo marker when the directory is not inside any git repository. Parts that match the parent are omitted, which is why a child working in the same repository but on a different branch shows only `branch:`, not `repo:`.
+
+**Known limitation:** the snapshot is written to the status step when a step starts. A queued run, or a task still waiting behind a concurrency limit, shows no location line until the step actually begins.
+
 ## Prompt-cache heartbeat
 
 When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.

@@ -29,6 +29,7 @@ import {
   type AsyncStatusQuarantineOptions,
 } from "./async-status-quarantine.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
 import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   lookupProjectAgentRunReference,
@@ -545,7 +546,15 @@ export function createAsyncJobTracker(
               cancelProjectReferenceCleanup(job.asyncId);
             }
             if (status.steps?.length) {
-              const visibleSteps = status.steps.map((step, index) => ({ ...step, index }));
+              const visibleSteps = status.steps.map((step, index) => ({
+                ...step,
+                index,
+                // Normalize childLocation through the shared validator so a
+                // malformed value read from status.json never reaches the
+                // renderer.  A bad shape is dropped (→ undefined) rather than
+                // propagated, matching the existing async-status.ts boundary.
+                childLocation: parsePersistedChildLocationSnapshot(step.childLocation),
+              }));
               job.agents = visibleSteps.map((step) => step.agent);
               job.steps = visibleSteps;
               refreshNestedProjection();

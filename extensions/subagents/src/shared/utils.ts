@@ -59,6 +59,15 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Normalize a cwd for stable comparison across call sites.
+ * On Windows paths are lowercased so drive-letter case differences are ignored.
+ */
+export function normalizeComparableCwd(cwd: string): string {
+  const resolved = path.resolve(cwd);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 export function resolveChildCwd(baseCwd: string, childCwd: string | undefined): string {
   if (!childCwd) return baseCwd;
   return path.isAbsolute(childCwd) ? childCwd : path.resolve(baseCwd, childCwd);

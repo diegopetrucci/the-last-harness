@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -228,5 +229,101 @@ describe("async runner execution", () => {
     assert.deepEqual(result, {
       error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
     });
+  });
+});
+
+describe("async runner plan child-location persistence", () => {
+  // Use a stable parent cwd that is unlikely to be a git repo or inside the
+  // project; tmpdir works because the tests never shell out to git (no
+  // production git calls happen inside the plan-build path, which is
+  // synchronous and calls spawnSync internally via captureChildLocationSnapshot).
+  // We DO need a real directory for resolveChildCwd to resolve against, but
+  // the git runner is the production one — so in practice captureChildLocationSnapshot
+  // returns a snapshot with at least childCwd + displayPath set regardless of
+  // whether git succeeds, which is sufficient for these assertions.
+  const parentCwd = os.tmpdir();
+  const stepSubdir = path.join(os.tmpdir(), "tlh-unit-test-step-subdir");
+  const stepCtx = makeAsyncCtx(parentCwd, { currentSessionId: "session-cl-1" });
+
+  it("attaches childLocation to a parallel step whose cwd differs from the parent cwd", () => {
+    const result = buildAsyncRunnerPlan("run-cl-parallel-diff", {
+      tasks: [{ agent: "worker", task: "work in subdir", cwd: stepSubdir }],
+      agents: [agent("worker")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx: stepCtx,
+      maxSubagentDepth: 2,
+    });
+
+    assert.ok("plan" in result, "expected successful plan build");
+    if ("error" in result) return;
+    const step = result.plan.tasks[0] as RunnerSubagentStep;
+    assert.ok(
+      step.childLocation !== undefined,
+      "childLocation must be present when step cwd differs from parent cwd",
+    );
+    assert.equal(
+      step.childLocation?.childCwd,
+      stepSubdir,
+      "childLocation.childCwd must equal the step cwd",
+    );
+  });
+
+  it("omits childLocation from a parallel step whose cwd matches the parent cwd", () => {
+    const result = buildAsyncRunnerPlan("run-cl-parallel-same", {
+      tasks: [{ agent: "worker", task: "work in parent cwd" }],
+      agents: [agent("worker")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx: stepCtx,
+      maxSubagentDepth: 2,
+    });
+
+    assert.ok("plan" in result, "expected successful plan build");
+    if ("error" in result) return;
+    const step = result.plan.tasks[0] as RunnerSubagentStep;
+    assert.equal(
+      step.childLocation,
+      undefined,
+      "childLocation must be absent when step cwd equals parent cwd",
+    );
+  });
+
+  it("attaches distinct childLocation snapshots to steps with different cwds in one plan", () => {
+    const stepSubdir2 = path.join(os.tmpdir(), "tlh-unit-test-step-subdir-2");
+    const result = buildAsyncRunnerPlan("run-cl-parallel-multi", {
+      tasks: [
+        { agent: "worker", task: "work in subdir 1", cwd: stepSubdir },
+        { agent: "worker2", task: "same as parent" },
+        { agent: "worker3", task: "work in subdir 2", cwd: stepSubdir2 },
+      ],
+      agents: [agent("worker"), agent("worker2"), agent("worker3")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx: stepCtx,
+      maxSubagentDepth: 2,
+    });
+
+    assert.ok("plan" in result, "expected successful plan build");
+    if ("error" in result) return;
+    const steps = result.plan.tasks as RunnerSubagentStep[];
+    assert.ok(
+      steps[0]?.childLocation !== undefined,
+      "step 0 has a different cwd: childLocation must be present",
+    );
+    assert.equal(
+      steps[1]?.childLocation,
+      undefined,
+      "step 1 has the same cwd as parent: childLocation must be absent",
+    );
+    assert.ok(
+      steps[2]?.childLocation !== undefined,
+      "step 2 has a different cwd: childLocation must be present",
+    );
+    // The two snapshots must refer to their respective child cwds.
+    assert.equal(steps[0]?.childLocation?.childCwd, stepSubdir);
+    assert.equal(steps[2]?.childLocation?.childCwd, stepSubdir2);
+    assert.notEqual(
+      steps[0]?.childLocation?.childCwd,
+      steps[2]?.childLocation?.childCwd,
+      "distinct step cwds must yield distinct snapshots",
+    );
   });
 });

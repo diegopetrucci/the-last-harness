@@ -10,6 +10,7 @@ import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../sh
 import { scanAsyncRunsForRestore } from "./async-status.js";
 import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
@@ -464,7 +465,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             cancelProjectReferenceCleanup(job.asyncId);
                         }
                         if (status.steps?.length) {
-                            const visibleSteps = status.steps.map((step, index) => ({ ...step, index }));
+                            const visibleSteps = status.steps.map((step, index) => ({
+                                ...step,
+                                index,
+                                childLocation: parsePersistedChildLocationSnapshot(step.childLocation),
+                            }));
                             job.agents = visibleSteps.map((step) => step.agent);
                             job.steps = visibleSteps;
                             refreshNestedProjection();

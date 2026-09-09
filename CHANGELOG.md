@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Main-ref installs now persist the installed commit subject and display `TLH main • <commit subject>` in the footer, with the bullet-and-subject suffix dimmed; legacy main state without metadata remains `TLH main`.
+- When a child subagent runs in a different working directory from the parent session, a dim location line now appears in the subagent widget and foreground displays, showing the child's path and any relevant repo, worktree, or branch information. Parts that match the parent are omitted. The snapshot is taken once at dispatch and never polled, so no git work happens during rendering.
 
 ### Changed
 

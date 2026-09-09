@@ -100,6 +100,11 @@ import {
   resolveTkTicketTaskContext,
 } from "../shared/tk-ticket.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
+import {
+  captureChildLocationSnapshot,
+  makeParentGitFactsAccessor,
+  type ChildLocationSnapshot,
+} from "../../shared/child-location.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -524,6 +529,12 @@ export function buildAsyncRunnerPlan(
     }
   }
 
+  // Create a lazy memoizing accessor for parent git facts. The accessor is
+  // only invoked when a child cwd actually differs from the parent, so in the
+  // common case (all tasks share the parent cwd) zero git work is done. When
+  // multiple tasks do differ, the parent lookup runs exactly once.
+  const asyncParentFacts = makeParentGitFactsAccessor(ctx.cwd);
+
   let progressInstructionCreated = false;
   const buildStepOverrides = (task: AsyncParallelTaskParams): StepOverrides => ({
     ...(task.output !== undefined ? { output: task.output } : {}),
@@ -537,6 +548,7 @@ export function buildAsyncRunnerPlan(
     sessionFile?: string,
     progressPrecreated = false,
     resolvedBehavior?: ResolvedStepBehavior,
+    precomputedChildLocation?: ChildLocationSnapshot,
   ): RunnerSubagentStep => {
     const agent = agents.find((candidate) => candidate.name === taskSpec.agent)!;
     const toolBudgetInput = taskSpec.toolBudget ?? params.toolBudget ?? agent.toolBudget;
@@ -546,6 +558,12 @@ export function buildAsyncRunnerPlan(
     );
     if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
     const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+    // Prefer the pre-computed snapshot (parent git invoked once per dispatch);
+    // fall back to a fresh capture when called outside the tasks.map loop.
+    const childLocation =
+      precomputedChildLocation !== undefined
+        ? precomputedChildLocation
+        : captureChildLocationSnapshot(ctx.cwd, stepCwd, undefined, asyncParentFacts);
     const behavior = suppressProgressForReadOnlyTask(
       resolvedBehavior ?? resolveStepBehavior(agent, buildStepOverrides(taskSpec)),
       taskSpec.task,
@@ -710,6 +728,7 @@ export function buildAsyncRunnerPlan(
       // every new task so the runner can enforce it even when the run-level
       // ceiling is disabled or longer than this agent's allowance.
       ...(agent.maxExecutionTimeMs !== undefined ? { timeoutMs: agent.maxExecutionTimeMs } : {}),
+      ...(childLocation ? { childLocation } : {}),
     };
   };
 
@@ -726,12 +745,25 @@ export function buildAsyncRunnerPlan(
     progressInstructionCreated = true;
   }
 
+  // Precompute all child location snapshots in one pass. The shared accessor
+  // ensures the parent git lookup runs at most once across all tasks.
+  const asyncTaskSnapshots = tasks.map((taskSpec) => {
+    const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+    return captureChildLocationSnapshot(ctx.cwd, stepCwd, undefined, asyncParentFacts);
+  });
+
   let flatStepIndex = 0;
   let builtTasks: RunnerSubagentStep[];
   try {
     builtTasks = tasks.map((task, index) => {
       const sessionFile = sessionFilesByFlatIndex?.[flatStepIndex++];
-      return buildTask(task, sessionFile, progressPrecreated, progressBehaviors[index]);
+      return buildTask(
+        task,
+        sessionFile,
+        progressPrecreated,
+        progressBehaviors[index],
+        asyncTaskSnapshots[index],
+      );
     });
   } catch (error) {
     if (
@@ -984,6 +1016,8 @@ interface AsyncSingleRunnerPlanInputs {
   outputPath?: string;
   outputMode: "inline" | "file-only";
   runDeadlineAt?: number;
+  /** Dispatch-time child-location snapshot; absent when cwd matches parent. */
+  childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }
 
 interface AsyncSingleRunnerPlanBuildResult {
@@ -1034,6 +1068,7 @@ function buildAsyncSingleRunnerPlan(
     outputPath,
     outputMode,
     runDeadlineAt,
+    childLocation,
   } = inputs;
   const thinkingSuffixOptions = {
     availableModels,
@@ -1225,6 +1260,7 @@ function buildAsyncSingleRunnerPlan(
         ...(resolvedActiveRuntimeCheckpointAt !== undefined
           ? { activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt }
           : {}),
+        ...(childLocation ? { childLocation } : {}),
       },
     }),
     effectiveTimeoutMs,
@@ -1259,6 +1295,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
   if (acceptanceErrors.length > 0)
     return formatAsyncStartError("single", acceptanceErrors.join(" "));
   const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+  const childLocation = captureChildLocationSnapshot(ctx.cwd, runnerCwd);
   const skillNames = params.skills ?? agentConfig.skills ?? [];
   const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
     skillNames,
@@ -1321,6 +1358,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     outputPath,
     outputMode,
     runDeadlineAt,
+    ...(childLocation ? { childLocation } : {}),
   });
   if ("error" in launchPlan) return formatAsyncStartError("single", launchPlan.error);
   const tkTicket = detectTkTicketId(task)

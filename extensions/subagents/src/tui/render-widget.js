@@ -8,7 +8,7 @@ import { countNestedRuns } from "../runs/shared/nested-render.js";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.js";
 import { safeTerminalText } from "../shared/display-text.js";
-import { buildLiveStatusLine, compactThinkingPhrase, isHealthActivityState, fitInlineActivity, fitInlineThinkingActivity, fitCompactToolStatus, formatCurrentToolLines, formatTokenStat, formatToolUseStat, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, runningGlyph, runningSeed, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
+import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, isHealthActivityState, fitInlineActivity, fitInlineThinkingActivity, fitCompactToolStatus, formatCurrentToolLines, formatTokenStat, formatToolUseStat, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, runningGlyph, runningSeed, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
 const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function widgetRenderKey(job) {
@@ -339,6 +339,9 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
         else {
             lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
         }
+        const parallelChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+        if (parallelChildLocLine)
+            lines.push(parallelChildLocLine);
         for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
             lines.push(`    ${nestedLine}`);
     }
@@ -582,6 +585,9 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     const activityLines = resolvedDisplayStatus === displayStep.status
         ? widgetStepActivityLines(displayStep, width - visibleWidth(WIDGET_ACTIVITY_PREFIX), width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt)
         : [];
+    const childLocLine = childLocationLine(step.childLocation, theme, "    ");
+    if (childLocLine)
+        lines.push(childLocLine);
     for (const [activityIndex, activity] of activityLines.entries()) {
         const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
         lines.push(theme.fg("dim", `${prefix}${activity}`));
@@ -797,6 +803,9 @@ function compactSingleWidgetLines(job, theme, width) {
         else {
             lines.push(`${rowPrefix}${activitySuffix}`);
         }
+        const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+        if (compactChildLocLine)
+            lines.push(compactChildLocLine);
         for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
             lines.push(`    ${nestedLine}`);
     }
@@ -806,7 +815,7 @@ function compactSingleWidgetLines(job, theme, width) {
 }
 const RESERVED_NON_WIDGET_ROWS = 19;
 let widgetLayoutSession;
-function resetWidgetLayoutSession() {
+export function resetWidgetLayoutSession() {
     widgetLayoutSession = undefined;
 }
 function estimateAvailableWidgetRows() {
@@ -1134,7 +1143,7 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
 function liveDetailExpanded(controller) {
     return controller?.isExpanded() ?? false;
 }
-function buildWidgetComponent(jobs, controller) {
+export function buildWidgetComponent(jobs, controller) {
     return (_tui, theme) => {
         const width = getTermWidth();
         const expanded = liveDetailExpanded(controller);
@@ -1173,9 +1182,11 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
             continue;
         }
         const stats = widgetSummaryStats(job, theme, expanded);
+        const jobLocLine = job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
         items.push([
             `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
             ...widgetTkTicketLines(job, theme),
+            ...(jobLocLine ? [jobLocLine] : []),
             ...widgetActivityDetailLines(job, theme, expanded),
             ...widgetParallelAgentDetails(job, theme, expanded, width),
         ]);
@@ -1192,9 +1203,11 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
             continue;
         }
         const stats = widgetSummaryStats(job, theme, expanded);
+        const jobLocLine = job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
         items.push([
             `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
             ...widgetTkTicketLines(job, theme),
+            ...(jobLocLine ? [jobLocLine] : []),
             ...widgetActivityDetailLines(job, theme, expanded),
             ...widgetParallelAgentDetails(job, theme, expanded, width),
         ]);
