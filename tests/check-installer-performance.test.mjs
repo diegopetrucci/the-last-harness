@@ -720,13 +720,21 @@ test("clean child exit reports close time before detached descendant cleanup gra
   const root = mkdtempSync(join(tmpdir(), "tlh-installer-performance-clean-exit-test-"));
   const pidFile = join(root, "descendant.pid");
   const readyFile = join(root, "descendant.ready");
-  const env = { PATH: process.env.PATH, HOME: root, TMPDIR: root };
+  const env = {
+    PATH: process.env.PATH,
+    HOME: root,
+    TMPDIR: root,
+    TLH_TEST_DESCENDANT_PID_FILE: pidFile,
+    TLH_TEST_DESCENDANT_READY_FILE: readyFile,
+  };
   const fixture = [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
-    `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(`const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(${JSON.stringify(readyFile)}, 'ready'); setTimeout(() => {}, 60000);`)}], { stdio: 'ignore' });`,
-    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));`,
-    `const waitForReady = setInterval(() => { if (fs.existsSync(${JSON.stringify(readyFile)})) { clearInterval(waitForReady); process.exit(0); } }, 1);`,
+    "const pidFile = process.env.TLH_TEST_DESCENDANT_PID_FILE;",
+    "const readyFile = process.env.TLH_TEST_DESCENDANT_READY_FILE;",
+    "const descendant = spawn(process.execPath, ['-e', \"const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync(process.env.TLH_TEST_DESCENDANT_READY_FILE, 'ready'); setTimeout(() => {}, 60000);\"], { stdio: 'ignore', env: process.env });",
+    "fs.writeFileSync(pidFile, String(descendant.pid));",
+    "const waitForReady = setInterval(() => { if (fs.existsSync(readyFile)) { clearInterval(waitForReady); process.exit(0); } }, 1);",
   ].join(" ");
   try {
     const baselineStartedAt = performance.now();
@@ -761,12 +769,17 @@ test("clean child exit reports close time before detached descendant cleanup gra
 test("failed and timed-out synthetic process trees are terminated", async () => {
   const root = mkdtempSync(join(tmpdir(), "tlh-installer-performance-process-test-"));
   const pidFile = join(root, "child.pid");
-  const env = { PATH: process.env.PATH, HOME: root, TMPDIR: root };
+  const env = {
+    PATH: process.env.PATH,
+    HOME: root,
+    TMPDIR: root,
+    TLH_TEST_CHILD_PID_FILE: pidFile,
+  };
   const fixture = [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
     "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);",
-    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+    "fs.writeFileSync(process.env.TLH_TEST_CHILD_PID_FILE, String(child.pid));",
     "setTimeout(() => process.exit(7), 30);",
   ].join(" ");
   try {
