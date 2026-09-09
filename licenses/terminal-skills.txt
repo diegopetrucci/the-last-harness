@@ -6,8 +6,8 @@ notices that accompany them.
 
 Herdr skill
 -----------
-Source: https://github.com/herdrdev/herdr/tree/346411fa21afd297f5ed3b3fa56f9e3fbf7654b7/skills/herdr
-Pinned commit: 346411fa21afd297f5ed3b3fa56f9e3fbf7654b7 (herdr v0.8.0)
+Source: https://github.com/herdrdev/herdr/tree/b99002ac99b09e00b4ca692436cb15a6b0d676f1/skills/herdr
+Pinned commit: b99002ac99b09e00b4ca692436cb15a6b0d676f1 (herdr v0.9.0)
 Bundled files: skills/herdr/SKILL.md
 License: Apache-2.0
 Copyright notice: The upstream Herdr LICENSE at this pinned commit does not

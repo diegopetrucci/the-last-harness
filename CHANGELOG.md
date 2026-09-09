@@ -12,6 +12,8 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. OpenAI Codex and OpenRouter defaults are unchanged.
+- Refreshed bundled default-extension pins: `pi-fast` 0.1.0 to 0.1.2, `pi-inline-bash` 0.1.9 to 0.1.11, `pi-context-inspector` 0.1.11 to 0.1.13, `pi-quiet-tools` 0.1.10 to 0.1.12, `pi-dirty-repo-guard` 0.1.9 to 0.1.11, and `pi-transcribe` commit `e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1` to `f673cad478885c81fdaa5c7977eb4d291fd87816`. Contributor tooling also moves `@oxlint/plugins` and `oxlint` from 1.78.0 to 1.82.0, `@types/node` from 26.2.0 to 26.5.0, and `oxfmt` from 0.63.0 to 0.67.0.
+- Refreshed the bundled Herdr skill from v0.8.0 (commit `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7`) to v0.9.0 (commit `b99002ac99b09e00b4ca692436cb15a6b0d676f1`).
 
 ### Fixed
 
