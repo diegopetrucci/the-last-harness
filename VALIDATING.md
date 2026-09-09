@@ -100,6 +100,20 @@ This runs ShellCheck over every `*.sh` file tracked by git. It is also included 
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
 
+## Installer performance baseline
+
+The opt-in installer benchmark and its recorded baseline are documented in
+[docs/installer-performance.md](docs/installer-performance.md). Use the package
+script as the preferred invocation, passing checker options after `--`:
+
+```sh
+npm run check:installer-performance -- --mode remote --ref v0.40.0 --upgrade-from v0.39.0 --runs 3 --scenarios all
+npm run check:installer-performance -- --mode checkout --ref v0.40.0 --runs 1 --scenarios cold
+```
+
+It performs real network/package-manager work only in benchmark-owned temporary
+paths and is not part of `npm run validate` or ordinary CI.
+
 ## Release-tier manual validation
 
 Run this checker during release preparation, not as part of routine local validation:

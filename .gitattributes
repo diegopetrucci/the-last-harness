@@ -1,5 +1,10 @@
 # Generated runtime outputs compiled from TypeScript sources.
 # Hand-written .mjs/.js runtime files are intentionally absent from this list.
+# The installer benchmark is a contributor-only TypeScript runtime output.
+scripts/check-installer-performance.mjs linguist-generated=true
+scripts/lib/check-installer-performance-process.mjs linguist-generated=true
+scripts/lib/check-installer-performance-workspace.mjs linguist-generated=true
+scripts/lib/tlh-startup-readiness.mjs linguist-generated=true
 scripts/lib/default-extensions.mjs linguist-generated=true
 scripts/lib/session-analysis.mjs linguist-generated=true
 scripts/lib/tlh-install-git.mjs linguist-generated=true

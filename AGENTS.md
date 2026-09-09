@@ -7,7 +7,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 ## Project Structure
 
 - Installer entrypoints: `install.sh` performs install/update bootstrap work and creates the `tlh` wrapper; `uninstall.sh` removes the isolated profile and managed wrapper artifacts.
-- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, ticket helpers, and legacy-profile cleanup support; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, `scripts/check-startup-performance.mjs`, and `scripts/check-lazy-import-boundaries.mjs` are contributor-facing validation checks.
+- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, ticket helpers, and legacy-profile cleanup support; `scripts/lib/` holds shared installer modules and contributor-check helpers; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, `scripts/check-installer-performance.mjs`, `scripts/check-startup-performance.mjs`, and `scripts/check-lazy-import-boundaries.mjs` are contributor-facing validation checks.
 - Packaged profile defaults: `config/` contains installer-owned settings, keybindings, librarian defaults, bundled extension manifests, and appended system prompt text for the isolated profile.
 - Packaged resources: `extensions/`, `prompts/`, `skills/`, and `themes/` are published package resources. First-party subagent orchestration lives under `extensions/subagents/`; its `.ts` files are authoritative and same-layout `.js` files are generated, while imported tests stay in the repository/CI and are excluded from publication. `skills/` contains the pinned Herdr, cmux-cli, and tmux runtime closures; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded, and the consolidated terminal-skill notice lives in `licenses/terminal-skills.txt`.
 - Agent definitions: `agents/primary/` and `agents/subagents/` hold packaged primary-agent and subagent prompt specs used by tlh.
@@ -16,7 +16,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Contributor-local tooling: `.pi/` stores repo-local prompts and skills for contributors, `.gnosis/entries.jsonl` stores repo-local Gnosis memory, and `.symphony/setup` contains local dependency setup automation.
 - Repository illustrations: `assets/` stores documentation and workflow illustrations used in the repository and is not shipped in the npm package.
 - Contributor docs: `README.md` covers install/update/uninstall and security, `CONTRIBUTING.md` explains contribution workflow, `VALIDATING.md` and `npm run validate` define the standard validation pass, `CHANGELOG.md` tracks releases, and `VISION.md` captures product direction.
-- Extended docs: `docs/` contains install, integration, MCP, telemetry, local-development, release, workflow-eval, and web-search reference material. `docs/subagents.md` documents the first-party runtime; `docs/subagents-history/` preserves its provenance, including an immutable archive whose directories must never be used as a task working directory.
+- Extended docs: `docs/` contains install, integration, MCP, telemetry, local-development, release, workflow-eval, and web-search reference material. `docs/installer-performance.md` documents the contributor-only installer benchmark; `docs/subagents.md` documents the first-party runtime; `docs/subagents-history/` preserves its provenance, including an immutable archive whose directories must never be used as a task working directory.
 - Package/tooling manifests: `package.json`, `package-lock.json`, `.oxfmtrc.json`, `tsconfig.json`, and `tsconfig.runtime-scripts.json` define the Node package, Oxlint/Oxfmt linting and formatting, and TypeScript settings used by contributors and validation.
 
 ## Safety Requirements
@@ -37,6 +37,8 @@ Run this before considering changes ready:
 ```sh
 npm run validate
 ```
+
+- Running `npm ci` in this repository is always allowed.
 
 Useful targeted checks:
 
