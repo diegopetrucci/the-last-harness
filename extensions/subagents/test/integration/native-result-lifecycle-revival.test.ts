@@ -987,6 +987,205 @@ describe(
       }
     });
 
+    it("resume action preserves independent same-segment pressure diagnostics", async () => {
+      const contextUsage = { contextTokens: 400, contextWindow: 1_000 };
+      const contextPressure = {
+        severity: "warning" as const,
+        crossedThreshold: "warning" as const,
+        contextTokens: 850,
+        contextWindow: 1_000,
+        contextPercent: 85,
+        remainingTokens: 150,
+        warnedAt: 123,
+      };
+      const contextPressureCrossedThresholds = ["warning", "critical"] as const;
+      const cases = [
+        { label: "pressure-only", contextPressure },
+        { label: "history-only", contextPressureCrossedThresholds },
+        { label: "both", contextPressure, contextPressureCrossedThresholds },
+        { label: "neither" },
+      ] as const;
+
+      // Public target normalization drops present-but-undefined diagnostic fields before this
+      // seam; there is no public hook that can distinguish that case, so it is not fabricated.
+      for (const currentCase of cases) {
+        const runId = `resume-pressure-${currentCase.label}-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const { executor, state } = makeExecutor();
+        let revivedId: string | undefined;
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          cwd: tempDir,
+          updatedAt: 1,
+          children: [
+            {
+              agent: "worker",
+              index: 0,
+              status: "completed",
+              sessionFile,
+              contextUsage,
+              ...("contextPressure" in currentCase
+                ? { contextPressure: currentCase.contextPressure }
+                : {}),
+              ...("contextPressureCrossedThresholds" in currentCase
+                ? { contextPressureCrossedThresholds: currentCase.contextPressureCrossedThresholds }
+                : {}),
+            },
+          ],
+        });
+        mockPi.onCall({ output: `revived ${currentCase.label}` });
+        try {
+          const result = await executor.execute(
+            `resume-pressure-${currentCase.label}`,
+            { action: "resume", id: runId, message: "Continue the diagnostic check." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+          revivedId = await waitForRevivedAsyncResult(result);
+          const status = readAsyncStatusJson<{
+            steps?: Array<{
+              contextUsage?: { contextTokens?: number; contextWindow?: number };
+              contextPressure?: typeof contextPressure;
+              contextPressureCrossedThresholds?: string[];
+            }>;
+          }>(revivedId);
+          const step = status.steps?.[0];
+          const expectedPressure =
+            "contextPressure" in currentCase ? currentCase.contextPressure : undefined;
+          const expectedHistory =
+            "contextPressureCrossedThresholds" in currentCase
+              ? currentCase.contextPressureCrossedThresholds
+              : undefined;
+          assert.equal(
+            Object.hasOwn(step ?? {}, "contextPressure"),
+            expectedPressure !== undefined,
+          );
+          assert.equal(
+            Object.hasOwn(step ?? {}, "contextPressureCrossedThresholds"),
+            expectedHistory !== undefined,
+          );
+          assert.deepEqual(step?.contextPressure, expectedPressure);
+          assert.deepEqual(step?.contextPressureCrossedThresholds, expectedHistory);
+          assert.equal(Object.hasOwn(step ?? {}, "contextUsage"), true);
+        } finally {
+          if (revivedId) {
+            fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+            fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
+          }
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          fs.rmSync(sessionFile, { force: true });
+        }
+      }
+    });
+
+    it("resume action clears both pressure diagnostics for a claimed paused continuation", async () => {
+      const runId = `resume-pressure-claimed-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      const contextUsage = { contextTokens: 400, contextWindow: 1_000 };
+      const contextPressure = {
+        severity: "warning" as const,
+        crossedThreshold: "warning" as const,
+        contextTokens: 850,
+        contextWindow: 1_000,
+        contextPercent: 85,
+        remainingTokens: 150,
+        warnedAt: 123,
+      };
+      const contextPressureCrossedThresholds = ["warning", "critical"] as const;
+      let revivedId: string | undefined;
+      try {
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        fs.writeFileSync(
+          path.join(asyncDir, "status.json"),
+          JSON.stringify(
+            {
+              runId,
+              mode: "single",
+              state: "paused",
+              startedAt: 100,
+              lastUpdate: 200,
+              cwd: tempDir,
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              steps: [
+                {
+                  agent: "worker",
+                  status: "paused",
+                  sessionFile,
+                  pause: { kind: "awaiting_supervisor" },
+                  contextUsage,
+                  contextPressure,
+                  contextPressureCrossedThresholds,
+                },
+              ],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        const { executor, state } = makeExecutor();
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          cwd: tempDir,
+          updatedAt: 1,
+          children: [
+            {
+              agent: "worker",
+              index: 0,
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              contextUsage,
+              contextPressure,
+              contextPressureCrossedThresholds,
+            },
+          ],
+        });
+        mockPi.onCall({ output: "revived claimed continuation" });
+
+        const result = await executor.execute(
+          "resume-pressure-claimed",
+          { action: "resume", id: runId, message: "Continue the claimed diagnostic check." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+        revivedId = await waitForRevivedAsyncResult(result);
+        const status = readAsyncStatusJson<{
+          steps?: Array<{
+            contextUsage?: { contextTokens?: number; contextWindow?: number };
+            contextPressure?: unknown;
+            contextPressureCrossedThresholds?: unknown;
+          }>;
+        }>(revivedId);
+        const step = status.steps?.[0];
+        assert.equal(Object.hasOwn(step ?? {}, "contextPressure"), false);
+        assert.equal(Object.hasOwn(step ?? {}, "contextPressureCrossedThresholds"), false);
+        assert.equal(step?.contextPressure, undefined);
+        assert.equal(step?.contextPressureCrossedThresholds, undefined);
+        assert.equal(Object.hasOwn(step ?? {}, "contextUsage"), true);
+      } finally {
+        if (revivedId) {
+          fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+          fs.rmSync(path.join(RESULTS_DIR, `${revivedId}.json`), { force: true });
+        }
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(sessionFile, { force: true });
+      }
+    });
+
     it("resume of a completed foreground child tolerates missing lifecycle status without mutation", async () => {
       mockPi.onCall({ output: "revived from remembered foreground state" });
       const runId = `resume-foreground-missing-status-${Date.now()}`;

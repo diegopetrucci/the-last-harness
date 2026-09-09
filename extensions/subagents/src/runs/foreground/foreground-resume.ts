@@ -247,6 +247,23 @@ type PausedContinuationClaim = {
   markSpawned: () => void;
 };
 
+function revivedPressureOptions(
+  target: ResumeSourceTarget,
+  claimedPause: PausedContinuationClaim | undefined,
+): Pick<
+  Parameters<typeof executeAsyncSingle>[1],
+  "contextPressure" | "contextPressureCrossedThresholds"
+> {
+  return {
+    ...(target.kind === "revive" && !claimedPause && "contextPressure" in target
+      ? { contextPressure: target.contextPressure }
+      : {}),
+    ...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
+      ? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
+      : {}),
+  };
+}
+
 type ContinuationClaimDecision = PausedContinuationClaim | { blockedMessage: string } | undefined;
 
 function claimPausedAwaitingSupervisorTarget(
@@ -1175,12 +1192,7 @@ export async function resumeAsyncRun(input: {
       // A same-segment revival restores the latest display projection and the
       // machine deduplication history independently. A claimed pause creates a
       // new continuation segment and intentionally starts with neither.
-      ...(target.kind === "revive" && !claimedPause && "contextPressure" in target
-        ? { contextPressure: target.contextPressure }
-        : {}),
-      ...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
-        ? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
-        : {}),
+      ...revivedPressureOptions(target, claimedPause),
       agentConfig,
       projectAgent: persistedProjectAuthorization?.capture,
       ctx: {
