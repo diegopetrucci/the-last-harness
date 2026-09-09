@@ -132,6 +132,16 @@ function resolveResumeTarget(params, state, options = {}) {
         throw asyncError;
     throw new Error("Run not found. Provide id.");
 }
+function revivedPressureOptions(target, claimedPause) {
+    return {
+        ...(target.kind === "revive" && !claimedPause && "contextPressure" in target
+            ? { contextPressure: target.contextPressure }
+            : {}),
+        ...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
+            ? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
+            : {}),
+    };
+}
 function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow) {
     if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir)
         return undefined;
@@ -887,12 +897,7 @@ export async function resumeAsyncRun(input) {
             ...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
                 ? { contextUsage: target.contextUsage }
                 : {}),
-            ...(target.kind === "revive" && !claimedPause && "contextPressure" in target
-                ? { contextPressure: target.contextPressure }
-                : {}),
-            ...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
-                ? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
-                : {}),
+            ...revivedPressureOptions(target, claimedPause),
             agentConfig,
             projectAgent: persistedProjectAuthorization?.capture,
             ctx: {

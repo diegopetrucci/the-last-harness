@@ -27,6 +27,37 @@ import { hasUsableSessionArtifact, mergeContextUsageDiagnostics, resolveEffectiv
 import { CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE, applyHealthProgressProjection, clearHealthForProgress, evaluateSingleAcceptance, finalizeForegroundArtifacts, finalizeSingleAttempt, formatTimeoutMessage, prepareForegroundRunFinalization, resolveResultSessionFile, setupForegroundArtifacts, snapshotProgress, snapshotResult, transitionHealthForProgress, } from "./execution-finalization.js";
 import { createHealthTransitionState, resetHealthTransitionState, } from "../shared/health-transition.js";
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE = "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
+function settleForegroundAcceptance(result, acceptance, options, interruptedAcceptance, healthState) {
+    result.acceptance = acceptance;
+    if (!result.protocolOutputLimit &&
+        !result.timedOut &&
+        !result.interrupted &&
+        options.interruptSignal?.aborted) {
+        result.interrupted = true;
+        result.exitCode = 0;
+        result.error = undefined;
+        result.finalOutput = "Interrupted. Waiting for explicit next action.";
+        result.acceptance = interruptedAcceptance;
+        if (result.progress) {
+            clearHealthForProgress(healthState, result.progress);
+            result.progress.error = undefined;
+        }
+    }
+    const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
+    if (acceptanceFailure &&
+        result.acceptance.explicit &&
+        result.exitCode === 0 &&
+        !result.interrupted &&
+        !result.timedOut &&
+        !result.protocolOutputLimit) {
+        result.exitCode = 1;
+        result.error = composeAcceptanceFailureError(result.error, acceptanceFailure);
+        if (result.progress) {
+            result.progress.status = "failed";
+            result.progress.error = result.error;
+        }
+    }
+}
 function emptyUsage() {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
@@ -1320,35 +1351,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         runtimeCwd,
     });
     const { interruptedAcceptance, acceptance } = acceptanceEvaluation;
-    result.acceptance = acceptance instanceof Promise ? await acceptance : acceptance;
-    if (!result.protocolOutputLimit &&
-        !result.timedOut &&
-        !result.interrupted &&
-        options.interruptSignal?.aborted) {
-        result.interrupted = true;
-        result.exitCode = 0;
-        result.error = undefined;
-        result.finalOutput = "Interrupted. Waiting for explicit next action.";
-        result.acceptance = interruptedAcceptance;
-        if (result.progress) {
-            clearHealthForProgress(healthState, result.progress);
-            result.progress.error = undefined;
-        }
-    }
-    const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
-    if (acceptanceFailure &&
-        result.acceptance.explicit &&
-        result.exitCode === 0 &&
-        !result.interrupted &&
-        !result.timedOut &&
-        !result.protocolOutputLimit) {
-        result.exitCode = 1;
-        result.error = composeAcceptanceFailureError(result.error, acceptanceFailure);
-        if (result.progress) {
-            result.progress.status = "failed";
-            result.progress.error = result.error;
-        }
-    }
+    const evaluatedAcceptance = acceptance instanceof Promise ? await acceptance : acceptance;
+    settleForegroundAcceptance(result, evaluatedAcceptance, options, interruptedAcceptance, healthState);
     finalizeForegroundArtifacts({
         result,
         options,

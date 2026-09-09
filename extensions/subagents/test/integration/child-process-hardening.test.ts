@@ -50,6 +50,11 @@ interface ForegroundExecutionModule {
     interrupted?: boolean;
     progress: { status: string };
     transcriptPath?: string;
+    artifactPaths?: { outputPath: string; metadataPath: string };
+    acceptance?: {
+      status?: string;
+      runtimeChecks?: Array<{ id?: string; status?: string }>;
+    };
   }>;
 }
 
@@ -284,6 +289,7 @@ describe(
       { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
       async () => {
         const oversizedLine = `FG_PROTOCOL_BEGIN_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}_FG_PROTOCOL_END`;
+        const artifactsDir = path.join(tempDir, "foreground-protocol-artifacts");
         mockPi.onCall({
           rawStdout: oversizedLine,
           keepAliveAfterFinalMessageMs: 60_000,
@@ -297,6 +303,9 @@ describe(
             "Trigger overflow",
             {
               runId: "foreground-protocol-overflow",
+              artifactsDir,
+              artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+              acceptance: { level: "checked", criteria: ["The overflow is reported"] },
             },
           ),
           10_000,
@@ -308,6 +317,18 @@ describe(
         assert.equal(result.progress.status, "failed");
         assert.match(result.error ?? "", /protocol_output_limit/);
         assert.match(result.finalOutput ?? "", /protocol_output_limit/);
+        assert.equal(result.acceptance?.status, "rejected");
+        assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "attestation");
+        assert.ok(result.artifactPaths, "expected protocol overflow artifacts");
+        assert.equal(
+          fs.readFileSync(result.artifactPaths.outputPath, "utf-8"),
+          `${result.error}\n\nOutput:\n${result.finalOutput}`,
+        );
+        const metadata = JSON.parse(
+          fs.readFileSync(result.artifactPaths.metadataPath, "utf-8"),
+        ) as { exitCode?: number; terminationReason?: string };
+        assert.equal(metadata.exitCode, result.exitCode);
+        assert.equal(metadata.terminationReason, result.terminationReason);
         const pid = startedMockPiPids(mockPi)[0];
         assert.ok(pid);
         const signals = fs.readFileSync(path.join(mockPi.dir, `signals-${pid}.jsonl`), "utf8");
@@ -321,27 +342,53 @@ describe(
       { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
       async () => {
         const oversizedLine = `TIMEOUT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
+        const releaseMarker = path.join(tempDir, "foreground-timeout-release");
+        const artifactsDir = path.join(tempDir, "foreground-timeout-artifacts");
+        let resolveTimeout!: () => void;
+        const timeoutObserved = new Promise<void>((resolve) => {
+          resolveTimeout = resolve;
+        });
         mockPi.onCall({
-          delay: 100,
+          waitForMarker: releaseMarker,
           rawStdout: oversizedLine,
           keepAliveAfterFinalMessageMs: 10_000,
           ignoreSigint: true,
           ignoreSigterm: true,
         });
-        const result = await within(
-          execution!.runSync(tempDir, [makeAgent("worker")], "worker", "Timeout first", {
+        const resultPromise = execution!.runSync(
+          tempDir,
+          [makeAgent("worker")],
+          "worker",
+          "Timeout first",
+          {
             runId: "foreground-timeout-before-overflow",
             timeoutMs: 50,
-          }),
-          10_000,
-          "foreground timeout precedence run",
+            artifactsDir,
+            artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+            acceptance: { level: "checked", criteria: ["The timeout remains authoritative"] },
+            onUpdate: (update: { details?: { results?: Array<{ timedOut?: boolean }> } }) => {
+              if (update.details?.results?.[0]?.timedOut) resolveTimeout();
+            },
+          },
         );
+        await within(timeoutObserved, 10_000, "foreground timeout observation");
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const result = await within(resultPromise, 10_000, "foreground timeout precedence run");
 
         assert.equal(result.exitCode, 1);
         assert.equal(result.timedOut, true);
         assert.equal(result.terminationReason, "timed_out");
         assert.equal(result.protocolOutputLimit, undefined);
+        assert.equal(result.acceptance?.status, "rejected");
+        assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "timeout");
         assert.match(result.error ?? "", /timed out/i);
+        assert.ok(result.artifactPaths, "expected timeout precedence artifacts");
+        assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), result.finalOutput);
+        const metadata = JSON.parse(
+          fs.readFileSync(result.artifactPaths.metadataPath, "utf-8"),
+        ) as { exitCode?: number; terminationReason?: string };
+        assert.equal(metadata.exitCode, result.exitCode);
+        assert.equal(metadata.terminationReason, result.terminationReason);
       },
     );
 

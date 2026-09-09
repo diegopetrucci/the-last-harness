@@ -32,6 +32,7 @@ interface RunSyncResult {
   progress: {
     status: string;
     activityState?: string;
+    error?: string;
   };
   pause?: {
     kind?: string;
@@ -44,6 +45,7 @@ interface RunSyncResult {
     };
   };
   artifactPaths?: {
+    outputPath: string;
     metadataPath: string;
   };
   acceptance?: {
@@ -94,6 +96,54 @@ const createSubagentExecutor = executorMod?.createSubagentExecutor;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function shellQuote(value: string): string {
+  if (process.platform === "win32") return `"${value.replaceAll('"', '\\"')}"`;
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function waitForMarker(markerPath: string, timeoutMs = 10_000): Promise<void> {
+  if (fs.existsSync(markerPath)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let watcher: fs.FSWatcher | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      watcher?.close();
+    };
+    const complete = () => {
+      if (!fs.existsSync(markerPath)) return;
+      cleanup();
+      resolve();
+    };
+    watcher = fs.watch(path.dirname(markerPath), complete);
+    watcher.on("error", (error) => {
+      cleanup();
+      reject(error);
+    });
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for marker: ${markerPath}`));
+    }, timeoutMs);
+    complete();
+  });
+}
+
+async function waitForPidExit(pid: number, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for verifier pid ${pid} to exit`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 describe(
@@ -169,45 +219,135 @@ describe(
       mockPi.onCall({ jsonl: [events.assistantMessage(report)] });
       const agents = makeAgentConfigs(["slow"]);
       const controller = new AbortController();
-      setTimeout(() => controller.abort(), 200);
-      const startedAt = Date.now();
-
+      const verificationStartedMarker = path.join(tempDir, "acceptance-verification-started");
+      const verificationPidMarker = path.join(tempDir, "acceptance-verification-pid");
+      const verificationCleanupMarker = path.join(tempDir, "acceptance-verification-cleaned");
+      const verificationScriptPath = path.join(tempDir, "acceptance-verification-child.cjs");
+      fs.writeFileSync(
+        verificationScriptPath,
+        [
+          "const fs = require('node:fs');",
+          "const pidPath = process.env.VERIFICATION_PID;",
+          "const startedPath = process.env.VERIFICATION_STARTED;",
+          "const cleanupPath = process.env.VERIFICATION_CLEANED;",
+          "let cleanupMarked = false;",
+          "const markCleanup = () => {",
+          "  if (cleanupMarked) return;",
+          "  cleanupMarked = true;",
+          "  fs.writeFileSync(cleanupPath, String(process.pid));",
+          "};",
+          "process.once('SIGTERM', () => { markCleanup(); process.exit(0); });",
+          "process.once('exit', markCleanup);",
+          "fs.writeFileSync(pidPath, String(process.pid));",
+          "fs.writeFileSync(startedPath, 'started');",
+          "setTimeout(() => process.exit(0), 5000);",
+        ].join("\n"),
+        "utf-8",
+      );
+      const verificationCommand = [
+        ...(process.platform === "win32" ? [] : ["exec"]),
+        shellQuote(process.execPath),
+        shellQuote(verificationScriptPath),
+      ].join(" ");
       const acceptanceArtifactsDir = path.join(tempDir, "artifacts-acceptance-interrupt");
-      const result = await runSync(tempDir, agents, "slow", "Slow task", {
+      let verificationPid: number | undefined;
+      const reapVerification = async (): Promise<void> => {
+        if (verificationPid === undefined) return;
+        try {
+          process.kill(verificationPid, "SIGTERM");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+        await waitForPidExit(verificationPid);
+      };
+      const resultPromise = runSync(tempDir, agents, "slow", "Slow task", {
         runId: "acceptance-interrupt-metadata",
         artifactsDir: acceptanceArtifactsDir,
-        artifactConfig: { enabled: true, includeMetadata: true },
+        artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
         interruptSignal: controller.signal,
         acceptance: {
           level: "verified",
           verify: [
             {
               id: "slow",
-              command: `${process.execPath} -e "setTimeout(()=>process.exit(0), 5000)"`,
+              command: verificationCommand,
+              env: {
+                VERIFICATION_STARTED: verificationStartedMarker,
+                VERIFICATION_PID: verificationPidMarker,
+                VERIFICATION_CLEANED: verificationCleanupMarker,
+              },
               timeoutMs: 10_000,
             },
           ],
         },
       });
+      const resultSettlement = resultPromise.then(
+        (result) => ({ status: "fulfilled" as const, result }),
+        (error: unknown) => ({ status: "rejected" as const, error }),
+      );
 
-      assert.ok(Date.now() - startedAt < 3_000, "interrupt should abort verification promptly");
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.interrupted, true);
-      assert.equal(result.error, undefined);
-      assert.equal(result.acceptance?.status, "skipped");
-      assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "paused");
-      assert.equal(result.acceptance?.verifyRuns?.[0]?.status, undefined);
-      assert.match(result.finalOutput ?? "", /Interrupted/);
-      assert.ok(result.artifactPaths?.metadataPath);
-      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
-        exitCode?: number;
-        terminationReason?: string;
-      };
-      // Acceptance interruption happens after the initial child finalization; the
-      // metadata must agree with the final returned result, not the pre-acceptance snapshot.
-      assert.equal(metadata.exitCode, result.exitCode);
-      assert.equal(metadata.terminationReason, result.terminationReason);
-      assert.equal(result.terminationReason, "interrupted");
+      try {
+        await waitForMarker(verificationStartedMarker);
+        await waitForMarker(verificationPidMarker);
+        verificationPid = Number(fs.readFileSync(verificationPidMarker, "utf-8"));
+        assert.ok(Number.isInteger(verificationPid) && verificationPid > 0);
+        controller.abort();
+        const settledResult = await resultSettlement;
+        if (settledResult.status === "rejected") throw settledResult.error;
+        const result = settledResult.result;
+
+        await reapVerification();
+        await waitForMarker(verificationCleanupMarker);
+        assert.equal(fs.readFileSync(verificationCleanupMarker, "utf-8"), String(verificationPid));
+        assert.throws(
+          () => process.kill(verificationPid!, 0),
+          (error: unknown) => {
+            return (error as NodeJS.ErrnoException).code === "ESRCH";
+          },
+        );
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.interrupted, true);
+        assert.equal(result.error, undefined);
+        assert.equal(result.progress.status, "completed");
+        assert.equal(result.progress.error, undefined);
+        assert.equal(result.progress.activityState, undefined);
+        assert.equal(result.acceptance?.status, "skipped");
+        assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "paused");
+        assert.equal(result.acceptance?.verifyRuns?.[0]?.status, undefined);
+        assert.equal(result.finalOutput, "Interrupted. Waiting for explicit next action.");
+        assert.ok(result.artifactPaths?.outputPath);
+        const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+        assert.equal(
+          artifactText,
+          [
+            "done",
+            "",
+            "---",
+            "Validation evidence (from acceptance report):",
+            "",
+            "  [passed] npm test — passed",
+            "---",
+          ].join("\n"),
+        );
+        assert.ok(result.artifactPaths?.metadataPath);
+        const metadata = JSON.parse(
+          fs.readFileSync(result.artifactPaths.metadataPath, "utf-8"),
+        ) as {
+          exitCode?: number;
+          error?: string;
+          terminationReason?: string;
+        };
+        // Acceptance interruption happens after the initial child finalization; the
+        // metadata must agree with the final returned result, not the pre-acceptance snapshot.
+        assert.equal(metadata.exitCode, result.exitCode);
+        assert.equal(metadata.error, result.error);
+        assert.equal(metadata.terminationReason, result.terminationReason);
+        assert.equal(result.terminationReason, "interrupted");
+      } finally {
+        controller.abort();
+        await resultSettlement;
+        await reapVerification().catch(() => undefined);
+      }
     });
 
     it("soft-interrupts the current turn and returns a paused result", async () => {

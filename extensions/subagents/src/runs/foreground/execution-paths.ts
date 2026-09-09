@@ -390,6 +390,22 @@ function resolveParallelTaskCwd(task: TaskParam, paramsCwd: string): string {
   return resolveChildCwd(paramsCwd, task.cwd);
 }
 
+function cohortPauseHealth(
+  result: SingleResult | undefined,
+  liveProgress: AgentProgress | undefined,
+): Pick<
+  AgentProgress,
+  "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+> {
+  return {
+    activityState: result?.progress?.activityState ?? liveProgress?.activityState,
+    idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
+    durableAttentionReasons:
+      result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
+    compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+  };
+}
+
 function findDuplicateParallelOutputPath(input: {
   tasks: TaskParam[];
   behaviors: ResolvedStepBehavior[];
@@ -484,11 +500,7 @@ async function runForegroundParallelTasks(
           thinking: result?.thinking,
           modelIdentity: result?.modelIdentity,
           modelResolution: result?.modelResolution,
-          activityState: result?.progress?.activityState ?? liveProgress?.activityState,
-          idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
-          durableAttentionReasons:
-            result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
-          compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+          ...cohortPauseHealth(result, liveProgress),
           contextUsage: result?.contextUsage,
           contextPressure: result?.contextPressure,
           contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
@@ -508,11 +520,7 @@ async function runForegroundParallelTasks(
         thinking: result?.thinking,
         modelIdentity: result?.modelIdentity,
         modelResolution: result?.modelResolution,
-        activityState: result?.progress?.activityState ?? liveProgress?.activityState,
-        idleEpisodeId: result?.progress?.idleEpisodeId ?? liveProgress?.idleEpisodeId,
-        durableAttentionReasons:
-          result?.progress?.durableAttentionReasons ?? liveProgress?.durableAttentionReasons,
-        compaction: result?.progress?.compaction ?? liveProgress?.compaction,
+        ...cohortPauseHealth(result, liveProgress),
         contextUsage: result?.contextUsage,
         contextPressure: result?.contextPressure,
         contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,

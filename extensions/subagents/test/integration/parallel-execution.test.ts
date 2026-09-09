@@ -12,6 +12,7 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { ASYNC_DIR, type AgentProgress, type SingleResult } from "../../src/shared/types.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createEventBus,
@@ -20,6 +21,7 @@ import {
   events,
   makeAgent,
   makeAgentConfigs,
+  makeAgentProgress,
   makeMinimalCtx,
   removeTempDir,
   tryImport,
@@ -120,7 +122,11 @@ describe(
       removeTempDir(tempDir);
     });
 
-    function makeExecutor(agents = [makeAgent("echo")], config: Record<string, unknown> = {}) {
+    function makeExecutor(
+      agents = [makeAgent("echo")],
+      config: Record<string, unknown> = {},
+      runSyncOverride?: (...args: any[]) => Promise<SingleResult>,
+    ) {
       return createSubagentExecutor({
         pi: { events: createEventBus(), getSessionName: () => undefined },
         state: {
@@ -135,6 +141,7 @@ describe(
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
         discoverAgents: () => ({ agents }),
+        runSync: runSyncOverride,
       });
     }
 
@@ -213,6 +220,251 @@ describe(
       const ok = results.filter((r: any) => r.exitCode === 0).length;
       assert.equal(ok, 2);
     });
+
+    it(
+      "persists independent requester, active, pending, and terminal cohort health through the public executor",
+      { skip: !createSubagentExecutor ? "executor not importable" : undefined },
+      async () => {
+        type PauseTransition = {
+          stage: "pausing" | "paused";
+          ownerPid?: number;
+          result: SingleResult;
+        };
+        type RunOptions = {
+          index?: number;
+          runId?: string;
+          onUpdate?: (update: unknown) => void;
+          onSupervisorPauseTransition?: (transition: PauseTransition) => void;
+        };
+        type PersistedStep = {
+          status?: string;
+          activityState?: string;
+          idleEpisodeId?: string;
+          durableAttentionReasons?: string[];
+          compaction?: { reason?: string };
+          pause?: { kind?: string };
+        };
+
+        const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+          let resolve!: () => void;
+          const promise = new Promise<void>((next) => {
+            resolve = next;
+          });
+          return { promise, resolve };
+        };
+        const waitForSignal = async (signal: Promise<void>, label: string): Promise<void> => {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              signal,
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error(`Timed out waiting for ${label}`)),
+                  5_000,
+                );
+              }),
+            ]);
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        };
+        const progress = (agent: string, overrides: Partial<AgentProgress> = {}): AgentProgress =>
+          makeAgentProgress({
+            agent,
+            status: "running",
+            task: `${agent} task`,
+            ...overrides,
+          });
+        const result = (
+          agent: string,
+          childProgress: AgentProgress,
+          overrides: Partial<SingleResult> = {},
+        ): SingleResult => ({
+          agent,
+          task: `${agent} task`,
+          exitCode: 0,
+          messages: [],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+          progress: childProgress,
+          ...overrides,
+        });
+
+        const mixedReady = deferred();
+        const activeReady = deferred();
+        const terminalUpdate = deferred();
+        const terminalCheckpointReady = deferred();
+        const allowTerminal = deferred();
+        const allowRequester = deferred();
+        const requester = result(
+          "requester",
+          progress("requester", {
+            activityState: "needs_attention",
+            idleEpisodeId: "requester-idle",
+            durableAttentionReasons: ["tool_failures"],
+            compaction: { reason: "manual" },
+          }),
+          {
+            interrupted: true,
+            sessionFile: path.join(tempDir, "requester-session.jsonl"),
+            pause: {
+              kind: "awaiting_supervisor",
+              requestedAt: 10,
+              pausedAt: 11,
+              request: {
+                tool: "contact_supervisor",
+                reason: "need_decision",
+                summary: "Need a decision",
+              },
+            },
+          },
+        );
+        const active = result(
+          "active",
+          progress("active", {
+            activityState: "active_long_running",
+            durableAttentionReasons: ["context_pressure"],
+          }),
+        );
+        const live = progress("active", {
+          idleEpisodeId: "live-idle",
+          compaction: { reason: "threshold" },
+        });
+        const terminal = result(
+          "active",
+          progress("active", {
+            status: "completed",
+            activityState: "needs_attention",
+            idleEpisodeId: "terminal-idle",
+            durableAttentionReasons: ["completion_guard"],
+            compaction: { reason: "overflow" },
+          }),
+          {
+            interrupted: true,
+            sessionFile: path.join(tempDir, "active-session.jsonl"),
+            pause: {
+              kind: "awaiting_supervisor",
+              requestedAt: 20,
+              pausedAt: 21,
+              request: {
+                tool: "contact_supervisor",
+                reason: "need_decision",
+                summary: "Terminal snapshot",
+              },
+            },
+          },
+        );
+        let runId: string | undefined;
+        let runPromise: Promise<any> | undefined;
+        const runSyncOverride = async (...args: any[]): Promise<SingleResult> => {
+          const options = args[4] as RunOptions;
+          runId = options.runId;
+          const onPause = options.onSupervisorPauseTransition;
+          assert.ok(onPause, "parallel executor should provide the pause callback");
+          if (options.index === 0) {
+            await Promise.resolve();
+            onPause({ stage: "pausing", ownerPid: 1234, result: requester });
+            await activeReady.promise;
+            onPause({ stage: "paused", result: requester });
+            mixedReady.resolve();
+            await terminalUpdate.promise;
+            onPause({ stage: "paused", result: requester });
+            terminalCheckpointReady.resolve();
+            await allowRequester.promise;
+            return requester;
+          }
+          if (options.index === 1) {
+            options.onUpdate?.({
+              content: [],
+              details: { mode: "parallel", results: [active], progress: [live] },
+            });
+            activeReady.resolve();
+            await allowTerminal.promise;
+            options.onUpdate?.({
+              content: [],
+              details: { mode: "parallel", results: [terminal], progress: [terminal.progress] },
+            });
+            terminalUpdate.resolve();
+            await allowRequester.promise;
+            return terminal;
+          }
+          throw new Error(`unexpected foreground task index ${String(options.index)}`);
+        };
+        const executor = makeExecutor(
+          [makeAgent("requester"), makeAgent("active"), makeAgent("pending")],
+          { parallel: { concurrency: 2 } },
+          runSyncOverride,
+        );
+        const readCheckpoint = (): { steps?: PersistedStep[] } => {
+          assert.ok(runId, "expected a run id from the public executor");
+          return JSON.parse(
+            fs.readFileSync(path.join(ASYNC_DIR, runId, "status.json"), "utf8"),
+          ) as { steps?: PersistedStep[] };
+        };
+
+        try {
+          runPromise = executor.execute(
+            "parallel-health-checkpoint",
+            {
+              tasks: [
+                { agent: "requester", task: "Request supervisor input" },
+                { agent: "active", task: "Continue active work" },
+                { agent: "pending", task: "Wait for a slot" },
+              ],
+            },
+            new AbortController().signal,
+            () => undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          await waitForSignal(mixedReady.promise, "mixed cohort checkpoint");
+          const mixed = readCheckpoint();
+          assert.deepEqual(
+            mixed.steps?.map((step) => step.status),
+            ["paused", "pausing", "pending"],
+          );
+          assert.equal(mixed.steps?.[0]?.pause?.kind, "awaiting_supervisor");
+          assert.equal(mixed.steps?.[0]?.activityState, "needs_attention");
+          assert.equal(mixed.steps?.[0]?.idleEpisodeId, "requester-idle");
+          assert.deepEqual(mixed.steps?.[0]?.durableAttentionReasons, ["tool_failures"]);
+          assert.deepEqual(mixed.steps?.[0]?.compaction, { reason: "manual" });
+          assert.equal(mixed.steps?.[1]?.activityState, "active_long_running");
+          assert.equal(mixed.steps?.[1]?.idleEpisodeId, "live-idle");
+          assert.deepEqual(mixed.steps?.[1]?.durableAttentionReasons, ["context_pressure"]);
+          assert.deepEqual(mixed.steps?.[1]?.compaction, { reason: "threshold" });
+          assert.equal(mixed.steps?.[2]?.activityState, undefined);
+          assert.equal(mixed.steps?.[2]?.idleEpisodeId, undefined);
+          assert.equal(mixed.steps?.[2]?.durableAttentionReasons, undefined);
+          assert.equal(mixed.steps?.[2]?.compaction, undefined);
+
+          allowTerminal.resolve();
+          await waitForSignal(terminalCheckpointReady.promise, "terminal cohort checkpoint");
+          const terminalCheckpoint = readCheckpoint();
+          assert.deepEqual(
+            terminalCheckpoint.steps?.map((step) => step.status),
+            ["paused", "paused", "pending"],
+          );
+          assert.equal(terminalCheckpoint.steps?.[0]?.idleEpisodeId, "requester-idle");
+          assert.equal(terminalCheckpoint.steps?.[1]?.activityState, "needs_attention");
+          assert.equal(terminalCheckpoint.steps?.[1]?.idleEpisodeId, "terminal-idle");
+          assert.deepEqual(terminalCheckpoint.steps?.[1]?.durableAttentionReasons, [
+            "completion_guard",
+          ]);
+          assert.deepEqual(terminalCheckpoint.steps?.[1]?.compaction, { reason: "overflow" });
+
+          allowRequester.resolve();
+          const completed = await runPromise;
+          assert.equal(completed.details?.results?.length, 3);
+        } finally {
+          activeReady.resolve();
+          terminalUpdate.resolve();
+          terminalCheckpointReady.resolve();
+          allowTerminal.resolve();
+          allowRequester.resolve();
+          if (runPromise) await runPromise.catch(() => undefined);
+          if (runId) fs.rmSync(path.join(ASYNC_DIR, runId), { recursive: true, force: true });
+        }
+      },
+    );
 
     it(
       "carries one resolved tk ticket to the matching active foreground parallel child",
