@@ -188,6 +188,32 @@ describe(
       assert.equal(result.progress.status, "failed");
     });
 
+    it("preserves process failure while settling explicit acceptance rejection", async () => {
+      mockPi.onCall({ exitCode: 1, stderr: "Something went wrong" });
+      const artifactsDir = path.join(tempDir, "process-failure-acceptance-artifacts");
+
+      const result = await runSync(tempDir, makeAgentConfigs(["fail"]), "fail", "Task", {
+        runId: "process-failure-acceptance",
+        artifactsDir,
+        artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+        acceptance: { level: "checked", criteria: ["The task is complete"] },
+      });
+
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.error, "Something went wrong");
+      assert.equal(result.acceptance?.explicit, true);
+      assert.equal(result.acceptance?.status, "rejected");
+      assert.equal(result.progress.status, "failed");
+      assert.ok(result.artifactPaths, "expected process-failure artifacts");
+      assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), result.error);
+      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+        exitCode?: number;
+        error?: string;
+      };
+      assert.equal(metadata.exitCode, result.exitCode);
+      assert.equal(metadata.error, result.error);
+    });
+
     it("handles multi-turn conversation from JSONL", async () => {
       mockPi.onCall({
         jsonl: [
