@@ -367,6 +367,42 @@ function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {
 type SingleStepResult = Awaited<ReturnType<typeof runSingleStep>>;
 type ParallelStepExecutionResult = SingleStepResult & { skipped?: boolean };
 
+function normalizeFailedSupervisorPauseResults(
+  results: StepResult[],
+  steps: RunnerStatusStep[],
+  requesterIndex: number,
+  fallbackAgent: string,
+): void {
+  for (const result of results) {
+    if (
+      result.interrupted ||
+      result.pause?.kind === "awaiting_supervisor" ||
+      result.pause?.kind === "cohort_pause"
+    ) {
+      result.output = ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
+      result.error = ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
+      result.success = false;
+      result.exitCode = 1;
+      result.terminationReason = result.terminationReason ?? "process_exit";
+      result.interrupted = undefined;
+      result.pause = undefined;
+    }
+  }
+  if (results.length === 0) {
+    results.push({
+      agent: steps[requesterIndex]?.agent ?? fallbackAgent,
+      ...(steps[requesterIndex]?.projectAgent
+        ? { projectAgent: steps[requesterIndex].projectAgent }
+        : {}),
+      output: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
+      error: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
+      success: false,
+      exitCode: 1,
+      terminationReason: "process_exit",
+    });
+  }
+}
+
 const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
 const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR =
   "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
@@ -1683,40 +1719,12 @@ async function runSubagentWithInput(
           : step,
       );
       summary = ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-      for (const result of results) {
-        if (
-          result.interrupted ||
-          result.pause?.kind === "awaiting_supervisor" ||
-          result.pause?.kind === "cohort_pause"
-        ) {
-          result.output = ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-          result.error = ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-          result.success = false;
-          result.exitCode = 1;
-          result.terminationReason = result.terminationReason ?? "process_exit";
-          result.interrupted = undefined;
-          result.pause = undefined;
-        }
-      }
-      if (results.length === 0) {
-        results.push({
-          agent:
-            statusPayload.steps[statusOwner.supervisorPauseRequest.requesterIndex]?.agent ??
-            agentName,
-          ...(statusPayload.steps[statusOwner.supervisorPauseRequest.requesterIndex]?.projectAgent
-            ? {
-                projectAgent:
-                  statusPayload.steps[statusOwner.supervisorPauseRequest.requesterIndex]
-                    .projectAgent,
-              }
-            : {}),
-          output: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
-          error: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
-          success: false,
-          exitCode: 1,
-          terminationReason: "process_exit",
-        });
-      }
+      normalizeFailedSupervisorPauseResults(
+        results,
+        statusPayload.steps,
+        statusOwner.supervisorPauseRequest.requesterIndex,
+        agentName,
+      );
     }
   }
   const persistTerminalRun = (): void => {
