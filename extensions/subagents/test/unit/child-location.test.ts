@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
   captureChildLocationSnapshot,
+  classifySpawnSyncResult,
   makeParentGitFactsAccessor,
   type GitRunner,
 } from "../../src/shared/child-location.ts";
@@ -310,8 +311,10 @@ describe("captureChildLocationSnapshot", () => {
     // have been written before the process was killed, so parentGit.toplevel
     // is non-undefined while processError is true.
     // The old guard required only parentGit.toplevel !== undefined, which
-    // would accept this partial read as positive evidence. The tightened guard
-    // requires !parentGit.processError && exitStatus === 0 as well.
+    // would accept this partial read as positive evidence. The actual guard
+    // requires !parentGit.processError && parentGit.toplevel !== undefined:
+    // a process error implies the stdout may be truncated, so it is never
+    // treated as positive evidence regardless of exit status.
     const parentToplevelLine = PARENT_CWD + "\n"; // partial stdout, only toplevel was written
     const responses = new Map([
       [
@@ -382,6 +385,41 @@ describe("captureChildLocationSnapshot", () => {
     assert.ok(
       result.repoName !== undefined,
       "repoName should be set for different-repo unborn case",
+    );
+  });
+
+  it("sets notAGitRepo when parent is an unborn repo (exit 128, ambiguous HEAD) and child is not in a repo", () => {
+    // The parent gate is: !parentGit.processError && parentGit.toplevel !== undefined.
+    // exitStatus === 0 is deliberately NOT required: an unborn parent repo
+    // emits its toplevel and common-dir before git fails on HEAD (exit 128
+    // with "ambiguous argument 'HEAD'" stderr, not "not a git repository").
+    // This test fails if exitStatus === 0 is reintroduced into the parent gate:
+    // with exit 128 the gate would no longer pass, notAGitRepo would not be set,
+    // and the assertion below would fail.
+    const responses = new Map([
+      [
+        PARENT_CWD,
+        {
+          // Unborn parent: --show-toplevel and --git-common-dir succeed;
+          // HEAD is ambiguous because there are no commits yet.
+          stdout: gitOutputPartial({ toplevel: PARENT_CWD, commonDir: PARENT_COMMON_DIR }),
+          processError: false,
+          exitStatus: 128,
+          stderr:
+            "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.",
+        },
+      ],
+      [CHILD_NO_GIT, notARepoResponse()],
+    ]);
+    const { runner } = makeGitRunner(responses);
+
+    const result = captureChildLocationSnapshot(PARENT_CWD, CHILD_NO_GIT, runner);
+
+    assert.ok(result !== undefined, "snapshot must be returned");
+    assert.equal(
+      result.notAGitRepo,
+      true,
+      "notAGitRepo must be set: child is confirmed not a repo and parent is a (unborn) git repo",
     );
   });
 
@@ -982,6 +1020,79 @@ describe("captureChildLocationSnapshot — cwd contains CR or LF", () => {
     assert.equal(state.callCount, 0, "git must not be invoked when child cwd contains CR");
     assert.ok(result !== undefined, "snapshot must be returned");
     assert.equal(result.repoName, undefined, "repoName must be absent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifySpawnSyncResult — pure spawnSync result classifier
+// ---------------------------------------------------------------------------
+
+describe("classifySpawnSyncResult", () => {
+  it("classifies a signal-killed process (SIGKILL, null status, no error) as a process error", () => {
+    // This is the shape spawnSync returns when the OS kills a process:
+    // status is null, signal is set, error is undefined, stdout may be partial.
+    const partialStdout = "/home/user/repo\n/home/user/repo/.git\n"; // truncated mid-write
+    const result = classifySpawnSyncResult({
+      status: null,
+      signal: "SIGKILL",
+      error: undefined,
+      stdout: partialStdout,
+      stderr: "",
+    });
+
+    assert.equal(
+      result.processError,
+      true,
+      "signal-killed process must be classified as a process error",
+    );
+    assert.equal(result.exitStatus, null, "exitStatus must be null when processError is true");
+  });
+
+  it("does NOT classify a nonzero numeric exit status as a process error", () => {
+    // Exit 128 is git's own 'not a git repository' answer — NOT a process error.
+    const result = classifySpawnSyncResult({
+      status: 128,
+      signal: null,
+      error: undefined,
+      stdout: "",
+      stderr: "fatal: not a git repository",
+    });
+
+    assert.equal(
+      result.processError,
+      false,
+      "nonzero numeric exit must NOT be classified as a process error",
+    );
+    assert.equal(result.exitStatus, 128, "exitStatus must reflect git's own exit code");
+  });
+
+  it("classifies an error-property failure (ENOENT/ETIMEDOUT) as a process error", () => {
+    const result = classifySpawnSyncResult({
+      status: null,
+      signal: null,
+      error: new Error("ENOENT: git not found"),
+      stdout: "",
+      stderr: "",
+    });
+
+    assert.equal(result.processError, true, "error-property failure must be a process error");
+    assert.equal(result.exitStatus, null, "exitStatus must be null on process error");
+  });
+
+  it("classifies a clean exit-0 result as not a process error", () => {
+    const stdout =
+      "/home/user/repo\n/home/user/repo/.git\nabc1234abc1234abc1234abc1234abc1234abc1234\nmain\n";
+    const result = classifySpawnSyncResult({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout,
+      stderr: "",
+    });
+
+    assert.equal(result.processError, false, "clean exit-0 must not be a process error");
+    assert.equal(result.exitStatus, 0);
+    assert.equal(result.stdout, stdout);
   });
 });
 

@@ -58,6 +58,15 @@ function parseGitRevParseOutput(stdout) {
         commonDir = commonDir.replace(/[/\\]+$/, "");
     return { toplevel, commonDir, abbrevRef, shortSha };
 }
+export function classifySpawnSyncResult(result) {
+    const processError = result.error !== undefined || result.signal !== null || typeof result.status !== "number";
+    return {
+        stdout: typeof result.stdout === "string" ? result.stdout : "",
+        processError,
+        exitStatus: processError ? null : typeof result.status === "number" ? result.status : null,
+        stderr: typeof result.stderr === "string" ? result.stderr : "",
+    };
+}
 const productionGitRunner = (normalizedCwd) => {
     let result;
     try {
@@ -72,13 +81,7 @@ const productionGitRunner = (normalizedCwd) => {
     catch {
         return { stdout: "", processError: true, exitStatus: null, stderr: "" };
     }
-    const processError = result.error !== undefined;
-    return {
-        stdout: typeof result.stdout === "string" ? result.stdout : "",
-        processError,
-        exitStatus: processError ? null : typeof result.status === "number" ? result.status : null,
-        stderr: typeof result.stderr === "string" ? result.stderr : "",
-    };
+    return classifySpawnSyncResult(result);
 };
 function runGitForCwd(normalizedCwd, runner) {
     const { stdout, processError, exitStatus, stderr } = runner(normalizedCwd);

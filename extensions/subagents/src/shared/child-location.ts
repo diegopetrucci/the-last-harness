@@ -211,6 +211,37 @@ function parseGitRevParseOutput(stdout: string): GitInfo {
 }
 
 /**
+ * Pure classifier: maps a raw spawnSync result to the shape returned by
+ * {@link GitRunner}.
+ *
+ * Exported for unit testing only. Do not call from production code outside
+ * this module; use the module-private `productionGitRunner` instead.
+ *
+ * A process error is detected when:
+ *   - `error` is set (binary not found, ETIMEDOUT, etc.)
+ *   - `signal` is non-null (OS killed the process, e.g. SIGKILL on timeout)
+ *   - `status` is not a number (defensive; cannot occur without one of the above)
+ *
+ * A nonzero numeric `status` is git's own exit code and is NOT a process error.
+ */
+export function classifySpawnSyncResult(result: {
+  status: number | null;
+  signal: string | null;
+  error?: Error;
+  stdout: string | Buffer | null | undefined;
+  stderr: string | Buffer | null | undefined;
+}): ReturnType<GitRunner> {
+  const processError =
+    result.error !== undefined || result.signal !== null || typeof result.status !== "number";
+  return {
+    stdout: typeof result.stdout === "string" ? result.stdout : "",
+    processError,
+    exitStatus: processError ? null : typeof result.status === "number" ? result.status : null,
+    stderr: typeof result.stderr === "string" ? result.stderr : "",
+  };
+}
+
+/**
  * Production runner: wraps spawnSync in a try-catch so a hostile cwd (e.g. a
  * path containing a NUL byte that triggers ERR_INVALID_ARG_VALUE) degrades to
  * "no information" rather than propagating an exception into the dispatch path.
@@ -243,15 +274,7 @@ const productionGitRunner: GitRunner = (normalizedCwd) => {
     // ERR_INVALID_ARG_VALUE (NUL in path), ENOENT (no git binary), or similar.
     return { stdout: "", processError: true, exitStatus: null, stderr: "" };
   }
-  // result.error is set for ENOENT (binary not found), ETIMEDOUT, etc.
-  // A nonzero result.status is git's own exit code — not a process error.
-  const processError = result.error !== undefined;
-  return {
-    stdout: typeof result.stdout === "string" ? result.stdout : "",
-    processError,
-    exitStatus: processError ? null : typeof result.status === "number" ? result.status : null,
-    stderr: typeof result.stderr === "string" ? result.stderr : "",
-  };
+  return classifySpawnSyncResult(result);
 };
 
 // ---------------------------------------------------------------------------
