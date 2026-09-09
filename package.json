@@ -109,11 +109,11 @@
     "@earendil-works/pi-ai": "0.85.1",
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@earendil-works/pi-tui": "0.85.1",
-    "@oxlint/plugins": "1.78.0",
-    "@types/node": "26.2.0",
+    "@oxlint/plugins": "1.82.0",
+    "@types/node": "26.5.0",
     "jiti": "2.7.0",
-    "oxfmt": "0.63.0",
-    "oxlint": "1.78.0",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
     "shellcheck": "4.1.0",
     "typescript": "6.0.3"
   }
