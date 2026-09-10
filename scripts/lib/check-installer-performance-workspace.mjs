@@ -126,6 +126,7 @@ export function buildChildEnvironment(workspace, source = process.env, { ref = D
     environment.TLH_SKIP_UPDATE_CHECK = "1";
     environment.TLH_SKIP_TELEMETRY = "1";
     environment.TLH_TELEMETRY_DISABLED = "1";
+    environment.TLH_INSTALL_RECONCILIATION_TRACE = "1";
     environment.PI_SKIP_VERSION_CHECK = "1";
     environment.PI_TELEMETRY = "0";
     environment.NO_COLOR = "1";

@@ -183,6 +183,105 @@ function excerptOutput(text) {
         .filter((line) => line.length > 0);
     return lines.length === 0 ? "(no output captured)" : lines.slice(-12).join("\n");
 }
+const RECONCILIATION_EVENT_PREFIX = "TLH_INSTALL_RECONCILIATION_EVENT ";
+const RECONCILIATION_EVENT_TYPES = new Set([
+    "pi-reconciliation",
+    "tlh-repair",
+    "managed-checkout-summary",
+]);
+const RECONCILIATION_PHASES = new Set(["start", "complete", "failed", "skipped"]);
+function parseReconciliationEvent(value) {
+    if (!isJsonRecord(value) || typeof value.type !== "string")
+        return undefined;
+    if (!RECONCILIATION_EVENT_TYPES.has(value.type))
+        return undefined;
+    if (value.type === "managed-checkout-summary") {
+        if (typeof value.tlhGitFetches !== "number" ||
+            !Number.isSafeInteger(value.tlhGitFetches) ||
+            value.tlhGitFetches < 0 ||
+            typeof value.tlhPackageManagerInstalls !== "number" ||
+            !Number.isSafeInteger(value.tlhPackageManagerInstalls) ||
+            value.tlhPackageManagerInstalls < 0)
+            return undefined;
+        return {
+            type: "managed-checkout-summary",
+            tlhGitFetches: value.tlhGitFetches,
+            tlhPackageManagerInstalls: value.tlhPackageManagerInstalls,
+        };
+    }
+    if (typeof value.phase !== "string" || !RECONCILIATION_PHASES.has(value.phase))
+        return undefined;
+    if (value.type === "pi-reconciliation") {
+        if (value.phase === "complete") {
+            if (typeof value.headChanged !== "boolean")
+                return undefined;
+            return { type: "pi-reconciliation", phase: "complete", headChanged: value.headChanged };
+        }
+        if (value.phase === "start" || value.phase === "failed") {
+            return { type: "pi-reconciliation", phase: value.phase };
+        }
+        return undefined;
+    }
+    if (value.type !== "tlh-repair")
+        return undefined;
+    const reason = value.reason === "invalid-marker-or-dependencies" || value.reason === "pi-repaired-dependencies"
+        ? value.reason
+        : undefined;
+    if (!reason)
+        return undefined;
+    if (value.phase === "start")
+        return { type: "tlh-repair", phase: "start", reason };
+    if (value.phase === "complete")
+        return { type: "tlh-repair", phase: "complete", reason };
+    if (value.phase === "failed")
+        return { type: "tlh-repair", phase: "failed", reason };
+    if (value.phase === "skipped")
+        return { type: "tlh-repair", phase: "skipped", reason };
+    return undefined;
+}
+/** Parse and project only the opt-in, path-free reconciliation event fields. */
+export function parseReconciliationEvents(output) {
+    const events = [];
+    for (const line of output.split(/\r?\n/u)) {
+        if (!line.startsWith(RECONCILIATION_EVENT_PREFIX))
+            continue;
+        try {
+            const parsed = JSON.parse(line.slice(RECONCILIATION_EVENT_PREFIX.length));
+            const event = parseReconciliationEvent(parsed);
+            if (event)
+                events.push(event);
+        }
+        catch {
+            // Installer diagnostics are best-effort; malformed trace lines are ignored.
+        }
+    }
+    return events;
+}
+function reconciliationCount(events, type, phase) {
+    return events.filter((event) => "phase" in event && event.type === type && event.phase === phase)
+        .length;
+}
+function reconciliationSummaryCount(events, field) {
+    const summaries = events.filter((event) => event.type === "managed-checkout-summary");
+    if (summaries.length === 0)
+        return null;
+    return summaries.reduce((total, event) => total + event[field], 0);
+}
+export function parseReconciliationObservation(stdout, stderr = "") {
+    const events = parseReconciliationEvents(stripTerminalNoise(`${stdout}\n${stderr}`));
+    const hasSummary = events.some((event) => event.type === "managed-checkout-summary");
+    return {
+        available: hasSummary,
+        availability: hasSummary ? "available" : events.length > 0 ? "no-summary" : "no-trace",
+        events,
+        piReconciliations: reconciliationCount(events, "pi-reconciliation", "start"),
+        piFailures: reconciliationCount(events, "pi-reconciliation", "failed"),
+        tlhRepairs: reconciliationCount(events, "tlh-repair", "start"),
+        tlhRepairSkips: reconciliationCount(events, "tlh-repair", "skipped"),
+        tlhGitFetches: reconciliationSummaryCount(events, "tlhGitFetches"),
+        tlhPackageManagerInstalls: reconciliationSummaryCount(events, "tlhPackageManagerInstalls"),
+    };
+}
 function diagnoseReadinessFailure(state, status) {
     const diagnostics = [];
     if (state.headerMs === undefined)
@@ -388,11 +487,13 @@ async function runInstaller(sourcePath, packageRef, workspace, sourceEnv, cleanu
         },
     });
     const phases = finishPhaseObserver(phaseObserver, result.elapsedMs);
+    const reconciliation = parseReconciliationObservation(result.stdout, result.stderr);
     const success = result.code === 0 && result.signal === null && !result.timedOut;
     return {
         wallMs: result.elapsedMs,
         exit: { code: result.code, signal: result.signal, timedOut: result.timedOut },
         phases,
+        reconciliation,
         success,
         diagnostics: success ? [] : installerDiagnostics(result, phases),
     };
@@ -825,6 +926,7 @@ function benchmarkScope() {
         installerWallTime: "measured from the isolated installer process start through exit; all unclassified child work remains included",
         phaseTimings: "progress-marker timings are approximate; phases without both markers are unavailable rather than zero",
         phaseComposition: "managed-tools is unavailable because default-level output does not isolate it; wrapper creation is reported separately, while defaults may include unmarked managed-tool work",
+        reconciliation: "opt-in path-free events distinguish Pi reconciliation from TLH local repair; only managed-checkout summaries make TLH fetch and package-manager counters available, while failed, old, or untraced runs report those counters as null",
         firstUsableLaunch: "PTY launch with no prompt or model request; readiness requires observed TLH header and footer markers",
         setup: "seed installs, warm-cache seeding, trust metadata, and outer remote installer downloads are excluded from measured sample timings and reported separately",
         setupProvenance: "checkout mode uses this checkout's current support code for both old-ref seeds and selected-ref installs; remote mode stage-0 canonicalizes support files to each resolved commit, including old-ref seeds",
@@ -936,6 +1038,19 @@ function printTextResult(result) {
         console.log(`sample ${sample.scenario} run ${sample.run}: installer ${formatMs(sample.installer?.success ? sample.installer.wallMs : null)}; launch ${formatMs(sample.launch?.ready ? sample.launch.wallMs : null)}; readiness ${sample.readinessOutcome}`);
         console.log(`  cache: ${sample.cacheCondition}`);
         console.log(`  observed installed revision: ${sample.observedInstalledRevision || "unavailable"}`);
+        const reconciliation = sample.installer?.reconciliation;
+        if (reconciliation?.available) {
+            console.log(`  reconciliation: Pi ${reconciliation.piReconciliations}; TLH repairs ${reconciliation.tlhRepairs}; TLH repair skips ${reconciliation.tlhRepairSkips}; TLH fetches ${reconciliation.tlhGitFetches}; TLH package-manager installs ${reconciliation.tlhPackageManagerInstalls}`);
+        }
+        else if (!sample.installer) {
+            console.log("  reconciliation: unavailable (installer was not run)");
+        }
+        else if (reconciliation?.availability === "no-summary") {
+            console.log("  reconciliation: unavailable (managed-checkout-summary was not observed; summary-derived TLH work counters are unavailable)");
+        }
+        else {
+            console.log("  reconciliation: unavailable (installer ran without the opt-in trace; support may predate instrumentation or have failed before managed checkout)");
+        }
         for (const diagnostic of sample.failureDiagnostics.slice(0, 4)) {
             console.log(`  diagnostic: ${diagnostic}`);
         }

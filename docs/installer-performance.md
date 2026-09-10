@@ -39,9 +39,113 @@ copy a cache from a fully launched seed; reinstall and upgrade samples start
 from fully launched profiles. `--json` can be added when a credential-free
 machine-readable result is needed.
 
+The installer-performance checker sets `TLH_INSTALL_RECONCILIATION_TRACE=1` in
+its isolated child environment. Instrumented support code emits path-free
+`TLH_INSTALL_RECONCILIATION_EVENT` lines, and each attempted installer
+measurement records a `reconciliation` observation. It separates Pi
+reconciliation from TLH repair (`tlhRepairs`), records when Pi repaired
+dependencies without a TLH repair (`tlhRepairSkips`), and reports TLH-owned
+fetch and package-manager
+counts. `available` is true only when a managed-checkout summary was observed;
+otherwise the summary-derived counters are `null`/unavailable. `no-summary`
+means the installer emitted some trace but did not complete managed checkout;
+`no-trace` covers an unset opt-in, old support code, or an install that
+failed before tracing. An installer that was not run is reported separately.
+The trace is opt-in, and
+instrumentation failures cannot change installer behavior.
+
 The original ticket's checkout command also contained
 `--upgrade-from v0.39.0`; that flag is invalid and unused for `--scenarios
 cold`. The corrected command above removes only that flag.
+
+## Focused clone-based A/B observation
+
+The focused observation (2026-09-10) compares two independent copies of the
+same repository revision. The **baseline** copy contains tracked `HEAD` only;
+the **optimized** copy receives the current worktree overlay. The overlay also
+included the opt-in reconciliation trace/parser harness changes, not just the
+installer support changes. The harness code was therefore not byte-identical:
+baseline tracing was not enabled, while optimized runs used the overlaid
+trace/parser harness. The package ref, runtime, cache conditions, and benchmark
+setup were intended to be comparable, but this is an observation of the
+combined overlay rather than a support-code-only A/B (`supportCodeDirty: false`
+versus `true`). Both copies measure only the managed default package checkout,
+`git:github.com/diegopetrucci/the-last-harness@main`. Custom, local, non-Git,
+and critical bundled-extension checkouts are outside this observation.
+
+The benchmark-owned clone and overlay setup, followed by the exact commands,
+was:
+
+```sh
+set -euo pipefail
+AB_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tlh-installer-performance-ab-XXXXXX")"
+git clone --quiet --local --no-hardlinks "$PWD" "$AB_ROOT/baseline"
+git clone --quiet --local --no-hardlinks "$PWD" "$AB_ROOT/optimized"
+while IFS= read -r -d '' path; do
+  mkdir -p "$AB_ROOT/optimized/$(dirname "$path")"
+  cp -p "$PWD/$path" "$AB_ROOT/optimized/$path"
+done < <({ git diff --name-only -z HEAD; git ls-files --others --exclude-standard -z; })
+(cd "$AB_ROOT/baseline" && node scripts/check-installer-performance.mjs --mode checkout --ref main --runs 3 --scenarios cold --json) >"$AB_ROOT/baseline.json"
+(cd "$AB_ROOT/optimized" && node scripts/check-installer-performance.mjs --mode checkout --ref main --runs 3 --scenarios cold --json) >"$AB_ROOT/optimized.json"
+```
+
+The run order was fixed: all three baseline samples ran before all three
+optimized samples. Baseline installer samples declined monotonically
+(`42624.9 → 33993.6 → 28431.0` ms), as did its first usable launch samples
+(`2485.4 → 1768.5 → 1637.4` ms). The first-launch samples overlap between
+copies (baseline `1637.4–2485.4` ms; optimized `1618.8–1975.1` ms), even
+though the installer wall-time ranges do not. This leaves warm-up and order
+confounding—such as host, filesystem, runtime, network, and registry state—
+uncontrolled; the declining baseline series may reflect warm-up, but cannot
+identify its contribution.
+
+Both sides resolved `main` to
+`f7d00ec78dfee5ccbe9a085ec7c22041699e069f`, installed that same checkout
+revision, and had three ready samples with no failures. Both used Node
+`26.8.2`, npm `11.19.1`, and pinned Pi `0.85.1`. The support-code revision was
+`e73becfc4f9ff54395ec297d9e9c3dd51c76a03e` on both sides; only the optimized
+copy was dirty because it contained the worktree overlay. The baseline's
+pre-optimization support did not emit reconciliation events. Every optimized
+sample reported one Pi reconciliation, zero Pi failures, an observed
+managed-checkout summary, zero TLH fetches, zero TLH package-manager installs,
+and zero TLH repairs.
+
+| Copy | Installer samples (ms) | Installer median | First usable launch samples (ms) | Launch median | Package-reconciliation median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline (`supportCodeDirty: false`) | 42624.9 / 33993.6 / 28431.0 | 33993.6 | 2485.4 / 1768.5 / 1637.4 | 1768.5 | 18193.0 |
+| Optimized (`supportCodeDirty: true`) | 24536.1 / 21144.0 / 27293.4 | 24536.1 | 1633.9 / 1618.8 / 1975.1 | 1633.9 | 6563.7 |
+
+Descriptively, the optimized median was lower by 9457.5ms (27.8%) for
+installer wall time and by 11629.3ms for the package-reconciliation phase. The
+launch difference was 134.6ms (7.6%) lower. These
+three-run, single-machine medians are observational summaries, not performance
+budgets, causal estimates, or proof of a general speedup; network and registry
+variance remain large. The wall-time and phase deltas are not additive: their
+medians come from separate sample series, and approximate phase markers do not
+partition all wall time. Remove only the benchmark-owned `$AB_ROOT` after
+preserving any JSON needed for an audit.
+
+Comparing the bundled default-extension manifests for `v0.40.0` and the
+current `main` package identifies exactly these five npm pin changes. This table
+is derived from that manifest comparison, not from recorded benchmark
+`pinChange` metadata. The cold checkout A/B produced no upgrade/`pinChange`
+metadata.
+
+| Package | v0.40.0 | main |
+| --- | ---: | ---: |
+| `@diegopetrucci/pi-fast` | `0.1.0` | `0.1.2` |
+| `@diegopetrucci/pi-inline-bash` | `0.1.9` | `0.1.11` |
+| `@diegopetrucci/pi-context-inspector` | `0.1.11` | `0.1.13` |
+| `@diegopetrucci/pi-quiet-tools` | `0.1.10` | `0.1.12` |
+| `@diegopetrucci/pi-dirty-repo-guard` | `0.1.9` | `0.1.11` |
+
+Separately, the bundled `pi-transcribe` source moves from Git commit
+`e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1` to
+`f673cad478885c81fdaa5c7977eb4d291fd87816`. Git pins are ignored by benchmark
+`pinChange` and are recorded only in this document for provenance. The
+changed-pin scenario and counter track only npm sources, so the `pi-transcribe`
+Git pin is not a benchmark input and is not counted as one of the five npm
+changes.
 
 ## Measurement scope
 
@@ -51,11 +155,26 @@ cold`. The corrected command above removes only that flag.
   markers. A phase without both markers is `unavailable`, not zero. The
   `defaults` phase can include managed-tool work that has no separate output
   boundary; `managed-tools` is therefore reported as unavailable here.
-- **Ref identity**: `selected ref (... resolved ...)` is the requested package
-  ref and its resolved commit. `observed installed revision` is the installed
-  package checkout's post-install `HEAD`; keep it separate so mismatches remain
-  visible. `support-code revision` identifies the installer/support checkout and
-  is separate from both.
+- **Ref identity**: the focused A/B is limited to the managed main TLH package
+  checkout (`git:github.com/diegopetrucci/the-last-harness@main`). `selected ref
+  (... resolved ...)` is the requested package ref and its resolved commit.
+  `observed installed revision` is the installed package checkout's post-install
+  `HEAD`; keep it separate so mismatches remain visible. `support-code revision`
+  identifies the installer/support checkout and is separate from both.
+- **Pinned Pi contract**: the pinned upstream
+  `@earendil-works/pi-coding-agent@0.85.1` in the private TLH runtime owns
+  managed-checkout fetch, ref selection/checkout, and dependency reconciliation;
+  a global Pi installation is neither used nor modified. TLH's direct-dependency
+  checks are the postcondition after Pi returns, not a second normal-path
+  reconciliation. A Pi pin bump changes this behavioral contract and requires
+  revalidation of the direct-dependency checks, reconciliation paths, and any
+  benchmark conclusions. The benchmark records the observed private-runtime
+  version separately from package/support revisions.
+- **Repair exceptions**: TLH may run a local package-manager repair when the
+  dependency-aware marker or direct dependency tree is incomplete, after an
+  interrupted/partial install, or when custom package-manager semantics require
+  conservative fallback. A repair is separate from Pi's ordinary reconciliation
+  and is reported as such; a skipped repair means Pi already restored the tree.
 - **First usable launch** runs the generated wrapper in a PTY without a prompt
   or model request. Readiness requires both a TLH header and footer marker;
   first output or the installer's `Done` line alone is not readiness.
@@ -107,10 +226,14 @@ terminates registered child process trees on failure, timeout, and signal.
 
 ## Results
 
-Observed environment for both successful runs: `darwin/arm64`, Node `26.8.1`,
-npm `11.19.0`, and Pi `0.85.1`. Neither successful benchmark made a model/API
-request. The selected package pin transition was `anthropic-auth 2.0.3` ->
-`2.0.8`.
+Observed environment for the recorded historical runs was `darwin/arm64`,
+Node `26.8.1`, npm `11.19.0`, and Pi `0.85.1`; the focused A/B used
+`darwin/arm64`, Node `26.8.2`, npm `11.19.1`, and Pi `0.85.1`. No successful
+benchmark made a model/API request. The historical v0.39.0 -> v0.40.0 run
+changed `@gotgenes/pi-anthropic-auth` from `2.0.3` to `2.0.8`. The focused
+v0.40.0 -> main manifest comparison has the five npm changes and the separate
+Git pin listed above; the cold checkout A/B produced no upgrade/`pinChange`
+metadata and does not run the changed-pin scenario.
 
 The pre-fix remote result field reported support-code revision
 `a17d7346bf0d0ede0bdc330d7801949634faec44`, which is the annotated
@@ -168,14 +291,16 @@ Rank **#631 before #630** for the next measured investigation. The
 `21908.5ms` (mean `22338.8ms`), versus `1628.4ms` cold-cache fresh,
 `1666.2ms` warm-cache fresh, and `662.7ms` unchanged reinstall. Its installer
 median is also `16202.6ms`. This is a prioritization based on the observed
-outlier only; no optimization was implemented by this baseline ticket.
+outlier only; the baseline run itself implemented no optimization. The
+reconciliation work and focused follow-up are recorded above.
 
 ## Limits
 
 Results are single-machine observations, not pass/fail budgets. Network
 latency, registry availability, remote GitHub content, npm cache state, disk
-load, PTY behavior, and other machine load can change timings. The checkout
-sample additionally reflects the current local support files and must not be
-presented as a released-installer A/B comparison. Repeat the exact commands
-when a new baseline is needed rather than comparing samples across machines
-without recording environment, refs, cache conditions, and phase availability.
+load, PTY behavior, and other machine load can change timings. The historical
+checkout sample reflects local support files and is not a released-installer A/B
+comparison; the focused A/B above is the only clone-controlled comparison.
+Repeat the exact commands when a new baseline is needed rather than comparing
+samples across machines without recording environment, refs, cache conditions,
+and phase availability.
