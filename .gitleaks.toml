@@ -1,0 +1,55 @@
+title = "The Last Harness source secret-scan policy"
+minVersion = "v8.30.1"
+
+[extend]
+useDefault = true
+
+# Keep the default generic-api-key rule active everywhere else. These are
+# exact synthetic values in the reviewed test/eval and protocol fixture paths below.
+# Suffix-matched paths stay portable under random temporary scan roots; they are not
+# repository-root anchored.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Reviewed synthetic test values only"
+  condition = "AND"
+  paths = [
+    '''(^|/)extensions/subagents/test/integration/async-execution-lifecycle\.test\.ts$''',
+    '''(^|/)extensions/subagents/test/integration/async-execution-models-output\.test\.ts$''',
+    '''(^|/)extensions/subagents/test/unit/lifecycle-state\.test\.ts$''',
+    '''(^|/)protocol/local-bridge/v0/PROFILE\.md$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/invalid-concurrent-owner\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/invalid-incompatible-capability\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/invalid-major-version\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/invalid-ninth-conversation\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/invalid-superseded-source\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-bridge-restart\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-eight-conversations\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-identical-snapshot-dedup\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-dormant-slot-admission\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-idle-activity-generation\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-idle-eviction\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-large-state-normalization\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-rendezvous\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-sequential-source-epochs\.json$''',
+    '''(^|/)protocol/local-bridge/v0/fixtures/valid-source-reconnect\.json$''',
+    '''(^|/)tests/evals/tlh-live-evals\.test\.mjs$''',
+    '''(^|/)tests/local-bridge-conformance\.test\.mjs$''',
+    '''(^|/)tests/the-last-harness-subscription-usage\.test\.mjs$''',
+  ]
+  regexTarget = "match"
+  regexes = [
+    '''reservedClaimToken.*tlhm8typ\-test\-claim[\"'`\s,;)\]}]*$''',
+    '''claimToken.*tlht\-az3z\-pressure\-claim[\"'`\s,;)\]}]*$''',
+    '''claimToken.*claim\-safe\-123[\"'`\s,;)\]}]*$''',
+    '''secret.*SECRET\-STALE\-ROOT\-67890[\"'`\s,;)\]}]*$''',
+    '''secret.*SECRET\-MISSING\-ROOT\-24680[\"'`\s,;)\]}]*$''',
+    '''TLH_TEST_SESSION_TOKEN.*sk\-live\-eval\-secret\-1234567890[\"'`\s,;)\]}]*$''',
+    '''^secret=sk\-live\-eval\-secret\-1234567890"$''',
+    '''twoSegmentToken.*aGVhZGVy\.cGF5bG9hZA[\"'`\s,;)\]}]*$''',
+    '''launchToken.*0123456789abcdef0123456789abcdef[\"'`\s,;)\]}]*$''',
+    '''oldLaunchToken.*0123456789abcdef0123456789abcdef[\"'`\s,;)\]}]*$''',
+    '''newLaunchToken.*fedcba9876543210fedcba9876543210[\"'`\s,;)\]}]*$''',
+    '''LAUNCH_TOKEN.*0123456789abcdef0123456789abcdef[\"'`\s,;)\]}]*$''',
+  ]
