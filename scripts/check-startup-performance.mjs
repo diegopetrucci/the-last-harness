@@ -20,6 +20,11 @@ import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  hasFooterMarker,
+  hasHeaderMarker,
+  stripTerminalNoise,
+} from "./lib/tlh-startup-readiness.mjs";
 import { renderShellWords } from "./lib/tlh-install-utils.mjs";
 import { renderWrapper } from "./tlh-wrapper.mjs";
 
@@ -43,15 +48,6 @@ const MANAGED_WRAPPER_FIELDS = [
   ["default_wrapper_name", "wrapperName"],
   ["default_pi_cmd", "piCmd"],
 ];
-const ANSI_PATTERN = new RegExp(
-  `${String.raw`\u001B`}(?:\\][^${String.raw`\u0007\u001B`}]*(?:${String.raw`\u0007`}|${String.raw`\u001B\\`})|\\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])`,
-  "gu",
-);
-const HEADER_TEXT_MARKERS = ["Context:", "run /context"];
-const HEADER_LOGO_PATTERN = /(^|\n)\s*tlh(?:\s+v\d[^\n]*)?\s*(?=\n|$)/u;
-const HEADER_RULE_PATTERN = /(^|\n)[^\n]*─(?:[^\n]*─){19,}[^\n]*(?=\n|$)/u;
-const FOOTER_MARKER = "agent: ";
-const FOOTER_CWD_PATTERN = /(^|\n)(?:~|\/)[^\n]* \([^\n()]+\)(?=\n|$)/u;
 let interruptSignal;
 const PYTHON_PTY_BRIDGE = String.raw`
 import errno
@@ -446,36 +442,6 @@ function buildPtyCommand(commandParts) {
     command: "script",
     args: ["-q", "-e", "-c", renderShellWords(commandParts), "/dev/null"],
   };
-}
-
-function stripControlCharacters(text) {
-  let result = "";
-  for (const character of text) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined) {
-      continue;
-    }
-    if (codePoint === 0x09 || codePoint === 0x0a || codePoint === 0x0d || codePoint >= 0x20) {
-      result += character;
-    }
-  }
-  return result;
-}
-
-function stripTerminalNoise(text) {
-  return stripControlCharacters(text.replace(ANSI_PATTERN, "")).replace(/\r/g, "\n");
-}
-
-function hasHeaderMarker(text) {
-  return (
-    HEADER_TEXT_MARKERS.some((marker) => text.includes(marker)) ||
-    HEADER_LOGO_PATTERN.test(text) ||
-    HEADER_RULE_PATTERN.test(text)
-  );
-}
-
-function hasFooterMarker(text) {
-  return text.includes(FOOTER_MARKER) || FOOTER_CWD_PATTERN.test(text);
 }
 
 function delay(ms) {
