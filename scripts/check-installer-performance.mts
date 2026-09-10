@@ -459,8 +459,11 @@ function reconciliationSummaryCount(
   return summaries.reduce((total, event) => total + event[field], 0);
 }
 
-export function parseReconciliationObservation(output: string): ReconciliationObservation {
-  const events = parseReconciliationEvents(output);
+export function parseReconciliationObservation(
+  stdout: string,
+  stderr = "",
+): ReconciliationObservation {
+  const events = parseReconciliationEvents(stripTerminalNoise(`${stdout}\n${stderr}`));
   const hasSummary = events.some((event) => event.type === "managed-checkout-summary");
   return {
     available: hasSummary,
@@ -713,7 +716,7 @@ async function runInstaller(
     },
   );
   const phases = finishPhaseObserver(phaseObserver, result.elapsedMs);
-  const reconciliation = parseReconciliationObservation(`${result.stdout}\n${result.stderr}`);
+  const reconciliation = parseReconciliationObservation(result.stdout, result.stderr);
   const success = result.code === 0 && result.signal === null && !result.timedOut;
   return {
     wallMs: result.elapsedMs,

@@ -298,6 +298,37 @@ test("reconciliation trace separates Pi, TLH repair, and no-duplicate counts", (
   });
 });
 
+test("reconciliation trace normalizes terminal noise and bare carriage returns", () => {
+  const stdout = [
+    "\u001b[?25l",
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"start","path":"/private/checkout"}',
+    "\r\u001b[2K",
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"complete","headChanged":false,"path":"/private/checkout"}',
+    "\r",
+  ].join("");
+  const stderr = [
+    "\u001b[?25l",
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"managed-checkout-summary","tlhGitFetches":2,"tlhPackageManagerInstalls":1,"path":"/private/checkout"}',
+    "\r\u001b[?25h",
+  ].join("");
+
+  assert.deepEqual(parseReconciliationObservation(stdout, stderr), {
+    available: true,
+    availability: "available",
+    events: [
+      { type: "pi-reconciliation", phase: "start" },
+      { type: "pi-reconciliation", phase: "complete", headChanged: false },
+      { type: "managed-checkout-summary", tlhGitFetches: 2, tlhPackageManagerInstalls: 1 },
+    ],
+    piReconciliations: 1,
+    piFailures: 0,
+    tlhRepairs: 0,
+    tlhRepairSkips: 0,
+    tlhGitFetches: 2,
+    tlhPackageManagerInstalls: 1,
+  });
+});
+
 test("installed revision mismatches are diagnosed without replacing ref resolution", () => {
   const resolvedRevision = "1111111111111111111111111111111111111111";
   const observedRevision = "2222222222222222222222222222222222222222";
