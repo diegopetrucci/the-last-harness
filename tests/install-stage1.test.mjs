@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -167,6 +168,12 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
     output,
     /TLH_INSTALL_RECONCILIATION_EVENT .*"type":"managed-checkout-summary".*"tlhGitFetches":0.*"tlhPackageManagerInstalls":1/,
   );
+
+  const firstRunSettingsBackups = readdirSync(agentDir).filter((entry) =>
+    entry.startsWith("settings.json.backup-before-install-"),
+  );
+  assert.equal(firstRunSettingsBackups.length, 1);
+  rmSync(join(agentDir, firstRunSettingsBackups[0]), { force: true });
 
   const untracedEnv = scrubInstallerEnv({
     HOME: homeDir,

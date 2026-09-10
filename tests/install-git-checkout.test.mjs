@@ -63,6 +63,8 @@ function createManagedGitCheckout(t) {
   runGit(["clone", "--bare", seedDir, originDir]);
   mkdirSync(join(agentDir, "git", "github.com", "owner"), { recursive: true });
   runGit(["clone", originDir, targetDir]);
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
 
   return { root, agentDir, originDir, targetDir };
 }
