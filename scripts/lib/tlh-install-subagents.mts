@@ -16,7 +16,7 @@ import {
   ensureSafeProfileDir,
   isSymlink,
 } from "./tlh-install-paths.mjs";
-import { readJsonFile } from "./tlh-install-utils.mjs";
+import { readConfiguredNpmCommand, readJsonFile } from "./tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 
 interface PlainObject {
@@ -148,32 +148,9 @@ function gitInstallationIsOwned(path: string): boolean {
   }
 }
 
-function configuredNpmCommand(settings: unknown): string[] | undefined {
-  if (!isPlainObject(settings) || settings.npmCommand === undefined) return undefined;
-  if (
-    !Array.isArray(settings.npmCommand) ||
-    settings.npmCommand.some((value) => typeof value !== "string")
-  ) {
-    throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
-  }
-  if (settings.npmCommand.length === 0) return undefined;
-  const command = settings.npmCommand as string[];
-  if (!command[0])
-    throw new Error(
-      "invalid npmCommand in isolated settings: first entry must be a non-empty command",
-    );
-  return [...command];
-}
-
 /** Read the package-manager command that was active before settings migration. */
 export function captureRetiredSubagentNpmCommand(settingsPath: string): string[] | undefined {
-  if (!settingsPath || !existsSync(settingsPath)) return undefined;
-  try {
-    return configuredNpmCommand(readJsonFile(settingsPath));
-  } catch (error) {
-    if (error instanceof SyntaxError) return undefined;
-    throw error;
-  }
+  return readConfiguredNpmCommand(settingsPath);
 }
 
 function packageManagerCommand(config: RetiredSubagentCleanupConfig): {

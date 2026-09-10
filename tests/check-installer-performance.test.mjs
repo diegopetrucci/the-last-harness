@@ -34,6 +34,8 @@ import {
   observeReadinessChunk,
   parseArgs,
   parseBundledNpmPins,
+  parseReconciliationEvents,
+  parseReconciliationObservation,
   parseRemoteRevision,
   printTextResult,
   prepareSource,
@@ -191,6 +193,7 @@ test("child environment removes poisoned credentials and keeps measured launch o
     assert.equal(environment.npm_config_cache, workspace.npmCache);
     assert.equal(environment.TLH_SKIP_UPDATE_CHECK, "1");
     assert.equal(environment.TLH_SKIP_TELEMETRY, "1");
+    assert.equal(environment.TLH_INSTALL_RECONCILIATION_TRACE, "1");
 
     const trustPath = writeCredentialFreeTrustMetadata(workspace);
     const trust = JSON.parse(readFileSync(trustPath, "utf8"));
@@ -227,6 +230,72 @@ test("phase observer parses markers split per stream and preserves unavailable p
   const missing = finishPhaseObserver(createPhaseObserver(), 12);
   assert.equal(missing.runtime.durationMs, null);
   assert.equal(missing.runtime.quality, "unavailable");
+});
+
+test("reconciliation trace separates Pi, TLH repair, and no-duplicate counts", () => {
+  const output = [
+    "ordinary installer output",
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"start","path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"complete","headChanged":false,"path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"tlh-repair","phase":"skipped","reason":"pi-repaired-dependencies","path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"managed-checkout-summary","tlhGitFetches":0,"tlhPackageManagerInstalls":0,"path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"tlh-repair","phase":"start","reason":"invalid-marker-or-dependencies","path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"tlh-repair","phase":"complete","reason":"invalid-marker-or-dependencies","path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"managed-checkout-summary","tlhGitFetches":0,"tlhPackageManagerInstalls":1,"path":"/private/checkout"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"managed-checkout-summary","tlhGitFetches":-1,"tlhPackageManagerInstalls":99}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"complete","headChanged":"false"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"complete"}',
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"unknown","phase":"complete"}',
+    "TLH_INSTALL_RECONCILIATION_EVENT not-json",
+  ].join("\n");
+
+  const events = parseReconciliationEvents(output);
+  assert.deepEqual(events, [
+    { type: "pi-reconciliation", phase: "start" },
+    { type: "pi-reconciliation", phase: "complete", headChanged: false },
+    { type: "tlh-repair", phase: "skipped", reason: "pi-repaired-dependencies" },
+    { type: "managed-checkout-summary", tlhGitFetches: 0, tlhPackageManagerInstalls: 0 },
+    { type: "tlh-repair", phase: "start", reason: "invalid-marker-or-dependencies" },
+    { type: "tlh-repair", phase: "complete", reason: "invalid-marker-or-dependencies" },
+    { type: "managed-checkout-summary", tlhGitFetches: 0, tlhPackageManagerInstalls: 1 },
+  ]);
+  assert.deepEqual(parseReconciliationObservation(output), {
+    available: true,
+    availability: "available",
+    events,
+    piReconciliations: 1,
+    piFailures: 0,
+    tlhRepairs: 1,
+    tlhRepairSkips: 1,
+    tlhGitFetches: 0,
+    tlhPackageManagerInstalls: 1,
+  });
+
+  const failed = parseReconciliationObservation(
+    'TLH_INSTALL_RECONCILIATION_EVENT {"type":"pi-reconciliation","phase":"failed"}',
+  );
+  assert.deepEqual(failed, {
+    available: false,
+    availability: "no-summary",
+    events: [{ type: "pi-reconciliation", phase: "failed" }],
+    piReconciliations: 0,
+    piFailures: 1,
+    tlhRepairs: 0,
+    tlhRepairSkips: 0,
+    tlhGitFetches: null,
+    tlhPackageManagerInstalls: null,
+  });
+  assert.deepEqual(parseReconciliationObservation("no trace"), {
+    available: false,
+    availability: "no-trace",
+    events: [],
+    piReconciliations: 0,
+    piFailures: 0,
+    tlhRepairs: 0,
+    tlhRepairSkips: 0,
+    tlhGitFetches: null,
+    tlhPackageManagerInstalls: null,
+  });
 });
 
 test("installed revision mismatches are diagnosed without replacing ref resolution", () => {
@@ -594,11 +663,39 @@ test("summary medians exclude failed samples and JSON envelopes round-trip", () 
   assert.match(text, /failed samples: 2/u);
   assert.doesNotMatch(text, /failures: 3/u);
   assert.match(text, /managed-tools: unavailable median/);
+  assert.match(text, /installer ran without the opt-in trace/);
   assert.match(text, /setup provenance: setup provenance/);
   assert.match(
     benchmarkScope().setupProvenance,
     /checkout mode uses this checkout's current support code/,
   );
+
+  const notRunOutput = [];
+  const notRunSample = {
+    ...samples[0],
+    installer: null,
+    launch: null,
+    readinessOutcome: "not-run",
+    failureDiagnostics: ["seed was not ready"],
+  };
+  console.log = (...args) => notRunOutput.push(args.join(" "));
+  try {
+    printTextResult({
+      mode: "checkout",
+      selectedRef: { requested: "main", resolved: "revision" },
+      upgradeFromRef: null,
+      supportCodeRevision: "support-revision",
+      platform: { os: "test", arch: "test" },
+      toolVersions: { node: "22.0.0", npm: "10.0.0", pi: null },
+      samples: [notRunSample],
+      summary: summarizeSamples([notRunSample]),
+      measurementScope: { installerWallTime: "total installer time" },
+      failureDiagnostics: ["seed was not ready"],
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.match(notRunOutput.join("\\n"), /installer was not run/u);
 });
 
 test("probe subprocesses register their process trees with cleanup", async () => {

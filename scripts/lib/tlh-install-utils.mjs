@@ -94,6 +94,33 @@ export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
         throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
     }
 }
+/**
+ * Parse Pi's configured package-manager command with the same validation used
+ * by installer package cleanup. An absent or empty setting means the default
+ * npm command; malformed settings fail closed instead of silently falling
+ * back to a different package manager.
+ */
+export function configuredNpmCommand(settings) {
+    if (!settings || typeof settings !== "object" || Array.isArray(settings))
+        return undefined;
+    const value = settings.npmCommand;
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+        throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
+    }
+    if (value.length === 0)
+        return undefined;
+    if (!value[0]) {
+        throw new Error("invalid npmCommand in isolated settings: first entry must be a non-empty command");
+    }
+    return [...value];
+}
+export function readConfiguredNpmCommand(settingsPath) {
+    if (!settingsPath || !existsSync(settingsPath))
+        return undefined;
+    return configuredNpmCommand(readJsonFile(settingsPath));
+}
 function throwSymlinkedBackupSource(path, label) {
     throw new Error(`refusing to back up symlinked ${label} source: ${path}`);
 }

@@ -48,6 +48,7 @@ import {
 } from "./lib/tlh-install-npm.mjs";
 import {
   assignRequiredEqualsValue,
+  readConfiguredNpmCommand,
   renderShellWords,
   requiredValue,
   shellWord,
@@ -64,8 +65,8 @@ import {
   provisionSubagentExtensionConfig,
   subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
-import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
-import type { GitInstallConfig } from "./lib/tlh-install-git.mjs";
+import * as gitInstall from "./lib/tlh-install-git.mjs";
+type GitInstallConfig = gitInstall.GitInstallConfig;
 import {
   findLocalRepoDir,
   ensureSupportFilesPrepared,
@@ -629,12 +630,11 @@ function quietCommandEnv(
   extraEnv: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
   return {
-    ...config.env,
+    ...inheritedCommandEnv(config, extraEnv),
     GIT_TERMINAL_PROMPT: "0",
     NPM_CONFIG_AUDIT: "false",
     NPM_CONFIG_FUND: "false",
     NPM_CONFIG_LOGLEVEL: "error",
-    ...extraEnv,
   };
 }
 
@@ -642,7 +642,11 @@ function inheritedCommandEnv(
   config: InstallConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
-  return { ...config.env, ...extraEnv };
+  const env = { ...config.env, ...extraEnv };
+  // Alternate indexes are opt-in for TLH's own Git commands. Do not pass an
+  // ambient index to Pi, npm, hooks, or other child tools.
+  if (!extraEnv.GIT_INDEX_FILE) delete env.GIT_INDEX_FILE;
+  return env;
 }
 
 function runCommand(
@@ -675,10 +679,6 @@ function runCommand(
     printCommandFailure({ status, output, displayArgs, cwd });
     throw new Error(`command failed: ${commandDisplay(displayArgs)}`);
   }
-}
-
-function runInDir(config: InstallConfig, dir: string, commandArgs: CommandArgs): void {
-  runCommand(config, commandArgs, { cwd: dir });
 }
 
 function commandExists(config: InstallConfig, command: string): boolean {
@@ -764,12 +764,17 @@ function runNodeScript(
   return captureStdout ? result.stdout : "";
 }
 
-function runIsolatedPi(config: InstallConfig, commandArgs: CommandArgs): void {
+function runIsolatedPi(
+  config: InstallConfig,
+  commandArgs: CommandArgs,
+  extraEnv: NodeJS.ProcessEnv = {},
+): void {
+  const childEnv = { PI_CODING_AGENT_DIR: config.agentDir, ...extraEnv };
   const displayArgs = ["env", `PI_CODING_AGENT_DIR=${config.agentDir}`, ...commandArgs];
   if (!config.dryRun) assertSafeSettingsTarget(config);
   runCommand(config, commandArgs, {
     cwd: config.agentDir,
-    env: { PI_CODING_AGENT_DIR: config.agentDir },
+    env: childEnv,
     displayArgs,
   });
 }
@@ -822,10 +827,15 @@ function gitCheckoutIo(config: InstallConfig) {
       options?: { cwd?: string; env?: NodeJS.ProcessEnv },
     ) => runCommand(config, commandArgs, options),
     runInDir: (_gitConfig: GitInstallConfig, dir: string, commandArgs: string[]) =>
-      runInDir(config, dir, commandArgs),
+      runCommand(config, commandArgs, { cwd: dir }),
     printCommand: (commandArgs: string[]) => printCommand(commandArgs),
     log: (_gitConfig: GitInstallConfig, message: string) => log(config, message),
     warn,
+    onInstrumentationEvent: (event: gitInstall.GitCheckoutInstrumentationEvent) => {
+      if (config.env.TLH_INSTALL_RECONCILIATION_TRACE === "1") {
+        log(config, `TLH_INSTALL_RECONCILIATION_EVENT ${JSON.stringify(event)}`);
+      }
+    },
   };
 }
 
@@ -1185,76 +1195,69 @@ export function cleanupOldSettingsBackups(config: InstallConfig): void {
 function backupExistingSettingsBeforePiInstall(config: InstallConfig): void {
   backupExistingSettingsBeforePiInstallImpl(config, profileCleanupIo(config, config));
 }
-function refreshHarnessPackageCheckout(config: InstallConfig): void {
-  let packageRoot = config.packageRoot;
-  let packageRepo = "";
-  let packageRef = config.ref;
-  const packageSpec = criticalGitSourceSpec(config.packageSource, { agentDir: config.agentDir });
-  if (packageSpec) {
-    packageRoot = packageSpec.targetDir;
-    packageRepo = packageSpec.repo;
-    packageRef = packageSpec.ref;
-  }
-  if (config.packageSourceIsDefault) {
-    packageRef = packageRef || config.ref;
-  } else if (!packageSpec || !packageRef) {
-    return;
-  }
-
-  verboseLog(config, `Checking out The Last Harness git ref: ${packageRef}`);
-  refreshGitCheckout(
-    config,
-    {
-      targetDir: packageRoot,
-      repo: packageRepo,
-      ref: packageRef,
-      label: "The Last Harness package checkout",
-      missingMessage: `expected installed package checkout not found or invalid: ${packageRoot}`,
-    },
-    gitCheckoutIo(config),
-  );
-}
-
 function installHarnessPackage(config: InstallConfig): void {
   verboseLog(config, `Using isolated Pi agent dir: ${config.agentDir}`);
   if (config.dryRun) printCommand(["mkdir", "-p", config.agentDir]);
   else mkdirSync(config.agentDir, { recursive: true });
   backupExistingSettingsBeforePiInstall(config);
-
   log(config, "Installing package...");
   verboseLog(config, `Package source: ${config.packageSource}`);
   const piPackageSource = packageSourcePiSource(config.packageSource, {
     agentDir: config.agentDir,
   });
-  assertGitSourceTargetSafe(
+  const checkoutIo = gitCheckoutIo(config);
+  gitInstall.assertGitSourceTargetSafe(
     config,
     config.packageSource,
     "The Last Harness package checkout",
-    gitCheckoutIo(config),
+    checkoutIo,
   );
-  runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
-  refreshHarnessPackageCheckout(config);
-
-  if (config.packageSourceIsDefault) return;
-
-  const packageSpec = criticalGitSourceSpec(config.packageSource, { agentDir: config.agentDir });
-  if (packageSpec?.ref) {
-    verboseLog(
-      config,
-      "Pinned custom git package source was refreshed directly; skipping pi update.",
-    );
+  const managedPackageSpec = config.packageSourceIsDefault
+    ? criticalGitSourceSpec(config.packageSource, { agentDir: config.agentDir })
+    : undefined;
+  if (!managedPackageSpec) {
+    runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
+    if (
+      gitInstall.refreshGitPackageSource(
+        config,
+        {
+          packageSource: config.packageSource,
+          packageRoot: config.packageRoot,
+          ref: config.ref,
+          packageSourceIsDefault: config.packageSourceIsDefault,
+        },
+        checkoutIo,
+      ) ||
+      config.packageSourceIsDefault
+    )
+      return;
+    if (config.dryRun) {
+      log(
+        config,
+        `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} ${absolutePiCmd(config)} update ${piPackageSource}`,
+      );
+      return;
+    }
+    runIsolatedPi(config, [absolutePiCmd(config), "update", piPackageSource]);
     return;
   }
-  if (config.dryRun) {
-    log(
-      config,
-      `Would refresh custom package source if it is already installed: PI_CODING_AGENT_DIR=${config.agentDir} ${absolutePiCmd(config)} update ${piPackageSource}`,
-    );
-    return;
-  }
-  runIsolatedPi(config, [absolutePiCmd(config), "update", piPackageSource]);
+  // Capture this once for the managed package lifecycle. Do not mutate the
+  // shared installer config: default-extension and other package flows retain
+  // their own package-manager semantics.
+  const npmCommand = readConfiguredNpmCommand(config.settingsPath);
+  const checkoutOptions = {
+    targetDir: managedPackageSpec.targetDir,
+    repo: managedPackageSpec.repo,
+    label: "The Last Harness package checkout",
+    missingMessage: `expected installed package checkout not found or invalid: ${managedPackageSpec.targetDir}`,
+  };
+  gitInstall.installManagedGitCheckout(
+    { ...config, npmCommand },
+    checkoutOptions,
+    () => runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]),
+    checkoutIo,
+  );
 }
-
 async function mergeSettings(config: InstallConfig): Promise<void> {
   if (config.noSettings) {
     log(config, "Skipping settings/keybinding merge (--no-settings).");
@@ -1477,14 +1480,14 @@ function splitDefaultExtensionSources(
 function ensureCriticalGitSourceCheckout(config: InstallConfig, source: string): boolean {
   const spec = criticalGitSourceSpec(source, { agentDir: config.agentDir });
   if (!spec) return true;
-  assertGitSourceTargetSafe(
+  gitInstall.assertGitSourceTargetSafe(
     config,
     source,
     "critical git extension checkout",
     gitCheckoutIo(config),
   );
   if (!spec.ref) return true;
-  return refreshGitCheckout(
+  return gitInstall.refreshGitCheckout(
     config,
     {
       targetDir: spec.targetDir,
@@ -1510,7 +1513,7 @@ function preflightCriticalDefaultExtensionTargets(config: InstallConfig, sources
     `${config.dryRun ? "Would preflight" : "Preflighting"} ${gitSources.length} critical bundled default git checkout target(s) before any settings-wide default extension update.`,
   );
   for (const source of gitSources) {
-    assertGitSourceTargetSafe(
+    gitInstall.assertGitSourceTargetSafe(
       config,
       source,
       "critical default extension package checkout",
@@ -1522,7 +1525,7 @@ function preflightCriticalDefaultExtensionTargets(config: InstallConfig, sources
 function installCriticalDefaultExtension(config: InstallConfig, source: string): void {
   verboseLog(config, `Installing critical bundled default extension package: ${source}`);
   const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
-  assertGitSourceTargetSafe(
+  gitInstall.assertGitSourceTargetSafe(
     config,
     source,
     "critical default extension package checkout",
