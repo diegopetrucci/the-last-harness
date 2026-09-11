@@ -1,0 +1,27 @@
+{
+  "scenario": "source-reconnect",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-reconnect",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "sourceInstanceId": "cccccccccccccccccccccccccccccccc",
+  "snapshot": {
+    "eventId": "g1-e1",
+    "revision": 1,
+    "cursor": "g1-c1",
+    "snapshotId": "g1-s1",
+    "status": "idle"
+  },
+  "event": {
+    "eventId": "g1-e2",
+    "revision": 2,
+    "baseRevision": 1,
+    "cursor": "g1-c2",
+    "type": "status.changed",
+    "status": "active"
+  },
+  "expected": {
+    "sourceEpoch": 1,
+    "bridgeRevisions": [1, 2],
+    "outcomes": ["accepted", "accepted"]
+  }
+}

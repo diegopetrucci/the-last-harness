@@ -1,0 +1,9 @@
+{
+  "scenario": "teardown",
+  "expected": {
+    "firstCode": "closed",
+    "secondCode": "closed",
+    "postTeardownOperation": "closed",
+    "conversationsAfterTeardown": 0
+  }
+}

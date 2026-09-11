@@ -1,0 +1,5 @@
+{
+  "scenario": "hostile-boundaries",
+  "cases": ["cycle", "accessor", "prototype", "array-hole", "non-json-primitive"],
+  "expectedCode": "malformed-frame"
+}

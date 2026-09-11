@@ -1,0 +1,13 @@
+{
+  "scenario": "major-version-mismatch",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-version",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "sourceInstanceId": "12121212121212121212121212121212",
+  "protocol": {
+    "family": "local-bridge",
+    "major": 1,
+    "minor": 0
+  },
+  "expectedCode": "incompatible-protocol"
+}

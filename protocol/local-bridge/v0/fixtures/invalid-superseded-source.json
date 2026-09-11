@@ -1,0 +1,9 @@
+{
+  "scenario": "superseded-source",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-stale",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "firstSourceInstanceId": "ffffffffffffffffffffffffffffffff",
+  "replacementSourceInstanceId": "11111111111111111111111111111111",
+  "expectedCode": "stale-source"
+}

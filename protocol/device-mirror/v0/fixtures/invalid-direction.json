@@ -1,0 +1,5 @@
+{
+  "clientToListenerKind": "snapshot",
+  "listenerToClientKind": "hello",
+  "expectedCode": "wrong-direction"
+}

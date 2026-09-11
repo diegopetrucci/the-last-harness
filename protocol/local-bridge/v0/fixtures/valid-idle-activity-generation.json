@@ -1,0 +1,16 @@
+{
+  "scenario": "idle-activity-generation",
+  "installationId": "fixture-installation",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "sessionId": "conversation-activity-generation",
+  "initialSourceInstanceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "replacementSourceInstanceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "idleMinutes": 60,
+  "expected": {
+    "staleActivityCode": "stale-activity",
+    "staleOwnerCode": "stale-source",
+    "evictionCode": "evicted",
+    "reconnectCode": "ready",
+    "snapshotRequired": true
+  }
+}

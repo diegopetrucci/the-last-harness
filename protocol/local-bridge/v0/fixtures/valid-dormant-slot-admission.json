@@ -1,0 +1,31 @@
+{
+  "scenario": "dormant-slot-admission",
+  "installationId": "fixture-installation",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "idleMinutes": 60,
+  "reconnect": {
+    "sessionId": "conversation-dormant-reconnect",
+    "sourceInstanceId": "10101010101010101010101010101010"
+  },
+  "takeover": {
+    "sessionId": "conversation-dormant-takeover",
+    "oldSourceInstanceId": "20202020202020202020202020202020",
+    "newSourceInstanceId": "30303030303030303030303030303030"
+  },
+  "activeSlotSessions": [
+    "occupied-1",
+    "occupied-2",
+    "occupied-3",
+    "occupied-4",
+    "occupied-5",
+    "occupied-6",
+    "occupied-7",
+    "occupied-8"
+  ],
+  "expected": {
+    "busyCode": "busy",
+    "admissionCode": "ready",
+    "snapshotRequired": true,
+    "activeCountWhenFull": 8
+  }
+}

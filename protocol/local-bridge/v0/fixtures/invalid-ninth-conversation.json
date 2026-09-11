@@ -1,0 +1,7 @@
+{
+  "scenario": "ninth-conversation",
+  "installationId": "fixture-installation",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "ninthConversation": "conversation-9",
+  "expectedCode": "busy"
+}

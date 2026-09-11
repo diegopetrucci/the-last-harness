@@ -1,0 +1,17 @@
+{
+  "scenario": "large-state-normalization",
+  "installationId": "fixture-installation",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "sessionId": "conversation-large-state",
+  "sourceInstanceId": "12121212121212121212121212121212",
+  "eventCount": 63,
+  "entryCount": 4,
+  "textBytes": 32768,
+  "paddingBytes": 143360,
+  "expectedMinimumCanonicalBytes": 8388608,
+  "idleStatus": "idle",
+  "expected": {
+    "transitionCode": "disconnected",
+    "teardownCode": "closed"
+  }
+}

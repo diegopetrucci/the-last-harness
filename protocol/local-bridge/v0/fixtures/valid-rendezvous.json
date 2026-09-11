@@ -1,0 +1,17 @@
+{
+  "scenario": "rendezvous",
+  "installationRoot": "/Users/fixture/.the-last-harness",
+  "agentDirectory": "/Users/fixture/.the-last-harness/agent",
+  "companionDirectory": "/Users/fixture/.the-last-harness/companion",
+  "rendezvous": {
+    "protocol": {
+      "family": "local-bridge",
+      "major": 0,
+      "minor": 0
+    },
+    "installationId": "fixture-installation",
+    "socketName": "mirror-0123456789abcdef01234567.sock",
+    "launchToken": "0123456789abcdef0123456789abcdef"
+  },
+  "socketPath": "/Users/fixture/.the-last-harness/companion/mirror-0123456789abcdef01234567.sock"
+}

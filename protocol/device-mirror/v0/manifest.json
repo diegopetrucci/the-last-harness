@@ -1,0 +1,174 @@
+{
+  "manifestVersion": 1,
+  "profile": {
+    "family": "device-mirror",
+    "major": 0,
+    "minor": 0
+  },
+  "transport": {
+    "framework": "Network.framework",
+    "security": "TLS-PSK",
+    "customCryptography": false,
+    "plaintextFallback": false
+  },
+  "bounds": {
+    "maxSessionMirrorEnvelopeBytes": 262144,
+    "maxSnapshotFrameWrapperBytes": 839,
+    "maxFrameBodyBytes": 262983,
+    "maxControlFrameBytes": 16384,
+    "maxListingEntries": 8,
+    "maxInterfaceRecords": 256,
+    "maxInterfaceAddresses": 64,
+    "maxHandleCharacters": 128,
+    "maxRequestIdCharacters": 64,
+    "maxCapabilities": 16,
+    "maxRevision": 9007199254740990,
+    "maxNormalizationDepth": 528,
+    "maxNormalizationContainers": 12048,
+    "maxNormalizationBytes": 1311559,
+    "maxStateNormalizationContainers": 82048,
+    "maxStateNormalizationBytes": 8651591
+  },
+  "requiredCapabilities": ["list", "subscribe", "snapshot-replace"],
+  "listingStatuses": ["idle", "active", "waiting", "error", "unknown"],
+  "listingFreshness": ["fresh", "stale", "unknown"],
+  "dropReasons": [
+    "producer-disconnect",
+    "takeover",
+    "accepted-event",
+    "eviction",
+    "listener-stop",
+    "device-disconnect",
+    "backgrounding"
+  ],
+  "closeReasons": ["listener-stop", "device-disconnect", "backgrounding", "transport-failure"],
+  "directions": {
+    "clientToListener": ["hello", "list", "subscribe"],
+    "listenerToClient": ["ready", "list", "snapshot", "dropped", "close", "error"]
+  },
+  "wireErrorCodes": [
+    "incompatible-protocol",
+    "incompatible-capability",
+    "malformed-frame",
+    "frame-too-large",
+    "control-frame-too-large",
+    "snapshot-invalid",
+    "snapshot-bounds",
+    "snapshot-incompatible",
+    "snapshot-forbidden",
+    "snapshot-incomplete",
+    "unknown-handle",
+    "listener-stopped",
+    "connection-busy",
+    "device-disconnected"
+  ],
+  "frozenDependencies": [
+    {
+      "name": "session-mirror-v1",
+      "path": "protocol/session-mirror/v1",
+      "normativeFiles": [
+        {
+          "path": "protocol/session-mirror/v1/PROFILE.md",
+          "sha256": "525c5a212c7331eac449734c970eb7e64d5edd61c2745a3c625c548e68dcfcb9"
+        },
+        {
+          "path": "protocol/session-mirror/v1/CONFORMANCE.md",
+          "sha256": "f157f2dda97e79308c19e015af323600d8f9d6b1a2bcea43c3d1b0fae79725e1"
+        },
+        {
+          "path": "protocol/session-mirror/v1/manifest.json",
+          "sha256": "8407d1ff18d3de13de6a9b78d49f86375d169c95e887ac6f334e3d73240b56ac"
+        },
+        {
+          "path": "protocol/session-mirror/v1/conformance.ts",
+          "sha256": "d6ebb1cc14d4dc5c12700ddf1d694b3fc8f8fbab7a3eb5bd9eabf8985aa62ec4"
+        }
+      ]
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "valid-address-binding",
+      "path": "fixtures/valid-address-binding.json",
+      "valid": true,
+      "covers": [
+        "literal-cgnat-ipv4",
+        "client-address",
+        "active-utun",
+        "exact-address-bind",
+        "realistic-interface-table",
+        "different-active-utun-address"
+      ]
+    },
+    {
+      "id": "valid-opaque-listing",
+      "path": "fixtures/valid-opaque-listing.json",
+      "valid": true,
+      "covers": [
+        "opaque-per-launch-handles",
+        "coarse-status",
+        "coarse-freshness",
+        "bounded-listing"
+      ]
+    },
+    {
+      "id": "valid-snapshot-replacement",
+      "path": "fixtures/valid-snapshot-replacement.json",
+      "valid": true,
+      "covers": [
+        "whole-replacement",
+        "coalesce",
+        "validated-session-mirror-envelope",
+        "monotonic-revision"
+      ]
+    },
+    {
+      "id": "valid-drop-lifecycle",
+      "path": "fixtures/valid-drop-lifecycle.json",
+      "valid": true,
+      "covers": [
+        "producer-disconnect",
+        "takeover",
+        "accepted-event",
+        "eviction",
+        "listener-stop",
+        "device-disconnect",
+        "backgrounding"
+      ]
+    },
+    {
+      "id": "invalid-version",
+      "path": "fixtures/invalid-version.json",
+      "valid": false,
+      "expectedCode": "incompatible-protocol",
+      "covers": ["family-rejection", "major-rejection", "future-minor-rejection"]
+    },
+    {
+      "id": "invalid-frames",
+      "path": "fixtures/invalid-frames.json",
+      "valid": false,
+      "expectedCodes": [
+        "frame-too-large",
+        "malformed-frame",
+        "invalid-utf8",
+        "invalid-json",
+        "control-frame-too-large"
+      ],
+      "covers": ["u32be-bounds", "truncation", "trailing-bytes", "utf8", "json"]
+    },
+    {
+      "id": "invalid-direction",
+      "path": "fixtures/invalid-direction.json",
+      "valid": false,
+      "expectedCode": "wrong-direction",
+      "covers": ["client-to-listener", "listener-to-client"]
+    },
+    {
+      "id": "invalid-hostile-boundaries",
+      "path": "fixtures/invalid-hostile-boundaries.json",
+      "valid": false,
+      "expectedCode": "malformed-frame",
+      "covers": ["cycle", "accessor", "prototype", "array-hole", "no-throw"]
+    }
+  ]
+}

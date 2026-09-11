@@ -1,0 +1,290 @@
+{
+  "manifestVersion": 1,
+  "profile": {
+    "family": "local-bridge",
+    "major": 0,
+    "minor": 0
+  },
+  "bounds": {
+    "maxFrameBodyBytes": 262144,
+    "maxControlFrameBytes": 4096,
+    "maxRendezvousBytes": 4096,
+    "maxIdentityCharacters": 128,
+    "maxTokenCharacters": 32,
+    "maxSocketPathBytes": 103,
+    "maxSocketNameCharacters": 64,
+    "maxCapabilities": 16,
+    "maxActiveConversations": 8,
+    "maxKnownConversations": 64,
+    "maxSupersededSourceIds": 64,
+    "maxActivityGeneration": 9007199254740990,
+    "idleEvictionMinutes": 60,
+    "maxSourceEpoch": 9007199254740990,
+    "maxBridgeRevision": 9007199254740990,
+    "maxDirectNormalizationDepth": 16,
+    "maxDirectNormalizationContainers": 128,
+    "maxDirectNormalizationCollection": 64,
+    "maxDirectNormalizationBytes": 4096,
+    "maxNormalizationDepth": 128,
+    "maxNormalizationContainers": 2048,
+    "maxNormalizationCollection": 2048,
+    "maxNormalizationBytes": 153092096
+  },
+  "normalization": {
+    "maxActiveConversations": 8,
+    "maxKnownConversations": 64,
+    "maxSeenMessagesPerConversation": 64,
+    "maxEnvelopeBytes": 262144,
+    "perConversationMetadataSlackBytes": 524288,
+    "stateMetadataSlackBytes": 4194304,
+    "minimumBytes": 144703488,
+    "budgetBytes": 153092096
+  },
+  "requiredCapabilities": ["snapshot-replace", "cursor-recovery"],
+  "resultCodes": [
+    "ready",
+    "disconnected",
+    "accepted",
+    "duplicate",
+    "deduplicated",
+    "evicted",
+    "closed"
+  ],
+  "runtimeOnlyErrorCodes": ["handshake-required", "wrong-direction"],
+  "failureCodes": [
+    "invalid-input",
+    "malformed-rendezvous",
+    "unsafe-rendezvous",
+    "frame-too-large",
+    "control-frame-too-large",
+    "malformed-frame",
+    "invalid-utf8",
+    "invalid-json",
+    "incompatible-protocol",
+    "incompatible-capability",
+    "installation-mismatch",
+    "token-mismatch",
+    "session-mismatch",
+    "busy",
+    "stale-source",
+    "stale-activity",
+    "not-owner",
+    "handshake-required",
+    "wrong-direction",
+    "session-mirror-invalid",
+    "session-mirror-bounds",
+    "session-mirror-incompatible",
+    "session-mirror-forbidden",
+    "session-mirror-incomplete",
+    "session-mirror-duplicate-conflict",
+    "session-mirror-revision-gap",
+    "revision-exhausted",
+    "source-history-full",
+    "closed"
+  ],
+  "frozenDependencies": [
+    {
+      "name": "session-mirror-v1",
+      "path": "protocol/session-mirror/v1",
+      "normativeFiles": [
+        {
+          "path": "protocol/session-mirror/v1/PROFILE.md",
+          "sha256": "525c5a212c7331eac449734c970eb7e64d5edd61c2745a3c625c548e68dcfcb9"
+        },
+        {
+          "path": "protocol/session-mirror/v1/CONFORMANCE.md",
+          "sha256": "f157f2dda97e79308c19e015af323600d8f9d6b1a2bcea43c3d1b0fae79725e1"
+        },
+        {
+          "path": "protocol/session-mirror/v1/manifest.json",
+          "sha256": "8407d1ff18d3de13de6a9b78d49f86375d169c95e887ac6f334e3d73240b56ac"
+        },
+        {
+          "path": "protocol/session-mirror/v1/conformance.ts",
+          "sha256": "d6ebb1cc14d4dc5c12700ddf1d694b3fc8f8fbab7a3eb5bd9eabf8985aa62ec4"
+        }
+      ]
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "valid-rendezvous",
+      "path": "fixtures/valid-rendezvous.json",
+      "valid": true,
+      "covers": [
+        "restrictive-rendezvous",
+        "randomized-socket-name",
+        "lexical-companion-binding",
+        "installation-scope",
+        "launch-token"
+      ]
+    },
+    {
+      "id": "valid-sequential-source-epochs",
+      "path": "fixtures/valid-sequential-source-epochs.json",
+      "valid": true,
+      "covers": [
+        "producer-restart",
+        "reused-source-event-id",
+        "source-epoch-reset",
+        "bridge-revision-continuity",
+        "snapshot-replace"
+      ]
+    },
+    {
+      "id": "valid-source-reconnect",
+      "path": "fixtures/valid-source-reconnect.json",
+      "valid": true,
+      "covers": [
+        "same-source-reconnect",
+        "retained-source-epoch",
+        "retained-apply-state",
+        "event-append"
+      ]
+    },
+    {
+      "id": "invalid-concurrent-owner",
+      "path": "fixtures/invalid-concurrent-owner.json",
+      "valid": false,
+      "expectedCode": "busy",
+      "covers": ["one-owner-per-conversation", "concurrent-owner-rejection"]
+    },
+    {
+      "id": "invalid-superseded-source",
+      "path": "fixtures/invalid-superseded-source.json",
+      "valid": false,
+      "expectedCode": "stale-source",
+      "covers": ["supersession", "stale-source-rejection", "fail-closed"]
+    },
+    {
+      "id": "valid-eight-conversations",
+      "path": "fixtures/valid-eight-conversations.json",
+      "valid": true,
+      "covers": ["bounded-concurrency", "eight-active-conversations"]
+    },
+    {
+      "id": "invalid-ninth-conversation",
+      "path": "fixtures/invalid-ninth-conversation.json",
+      "valid": false,
+      "expectedCode": "busy",
+      "covers": ["bounded-concurrency", "ninth-conversation-busy"]
+    },
+    {
+      "id": "invalid-major-version",
+      "path": "fixtures/invalid-major-version.json",
+      "valid": false,
+      "expectedCode": "incompatible-protocol",
+      "covers": ["version-negotiation", "major-mismatch", "closed-error-code"]
+    },
+    {
+      "id": "invalid-incompatible-capability",
+      "path": "fixtures/invalid-incompatible-capability.json",
+      "valid": false,
+      "expectedCode": "incompatible-capability",
+      "covers": ["capability-order", "capability-incompatibility", "fail-closed"]
+    },
+    {
+      "id": "invalid-frames",
+      "path": "fixtures/invalid-frames.json",
+      "valid": false,
+      "expectedCodes": ["frame-too-large", "malformed-frame", "invalid-json", "invalid-utf8"],
+      "covers": [
+        "u32be-length-prefix",
+        "oversize-frame",
+        "truncated-frame",
+        "malformed-json",
+        "invalid-utf8"
+      ]
+    },
+    {
+      "id": "valid-identical-snapshot-dedup",
+      "path": "fixtures/valid-identical-snapshot-dedup.json",
+      "valid": true,
+      "covers": [
+        "exact-byte-dedup",
+        "dedup-does-not-bump-revision",
+        "semantic-equivalence-not-dedup",
+        "snapshot-authoritative"
+      ]
+    },
+    {
+      "id": "valid-bridge-restart",
+      "path": "fixtures/valid-bridge-restart.json",
+      "valid": true,
+      "covers": ["bridge-restart", "memory-reset", "no-replay-claim", "launch-token-rotation"]
+    },
+    {
+      "id": "valid-idle-eviction",
+      "path": "fixtures/valid-idle-eviction.json",
+      "valid": true,
+      "covers": [
+        "idle-eviction",
+        "dormant-slot-release",
+        "snapshot-required",
+        "same-source-reconnect",
+        "stale-source-rejection",
+        "superseded-history-cap"
+      ]
+    },
+    {
+      "id": "valid-teardown",
+      "path": "fixtures/valid-teardown.json",
+      "valid": true,
+      "covers": ["closed-teardown", "idempotent-teardown", "memory-drop"]
+    },
+    {
+      "id": "valid-dormant-slot-admission",
+      "path": "fixtures/valid-dormant-slot-admission.json",
+      "valid": true,
+      "covers": [
+        "dormant-reconnect-busy",
+        "dormant-takeover-busy",
+        "dormant-owner-history-preservation",
+        "dormant-slot-admission",
+        "handshake-slot-reservation"
+      ]
+    },
+    {
+      "id": "valid-idle-activity-generation",
+      "path": "fixtures/valid-idle-activity-generation.json",
+      "valid": true,
+      "covers": [
+        "stale-idle-timer",
+        "activity-generation",
+        "connected-owner-eviction",
+        "snapshot-required-after-reconnect"
+      ]
+    },
+    {
+      "id": "valid-large-state-normalization",
+      "path": "fixtures/valid-large-state-normalization.json",
+      "valid": true,
+      "covers": ["large-valid-v1-state", "over-8mib-normalization", "post-transition-normalization"]
+    },
+    {
+      "id": "invalid-hostile-boundaries",
+      "path": "fixtures/invalid-hostile-boundaries.json",
+      "valid": false,
+      "expectedCode": "malformed-frame",
+      "covers": [
+        "unknown-input",
+        "accessor-rejection",
+        "cycle-rejection",
+        "prototype-rejection",
+        "no-throw"
+      ]
+    },
+    {
+      "id": "invalid-unsafe-rendezvous",
+      "path": "fixtures/invalid-unsafe-rendezvous.json",
+      "valid": false,
+      "expectedCode": "unsafe-rendezvous",
+      "covers": [
+        "socket-path-bound",
+        "lexical-companion-bound",
+        "path-traversal-rejection",
+        "socket-name-restriction"
+      ]
+    }
+  ]
+}
