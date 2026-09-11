@@ -41,7 +41,7 @@ The architect has access to a few subagents, which can be divided in three big c
 - Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
-Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Anthropic sessions get OpenAI/Codex and OpenAI/Codex sessions get Anthropic; OpenRouter sessions use vendor-aware direct-provider selection with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
+Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Direct Anthropic sessions try OpenAI Codex first, then xAI; direct OpenAI/Codex sessions try Anthropic first, then xAI; direct xAI sessions try Anthropic first, then OpenAI Codex. OpenRouter sessions use the same three-family vendor-aware order with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
 
 Again, the core idea: explore and plan with the architect. Double check with the oracle/contrarian. Go back and forth. This is where you, as a human, are required. Once happy, the implementation follows, until ready for your review.
 
@@ -99,6 +99,10 @@ All bundled subagents:
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
+
+### Direct model providers
+
+TLH treats Anthropic, OpenAI Codex, and xAI as first-class direct providers. Its bundled xAI defaults use Grok 4.6 for primary and higher-reasoning roles and Grok 4.3 for utility roles. For xAI subscription access, use `/login xai` when available; OpenAI defaults intentionally use `openai-codex` for the Codex subscription provider. Anthropic and xAI subscription and API-key authentication share the provider IDs `anthropic` and `xai`, so Pi's stored `/login` credential takes precedence over the corresponding environment key (`ANTHROPIC_API_KEY` or `XAI_API_KEY`). TLH does not select among multiple simultaneous credentials, add auth storage, or mutate user credentials.
 
 ### Customisation
 

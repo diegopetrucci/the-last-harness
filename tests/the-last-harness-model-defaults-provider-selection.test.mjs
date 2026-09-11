@@ -24,6 +24,7 @@ const {
   rushLikePrimary,
   selectedProviderModelId,
   selectProviderAwareAgentDefaults,
+  xaiAvailable,
 } = createModelDefaultsTestContext();
 
 test("provider-aware model resolver follows active Anthropic provider for non-review subagents", () => {
@@ -149,6 +150,16 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
   assert.equal(Object.hasOwn(input, "thinking"), false);
 });
 
+test("provider-aware model resolver follows an active direct xAI provider", () => {
+  const available = [...anthropicAvailable, ...codexAvailable, ...xaiAvailable];
+  assert.equal(selectedProviderModelId(developer, available, "xai"), "xai/grok-4");
+
+  const input = { agent: "developer", task: "Implement the ticket" };
+  assert.equal(applyProviderAwareSubagentModels(input, agents, available, "xai"), 1);
+  assert.equal(input.model, "xai/grok-4:high");
+  assert.equal(Object.hasOwn(input, "thinking"), false);
+});
+
 test("provider-aware model resolver does not auto-inject OpenAI API models", () => {
   const input = { agent: "code-reviewer", task: "Review the diff" };
   assert.equal(selectedProviderModelId(codeReviewer, openaiAvailable, "openai"), undefined);
@@ -206,6 +217,59 @@ test("provider-aware opposite-provider preference picks Anthropic for opted-in O
   assert.equal(input.model, "anthropic/claude-opus-5");
   assert.deepEqual(getProviderAwareFallbackModels(input), ["openai-codex/gpt-5.6-sol"]);
   assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
+});
+
+test("provider-aware opposite-provider preference orders xAI after the established families", () => {
+  const allProviders = [...anthropicAvailable, ...codexAvailable, ...xaiAvailable];
+
+  // Anthropic → OpenAI/Codex, then xAI when the first independent family is absent.
+  assert.equal(
+    selectedProviderModelId(codeReviewer, allProviders, "anthropic"),
+    "openai-codex/gpt-5.6-sol",
+  );
+  assert.equal(
+    selectedProviderModelId(codeReviewer, [...anthropicAvailable, ...xaiAvailable], "anthropic"),
+    "xai/grok-4",
+  );
+
+  // OpenAI → Anthropic, then xAI when the first independent family is absent.
+  assert.equal(
+    selectedProviderModelId(codeReviewer, allProviders, "openai-codex"),
+    "anthropic/claude-opus-5",
+  );
+  assert.equal(
+    selectedProviderModelId(codeReviewer, [...codexAvailable, ...xaiAvailable], "openai-codex"),
+    "xai/grok-4",
+  );
+
+  // xAI → Anthropic, then OpenAI/Codex; xAI itself is not an independent choice.
+  assert.equal(
+    selectedProviderModelId(codeReviewer, allProviders, "xai"),
+    "anthropic/claude-opus-5",
+  );
+  assert.equal(
+    selectedProviderModelId(codeReviewer, [...codexAvailable, ...xaiAvailable], "xai"),
+    "openai-codex/gpt-5.6-sol",
+  );
+});
+
+test("provider-aware opposite-provider preference retains xAI session fallback and independence", () => {
+  const available = [...anthropicAvailable, ...xaiAvailable];
+  const currentModel = xaiAvailable[0];
+  const input = { agent: codeReviewer.name, task: "Review the diff" };
+
+  assert.equal(applyProviderAwareSubagentModels(input, agents, available, "xai", currentModel), 1);
+  assert.equal(input.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["xai/grok-4:high"]);
+  assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
+
+  const resolution = resolveProviderAwareSubagentResolution(
+    codeReviewer,
+    available,
+    "xai",
+    currentModel,
+  );
+  assert.equal(resolution.independence, "preferred");
 });
 
 test("provider-aware opposite-provider preference does not inject regular OpenAI API models for opted-in Anthropic sessions", () => {

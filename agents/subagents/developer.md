@@ -9,6 +9,9 @@ tlhModelDefaults:
   - provider: anthropic
     models: [claude-sonnet-4-6]
     effort: medium
+  - provider: xai
+    models: [grok-4.6]
+    effort: medium
   - provider: openrouter
     effort: medium
 systemPromptMode: replace

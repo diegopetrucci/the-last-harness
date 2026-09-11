@@ -80,6 +80,11 @@ export function createModelDefaultsTestContext() {
         models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
         effort: "medium",
       },
+      {
+        provider: "xai",
+        models: [{ provider: "xai", id: "grok-4" }],
+        effort: "high",
+      },
       { provider: "openrouter", effort: "medium" },
     ],
     tlhModelDefaultsSource: "frontmatter",
@@ -96,6 +101,11 @@ export function createModelDefaultsTestContext() {
       {
         provider: "anthropic",
         models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "xai",
+        models: [{ provider: "xai", id: "grok-4" }],
         effort: "high",
       },
       { provider: "openrouter", effort: "high" },
@@ -115,6 +125,11 @@ export function createModelDefaultsTestContext() {
       {
         provider: "anthropic",
         models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "xai",
+        models: [{ provider: "xai", id: "grok-4" }],
         effort: "high",
       },
       { provider: "openrouter", effort: "high" },
@@ -221,6 +236,8 @@ export function createModelDefaultsTestContext() {
 
   const openaiAvailable = [{ provider: "openai", id: "gpt-5.6" }];
 
+  const xaiAvailable = [{ provider: "xai", id: "grok-4" }];
+
   const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({
     ...model,
     reasoning: true,
@@ -262,6 +279,7 @@ export function createModelDefaultsTestContext() {
     resolveProviderThinking,
     rushLikePrimary,
     selectedProviderModelId,
+    xaiAvailable,
     selectProviderAwareAgentDefaults,
     splitKnownThinkingSuffix,
   };

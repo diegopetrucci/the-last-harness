@@ -89,6 +89,7 @@ type ReasoningProviderModelReference = ProviderModelReference & Partial<Reasonin
 
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
+const XAI_PROVIDERS = new Set(["xai"]);
 const OPENROUTER_PROVIDERS = new Set(["openrouter"]);
 const OPPOSITE_PROVIDER_FALLBACK_NOTICE =
   "TLH fell back to a same-provider review model; review independence is reduced.";
@@ -150,7 +151,11 @@ function agentModelsForFamily(
   family: ProviderFamily,
 ): ProviderModelReference[] {
   return listAgentModelDefaultReferences(agent).filter((model) =>
-    family === "openai" ? isOpenaiProvider(model.provider) : isAnthropicProvider(model.provider),
+    family === "openai"
+      ? isOpenaiProvider(model.provider)
+      : family === "anthropic"
+        ? isAnthropicProvider(model.provider)
+        : isXaiProvider(model.provider),
   );
 }
 
@@ -217,6 +222,10 @@ function isAnthropicProvider(provider: string | undefined): boolean {
   return Boolean(provider && ANTHROPIC_PROVIDERS.has(provider));
 }
 
+function isXaiProvider(provider: string | undefined): boolean {
+  return Boolean(provider && XAI_PROVIDERS.has(provider));
+}
+
 function isOpenrouterProvider(provider: string | undefined): boolean {
   return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
 }
@@ -232,7 +241,7 @@ export function followsOpenrouterSession(
   return isOpenrouterProvider(provider) && !agent?.preferOppositeProvider;
 }
 
-type ProviderFamily = "openai" | "anthropic";
+type ProviderFamily = "openai" | "anthropic" | "xai";
 
 function providerFamily(
   provider: string | undefined,
@@ -244,10 +253,16 @@ function providerFamily(
   if (isAnthropicProvider(provider)) {
     return "anthropic";
   }
+  if (isXaiProvider(provider)) {
+    return "xai";
+  }
   if (isOpenrouterProvider(provider)) {
     const underlyingVendor = modelId?.split("/", 1)[0];
     if (underlyingVendor === "openai" || underlyingVendor === "anthropic") {
       return underlyingVendor;
+    }
+    if (underlyingVendor === "x-ai") {
+      return "xai";
     }
   }
   return undefined;
@@ -316,6 +331,17 @@ function availableAnthropicCandidate<T extends ProviderModelReference>(
   return findAvailableProviderModel(availableModels, candidate);
 }
 
+function availableXaiCandidate<T extends ProviderModelReference>(
+  availableModels: readonly T[],
+  candidate: string | undefined,
+): T | undefined {
+  const parsed = parseProviderModelReference(candidate);
+  if (!parsed || !isXaiProvider(parsed.provider)) {
+    return undefined;
+  }
+  return findAvailableProviderModel(availableModels, candidate);
+}
+
 function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
@@ -350,6 +376,23 @@ function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
   );
 }
 
+function currentProviderXaiCandidate<T extends ProviderModelReference>(
+  agent: AgentModelDefaults | undefined,
+  availableModels: readonly T[],
+  currentProvider?: string,
+): T | undefined {
+  if (!isXaiProvider(currentProvider)) {
+    return undefined;
+  }
+  for (const candidate of agentModelsForProvider(agent, currentProvider)) {
+    const model = availableXaiCandidate(availableModels, formatProviderModelReference(candidate));
+    if (model) {
+      return model;
+    }
+  }
+  return undefined;
+}
+
 function currentProviderCustomCandidate<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
@@ -361,6 +404,7 @@ function currentProviderCustomCandidate<T extends ProviderModelReference>(
     !currentProvider ||
     isOpenaiProvider(currentProvider) ||
     isAnthropicProvider(currentProvider) ||
+    isXaiProvider(currentProvider) ||
     isOpenrouterProvider(currentProvider)
   ) {
     return undefined;
@@ -391,17 +435,24 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
     const currentFamily = providerFamily(currentProvider, currentModel?.id);
     const families: ProviderFamily[] =
       currentFamily === "anthropic"
-        ? ["openai", "anthropic"]
+        ? ["openai", "xai", "anthropic"]
         : currentFamily === "openai"
-          ? ["anthropic", "openai"]
-          : ["openai", "anthropic"];
+          ? ["anthropic", "xai", "openai"]
+          : currentFamily === "xai"
+            ? ["anthropic", "openai", "xai"]
+            : ["openai", "anthropic", "xai"];
     for (const family of families) {
       const candidates = agentModelsForFamily(agent, family);
       for (const candidate of candidates) {
         const model =
           family === "openai"
             ? availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate))
-            : availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
+            : family === "anthropic"
+              ? availableAnthropicCandidate(
+                  availableModels,
+                  formatProviderModelReference(candidate),
+                )
+              : availableXaiCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
           return model;
         }
@@ -411,26 +462,45 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   }
 
   if (isAnthropicProvider(currentProvider)) {
-    for (const candidate of agentModelsForFamily(agent, "openai")) {
-      const model = availableCodexCandidate(
-        availableModels,
-        formatProviderModelReference(candidate),
-      );
-      if (model) {
-        return model;
+    for (const family of ["openai", "xai"] as const) {
+      for (const candidate of agentModelsForFamily(agent, family)) {
+        const model =
+          family === "openai"
+            ? availableCodexCandidate(availableModels, formatProviderModelReference(candidate))
+            : availableXaiCandidate(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+          return model;
+        }
       }
     }
     return undefined;
   }
 
   if (isOpenaiProvider(currentProvider)) {
-    for (const candidate of agentModelsForFamily(agent, "anthropic")) {
-      const model = availableAnthropicCandidate(
-        availableModels,
-        formatProviderModelReference(candidate),
-      );
-      if (model) {
-        return model;
+    for (const family of ["anthropic", "xai"] as const) {
+      for (const candidate of agentModelsForFamily(agent, family)) {
+        const model =
+          family === "anthropic"
+            ? availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate))
+            : availableXaiCandidate(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+          return model;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  if (isXaiProvider(currentProvider)) {
+    for (const family of ["anthropic", "openai"] as const) {
+      for (const candidate of agentModelsForFamily(agent, family)) {
+        const model =
+          family === "anthropic"
+            ? availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate))
+            : availableCodexCandidate(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+          return model;
+        }
       }
     }
   }
@@ -468,7 +538,8 @@ function selectOppositeProviderFallbackModel<T extends ProviderModelReference>(
 
   return (
     currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
-    currentProviderAnthropicCandidate(agent, availableModels, currentProvider)
+    currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+    currentProviderXaiCandidate(agent, availableModels, currentProvider)
   );
 }
 
@@ -496,6 +567,7 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
   const currentProviderModel =
     currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
     currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+    currentProviderXaiCandidate(agent, availableModels, currentProvider) ??
     currentProviderCustomCandidate(agent, availableModels, currentProvider);
   if (currentProviderModel) {
     return currentProviderModel;
@@ -521,13 +593,20 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
     }
   }
 
+  for (const candidate of agentModelsForFamily(agent, "xai")) {
+    const model = availableXaiCandidate(availableModels, formatProviderModelReference(candidate));
+    if (model) {
+      return model;
+    }
+  }
+
   return undefined;
 }
 
 /**
  * When the active provider is "openrouter" (literal string only), agents without
  * preferOppositeProvider follow the current session model instead of falling
- * through to bundled codex/anthropic candidates.
+ * through to bundled direct-provider candidates.
  *
  * Thinking comes exclusively from the normalized OpenRouter entry; the generic
  * `thinking` key does NOT leak through on this path. Returns undefined when the rule does
