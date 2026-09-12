@@ -7,7 +7,7 @@ import {
   normalizeSubagentRunMode,
 } from "./types.ts";
 import { truncateWithMarker } from "./string-utils.ts";
-import { safeTerminalText } from "./display-text.ts";
+import { safeTerminalDocumentLeaf, safeTerminalText } from "./display-text.ts";
 
 export function resolveSubagentResultStatus(input: {
   exitCode?: number;
@@ -208,7 +208,7 @@ function boundedNativeForegroundError(value: string): string {
  * the summary line entirely rather than emitting a sliced fragment.
  */
 function boundedNativeForegroundSummary(child: SubagentResultChild, maxChars: number): string {
-  const raw = safeTerminalText(child.summary).trim() || "(no output)";
+  const raw = safeTerminalDocumentLeaf(child.summary).trim() || "(no output)";
   if (raw.length <= maxChars) return raw;
   // Select the marker first, then suppress when the budget cannot hold it.
   // Comparing against the selected marker's own length avoids suppressing a short

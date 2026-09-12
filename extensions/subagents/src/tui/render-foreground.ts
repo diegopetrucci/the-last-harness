@@ -24,7 +24,7 @@ import {
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.ts";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.ts";
-import { safeTerminalText } from "../shared/display-text.ts";
+import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.ts";
 import {
   buildLiveStatusLine,
   childLocationLine,
@@ -78,7 +78,6 @@ function hasEmptyTextOutputWithoutOutputTarget(task: string, output: string): bo
 
 function getToolCallLines(
   result: Pick<Details["results"][number], "messages" | "toolCalls">,
-  expanded: boolean,
 ): string[] {
   if (result.messages) {
     return getDisplayItems(result.messages)
@@ -86,11 +85,11 @@ function getToolCallLines(
         (item): item is { type: "tool"; name: string; args: Record<string, unknown> } =>
           item.type === "tool",
       )
-      .map((item) => safeTerminalText(formatToolCall(item.name, item.args, expanded)));
+      .map((item) => safeTerminalDocumentLeaf(formatToolCall(item.name, item.args, true)));
   }
   return (
     result.toolCalls?.map((toolCall) =>
-      safeTerminalText(expanded ? (toolCall.expandedText ?? toolCall.text) : toolCall.text),
+      safeTerminalDocumentLeaf(toolCall.expandedText ?? toolCall.text),
     ) ?? []
   );
 }
@@ -209,7 +208,7 @@ function firstOutputLine(text: string): string {
 }
 
 function compactOutputPreview(text: string): string {
-  const preview = firstOutputLine(safeTerminalText(text));
+  const preview = firstOutputLine(safeTerminalDocumentLeaf(text));
   const withoutTruncationPath = preview.replace(
     / - full output at (?:\/|[A-Za-z]:[\\/]|\\\\).*\]$/,
     "]",
@@ -231,12 +230,13 @@ function resultStatusLine(result: Details["results"][number], output: string): s
   if (result.exitCode !== 0) {
     const error = result.error
       ? safeTerminalText(result.error)
-      : firstOutputLine(safeTerminalText(output)) || `exit ${result.exitCode}`;
+      : firstOutputLine(safeTerminalDocumentLeaf(output)) || `exit ${result.exitCode}`;
     return `Error: ${error}`;
   }
   if (result.acceptance?.status && result.acceptance.status !== "not-required")
     return `Done · acceptance: ${safeTerminalText(result.acceptance.status)}`;
-  if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return "Done (no text output)";
+  if (hasEmptyTextOutputWithoutOutputTarget(result.task, safeTerminalDocumentLeaf(output)))
+    return "Done (no text output)";
   return "Done";
 }
 
@@ -411,7 +411,8 @@ function renderSingleCompact(
   theme: Theme,
   frame?: number,
 ): Component {
-  const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
+  const rawOutput = r.truncation?.text || getSingleResultOutput(r);
+  const output = safeTerminalText(rawOutput);
   const isRunning = r.progress?.status === "running";
   const lines: string[] = [];
   const width = getTermWidth() - 4;
@@ -439,7 +440,7 @@ function renderSingleCompact(
     return collapsedForegroundComponent(lines, theme);
   }
 
-  const preview = compactOutputPreview(output);
+  const preview = compactOutputPreview(rawOutput);
   lines.push(theme.fg("dim", `  ⎿  ${resultStatusLine(r, preview)}`));
   if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
     lines.push(theme.fg("dim", `     ${preview}`));
@@ -506,7 +507,8 @@ function renderMultiCompact(
   let hasRunningResult = false;
   for (const { index: resultIndex, result: r } of entries) {
     const agentName = safeTerminalText(r.agent);
-    const output = safeTerminalText(getSingleResultOutput(r));
+    const rawOutput = getSingleResultOutput(r);
+    const output = safeTerminalText(rawOutput);
     const progressFromArray =
       d.progress?.find((p) => p.index === resultIndex) ||
       d.progress?.find((p) => p.agent === r.agent && p.status === "running");
@@ -549,7 +551,7 @@ function renderMultiCompact(
       !rPending &&
       (rFailed || rPaused || hasEmptyTextOutputWithoutOutputTarget(r.task, output))
     ) {
-      lines.push(theme.fg(rFailed ? "error" : "dim", `    ⎿  ${resultStatusLine(r, output)}`));
+      lines.push(theme.fg(rFailed ? "error" : "dim", `    ⎿  ${resultStatusLine(r, rawOutput)}`));
     }
   }
   if (d.artifacts)
@@ -565,7 +567,7 @@ function renderZeroResult(
   theme: Theme,
 ): Component {
   const t = result.content[0];
-  const text = safeTerminalText(t?.type === "text" ? t.text : "(no output)");
+  const text = safeTerminalDocumentLeaf(t?.type === "text" ? t.text : "(no output)");
   const width = getTermWidth() - 4;
   if (!text.includes("\n")) {
     const c = new Container();
@@ -593,7 +595,8 @@ function renderExpandedSingleResult(
   frame?: number,
 ): Component {
   const isRunning = r.progress?.status === "running";
-  const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
+  const rawOutput = r.truncation?.text || getSingleResultOutput(r);
+  const output = safeTerminalText(rawOutput);
   const icon = isRunning
     ? resultGlyph(
         r,
@@ -617,7 +620,7 @@ function renderExpandedSingleResult(
         : "";
 
   const w = getTermWidth() - 4;
-  const toolCallLines = getToolCallLines(r, true);
+  const toolCallLines = getToolCallLines(r);
   const c = new Container();
   c.addChild(
     new Text(
@@ -631,7 +634,7 @@ function renderExpandedSingleResult(
   const childLocLineSingle = childLocationLine(r.childLocation, theme);
   if (childLocLineSingle) c.addChild(new Text(childLocLineSingle, 0, 0));
   c.addChild(new Spacer(1));
-  c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
+  c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
   c.addChild(new Spacer(1));
 
   const outputTarget = extractOutputTarget(r.task);
@@ -699,7 +702,10 @@ function renderExpandedSingleResult(
   }
   if (toolCallLines.length) c.addChild(new Spacer(1));
 
-  if (output) c.addChild(new Markdown(safeTerminalText(output), 0, 0, mdTheme));
+  if (output) {
+    const outputDocument = safeTerminalDocumentLeaf(rawOutput);
+    c.addChild(new Markdown(outputDocument, 0, 0, mdTheme));
+  }
   c.addChild(new Spacer(1));
   if (r.skills?.length) {
     c.addChild(
@@ -889,14 +895,14 @@ function renderExpandedMultiResult(
     const stepHeader = rRunning
       ? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", safeTerminalText(r.agent)))}${modelDisplay}${stats}`
       : `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
-    const toolCallLines = getToolCallLines(r, true);
+    const toolCallLines = getToolCallLines(r);
     c.addChild(new Text(stepHeader, 0, 0));
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
     const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
     if (childLocLineExpanded) c.addChild(new Text(childLocLineExpanded, 0, 0));
 
-    c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalText(r.task)}`), 0, 0));
+    c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
 
     const outputTarget = extractOutputTarget(r.task);
     if (outputTarget) {
@@ -1019,7 +1025,7 @@ function renderExpandedMultiResult(
 
     if (!rRunning) {
       for (const line of toolCallLines) {
-        c.addChild(new Text(theme.fg("muted", `      ${safeTerminalText(line)}`), 0, 0));
+        c.addChild(new Text(theme.fg("muted", `      ${line}`), 0, 0));
       }
       if (toolCallLines.length) c.addChild(new Spacer(1));
     }

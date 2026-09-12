@@ -13,7 +13,7 @@ import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../..
 import { aggregateParallelOutputs, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { attachNestedChildrenToResultChildren, formatForegroundNativeSubagentResult, resolveSubagentResultStatus, } from "../../shared/result-formatting.js";
 import { attachRootChildrenToSteps, updateForegroundNestedProjection, } from "../shared/nested-events.js";
-import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
+import { safeTerminalDocument, safeTerminalDocumentLeaf, safeTerminalText, } from "../../shared/display-text.js";
 import { formatForegroundPauseMessage, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
 import { runSync } from "./execution.js";
 import { resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, } from "../../shared/types.js";
@@ -73,9 +73,10 @@ function resultSummaryForNativeForeground(result, displayOutput) {
 }
 function formatFailedSingleRunOutput(result, displayOutput) {
     const error = safeTerminalText(result.error || "Failed");
-    const output = safeTerminalText(displayOutput).trim();
+    const output = safeTerminalDocumentLeaf(displayOutput).trim();
+    const outputForComparison = safeTerminalText(output).trim();
     const lines = [error];
-    if (output && output !== error.trim()) {
+    if (output && outputForComparison !== error.trim()) {
         lines.push("", "Output:", output);
     }
     if (result.artifactPaths?.outputPath) {

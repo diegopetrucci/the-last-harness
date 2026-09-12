@@ -20,6 +20,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Child-derived display text now has an explicit single-line `safeTerminalText` boundary; intentional multiline leaves use the binary-safe document boundary at display sites that require preserved structure, without rewriting durable artifacts.
 - Switching an isolated profile from a local TLH package source back to a canonical source now removes only local registrations confirmed by a valid TLH `package.json` manifest.
 - Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
 - Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.

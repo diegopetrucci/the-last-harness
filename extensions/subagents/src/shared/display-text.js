@@ -8,6 +8,11 @@ function isUnsafeControlCode(codePoint) {
         codePoint === 0x7f ||
         (codePoint >= 0x80 && codePoint <= 0x9f));
 }
+function isBinaryLike(sanitized) {
+    return (sanitized.normalized.includes("\x00") ||
+        (sanitized.normalized.length > 0 &&
+            sanitized.unsafeCount / sanitized.normalized.length > BINARY_DENSITY_THRESHOLD));
+}
 function isWhitespace(character) {
     return /\s/u.test(character);
 }
@@ -92,12 +97,13 @@ function sanitizeTerminalDocument(input) {
 }
 export function safeTerminalText(input) {
     const sanitized = sanitizeTerminalDocument(input);
-    if (sanitized.normalized.includes("\x00") ||
-        (sanitized.normalized.length > 0 &&
-            sanitized.unsafeCount / sanitized.normalized.length > BINARY_DENSITY_THRESHOLD)) {
+    if (isBinaryLike(sanitized))
         return BINARY_CONTENT_PLACEHOLDER;
-    }
-    return sanitized.cleaned;
+    return sanitized.cleaned.replace(/[\r\n]/g, " ");
+}
+export function safeTerminalDocumentLeaf(input) {
+    const sanitized = sanitizeTerminalDocument(input);
+    return isBinaryLike(sanitized) ? BINARY_CONTENT_PLACEHOLDER : sanitized.cleaned;
 }
 export function safeTerminalDocument(input) {
     return sanitizeTerminalDocument(input).cleaned;
