@@ -4,6 +4,45 @@ import type {
   DurableAttentionReason,
 } from "../../shared/types.ts";
 
+/** Watchdog cadence shared by foreground and background activity observers. */
+export const ACTIVITY_MONITOR_INTERVAL_MS = 1_000;
+export const ACTIVITY_MONITOR_GAP_THRESHOLD_MS = ACTIVITY_MONITOR_INTERVAL_MS * 2;
+
+export function getActivityMonitorGap(
+  previousMonitorTickAt: number | undefined,
+  now: number,
+): { gapMs: number; detected: boolean } {
+  const gapMs = previousMonitorTickAt === undefined ? 0 : Math.max(0, now - previousMonitorTickAt);
+  return { gapMs, detected: gapMs > ACTIVITY_MONITOR_GAP_THRESHOLD_MS };
+}
+
+/**
+ * Advance an observation window without rewriting the child's activity time.
+ * A delayed watchdog tick starts a new window; otherwise a changed activity
+ * timestamp or an uninitialized window starts observation at the current time.
+ */
+export function observeActivityWindow(input: {
+  previousMonitorTickAt?: number;
+  now: number;
+  startedAt: number;
+  activityAt: number;
+  observedIdleSince?: number;
+  observedActivityAt?: number;
+}): {
+  observedIdleSince: number;
+  observedActivityAt: number;
+} {
+  const { detected } = getActivityMonitorGap(input.previousMonitorTickAt, input.now);
+  let observedIdleSince = input.observedIdleSince;
+  if (detected) observedIdleSince = input.now;
+  else if (observedIdleSince === undefined) observedIdleSince = input.startedAt;
+  else if (input.observedActivityAt !== input.activityAt) observedIdleSince = input.now;
+  return {
+    observedIdleSince,
+    observedActivityAt: input.activityAt,
+  };
+}
+
 /** Maximum length of an episode identity carried through a control event. */
 export const MAX_IDLE_EPISODE_ID_LENGTH = 128;
 

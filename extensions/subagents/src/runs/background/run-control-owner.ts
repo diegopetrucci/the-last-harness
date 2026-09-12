@@ -50,6 +50,13 @@ import { boundSupervisorSummary } from "../shared/lifecycle-state.ts";
 import { toolBudgetState } from "../shared/tool-budget.ts";
 import type { ModelAttemptStart } from "./single-step-execution.ts";
 import type { BackgroundRunStatusOwner } from "./run-status-owner.ts";
+import {
+  ACTIVITY_MONITOR_INTERVAL_MS,
+  getActivityMonitorGap,
+  observeActivityWindow,
+} from "../shared/health-transition.ts";
+
+const MONITOR_GAP_DIAGNOSTIC_TYPE = "subagent.run.monitor_gap";
 
 export interface BackgroundRunControlOwnerInput {
   status: BackgroundRunStatusOwner;
@@ -59,6 +66,7 @@ export interface BackgroundRunControlOwnerInput {
   controlConfig: ResolvedControlConfig;
   nestedRoute?: NestedRouteInfo;
   appendEvent: (line: string) => void;
+  appendDiagnosticEvent?: (line: string, droppedEventType?: string) => void;
 }
 
 export interface BackgroundRunControlOwner {
@@ -106,13 +114,31 @@ function resolveSupervisorPauseMetadata(input: {
 export function createBackgroundRunControlOwner(
   input: BackgroundRunControlOwnerInput,
 ): BackgroundRunControlOwner {
-  const { status, id, asyncDir, overallStartTime, controlConfig, nestedRoute, appendEvent } = input;
+  const {
+    status,
+    id,
+    asyncDir,
+    overallStartTime,
+    controlConfig,
+    nestedRoute,
+    appendEvent,
+    appendDiagnosticEvent,
+  } = input;
   const statusPayload = status.statusPayload;
   const flatSteps = status.flatSteps;
   const activeChildInterrupts = new Map<number, () => void>();
   const activeChildTimeouts = new Map<number, () => void>();
   const pendingStepSteers: ChildMessageRequest[] = [];
   const emittedControlEventKeys = new Set<string>();
+  // These timestamps describe what the watchdog has continuously observed, not
+  // the child's truthful activity timestamps. A delayed watchdog tick resets
+  // this observation window without rewriting lastActivityAt.
+  const observedIdleSince: Array<number | undefined> = status.initialStatusSteps.map(
+    () => undefined,
+  );
+  const observedActivityAt: Array<number | undefined> = status.initialStatusSteps.map(
+    () => undefined,
+  );
   const mutatingFailureStates = status.initialStatusSteps.map(() => createMutatingFailureState());
   // Runtime-reported identity is trusted only after exact registry validation
   // and is scoped to the currently dispatched child attempt. A fallback invokes
@@ -129,6 +155,7 @@ export function createBackgroundRunControlOwner(
   > = status.initialStatusSteps.map(() => undefined);
   const mutatingFailureWindowMs = 5 * 60_000;
   let activityTimer: NodeJS.Timeout | undefined;
+  let lastMonitorTickAt: number | undefined;
 
   function registerStepInterrupt(flatIndex: number, interrupt: (() => void) | undefined): void {
     if (!interrupt) {
@@ -402,6 +429,10 @@ export function createBackgroundRunControlOwner(
     // episode and any in-flight compaction while retaining durable causes and
     // an already-earned long-running notice.
     status.resetStepHealth(flatIndex);
+    // A fallback attempt starts a fresh observed-idle segment. Keep the
+    // previous attempt's activity timestamp intact for truthful status output.
+    observedIdleSince[flatIndex] = now;
+    observedActivityAt[flatIndex] = step.lastActivityAt;
     runtimeModelContexts[flatIndex] = undefined;
     activeConfiguredModels[flatIndex] = attempt.model;
     step.model = attempt.model;
@@ -423,6 +454,9 @@ export function createBackgroundRunControlOwner(
     const step = statusPayload.steps[flatIndex];
     if (!step) return;
     const now = Date.now();
+    // Validated child activity starts a new observed-idle window. Raw output
+    // freshness is still folded into this window by the monitor below.
+    observedIdleSince[flatIndex] = now;
     // Only validated child protocol events can recover an idle episode. The
     // compaction operation is tracked independently of tool-call state.
     status.transitionStepHealth(flatIndex, { type: "validated_activity" });
@@ -652,6 +686,7 @@ export function createBackgroundRunControlOwner(
     }
     syncTopLevelCurrentTool();
     step.lastActivityAt = now;
+    observedActivityAt[flatIndex] = now;
     statusPayload.lastActivityAt = now;
     statusPayload.lastUpdate = now;
     maybeEmitActiveLongRunning(flatIndex, now);
@@ -683,10 +718,29 @@ export function createBackgroundRunControlOwner(
     return lastActivityAt;
   }
 
+  function appendMonitorGapDiagnostic(now: number, gapMs: number): void {
+    const line = JSON.stringify({
+      type: MONITOR_GAP_DIAGNOSTIC_TYPE,
+      ts: now,
+      runId: id,
+      gapMs,
+    });
+    if (appendDiagnosticEvent) appendDiagnosticEvent(line, MONITOR_GAP_DIAGNOSTIC_TYPE);
+    else appendEvent(line);
+  }
+
   function updateRunnerActivityState(now: number): boolean {
     if (!controlConfig.enabled) return false;
+    const previousMonitorTickAt = lastMonitorTickAt;
+    const { gapMs: monitorGapMs, detected: monitorGapDetected } = getActivityMonitorGap(
+      previousMonitorTickAt,
+      now,
+    );
+    lastMonitorTickAt = now;
     let changed = false;
     let runLastActivityAt = statusPayload.lastActivityAt ?? overallStartTime;
+    if (monitorGapDetected && statusPayload.steps.some((step) => step.status === "running"))
+      appendMonitorGapDiagnostic(now, monitorGapMs);
     for (let index = 0; index < statusPayload.steps.length; index++) {
       const step = statusPayload.steps[index]!;
       if (step.status !== "running") continue;
@@ -696,13 +750,24 @@ export function createBackgroundRunControlOwner(
         step.lastActivityAt = lastActivityAt;
         changed = true;
       }
+      const observation = observeActivityWindow({
+        previousMonitorTickAt,
+        now,
+        startedAt: step.startedAt ?? overallStartTime,
+        activityAt: lastActivityAt,
+        observedIdleSince: observedIdleSince[index],
+        observedActivityAt: observedActivityAt[index],
+      });
+      observedIdleSince[index] = observation.observedIdleSince;
+      observedActivityAt[index] = observation.observedActivityAt;
+      const observedActivitySince = observation.observedIdleSince;
       const healthState = status.healthStateForStep(index);
       const idleState = healthState.compaction
         ? undefined
         : deriveActivityState({
             config: controlConfig,
             startedAt: step.startedAt ?? overallStartTime,
-            lastActivityAt,
+            lastActivityAt: observedActivitySince,
             toolCallInFlight: Boolean(step.currentTool),
             now,
           });
@@ -720,6 +785,7 @@ export function createBackgroundRunControlOwner(
                 index,
                 ts: now,
                 lastActivityAt,
+                elapsedMs: Math.max(0, now - observedActivitySince),
                 idleEpisodeId: transition.state.idleEpisodeId,
               }),
             );
@@ -744,10 +810,11 @@ export function createBackgroundRunControlOwner(
 
   function startActivityTimer(): void {
     if (!controlConfig.enabled) return;
+    lastMonitorTickAt = Date.now();
     activityTimer = setInterval(() => {
       if (statusPayload.state !== "running") return;
       updateRunnerActivityState(Date.now());
-    }, 1000);
+    }, ACTIVITY_MONITOR_INTERVAL_MS);
     activityTimer.unref?.();
   }
 
