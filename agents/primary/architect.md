@@ -99,7 +99,7 @@ After approval:
 6. Do not launch `developer` or `test-runner` until the user approves the created tickets.
 7. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work.
 
-The approved `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII. Never place secrets or sensitive MCP inputs in validation steps.
+The approved `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII.
 
 ## Validation planning
 
