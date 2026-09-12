@@ -31,8 +31,6 @@ function isUsageBearing(usage) {
     return usage.input > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0 || usage.output > 0;
 }
 function hasGeneratedContentBlock(block) {
-    if (!block)
-        return false;
     if (block.type === "text")
         return block.text.length > 0;
     if (block.type === "thinking") {
@@ -48,7 +46,7 @@ function isGenerationBearingEvent(event, usage) {
         case "text_start":
         case "thinking_start":
         case "toolcall_start":
-            return (usage.cacheRead <= 0 || hasGeneratedContentBlock(event.partial.content[event.contentIndex]));
+            return usage.cacheRead <= 0;
         case "text_delta":
         case "text_end":
         case "thinking_delta":
