@@ -40,6 +40,7 @@ function readBundledDefinitions() {
       filePath,
       relativePath: relative(bundledAgentsRoot, filePath),
       name: frontmatter.name,
+      tools: frontmatter.tools,
       acceptanceRole: frontmatter.acceptanceRole,
     };
   });
@@ -106,6 +107,11 @@ test("all bundled minor agents declare acceptance roles through runtime discover
 
   const names = definitions.map((definition) => definition.name);
   assert.equal(new Set(names).size, names.length, "bundled minor-agent names must be unique");
+  assert.equal(
+    definitions.find((definition) => definition.name === "test-runner")?.tools,
+    "bash, mcp",
+    "test-runner must expose bash and the generic MCP gateway",
+  );
   assert.ok(
     names.includes("developer"),
     "the bundled minor-agent inventory must include developer",
@@ -156,6 +162,11 @@ test("all bundled minor agents declare acceptance roles through runtime discover
       `${definition.name} must retain no-override identity metadata`,
     );
   }
+  assert.deepEqual(
+    discoveredByName.get("test-runner")?.tools,
+    ["bash", "mcp"],
+    "runtime discovery must preserve test-runner's generic MCP gateway",
+  );
 });
 
 test("canonical bundled roles accept profile and project acceptanceRole overrides", async (t) => {

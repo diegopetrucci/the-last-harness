@@ -704,6 +704,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(args[args.indexOf("--tools") + 1], "bash,contact_supervisor");
   });
 
+  it("retains generic MCP while filtering direct MCP selections", () => {
+    const { args, env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      supervisorBridge: false,
+      tools: ["bash", "mcp", "mcp:server/lookup"],
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
+    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+  });
+
   it("always sets MCP_DIRECT_TOOLS=__none__ sentinel for @diegopetrucci/pi-mcp-adapter", () => {
     // The adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
     // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would widen every child's tool surface.

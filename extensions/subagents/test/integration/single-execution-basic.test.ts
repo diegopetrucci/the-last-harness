@@ -1068,10 +1068,11 @@ describe(
     it("allows test-runner to report realistic final-validation wording without a mutation guard", async () => {
       mockPi.onCall({ output: "Validation passed; no edits were needed." });
       const runner = makeAgent("test-runner", {
-        tools: ["bash"],
+        tools: ["bash", "mcp"],
         completionGuard: false,
         supervisorBridge: false,
-        systemPrompt: "Run exact validation commands. Prompt prose is not a capability signal.",
+        systemPrompt:
+          "Run exact shell and MCP validation steps. Prompt prose is not a capability signal.",
       });
       assert.equal(runner.completionGuard, false);
       assert.equal(runner.supervisorBridge, false);
@@ -1080,7 +1081,7 @@ describe(
         tempDir,
         [runner],
         "test-runner",
-        "Run the final-validation ticket's exact commands, report pass/fail results, and do not modify the repository.",
+        "Run the final-validation ticket's exact shell and MCP steps, report pass/fail results, and do not modify the repository.",
         { runId: "test-runner-final-validation" },
       );
 
@@ -1088,7 +1089,7 @@ describe(
       assert.equal(result.progress.status, "completed");
       assert.equal(result.finalOutput, "Validation passed; no edits were needed.");
       const args = readCallArgs();
-      assert.equal(args[args.indexOf("--tools") + 1], "bash");
+      assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
       assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
     });
 

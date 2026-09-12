@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
+- The test-runner agent can now use MCPs.
 - When a child subagent runs in a different directory / worktree than the parent session, a line shows where.
 - Added support for xAI/Grok as primary/opposite provider.
 - Installing / updating TLH should be faster.
