@@ -538,62 +538,69 @@ async function runSubagentWithInput(config, plan) {
         abortInterrupt: () => interruptAbortController.abort(),
         abortTimeout: () => timeoutAbortController.abort(),
     });
-    if (config.continuationSource) {
-        const gate = finalizeLifecycleContinuationLaunch(config.continuationSource.asyncDir, config.continuationSource.index, config.continuationSource.claimToken, id);
-        if (!gate.finalized) {
-            statusPayload.state = "failed";
-            statusPayload.pid = undefined;
-            statusPayload.endedAt = Date.now();
-            statusPayload.lastUpdate = statusPayload.endedAt;
-            statusPayload.error = `Continuation launch gate rejected for source run '${config.continuationSource.runId}' child ${config.continuationSource.index}.`;
-            statusPayload.steps = statusPayload.steps?.map((step, index) => index === 0
-                ? {
-                    ...step,
-                    status: "failed",
-                    endedAt: statusPayload.endedAt,
-                    exitCode: 1,
-                    terminationReason: step.terminationReason ?? "process_exit",
-                    error: statusPayload.error,
-                }
-                : step);
-            writeNormalizedLifecycleStatus(asyncDir, statusPayload);
-            const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
-            try {
-                writeAtomicJson(resultPath, {
-                    lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-                    id,
-                    agent: gateRejectAgent,
-                    mode: statusPayload.mode,
-                    success: false,
-                    state: "failed",
-                    summary: statusPayload.error,
-                    error: statusPayload.error,
-                    results: [
-                        {
-                            agent: gateRejectAgent,
-                            ...(statusPayload.steps?.[0]?.projectAgent
-                                ? { projectAgent: statusPayload.steps[0].projectAgent }
-                                : {}),
-                            output: statusPayload.error,
-                            error: statusPayload.error,
-                            success: false,
-                            exitCode: 1,
-                        },
-                    ],
-                    exitCode: 1,
-                    timestamp: statusPayload.endedAt,
-                    durationMs: 0,
-                    asyncDir,
-                    sessionId: config.sessionId,
-                    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
-                });
+    const rejectContinuationLaunch = () => {
+        const continuationSource = config.continuationSource;
+        if (!continuationSource)
+            return false;
+        const gate = finalizeLifecycleContinuationLaunch(continuationSource.asyncDir, continuationSource.index, continuationSource.claimToken, id);
+        if (gate.finalized)
+            return false;
+        const endedAt = Date.now();
+        const error = `Continuation launch gate rejected for source run '${continuationSource.runId}' child ${continuationSource.index}.`;
+        statusPayload.state = "failed";
+        statusPayload.pid = undefined;
+        statusPayload.endedAt = endedAt;
+        statusPayload.lastUpdate = endedAt;
+        statusPayload.error = error;
+        statusPayload.steps = statusPayload.steps?.map((step, index) => index === 0
+            ? {
+                ...step,
+                status: "failed",
+                endedAt,
+                exitCode: 1,
+                terminationReason: step.terminationReason ?? "process_exit",
+                error,
             }
-            catch (err) {
-                console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
-            }
-            return;
+            : step);
+        writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+        const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
+        try {
+            writeAtomicJson(resultPath, {
+                lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+                id,
+                agent: gateRejectAgent,
+                mode: statusPayload.mode,
+                success: false,
+                state: "failed",
+                summary: error,
+                error,
+                results: [
+                    {
+                        agent: gateRejectAgent,
+                        ...(statusPayload.steps?.[0]?.projectAgent
+                            ? { projectAgent: statusPayload.steps[0].projectAgent }
+                            : {}),
+                        output: error,
+                        error,
+                        success: false,
+                        exitCode: 1,
+                    },
+                ],
+                exitCode: 1,
+                timestamp: endedAt,
+                durationMs: 0,
+                asyncDir,
+                sessionId: config.sessionId,
+                ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+            });
         }
-    }
+        catch (err) {
+            console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
+        }
+        return true;
+    };
+    if (rejectContinuationLaunch())
+        return;
     interruptRunner = () => {
         consumeInterruptRequest(asyncDir);
         statusOwner.interrupt();
@@ -693,7 +700,7 @@ async function runSubagentWithInput(config, plan) {
             statusPayload.steps[flatIndex].sessionFile = resolvedSeqSessionFile;
             statusOwner.latestSessionFile = resolvedSeqSessionFile;
         }
-        results.push({
+        const projectSingleStepResult = () => ({
             agent: singleResult.agent,
             ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
             output: statusOwner.timedOut
@@ -742,6 +749,7 @@ async function runSubagentWithInput(config, plan) {
             durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
             compaction: statusPayload.steps[flatIndex]?.compaction,
         });
+        results.push(projectSingleStepResult());
         const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
         let stepTokens = cumulativeTokens
             ? {
@@ -1433,7 +1441,7 @@ async function runSubagentWithInput(config, plan) {
                 !statusOwner.concurrentTerminalStatusAdopted
                 ? safePausedResultAfterReap
                 : undefined);
-        const resultState = statusOwner.concurrentTerminalStatusAdopted
+        const resolveResultState = () => statusOwner.concurrentTerminalStatusAdopted
             ? statusPayload.state
             : statusOwner.terminalReason.reason === "output_limit"
                 ? "failed"
@@ -1453,6 +1461,7 @@ async function runSubagentWithInput(config, plan) {
                                     : results.every((r) => r.success)
                                         ? "complete"
                                         : "failed";
+        const resultState = resolveResultState();
         const resultSuccess = resultState === "complete";
         const resultSummary = !statusOwner.concurrentTerminalStatusAdopted && statusOwner.timedOut
             ? (timeoutMessage ?? "Subagent timed out.")

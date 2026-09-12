@@ -730,89 +730,81 @@ async function runSubagentWithInput(
     abortInterrupt: () => interruptAbortController.abort(),
     abortTimeout: () => timeoutAbortController.abort(),
   });
-  if (config.continuationSource) {
+  const rejectContinuationLaunch = (): boolean => {
+    const continuationSource = config.continuationSource;
+    if (!continuationSource) return false;
     const gate = finalizeLifecycleContinuationLaunch(
-      config.continuationSource.asyncDir,
-      config.continuationSource.index,
-      config.continuationSource.claimToken,
+      continuationSource.asyncDir,
+      continuationSource.index,
+      continuationSource.claimToken,
       id,
     );
-    if (!gate.finalized) {
-      statusPayload.state = "failed";
-      statusPayload.pid = undefined;
-      statusPayload.endedAt = Date.now();
-      statusPayload.lastUpdate = statusPayload.endedAt;
-      statusPayload.error = `Continuation launch gate rejected for source run '${config.continuationSource.runId}' child ${config.continuationSource.index}.`;
-      statusPayload.steps = statusPayload.steps?.map((step, index) =>
-        index === 0
-          ? {
-              ...step,
-              status: "failed",
-              endedAt: statusPayload.endedAt,
-              exitCode: 1,
-              terminationReason: step.terminationReason ?? "process_exit",
-              error: statusPayload.error,
-            }
-          : step,
-      );
-      writeNormalizedLifecycleStatus(asyncDir, statusPayload);
-      // Option (b): explicit inline failure artifact. The terminal result writer at
-      // the bottom of runSubagent is unreachable from this early return, so any waiter
-      // blocking on RESULTS_DIR/${id}.json would hang until its own timeout without
-      // this write. Consumer contract verified against result-watcher.ts handleResult:
-      //   - sessionId    CRITICAL: delivery gate; result-watcher drops the file if absent
-      //                  or mismatched against state.currentSessionId.
-      //   - id           Primary dedup key; buildCompletionKey uses `id:${id}` when present.
-      //   - state/success Drive child-status resolution and resolvePausedArtifactDecision
-      //                  (returns "compat" for state !== "paused", so delivery proceeds).
-      //   - summary/error User-visible failure message surfaced in the UI.
-      //   - results       Child array consumed by the normalizedChildren path.
-      //   - asyncDir      Read by resolvePausedArtifactDecision only when state === "paused";
-      //                  included for forward compatibility.
-      // Safe to omit: durationMs, totalTokens, totalCost, truncated, cwd,
-      // sessionFile, shareUrl,
-      const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
-      try {
-        // summary, timestamp, and results[].output are required on AsyncResultArtifact.
-        // They are satisfied here because TypeScript control-flow analysis narrows
-        // statusPayload.error (assigned above) and statusPayload.endedAt (assigned
-        // above) to non-undefined at this write site. Do not extract this block
-        // into a helper that accepts statusPayload — doing so would lose that
-        // narrowing and require explicit non-null assertions or guards.
-        writeAtomicJson(resultPath, {
-          lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-          id,
-          agent: gateRejectAgent,
-          mode: statusPayload.mode,
-          success: false,
-          state: "failed" as const,
-          summary: statusPayload.error,
-          error: statusPayload.error,
-          results: [
-            {
-              agent: gateRejectAgent,
-              ...(statusPayload.steps?.[0]?.projectAgent
-                ? { projectAgent: statusPayload.steps[0].projectAgent }
-                : {}),
-              output: statusPayload.error,
-              error: statusPayload.error,
-              success: false,
-              exitCode: 1,
-            },
-          ],
-          exitCode: 1,
-          timestamp: statusPayload.endedAt,
-          durationMs: 0,
-          asyncDir,
-          sessionId: config.sessionId,
-          ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
-        } satisfies AsyncResultArtifact);
-      } catch (err) {
-        console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
-      }
-      return;
+    if (gate.finalized) return false;
+
+    const endedAt = Date.now();
+    const error = `Continuation launch gate rejected for source run '${continuationSource.runId}' child ${continuationSource.index}.`;
+    statusPayload.state = "failed";
+    statusPayload.pid = undefined;
+    statusPayload.endedAt = endedAt;
+    statusPayload.lastUpdate = endedAt;
+    statusPayload.error = error;
+    statusPayload.steps = statusPayload.steps?.map((step, index) =>
+      index === 0
+        ? {
+            ...step,
+            status: "failed",
+            endedAt,
+            exitCode: 1,
+            terminationReason: step.terminationReason ?? "process_exit",
+            error,
+          }
+        : step,
+    );
+    writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+    const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
+    try {
+      // This early inline artifact is required because the normal terminal writer
+      // below is unreachable after the gate-rejection return; without it, waiters
+      // could time out without a completion receipt.
+      // sessionId is the live-session delivery gate and must match currentSessionId;
+      // id is the completion deduplication key.
+      // state/success drive child-status resolution and delivery; summary/error carry
+      // the user-visible failure; results carries normalized child output; asyncDir
+      // supports paused-artifact resolution and the forward-compatible contract.
+      writeAtomicJson(resultPath, {
+        lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+        id,
+        agent: gateRejectAgent,
+        mode: statusPayload.mode,
+        success: false,
+        state: "failed" as const,
+        summary: error,
+        error,
+        results: [
+          {
+            agent: gateRejectAgent,
+            ...(statusPayload.steps?.[0]?.projectAgent
+              ? { projectAgent: statusPayload.steps[0].projectAgent }
+              : {}),
+            output: error,
+            error,
+            success: false,
+            exitCode: 1,
+          },
+        ],
+        exitCode: 1,
+        timestamp: endedAt,
+        durationMs: 0,
+        asyncDir,
+        sessionId: config.sessionId,
+        ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+      } satisfies AsyncResultArtifact);
+    } catch (err) {
+      console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
     }
-  }
+    return true;
+  };
+  if (rejectContinuationLaunch()) return;
   interruptRunner = () => {
     consumeInterruptRequest(asyncDir);
     statusOwner.interrupt();
@@ -933,7 +925,8 @@ async function runSubagentWithInput(
       statusOwner.latestSessionFile = resolvedSeqSessionFile;
     }
 
-    results.push({
+    // Invoke immediately below; this snapshots mutable lifecycle state captured by the runner.
+    const projectSingleStepResult = (): StepResult => ({
       agent: singleResult.agent,
       ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
       output: statusOwner.timedOut
@@ -983,6 +976,7 @@ async function runSubagentWithInput(
       durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
       compaction: statusPayload.steps[flatIndex]?.compaction,
     });
+    results.push(projectSingleStepResult());
     const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
     let stepTokens: TokenUsage | null = cumulativeTokens
       ? {
@@ -1809,26 +1803,29 @@ async function runSubagentWithInput(
       !statusOwner.concurrentTerminalStatusAdopted
         ? safePausedResultAfterReap
         : undefined);
-    const resultState = statusOwner.concurrentTerminalStatusAdopted
-      ? statusPayload.state
-      : statusOwner.terminalReason.reason === "output_limit"
-        ? "failed"
-        : statusOwner.timedOut
+    // Invoke immediately below; this snapshots mutable terminal state at the current site.
+    const resolveResultState = (): AsyncResultArtifact["state"] =>
+      statusOwner.concurrentTerminalStatusAdopted
+        ? statusPayload.state
+        : statusOwner.terminalReason.reason === "output_limit"
           ? "failed"
-          : resultPausedAwaitingSupervisor
-            ? "paused"
-            : statusOwner.supervisorPauseTransitionFailed
-              ? "failed"
-              : statusPayload.state === "failed" ||
-                  statusPayload.state === "paused" ||
-                  statusPayload.state === "cancelled" ||
-                  statusPayload.state === "continued"
-                ? statusPayload.state
-                : statusOwner.interrupted
-                  ? "paused"
-                  : results.every((r) => r.success)
-                    ? "complete"
-                    : "failed";
+          : statusOwner.timedOut
+            ? "failed"
+            : resultPausedAwaitingSupervisor
+              ? "paused"
+              : statusOwner.supervisorPauseTransitionFailed
+                ? "failed"
+                : statusPayload.state === "failed" ||
+                    statusPayload.state === "paused" ||
+                    statusPayload.state === "cancelled" ||
+                    statusPayload.state === "continued"
+                  ? statusPayload.state
+                  : statusOwner.interrupted
+                    ? "paused"
+                    : results.every((r) => r.success)
+                      ? "complete"
+                      : "failed";
+    const resultState = resolveResultState();
     const resultSuccess = resultState === "complete";
     const resultSummary =
       !statusOwner.concurrentTerminalStatusAdopted && statusOwner.timedOut
