@@ -453,7 +453,7 @@ test("trace-policy fixture importer correlates Pi toolResult failures onto the c
   );
 });
 
-test("trace-policy fixture importer preserves MCP details.error and validation stops on it", () => {
+test("trace-policy fixture importer preserves MCP connect_failed details.error and validation stops on it", () => {
   const fixture = importTracePolicyFixtureFromText(
     JSON.stringify({
       agent: "test-runner",
@@ -482,8 +482,7 @@ test("trace-policy fixture importer preserves MCP details.error and validation s
         {
           role: "toolResult",
           toolCallId: "call_mcp_1",
-          toolName: "mcp",
-          details: { error: "tool_error" },
+          details: { error: "connect_failed" },
         },
         {
           role: "assistant",
@@ -501,7 +500,7 @@ test("trace-policy fixture importer preserves MCP details.error and validation s
       input: { server: "repo-checks", tool: "check_status", args: "{}" },
       ok: false,
       status: "failed",
-      details: { error: "tool_error" },
+      details: { error: "connect_failed" },
     },
     { type: "tool", tool: "bash", command: "npm test" },
   ]);
@@ -517,7 +516,7 @@ test("trace-policy fixture importer preserves MCP details.error and validation s
   );
 });
 
-test("trace-policy fixture importer keeps MCP non-failure details stable across re-import", () => {
+test("trace-policy fixture importer preserves MCP details.error failures across re-import", () => {
   for (const error of [
     "auth_required",
     "not_connected",
@@ -525,6 +524,7 @@ test("trace-policy fixture importer keeps MCP non-failure details stable across 
     "empty_query",
     "tool_not_found",
     "connect_failed",
+    "gateway_failure",
   ]) {
     const firstImport = importTracePolicyFixtureFromText(
       JSON.stringify({
@@ -563,6 +563,8 @@ test("trace-policy fixture importer keeps MCP non-failure details stable across 
         type: "tool",
         tool: "mcp",
         input: { server: "repo-checks" },
+        ok: false,
+        status: "failed",
         details: { error },
       },
     ];
@@ -571,9 +573,22 @@ test("trace-policy fixture importer keeps MCP non-failure details stable across 
     assert.deepEqual(reimport.transcript.steps, expectedSteps, error);
     for (const imported of [firstImport, reimport]) {
       imported.transcript.metadata = {
-        assignedValidationSteps: [{ kind: "mcp", input: { server: "repo-checks" } }],
+        assignedValidationSteps: [
+          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "shell", command: "npm test" },
+        ],
       };
-      assert.deepEqual(evaluateTracePolicy(imported.transcript).violations, [], error);
+      assert.deepEqual(
+        evaluateTracePolicy({
+          ...imported.transcript,
+          steps: [
+            ...imported.transcript.steps,
+            { type: "tool", tool: "bash", command: "npm test" },
+          ],
+        }).violations.map((violation) => violation.code),
+        ["test-runner.validation_stop_required"],
+        error,
+      );
     }
   }
 });

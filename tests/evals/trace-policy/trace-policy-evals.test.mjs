@@ -585,7 +585,7 @@ test("test-runner stops after an imported generic MCP details.error failure", ()
   );
 });
 
-test("test-runner treats only adapter failure codes as MCP details errors", () => {
+test("test-runner stops after any meaningful MCP details.error", () => {
   for (const error of [
     "auth_required",
     "not_connected",
@@ -593,20 +593,28 @@ test("test-runner treats only adapter failure codes as MCP details errors", () =
     "empty_query",
     "tool_not_found",
     "connect_failed",
+    "gateway_failure",
   ]) {
     const result = evaluateTracePolicy({
       agent: "test-runner",
       metadata: {
-        assignedValidationSteps: [{ kind: "mcp", input: { server: "repo-checks" } }],
+        assignedValidationSteps: [
+          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "shell", command: "npm test" },
+        ],
       },
       steps: [
         { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
         { type: "tool", tool: "mcp", input: { server: "repo-checks" }, details: { error } },
+        { type: "tool", tool: "bash", command: "npm test" },
       ],
     });
 
-    assert.equal(result.ok, true, error);
-    assert.deepEqual(result.violations, [], error);
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      ["test-runner.validation_stop_required"],
+      error,
+    );
   }
 });
 
@@ -634,6 +642,34 @@ test("test-runner does not let a falsy top-level error mask an MCP failure detai
         ],
       }),
       ["test-runner.validation_stop_required"],
+      String(error),
+    );
+  }
+});
+
+test("test-runner does not stop after falsy nested MCP details.error", () => {
+  for (const error of [false, 0, "", null]) {
+    assert.deepEqual(
+      violationCodes({
+        agent: "test-runner",
+        metadata: {
+          assignedValidationSteps: [
+            { kind: "mcp", input: { server: "repo-checks" } },
+            { kind: "shell", command: "npm test" },
+          ],
+        },
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+          {
+            type: "tool",
+            tool: "mcp",
+            input: { server: "repo-checks" },
+            details: { error },
+          },
+          { type: "tool", tool: "bash", command: "npm test" },
+        ],
+      }),
+      [],
       String(error),
     );
   }
