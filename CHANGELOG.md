@@ -14,7 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.
-- Subagents should be reporting acceptance criterias in a more structured way.
+- Subagent reports with partial or unrecognized acceptance statuses are now preserved and treated as incomplete instead of being rejected as malformed.
 
 ## [0.40.0] - 2026-09-06
 
