@@ -4,7 +4,7 @@ import { liveDetailShortcutDisplay } from "../shared/subagent-shortcuts.js";
 import {} from "../shared/types.js";
 import { formatDuration, formatModelThinking, formatTokens } from "../shared/formatters.js";
 import { formatActivityLabel } from "../shared/status-format.js";
-import { safeTerminalText } from "../shared/display-text.js";
+import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.js";
 import { whimsicalThinkingPhrase } from "./whimsical-phrases.js";
 export function liveDetailKeyText() {
     return liveDetailShortcutDisplay();
@@ -123,7 +123,9 @@ export function formatCurrentToolLines(progress, firstWidth, continuationWidth, 
     if (!progress.currentTool)
         return undefined;
     const currentTool = safeTerminalText(progress.currentTool);
-    const toolArgsPreview = safeTerminalText(progress.currentToolArgs ?? "");
+    const toolArgsPreview = expanded
+        ? safeTerminalDocumentLeaf(progress.currentToolArgs ?? "")
+        : safeTerminalText(progress.currentToolArgs ?? "");
     const durationSuffix = progress.currentToolStartedAt !== undefined && snapshotNow !== undefined
         ? ` | ${formatDuration(Math.max(0, snapshotNow - progress.currentToolStartedAt))}`
         : "";
@@ -174,18 +176,19 @@ export function modelThinkingBadge(theme, model, thinking) {
 export function childLocationText(loc) {
     if (!loc)
         return undefined;
-    const parts = [`cwd: ${safeTerminalText(loc.displayPath)}`];
+    const safeLocationPart = (value) => safeTerminalText(value.replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n")));
+    const parts = [`cwd: ${safeLocationPart(loc.displayPath)}`];
     if (loc.repoName)
-        parts.push(`repo: ${safeTerminalText(loc.repoName)}`);
+        parts.push(`repo: ${safeLocationPart(loc.repoName)}`);
     if (loc.linkedWorktree)
         parts.push("linked worktree");
     if (loc.detachedHead)
-        parts.push(`branch: detached@${safeTerminalText(loc.detachedHead)}`);
+        parts.push(`branch: detached@${safeLocationPart(loc.detachedHead)}`);
     else if (loc.branch)
-        parts.push(`branch: ${safeTerminalText(loc.branch)}`);
+        parts.push(`branch: ${safeLocationPart(loc.branch)}`);
     if (loc.notAGitRepo)
         parts.push("no git repo");
-    return parts.join(" \u00b7 ").replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n"));
+    return parts.join(" \u00b7 ").replace(/[\r\n]/g, " ");
 }
 export function childLocationLine(loc, theme, indent = "  ") {
     const text = childLocationText(loc);

@@ -85,7 +85,11 @@ import {
   attachRootChildrenToSteps,
   updateForegroundNestedProjection,
 } from "../shared/nested-events.ts";
-import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
+import {
+  safeTerminalDocument,
+  safeTerminalDocumentLeaf,
+  safeTerminalText,
+} from "../../shared/display-text.ts";
 import {
   formatForegroundPauseMessage,
   formatForegroundSupervisorPauseMessage,
@@ -235,9 +239,10 @@ function resultSummaryForNativeForeground(result: SingleResult, displayOutput?: 
 
 function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string): string {
   const error = safeTerminalText(result.error || "Failed");
-  const output = safeTerminalText(displayOutput).trim();
+  const output = safeTerminalDocumentLeaf(displayOutput).trim();
+  const outputForComparison = safeTerminalText(output).trim();
   const lines = [error];
-  if (output && output !== error.trim()) {
+  if (output && outputForComparison !== error.trim()) {
     lines.push("", "Output:", output);
   }
   if (result.artifactPaths?.outputPath) {

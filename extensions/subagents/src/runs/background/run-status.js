@@ -14,7 +14,7 @@ import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegis
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.js";
 import { formatProtectedLifecycleCleanup, isProtectedPausedLifecycle, protectedLifecycleText, } from "../shared/lifecycle-privacy.js";
-import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
+import { safeTerminalDocument, safeTerminalDocumentLeaf, safeTerminalText, } from "../../shared/display-text.js";
 import { acceptanceRejectionReason } from "../shared/acceptance.js";
 import { formatRejectionReason } from "../../shared/string-utils.js";
 function hasExistingSessionFile(value) {
@@ -171,7 +171,7 @@ function formatRememberedForegroundStatus(run) {
         `Updated: ${new Date(run.updatedAt).toISOString()}`,
     ];
     for (const child of run.children) {
-        const output = safeTerminalText(rememberedForegroundChildOutput(child))
+        const output = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
             .trim()
             .split(/\r?\n/)
             .find((line) => line.trim());
@@ -239,7 +239,7 @@ function formatRememberedForegroundTranscript(run, options) {
         throw new Error(`Status transcript index ${index} is out of range for ${run.children.length} foreground children.`);
     const child = run.children[index];
     const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
-    const outputLines = safeTerminalText(rememberedForegroundChildOutput(child))
+    const outputLines = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
         .split(/\r?\n/)
         .filter((line) => line.trim())
         .slice(-lineLimit);
@@ -447,7 +447,7 @@ function inspectAsyncResultFile(resultPath, params, resolvedId) {
                 : [];
         lines.push(formatResumeGuidance(runId, children, data.sessionFile));
         if (data.summary)
-            lines.push("", privacySafeResult ? "Paused awaiting supervisor." : safeTerminalText(data.summary));
+            lines.push("", privacySafeResult ? "Paused awaiting supervisor." : safeTerminalDocumentLeaf(data.summary));
         return {
             content: [{ type: "text", text: safeTerminalDocument(lines.join("\n")) }],
             details: { mode: "single", results: [] },

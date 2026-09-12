@@ -8,7 +8,7 @@ import { liveDetailShortcutDisplay } from "../shared/subagent-shortcuts.ts";
 import { type ActivityState, type AgentProgress } from "../shared/types.ts";
 import { formatDuration, formatModelThinking, formatTokens } from "../shared/formatters.ts";
 import { formatActivityLabel } from "../shared/status-format.ts";
-import { safeTerminalText } from "../shared/display-text.ts";
+import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.ts";
 import { whimsicalThinkingPhrase } from "./whimsical-phrases.ts";
 import type { ChildLocationSnapshot } from "../shared/child-location.ts";
 
@@ -197,7 +197,9 @@ export function formatCurrentToolLines(
 ): string[] | undefined {
   if (!progress.currentTool) return undefined;
   const currentTool = safeTerminalText(progress.currentTool);
-  const toolArgsPreview = safeTerminalText(progress.currentToolArgs ?? "");
+  const toolArgsPreview = expanded
+    ? safeTerminalDocumentLeaf(progress.currentToolArgs ?? "")
+    : safeTerminalText(progress.currentToolArgs ?? "");
   const durationSuffix =
     progress.currentToolStartedAt !== undefined && snapshotNow !== undefined
       ? ` | ${formatDuration(Math.max(0, snapshotNow - progress.currentToolStartedAt))}`
@@ -269,17 +271,18 @@ export function modelThinkingBadge(theme: Theme, model?: string, thinking?: stri
  */
 export function childLocationText(loc: ChildLocationSnapshot | undefined): string | undefined {
   if (!loc) return undefined;
-  const parts: string[] = [`cwd: ${safeTerminalText(loc.displayPath)}`];
-  if (loc.repoName) parts.push(`repo: ${safeTerminalText(loc.repoName)}`);
+  // Keep newline-bearing path components visible without allowing them to
+  // become physical rows. Escape before the single-line display boundary so
+  // safeTerminalText does not replace them with spaces first.
+  const safeLocationPart = (value: string): string =>
+    safeTerminalText(value.replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n")));
+  const parts: string[] = [`cwd: ${safeLocationPart(loc.displayPath)}`];
+  if (loc.repoName) parts.push(`repo: ${safeLocationPart(loc.repoName)}`);
   if (loc.linkedWorktree) parts.push("linked worktree");
-  if (loc.detachedHead) parts.push(`branch: detached@${safeTerminalText(loc.detachedHead)}`);
-  else if (loc.branch) parts.push(`branch: ${safeTerminalText(loc.branch)}`);
+  if (loc.detachedHead) parts.push(`branch: detached@${safeLocationPart(loc.detachedHead)}`);
+  else if (loc.branch) parts.push(`branch: ${safeLocationPart(loc.branch)}`);
   if (loc.notAGitRepo) parts.push("no git repo");
-  // Prevent an embedded newline in any path component from emitting extra
-  // physical rows and corrupting widget height accounting.  Replace CR and LF
-  // with visible escaped forms here, in the location line only, without
-  // touching the shared safeTerminalText helper used by other callers.
-  return parts.join(" \u00b7 ").replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n"));
+  return parts.join(" \u00b7 ").replace(/[\r\n]/g, " ");
 }
 
 export function childLocationLine(

@@ -1,9 +1,12 @@
 /**
- * Terminal-safe text boundary for untrusted child transcript/status content.
+ * Terminal-safe display boundaries for untrusted child transcript/status content.
  *
- * Apply {@link safeTerminalText} only at display/render surfaces. Do not apply
- * it to durable files such as transcript JSONL, output artifacts, metadata, or
- * log files: those paths must remain byte-faithful.
+ * Use {@link safeTerminalText} for a single logical line, {@link safeTerminalDocumentLeaf}
+ * for a raw multiline leaf, and {@link safeTerminalDocument} for composed text
+ * whose leaves have already crossed a display boundary. Apply these helpers
+ * only at display/render surfaces. Do not apply them to durable files such as
+ * transcript JSONL, output artifacts, metadata, or log files: those paths must
+ * remain byte-faithful.
  */
 
 /** Returned when input contains binary-looking content. */
@@ -31,6 +34,14 @@ interface SanitizedTerminalText {
   normalized: string;
   cleaned: string;
   unsafeCount: number;
+}
+
+function isBinaryLike(sanitized: SanitizedTerminalText): boolean {
+  return (
+    sanitized.normalized.includes("\x00") ||
+    (sanitized.normalized.length > 0 &&
+      sanitized.unsafeCount / sanitized.normalized.length > BINARY_DENSITY_THRESHOLD)
+  );
 }
 
 function isWhitespace(character: string): boolean {
@@ -138,22 +149,29 @@ function sanitizeTerminalDocument(input: string): SanitizedTerminalText {
 /**
  * Sanitize untrusted child text for safe terminal display.
  *
- * CRLF and lone CR are normalized to LF. ANSI CSI and OSC sequences are
- * consumed as a unit, while a bare ESC and other unsafe controls are removed.
- * Tabs and newlines remain usable for readable display text. Ordinary Unicode
- * is copied unchanged. Inputs containing a NUL or a high density of unsafe
- * controls are represented by a short placeholder instead of partial output.
+ * CRLF, lone CR, and LF are rendered as spaces so the result contains one
+ * logical line and does not add line breaks; width fitting remains the
+ * caller's responsibility. ANSI CSI and OSC sequences are consumed as a unit,
+ * while a bare ESC and other unsafe controls are removed. Tabs remain usable
+ * for readable display text. Ordinary Unicode is copied unchanged. Inputs
+ * containing a NUL or a high density of unsafe controls are represented by a
+ * short placeholder instead of partial output.
  */
 export function safeTerminalText(input: string): string {
   const sanitized = sanitizeTerminalDocument(input);
-  if (
-    sanitized.normalized.includes("\x00") ||
-    (sanitized.normalized.length > 0 &&
-      sanitized.unsafeCount / sanitized.normalized.length > BINARY_DENSITY_THRESHOLD)
-  ) {
-    return BINARY_CONTENT_PLACEHOLDER;
-  }
-  return sanitized.cleaned;
+  if (isBinaryLike(sanitized)) return BINARY_CONTENT_PLACEHOLDER;
+  return sanitized.cleaned.replace(/[\r\n]/g, " ");
+}
+
+/**
+ * Sanitize an untrusted multiline leaf while preserving the binary-content
+ * placeholder policy. Use this when a raw child-derived value is intentionally
+ * rendered as a document; use safeTerminalDocument for composed text whose
+ * leaves have already crossed a display boundary.
+ */
+export function safeTerminalDocumentLeaf(input: string): string {
+  const sanitized = sanitizeTerminalDocument(input);
+  return isBinaryLike(sanitized) ? BINARY_CONTENT_PLACEHOLDER : sanitized.cleaned;
 }
 
 /**
