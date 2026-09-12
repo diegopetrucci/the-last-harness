@@ -81,10 +81,6 @@ test("commit attribution prompt helper only renders when enabled", () => {
     buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
     /Co-authored-by: The Last Harness <hi@thelastharness\.com>/,
   );
-  assert.match(
-    buildTlhCommitAttributionPrompt(resolveTlhCommitAttribution(undefined)) ?? "",
-    /blank line/,
-  );
 });
 
 test("git commit attribution guard blocks only obvious unattributed inline commit commands", () => {

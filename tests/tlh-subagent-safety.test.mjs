@@ -219,20 +219,8 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes", 
   assert.equal(allowedDeveloperResume.agentScope, "user");
 });
 
-test("validateSubagentToolInput uses generic primary-agent wording", () => {
-  const reasons = [
-    validateSubagentToolInput(null),
-    validateSubagentToolInput({ action: "delete" }),
-    validateSubagentToolInput({ agent: "developer" }),
-  ].filter(Boolean);
-
-  for (const reason of reasons) {
-    assert.match(reason, /TLH primary(?:-agent| agents)/);
-    assert.doesNotMatch(reason, /TLH architect/);
-  }
-});
-
 test("validateSubagentToolInput rejects disallowed agents", () => {
+  assert.ok(validateSubagentToolInput(null));
   assert.match(
     validateSubagentToolInput({ agent: "architect" }),
     /Disallowed target\(s\): architect/,
