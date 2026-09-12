@@ -167,6 +167,9 @@ function sanitizeState(value, fallback) {
         ? value
         : fallback;
 }
+function sanitizeActivityState(value) {
+    return value === "needs_attention" ? value : undefined;
+}
 function projectAgentProjection(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         return { malformed: false };
@@ -198,6 +201,7 @@ function sanitizeStep(input, depth) {
     const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
+    const activityState = sanitizeActivityState(raw.activityState);
     return {
         agent,
         ...(projectAgent.capture ? { projectAgent: projectAgent.capture } : {}),
@@ -207,9 +211,7 @@ function sanitizeStep(input, depth) {
             ? { terminationReason: terminationReason }
             : {}),
         ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-        ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
-            ? { activityState: raw.activityState }
-            : {}),
+        ...(activityState ? { activityState } : {}),
         ...(clampNumber(raw.lastActivityAt) !== undefined
             ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
             : {}),
@@ -271,6 +273,7 @@ export function sanitizeSummary(input, depth = 0) {
     const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
+    const activityState = sanitizeActivityState(raw.activityState);
     return {
         id: raw.id,
         parentRunId: raw.parentRunId,
@@ -321,9 +324,7 @@ export function sanitizeSummary(input, depth = 0) {
         ...(clampNumber(raw.currentStep) !== undefined
             ? { currentStep: clampNumber(raw.currentStep) }
             : {}),
-        ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
-            ? { activityState: raw.activityState }
-            : {}),
+        ...(activityState ? { activityState } : {}),
         ...(clampNumber(raw.lastActivityAt) !== undefined
             ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
             : {}),
@@ -835,6 +836,7 @@ function projectAgentProjectionFromAsyncStatus(status) {
 }
 export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
     const projectAgent = projectAgentProjectionFromAsyncStatus(status);
+    const activityState = sanitizeActivityState(status.activityState);
     return {
         id: status.runId || fallback.id,
         parentRunId: fallback.parentRunId,
@@ -855,7 +857,7 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
         state: nestedStateFromAsyncState(status.state),
         ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-        ...(status.activityState ? { activityState: status.activityState } : {}),
+        ...(activityState ? { activityState } : {}),
         ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
         ...(status.currentTool ? { currentTool: status.currentTool } : {}),
         ...(status.currentToolStartedAt !== undefined
@@ -886,13 +888,14 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                 steps: status.steps
                     .map((step) => {
                     const stepProjectAgent = projectAgentProjection(step);
+                    const stepActivityState = sanitizeActivityState(step.activityState);
                     return {
                         agent: step.agent,
                         ...(stepProjectAgent.capture ? { projectAgent: stepProjectAgent.capture } : {}),
                         ...(stepProjectAgent.malformed ? { projectAgentMarker: true } : {}),
                         status: nestedStepStatusFromAsyncStepStatus(step.status),
                         ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-                        ...(step.activityState ? { activityState: step.activityState } : {}),
+                        ...(stepActivityState ? { activityState: stepActivityState } : {}),
                         ...(step.lastActivityAt !== undefined
                             ? { lastActivityAt: step.lastActivityAt }
                             : {}),

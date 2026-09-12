@@ -5,6 +5,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
+import { formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, } from "./lib/tlh-install-subagents.mjs";
 import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath, } from "./lib/tlh-install-utils.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -539,6 +540,13 @@ function printPackageUpdateDryRun(piCommand, args) {
     console.log(`Agent dir: ${args.agentDir}`);
     console.log(`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`);
 }
+function reportSubagentExtensionConfigMigration(args, result) {
+    if (result.warning)
+        return console.error(`warning: ${result.warning}`);
+    const message = formatSubagentExtensionConfigMigration(result, args);
+    if (message && !args.quiet)
+        console.log(message);
+}
 function runPackageUpdate(args) {
     assertPackageUpdateTargetSafe(args.agentDir);
     assertPackageUpdateArgs(args);
@@ -548,6 +556,7 @@ function runPackageUpdate(args) {
     const piCommand = join(dirname(args.agentDir), "runtime", "bin", "pi");
     if (args.dryRun) {
         printPackageUpdateDryRun(piCommand, args);
+        reportSubagentExtensionConfigMigration(args, migrateSubagentExtensionConfig({ agentDir: args.agentDir, dryRun: true }));
         return;
     }
     if (!existsSync(piCommand)) {
@@ -576,6 +585,7 @@ function runPackageUpdate(args) {
         process.exitCode = exitCode;
         return;
     }
+    reportSubagentExtensionConfigMigration(args, migrateSubagentExtensionConfig({ agentDir: args.agentDir }));
     process.exitCode = 0;
 }
 async function downloadInstaller(url) {
@@ -631,6 +641,7 @@ async function main() {
     }
     if (args.dryRun) {
         printDryRun(plan, installerArgs, childEnv);
+        reportSubagentExtensionConfigMigration(args, migrateSubagentExtensionConfig({ agentDir: args.agentDir, dryRun: true }));
         return;
     }
     if (isTruthyEnv(process.env.PI_OFFLINE)) {
@@ -653,7 +664,11 @@ async function main() {
         if (result.error) {
             throw result.error;
         }
-        process.exitCode = result.status ?? (result.signal ? 1 : 0);
+        const exitCode = result.status ?? (result.signal ? 1 : 0);
+        process.exitCode = exitCode;
+        if (exitCode === 0) {
+            reportSubagentExtensionConfigMigration(args, migrateSubagentExtensionConfig({ agentDir: args.agentDir }));
+        }
     }
     finally {
         if (temp?.dir) {

@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -15,7 +16,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -46,10 +47,9 @@ import {
   copyTlhSubagentPrompts,
   findTlhSubagentsDir,
   managedRetiredSubagentPackages,
+  migrateSubagentExtensionConfig,
   missingTlhSubagentPrompts,
-  provisionSubagentExtensionConfig,
   restoreNeededTlhSubagentPrompts,
-  subagentExtensionConfigMissingDefaults,
 } from "../scripts/lib/tlh-install-subagents.mjs";
 
 function tempFixture(t, prefix = "tlh-install-lib-test-") {
@@ -1389,186 +1389,190 @@ test("settings defaults no longer declare a subagents.agentDirs default", () => 
   assert.equal(defaults.subagents, undefined);
 });
 
-test("subagentExtensionConfigMissingDefaults reports only the active-notice default", (t) => {
-  const agentDir = tempFixture(t, "tlh-ext-config-notice-");
-  const config = { agentDir };
+test("migrateSubagentExtensionConfig creates and converges the managed policy", (t) => {
+  const agentDir = tempFixture(t, "tlh-ext-config-fresh-");
   const configPath = join(agentDir, "extensions", "subagent", "config.json");
 
-  assert.deepEqual(
-    subagentExtensionConfigMissingDefaults(config),
-    ["control.activeNoticeAfterMs: 270000 (4m30)"],
-    "missing config reports only the active-notice default",
-  );
+  const first = migrateSubagentExtensionConfig({ agentDir });
+  assert.deepEqual(first.changes, ["set control.needsAttentionAfterMs: 180000"]);
+  assert.equal(first.changed, true);
+  assert.equal(first.backupPath, undefined, "fresh config has no backup");
+  assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), {
+    control: { needsAttentionAfterMs: 180000 },
+  });
 
-  mkdirSync(join(agentDir, "extensions", "subagent"), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: null }) + "\n");
-  assert.deepEqual(
-    subagentExtensionConfigMissingDefaults(config),
-    [],
-    "unprovisionable control and an unknown legacy key report no defaults",
-  );
-
-  writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: {} }) + "\n");
-  assert.deepEqual(
-    subagentExtensionConfigMissingDefaults(config),
-    ["control.activeNoticeAfterMs: 270000 (4m30)"],
-    "only the active-notice default is reported when it can be written",
-  );
-
-  writeFileSync(
-    configPath,
-    JSON.stringify({ toolDescriptionMode: "full", control: { activeNoticeAfterMs: 123 } }) + "\n",
-  );
-  assert.deepEqual(
-    subagentExtensionConfigMissingDefaults(config),
-    [],
-    "complete config reports no provisioning",
-  );
+  const firstContent = readFileSync(configPath, "utf8");
+  const second = migrateSubagentExtensionConfig({ agentDir });
+  assert.equal(second.changed, false, "a converged run is a no-op");
+  assert.equal(second.backupPath, undefined, "a converged run does not create a backup");
+  assert.equal(readFileSync(configPath, "utf8"), firstContent, "converged config is untouched");
 });
 
-test("provisionSubagentExtensionConfig manages only the active-notice default", (t) => {
-  const agentDir = tempFixture(t, "tlh-ext-config-test-");
-  const config = { agentDir };
-  const configPath = join(agentDir, "extensions", "subagent", "config.json");
+test("migrateSubagentExtensionConfig rejects normal Pi config before planning", () => {
+  const agentDir = join(homedir(), ".pi", "agent", "tlh-aohm-migration-test");
+  const result = migrateSubagentExtensionConfig({ agentDir, dryRun: true });
 
-  // Fresh install: config does not exist yet.
-  provisionSubagentExtensionConfig(config);
-  assert.ok(existsSync(configPath), "config.json created on first run");
-  const created = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.equal(
-    Object.hasOwn(created, "toolDescriptionMode"),
-    false,
-    "fresh config does not receive the retired description-mode key",
-  );
-  assert.deepEqual(
-    created.control,
-    { activeNoticeAfterMs: 270000 },
-    "active notice default set to 4m30",
-  );
-
-  // Idempotent re-run: existing values must not change.
-  provisionSubagentExtensionConfig(config);
-  const afterRerun = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.deepEqual(afterRerun, created, "re-running leaves the completed config unchanged");
-
-  // Existing user values and unrelated keys survive unchanged.
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      control: { activeNoticeAfterMs: 123456, nestedKey: "preserve" },
-      topLevelKey: true,
-    }) + "\n",
-  );
-  provisionSubagentExtensionConfig(config);
-  const afterActiveNoticeOverride = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.equal(
-    Object.hasOwn(afterActiveNoticeOverride, "toolDescriptionMode"),
-    false,
-    "missing legacy key is not injected",
-  );
-  assert.equal(
-    afterActiveNoticeOverride.control.activeNoticeAfterMs,
-    123456,
-    "active notice override is preserved",
-  );
-  assert.equal(
-    afterActiveNoticeOverride.control.nestedKey,
-    "preserve",
-    "nested control keys are preserved",
-  );
-  assert.equal(afterActiveNoticeOverride.topLevelKey, true, "top-level user keys are preserved");
-
-  // An existing legacy key is preserved while the independently missing default is added.
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      toolDescriptionMode: "full",
-      control: { nestedKey: "preserve" },
-    }) + "\n",
-  );
-  provisionSubagentExtensionConfig(config);
-  const afterLegacyConfig = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.equal(afterLegacyConfig.toolDescriptionMode, "full", "legacy key is preserved");
-  assert.equal(
-    afterLegacyConfig.control.activeNoticeAfterMs,
-    270000,
-    "active notice is added independently",
-  );
-  assert.equal(afterLegacyConfig.control.nestedKey, "preserve", "nested keys remain");
-
-  // A complete config is not rewritten, including its unknown legacy key.
-  const completeContent =
-    JSON.stringify({
-      toolDescriptionMode: "full",
-      control: { activeNoticeAfterMs: 123, nestedKey: "preserve" },
-      topLevelKey: true,
-    }) + "\n";
-  writeFileSync(configPath, completeContent);
-  provisionSubagentExtensionConfig(config);
-  assert.equal(
-    readFileSync(configPath, "utf8"),
-    completeContent,
-    "complete config remains byte-for-byte unchanged",
-  );
-
-  // A malformed nested control value cannot receive the managed default and is untouched.
-  const malformedContent =
-    JSON.stringify({ toolDescriptionMode: "full", control: null, topLevelKey: "preserve" }) + "\n";
-  writeFileSync(configPath, malformedContent);
-  provisionSubagentExtensionConfig(config);
-  assert.equal(
-    readFileSync(configPath, "utf8"),
-    malformedContent,
-    "unprovisionable config remains byte-for-byte unchanged",
-  );
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.changes, []);
+  assert.match(result.warning || "", /normal Pi config root/);
 });
 
-test("provisionSubagentExtensionConfig preserves byte-for-byte non-object and unreadable configs", (t) => {
-  const agentDir = tempFixture(t, "tlh-ext-config-noobj-");
-  const config = { agentDir };
+test("migrateSubagentExtensionConfig replaces overrides, removes retired controls, and backs up", (t) => {
+  const agentDir = tempFixture(t, "tlh-ext-config-migration-");
   const configDir = join(agentDir, "extensions", "subagent");
-  mkdirSync(configDir, { recursive: true });
   const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  const before =
+    JSON.stringify(
+      {
+        toolDescriptionMode: "full",
+        control: {
+          activeNoticeAfterMs: 123456,
+          activeNoticeAfterTurns: 7,
+          activeNoticeAfterTokens: 99,
+          needsAttentionAfterMs: 321,
+          notifyOn: ["active_long_running", "needs_attention", "active_long_running", "custom"],
+          nestedKey: "preserve",
+        },
+        topLevelKey: true,
+      },
+      null,
+      2,
+    ) + "\n";
+  writeFileSync(configPath, before);
 
-  // Array value — must be left byte-for-byte untouched.
-  const arrayContent = "[]\n";
-  writeFileSync(configPath, arrayContent);
-  provisionSubagentExtensionConfig(config);
+  const result = migrateSubagentExtensionConfig({ agentDir });
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.changes, [
+    "remove control.activeNoticeAfterMs",
+    "remove control.activeNoticeAfterTurns",
+    "remove control.activeNoticeAfterTokens",
+    "remove active_long_running from control.notifyOn",
+    "set control.needsAttentionAfterMs: 180000",
+  ]);
+  assert.ok(result.backupPath, "changed existing config has a backup path");
+  assert.equal(readFileSync(result.backupPath, "utf8"), before, "backup preserves original bytes");
+
+  const migrated = JSON.parse(readFileSync(configPath, "utf8"));
+  assert.equal(migrated.toolDescriptionMode, "full");
+  assert.equal(migrated.topLevelKey, true);
+  assert.deepEqual(migrated.control, {
+    needsAttentionAfterMs: 180000,
+    notifyOn: ["needs_attention", "custom"],
+    nestedKey: "preserve",
+  });
+  const backupNames = readdirSync(configDir).filter((name) =>
+    name.startsWith("config.json.backup-"),
+  );
+  assert.equal(backupNames.length, 1, "exactly one backup is created for the changed write");
+
+  const afterMigration = readFileSync(configPath, "utf8");
+  const rerun = migrateSubagentExtensionConfig({ agentDir });
+  assert.equal(rerun.changed, false, "rerunning a migrated config is a no-op");
+  assert.equal(rerun.backupPath, undefined, "rerunning does not create another backup");
+  assert.equal(readFileSync(configPath, "utf8"), afterMigration);
   assert.equal(
-    readFileSync(configPath, "utf8"),
-    arrayContent,
-    "array config preserved byte-for-byte",
+    readdirSync(configDir).filter((name) => name.startsWith("config.json.backup-")).length,
+    1,
+  );
+});
+
+test("migrateSubagentExtensionConfig clears an active-only notifyOn list", (t) => {
+  const agentDir = tempFixture(t, "tlh-ext-config-active-only-");
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    configPath,
+    JSON.stringify({ control: { notifyOn: ["active_long_running"] } }) + "\n",
   );
 
-  // null value — must be left byte-for-byte untouched.
-  const nullContent = "null\n";
-  writeFileSync(configPath, nullContent);
-  provisionSubagentExtensionConfig(config);
-  assert.equal(
-    readFileSync(configPath, "utf8"),
-    nullContent,
-    "null config preserved byte-for-byte",
-  );
+  const result = migrateSubagentExtensionConfig({ agentDir });
+  assert.equal(result.changed, true);
+  assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")).control, {
+    notifyOn: [],
+    needsAttentionAfterMs: 180000,
+  });
+});
 
-  // Scalar value — must be left byte-for-byte untouched.
-  const scalarContent = "42\n";
-  writeFileSync(configPath, scalarContent);
-  provisionSubagentExtensionConfig(config);
-  assert.equal(
-    readFileSync(configPath, "utf8"),
-    scalarContent,
-    "scalar config preserved byte-for-byte",
-  );
+test("migrateSubagentExtensionConfig dry-run is filesystem-neutral", (t) => {
+  const freshAgentDir = tempFixture(t, "tlh-ext-config-dry-fresh-");
+  const freshResult = migrateSubagentExtensionConfig({ agentDir: freshAgentDir, dryRun: true });
+  assert.equal(freshResult.changed, true);
+  assert.equal(freshResult.backupPath, undefined);
+  assert.equal(existsSync(join(freshAgentDir, "extensions")), false, "dry-run creates no dirs");
 
-  // Invalid JSON is unreadable and must also be left untouched.
-  const invalidContent = "{ not-json\n";
-  writeFileSync(configPath, invalidContent);
-  provisionSubagentExtensionConfig(config);
-  assert.equal(
-    readFileSync(configPath, "utf8"),
-    invalidContent,
-    "unreadable config preserved byte-for-byte",
-  );
+  const agentDir = tempFixture(t, "tlh-ext-config-dry-existing-");
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  const content = JSON.stringify({ control: { needsAttentionAfterMs: 1 } }) + "\n";
+  writeFileSync(configPath, content);
+  const beforeNames = readdirSync(configDir);
+  const result = migrateSubagentExtensionConfig({ agentDir, dryRun: true });
+  assert.equal(result.changed, true);
+  assert.ok(result.backupPath, "dry-run reports the backup it would create");
+  assert.equal(readFileSync(configPath, "utf8"), content, "dry-run leaves config bytes unchanged");
+  assert.deepEqual(readdirSync(configDir), beforeNames, "dry-run creates no backup");
+});
+
+test("migrateSubagentExtensionConfig preserves malformed and structurally unsafe configs", (t) => {
+  const agentDir = tempFixture(t, "tlh-ext-config-unsafe-");
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  const sourcePath = join(configDir, "source.json");
+  mkdirSync(configDir, { recursive: true });
+
+  const cases = [
+    ["array", "[]\n", "top-level JSON value must be an object"],
+    ["null", "null\n", "top-level JSON value must be an object"],
+    ["scalar", "42\n", "top-level JSON value must be an object"],
+    ["invalid JSON", "{ not-json\n", "contains invalid JSON"],
+    ["invalid control", JSON.stringify({ control: null }) + "\n", "control must be an object"],
+    [
+      "invalid notifyOn",
+      JSON.stringify({ control: { notifyOn: "active_long_running" } }) + "\n",
+      "control.notifyOn must be an array",
+    ],
+    ["symlink", '{"control":{"needsAttentionAfterMs":1}}\n', "symbolic link", "symlink"],
+    ["hardlink", '{"control":{"needsAttentionAfterMs":1}}\n', "hard-linked", "hardlink"],
+    ["empty", "", "config file is empty"],
+    ["whitespace", " \t\r\n", "config file is empty"],
+  ];
+  for (const [label, content, warning, structure] of cases) {
+    rmSync(configPath, { force: true });
+    rmSync(sourcePath, { force: true });
+    if (structure === "symlink") {
+      writeFileSync(sourcePath, content);
+      symlinkSync(sourcePath, configPath);
+    } else if (structure === "hardlink") {
+      writeFileSync(sourcePath, content);
+      linkSync(sourcePath, configPath);
+    } else {
+      writeFileSync(configPath, content);
+    }
+    const before = readFileSync(configPath, "utf8");
+    const beforeStats = lstatSync(configPath);
+    const beforeEntries = readdirSync(configDir);
+    const result = migrateSubagentExtensionConfig({ agentDir });
+    assert.equal(result.changed, false, `${label} config is not changed`);
+    assert.equal(result.backupPath, undefined, `${label} config has no backup`);
+    assert.match(
+      result.warning || "",
+      new RegExp(
+        `${warning}.*existing configuration was preserved; inspect the file and repair it manually before rerunning`,
+      ),
+    );
+    assert.equal(readFileSync(configPath, "utf8"), before, `${label} config is preserved`);
+    assert.deepEqual(readdirSync(configDir), beforeEntries, `${label} config creates no backup`);
+    assert.equal(
+      lstatSync(configPath).mtimeMs,
+      beforeStats.mtimeMs,
+      `${label} config is not written`,
+    );
+    if (structure === "symlink") assert.equal(lstatSync(configPath).isSymbolicLink(), true);
+    if (structure === "hardlink") assert.equal(lstatSync(configPath).nlink, 2);
+  }
 });
 
 // ── managedRetiredSubagentPackages unit tests ──────────────────────────────

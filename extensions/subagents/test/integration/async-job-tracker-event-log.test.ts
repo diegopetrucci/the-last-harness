@@ -822,7 +822,7 @@ describe(
       }
     });
 
-    it("delivers active-long-running records through the native event channel", async () => {
+    it("ignores retired active-long-running records while delivering supported native events", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
         const runDir = path.join(asyncRoot, "run-active-native");
@@ -839,20 +839,33 @@ describe(
           }),
           "utf-8",
         );
+        const retiredEvent = {
+          type: "subagent.control",
+          channels: ["event"],
+          event: {
+            type: "active_long_running",
+            to: "active_long_running",
+            ts: 123,
+            runId: "run-active-native",
+            agent: "worker",
+            message: "worker is still active but long-running",
+          },
+        };
+        const supportedEvent = {
+          type: "subagent.control",
+          channels: ["event"],
+          event: {
+            type: "needs_attention",
+            to: "needs_attention",
+            ts: 124,
+            runId: "run-active-native",
+            agent: "worker",
+            message: "worker needs attention",
+          },
+        };
         fs.writeFileSync(
           path.join(runDir, "events.jsonl"),
-          `${JSON.stringify({
-            type: "subagent.control",
-            channels: ["event"],
-            event: {
-              type: "active_long_running",
-              to: "active_long_running",
-              ts: 123,
-              runId: "run-active-native",
-              agent: "worker",
-              message: "worker is still active but long-running",
-            },
-          })}\n`,
+          `${JSON.stringify(retiredEvent)}\n${JSON.stringify(supportedEvent)}\n`,
           "utf-8",
         );
 
@@ -863,10 +876,21 @@ describe(
         });
         tracker.handleStarted({ id: "run-active-native", asyncDir: runDir, agent: "worker" });
 
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await waitForCondition(
+          () =>
+            recorder.events.filter((event) => event.channel === "subagent:control-event").length ===
+            1,
+          "supported native control event",
+        );
+        const controlEvents = recorder.events.filter(
+          (event) => event.channel === "subagent:control-event",
+        );
+        assert.equal(controlEvents.length, 1);
+        const controlEvent = controlEvents[0];
+        assert.ok(controlEvent);
         assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-event"),
-          true,
+          (controlEvent.data as { event?: { type?: string } }).event?.type,
+          "needs_attention",
         );
       } finally {
         removeTempDir(asyncRoot);

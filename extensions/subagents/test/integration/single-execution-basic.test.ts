@@ -32,6 +32,7 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
 import {
   getFinalOutput,
   escapeRegExp,
@@ -1145,35 +1146,6 @@ describe(
       assert.ok(result.error?.includes("Unknown agent"));
     });
 
-    it("emits an active-long-running notice after the turn threshold", async () => {
-      mockPi.onCall({
-        jsonl: [events.assistantMessage("first update"), events.assistantMessage("second update")],
-      });
-      const agents = makeAgentConfigs(["echo"]);
-      const controlEvents: NonNullable<RunSyncResult["controlEvents"]> = [];
-
-      const result = await runSync(tempDir, agents, "echo", "Investigate behavior", {
-        runId: "run-active",
-        controlConfig: {
-          enabled: true,
-          activeNoticeAfterTurns: 2,
-          activeNoticeAfterMs: 999_999,
-          activeNoticeAfterTokens: 999_999,
-          notifyOn: ["active_long_running", "needs_attention"],
-        },
-        onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
-          controlEvents.push(event),
-      });
-
-      assert.equal(result.exitCode, 0);
-      assert.equal(controlEvents.length, 1);
-      assert.equal(controlEvents[0]?.type, "active_long_running");
-      assert.equal(controlEvents[0]?.reason, "turn_threshold");
-      assert.equal(controlEvents[0]?.turns, 2);
-      assert.equal(result.controlEvents?.[0]?.type, "active_long_running");
-      assert.equal(result.progress.activityState, "active_long_running");
-    });
-
     it("does not emit idle attention while a tool call is still running", async () => {
       mockPi.onCall({
         steps: [
@@ -1190,10 +1162,7 @@ describe(
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 200,
-          activeNoticeAfterMs: 999_999,
-          activeNoticeAfterTurns: 999_999,
-          activeNoticeAfterTokens: 999_999,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
         },
         onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
           controlEvents.push(event),
@@ -1227,10 +1196,7 @@ describe(
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 200,
-          activeNoticeAfterMs: 999_999,
-          activeNoticeAfterTurns: 999_999,
-          activeNoticeAfterTokens: 999_999,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
         },
         onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
           controlEvents.push(event),
@@ -1283,10 +1249,7 @@ describe(
           controlConfig: {
             enabled: true,
             needsAttentionAfterMs: 200,
-            activeNoticeAfterTurns: 999_999,
-            activeNoticeAfterMs: 999_999,
-            activeNoticeAfterTokens: 999_999,
-            notifyOn: ["active_long_running", "needs_attention"],
+            notifyOn: ["needs_attention"],
           },
           onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) => {
             controlEvents.push(event);
@@ -1379,10 +1342,7 @@ describe(
             controlConfig: {
               enabled: true,
               needsAttentionAfterMs: 200,
-              activeNoticeAfterMs: 200,
-              activeNoticeAfterTurns: 999_999,
-              activeNoticeAfterTokens: 999_999,
-              notifyOn: ["active_long_running", "needs_attention"],
+              notifyOn: ["needs_attention"],
             },
             onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
               controls.push(event),
@@ -1394,15 +1354,24 @@ describe(
           },
         );
         await waitForTestMarker(started);
-        const activeDeadline = Date.now() + scaleTestTimeout(5_000);
-        while (!controls.some((event) => event.type === "active_long_running")) {
-          if (Date.now() > activeDeadline)
-            assert.fail(`Timed out waiting for compaction long-running notice (${variant.name})`);
+        const monitorOpportunityAt =
+          Date.now() +
+          Math.max(
+            ACTIVITY_MONITOR_INTERVAL_MS * 2,
+            scaleTestTimeout(ACTIVITY_MONITOR_INTERVAL_MS * 2),
+          );
+        while (Date.now() < monitorOpportunityAt) {
+          assert.equal(
+            controls.some((event) => event.reason === "idle"),
+            false,
+            "compaction must suppress idle through a monitor opportunity",
+          );
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
         assert.equal(
           controls.some((event) => event.reason === "idle"),
           false,
+          "compaction must suppress idle through a monitor opportunity",
         );
         assert.ok(snapshots.some((progress) => progress.compaction?.reason === variant.reason));
         fs.writeFileSync(release, "", "utf-8");
@@ -1416,7 +1385,7 @@ describe(
         const result = await resultPromise;
         assert.equal(result.exitCode, 0);
         assert.equal(result.progress.compaction, undefined);
-        assert.equal(result.progress.activityState, "active_long_running");
+        assert.equal(result.progress.activityState, undefined);
         assert.equal(controls.filter((event) => event.reason === "idle").length, 1);
       }
     });
@@ -1488,10 +1457,7 @@ describe(
           controlConfig: {
             enabled: true,
             needsAttentionAfterMs: 200,
-            activeNoticeAfterTurns: 999_999,
-            activeNoticeAfterMs: 999_999,
-            activeNoticeAfterTokens: 999_999,
-            notifyOn: ["active_long_running", "needs_attention"],
+            notifyOn: ["needs_attention"],
           },
           onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
             controls.push(event),
@@ -1611,10 +1577,7 @@ describe(
           controlConfig: {
             enabled: true,
             needsAttentionAfterMs: 200,
-            activeNoticeAfterTurns: 999_999,
-            activeNoticeAfterMs: 999_999,
-            activeNoticeAfterTokens: 999_999,
-            notifyOn: ["active_long_running", "needs_attention"],
+            notifyOn: ["needs_attention"],
           },
           onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
             controls.push(event),
@@ -1739,11 +1702,8 @@ describe(
           controlConfig: {
             enabled: true,
             needsAttentionAfterMs: 200,
-            activeNoticeAfterTurns: 999_999,
-            activeNoticeAfterMs: 999_999,
-            activeNoticeAfterTokens: 999_999,
             failedToolAttemptsBeforeAttention: 3,
-            notifyOn: ["active_long_running", "needs_attention"],
+            notifyOn: ["needs_attention"],
           },
           onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
             controls.push(event),
@@ -1782,7 +1742,7 @@ describe(
         "Implement the approved fixes",
         {
           runId: "foreground-completion-guard-health",
-          controlConfig: { enabled: true, notifyOn: ["active_long_running", "needs_attention"] },
+          controlConfig: { enabled: true, notifyOn: ["needs_attention"] },
           onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
             controls.push(event),
         },
@@ -1852,10 +1812,7 @@ describe(
           controlConfig: {
             enabled: true,
             needsAttentionAfterMs: 200,
-            activeNoticeAfterTurns: 999_999,
-            activeNoticeAfterMs: 999_999,
-            activeNoticeAfterTokens: 999_999,
-            notifyOn: ["active_long_running", "needs_attention"],
+            notifyOn: ["needs_attention"],
           },
         },
       );
@@ -1890,7 +1847,7 @@ describe(
         controlConfig: {
           enabled: true,
           failedToolAttemptsBeforeAttention: 3,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
         },
         onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
           controlEvents.push(event),
@@ -1915,10 +1872,8 @@ describe(
         runId: "run-control-disabled",
         controlConfig: {
           enabled: false,
-          activeNoticeAfterTurns: 1,
-          activeNoticeAfterMs: 1,
-          activeNoticeAfterTokens: 1,
-          notifyOn: ["active_long_running", "needs_attention"],
+          needsAttentionAfterMs: 1,
+          notifyOn: ["needs_attention"],
         },
         onControlEvent: (event: NonNullable<RunSyncResult["controlEvents"]>[number]) =>
           controlEvents.push(event),

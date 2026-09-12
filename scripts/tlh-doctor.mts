@@ -17,6 +17,7 @@ import {
   captureRetiredSubagentNpmCommand,
   cleanupManagedRetiredSubagentPackages,
   copyTlhSubagentPrompts,
+  migrateSubagentExtensionConfig,
   missingTlhSubagentPrompts,
   restoreNeededTlhSubagentPrompts,
 } from "./lib/tlh-install-subagents.mjs";
@@ -757,6 +758,28 @@ function repairAction(level: RepairLevel, label: string, detail: string): Repair
   return { level, label, detail };
 }
 
+function repairSubagentAttentionConfig(agentDir: string): RepairAction {
+  const result = migrateSubagentExtensionConfig({ agentDir });
+  if (result.warning) {
+    return repairAction("WARN", "subagent attention config", result.warning);
+  }
+  if (!result.changed) {
+    return repairAction(
+      "OK",
+      "subagent attention config",
+      "managed attention policy already matches the isolated profile",
+    );
+  }
+  const backupDetail = result.backupPath
+    ? `; backed up previous config to ${result.backupPath}`
+    : "";
+  return repairAction(
+    "OK",
+    "subagent attention config",
+    `enforced ${result.changes.join("; ")}${backupDetail}`,
+  );
+}
+
 function repairSettings(
   packageRoot: string,
   agentDir: string,
@@ -966,6 +989,7 @@ function runRepairMode(
   }
 
   const actions: RepairAction[] = [
+    repairSubagentAttentionConfig(agentDir),
     repairSettings(packageRoot, agentDir, settingsPath, env),
     repairBundledSubagentPrompts(packageRoot, agentDir),
     repairManagedHelper(

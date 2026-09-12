@@ -241,6 +241,39 @@ describe("async status helpers", () => {
     }
   });
 
+  it("drops retired active-long-running state from persisted status projections", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-retired-health-"));
+    try {
+      const now = Date.now();
+      createAsyncDir(root, "run-retired-health", {
+        runId: "run-retired-health",
+        mode: "single",
+        state: "running",
+        activityState: "active_long_running",
+        lastActivityAt: now - 90_000,
+        startedAt: now - 120_000,
+        lastUpdate: now,
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            activityState: "active_long_running",
+            lastActivityAt: now - 90_000,
+          },
+        ],
+      });
+
+      const run = listAsyncRuns(root, { states: ["running"] })[0];
+      assert.equal(run?.activityState, undefined);
+      assert.equal(run?.steps[0]?.activityState, undefined);
+      const text = formatAsyncRunList([run!], "Active async runs");
+      assert.match(text, /worker \| running \| active/);
+      assert.doesNotMatch(text, /needs attention|no activity/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not smear run-level attention state across running siblings when step metadata exists", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-step-attention-"));
     try {
