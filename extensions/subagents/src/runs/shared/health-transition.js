@@ -1,3 +1,23 @@
+export const ACTIVITY_MONITOR_INTERVAL_MS = 1_000;
+export const ACTIVITY_MONITOR_GAP_THRESHOLD_MS = ACTIVITY_MONITOR_INTERVAL_MS * 2;
+export function getActivityMonitorGap(previousMonitorTickAt, now) {
+    const gapMs = previousMonitorTickAt === undefined ? 0 : Math.max(0, now - previousMonitorTickAt);
+    return { gapMs, detected: gapMs > ACTIVITY_MONITOR_GAP_THRESHOLD_MS };
+}
+export function observeActivityWindow(input) {
+    const { detected } = getActivityMonitorGap(input.previousMonitorTickAt, input.now);
+    let observedIdleSince = input.observedIdleSince;
+    if (detected)
+        observedIdleSince = input.now;
+    else if (observedIdleSince === undefined)
+        observedIdleSince = input.startedAt;
+    else if (input.observedActivityAt !== input.activityAt)
+        observedIdleSince = input.now;
+    return {
+        observedIdleSince,
+        observedActivityAt: input.activityAt,
+    };
+}
 export const MAX_IDLE_EPISODE_ID_LENGTH = 128;
 export const MAX_HEALTH_ATTEMPT_ID_LENGTH = 96;
 const PRINTABLE_ASCII_START = 0x21;

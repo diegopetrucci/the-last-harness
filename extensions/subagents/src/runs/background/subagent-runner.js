@@ -508,6 +508,7 @@ async function runSubagentWithInput(config, plan) {
         controlConfig,
         nestedRoute: config.nestedRoute,
         appendEvent,
+        appendDiagnosticEvent,
     });
     const pausedOutputForIndex = (index, agent) => statusOwner.supervisorPauseRequest &&
         index === statusOwner.supervisorPauseRequest.requesterIndex

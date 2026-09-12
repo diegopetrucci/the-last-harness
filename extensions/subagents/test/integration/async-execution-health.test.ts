@@ -187,6 +187,141 @@ describe("async execution health", () => {
     assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
   });
 
+  it(
+    "does not charge a delayed background monitor gap as idle time",
+    { skip: process.platform === "win32" ? "SIGSTOP is unavailable on Windows" : undefined },
+    async () => {
+      const markerDir = path.join(tempDir, "async-monitor-gap-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const ready = path.join(markerDir, "ready");
+      const release = path.join(markerDir, "release");
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [events.assistantMessage("quiet baseline", "mock/test-model", "tool_use")],
+            writeMarkerAfter: ready,
+          },
+          { waitForMarker: release },
+          { jsonl: [events.assistantMessage("completed")] },
+        ],
+      });
+
+      const id = `async-monitor-gap-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, id);
+      executeAsyncSingle(id, {
+        agent: "scout",
+        task: "Investigate monitor timing",
+        agentConfig: makeAgent("scout"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          activeNoticeAfterTurns: 999_999,
+          activeNoticeAfterMs: 999_999,
+          activeNoticeAfterTokens: 999_999,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["active_long_running", "needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+      });
+
+      await waitForMarker(ready);
+      const running = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.state === "running" && typeof status.pid === "number",
+        "running monitor-gap background run",
+      );
+      // Let one ordinary watchdog observation establish a baseline before
+      // suspending the runner. The child remains quiet while only the monitor
+      // is stopped, so the old wall-clock calculation emits immediately after
+      // SIGCONT whereas the observation-aware baseline does not.
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      const runnerPid = running.pid;
+      assert.ok(typeof runnerPid === "number");
+      let resumed = false;
+      try {
+        process.kill(runnerPid, "SIGSTOP");
+        await new Promise((resolve) => setTimeout(resolve, 3_200));
+        process.kill(runnerPid, "SIGCONT");
+        resumed = true;
+
+        const afterGap = await waitForAsyncControlCondition(
+          asyncDir,
+          (_status, eventText) => {
+            const records = eventText
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+            const diagnostics = records.filter(
+              (record) => record.type === "subagent.run.monitor_gap",
+            );
+            const idleControls = records.filter(
+              (record) => record.type === "subagent.control" && record.event?.reason === "idle",
+            );
+            return diagnostics.length === 1 && idleControls.length === 0;
+          },
+          scaleTestTimeout(10_000),
+        );
+        const diagnostic = afterGap.eventText
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .find((record) => record.type === "subagent.run.monitor_gap");
+        assert.deepEqual(Object.keys(diagnostic ?? {}).sort(), ["gapMs", "runId", "ts", "type"]);
+        assert.ok(typeof diagnostic?.gapMs === "number" && diagnostic.gapMs >= 3_000);
+        assert.doesNotMatch(
+          JSON.stringify(diagnostic),
+          /quiet baseline|Investigate monitor timing/,
+        );
+
+        const idleObserved = await waitForAsyncControlCondition(
+          asyncDir,
+          (_status, eventText) => {
+            const records = eventText
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line));
+            return records.some(
+              (record) => record.type === "subagent.control" && record.event?.reason === "idle",
+            );
+          },
+          scaleTestTimeout(10_000),
+        );
+        const idleControl = idleObserved.eventText
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .find((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+        assert.ok(typeof idleControl?.event?.elapsedMs === "number");
+        assert.ok(idleControl.event.elapsedMs >= 2_000);
+        assert.ok(idleControl.event.elapsedMs <= 4_000);
+        fs.writeFileSync(release, "", "utf-8");
+      } finally {
+        if (!resumed && typeof runnerPid === "number") {
+          try {
+            process.kill(runnerPid, "SIGCONT");
+          } catch {
+            // The runner may have already exited after a test failure.
+          }
+        }
+        if (!fs.existsSync(release)) fs.writeFileSync(release, "", "utf-8");
+      }
+
+      await waitForAsyncResultFile(id);
+    },
+  );
+
   it("background compaction suppresses idle but preserves long-running and post-operation stall detection", async () => {
     for (const variant of [
       { name: "normal", reason: "manual" as const, options: {} },
@@ -893,7 +1028,12 @@ describe("async execution health", () => {
   it("resets background idle episode identity across fallback attempts", async () => {
     const markerDir = path.join(tempDir, "async-fallback-health-markers");
     fs.mkdirSync(markerDir, { recursive: true });
+    const needsAttentionAfterMs = 2_000;
     const firstRelease = path.join(markerDir, "first-release");
+    const firstAttemptErrorActivity = path.join(markerDir, "first-attempt-error-activity");
+    const firstAttemptFallbackRelease = path.join(markerDir, "first-attempt-fallback-release");
+    const fallbackAttemptStarted = path.join(markerDir, "fallback-attempt-started");
+    const fallbackAttemptRelease = path.join(markerDir, "fallback-attempt-release");
     const secondRelease = path.join(markerDir, "second-release");
     mockPi.onCall({
       exitCode: 1,
@@ -914,10 +1054,14 @@ describe("async execution health", () => {
               },
             },
           ],
+          writeMarkerAfter: firstAttemptErrorActivity,
         },
+        { waitForMarker: firstAttemptFallbackRelease },
       ],
     });
     mockPi.onCall({
+      writeMarker: fallbackAttemptStarted,
+      waitForMarker: fallbackAttemptRelease,
       steps: [
         { jsonl: [events.assistantMessage("fallback attempt", "mock/test-model", "tool_use")] },
         { waitForMarker: secondRelease },
@@ -947,7 +1091,7 @@ describe("async execution health", () => {
       maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
-        needsAttentionAfterMs: 200,
+        needsAttentionAfterMs,
         activeNoticeAfterTurns: 999_999,
         activeNoticeAfterMs: 999_999,
         activeNoticeAfterTokens: 999_999,
@@ -955,7 +1099,7 @@ describe("async execution health", () => {
         notifyChannels: ["event", "async"],
       },
     });
-    const secondObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+    await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
       const idleControls = eventText
         .split("\n")
         .filter(Boolean)
@@ -967,26 +1111,65 @@ describe("async execution health", () => {
         typeof status.steps?.[0]?.idleEpisodeId === "string"
       );
     });
-    const firstIdleId = secondObserved.status.steps?.[0]?.idleEpisodeId;
-    const firstIdleControl = secondObserved.eventText
+    fs.writeFileSync(firstRelease, "", "utf-8");
+    await waitForMarker(firstAttemptErrorActivity);
+    // Keep the first attempt alive after its final validated error activity.
+    // It may earn another idle episode here; that episode must not become the
+    // fallback attempt's starting idle age.
+    await new Promise((resolve) => setTimeout(resolve, needsAttentionAfterMs + 600));
+    const attemptOneQuietEventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    const attemptOneIdleControls = attemptOneQuietEventText
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line))
-      .find((record) => record.type === "subagent.control" && record.event?.reason === "idle");
-    fs.writeFileSync(firstRelease, "", "utf-8");
-    const secondIdleObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
-      const idleControls = eventText
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line))
-        .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
-      return (
-        idleControls.length === 2 &&
-        status.steps?.[0]?.activityState === "needs_attention" &&
-        typeof status.steps?.[0]?.idleEpisodeId === "string" &&
-        status.steps?.[0]?.idleEpisodeId !== firstIdleId
-      );
-    });
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    assert.ok(attemptOneIdleControls.length >= 1);
+    const attemptOneIdleCount = attemptOneIdleControls.length;
+    const attemptOneIdleEpisodeIds = attemptOneIdleControls
+      .map((record) => record.event?.idleEpisodeId)
+      .filter((episodeId): episodeId is string => typeof episodeId === "string");
+    fs.writeFileSync(firstAttemptFallbackRelease, "", "utf-8");
+    await waitForMarker(fallbackAttemptStarted);
+    // The output stream is opened for every attempt. Make the quiet fallback
+    // explicitly have no fresh output so this checks the observation baseline,
+    // not the stream-open timestamp.
+    const outputPath = path.join(asyncDir, "output-0.log");
+    const staleOutputTime = new Date(Date.now() - needsAttentionAfterMs - 800);
+    fs.utimesSync(outputPath, staleOutputTime, staleOutputTime);
+    // This is intentionally shorter than a fresh threshold. Pre-fix code uses
+    // the prior attempt's old lastActivityAt and emits here; the fix starts a
+    // new observation window at fallback dispatch.
+    await new Promise((resolve) => setTimeout(resolve, needsAttentionAfterMs - 800));
+    const fallbackPauseEventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    const fallbackPauseIdleControls = fallbackPauseEventText
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
+    const fallbackPauseStatus = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(fallbackPauseIdleControls.length, attemptOneIdleCount);
+    assert.equal(fallbackPauseStatus.steps?.[0]?.activityState, undefined);
+    fs.writeFileSync(fallbackAttemptRelease, "", "utf-8");
+    const fallbackIdleObserved = await waitForAsyncControlCondition(
+      asyncDir,
+      (status, eventText) => {
+        const idleControls = eventText
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line))
+          .filter(
+            (record) => record.type === "subagent.control" && record.event?.reason === "idle",
+          );
+        return (
+          idleControls.length === attemptOneIdleCount + 1 &&
+          status.steps?.[0]?.activityState === "needs_attention" &&
+          typeof status.steps?.[0]?.idleEpisodeId === "string" &&
+          !attemptOneIdleEpisodeIds.includes(status.steps?.[0]?.idleEpisodeId)
+        );
+      },
+    );
     fs.writeFileSync(secondRelease, "", "utf-8");
     const resultPath = await waitForAsyncResultFile(id);
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -997,11 +1180,10 @@ describe("async execution health", () => {
       .map((line) => JSON.parse(line))
       .filter((record) => record.type === "subagent.control" && record.event?.reason === "idle");
     assert.equal(payload.success, true);
-    assert.equal(idleControls.length, 2);
-    assert.notEqual(idleControls[0]?.event?.idleEpisodeId, idleControls[1]?.event?.idleEpisodeId);
-    assert.notEqual(
-      firstIdleControl?.event?.idleEpisodeId,
-      secondIdleObserved.status.steps?.[0]?.idleEpisodeId,
-    );
+    assert.equal(idleControls.length, attemptOneIdleCount + 1);
+    const fallbackIdleEpisodeId = fallbackIdleObserved.status.steps?.[0]?.idleEpisodeId;
+    if (typeof fallbackIdleEpisodeId !== "string") assert.fail("fallback idle episode is missing");
+    assert.equal(idleControls.at(-1)?.event?.idleEpisodeId, fallbackIdleEpisodeId);
+    assert.ok(!attemptOneIdleEpisodeIds.includes(fallbackIdleEpisodeId));
   });
 });

@@ -39,7 +39,6 @@ import {
   type RunSyncResult,
 } from "../support/single-execution-fixtures.ts";
 import type { ContextUsageDiagnostics } from "../../src/shared/types.ts";
-
 describe(
   "single sync execution",
   { skip: !available ? "pi packages not available" : undefined },
