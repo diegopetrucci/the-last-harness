@@ -108,7 +108,7 @@ When implementation work needs broader verification:
 1. Split implementation work into normal implementation tickets.
 2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
 3. Keep implementation-ticket validation narrow and ticket-scoped; the developer must run those checks as part of implementation. Defer only the final cross-ticket validation work.
-4. Every final-validation ticket must list the exact ordered validation steps that `test-runner` must execute. Each step must be either a complete shell command (including arguments) or exact adapter-shaped input for the generic `mcp` gateway. Include only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and `args` are optional overall, and `args` is a JSON string for tool calls. An assigned generic MCP call may invoke any configured server/tool, including tools that change server-side state. Derive shell steps from `VALIDATING.md` or repository discovery; do not leave step selection or validation planning to `test-runner`.
+4. Every final-validation ticket must list the exact ordered validation steps that `test-runner` must execute. Each step must be either a complete shell command (including arguments) or exact adapter-shaped input for the generic `mcp` gateway.
 5. Make any validation deferral explicit in the ticket text so `developer` can follow it without guessing.
 6. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation checks.
 7. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
