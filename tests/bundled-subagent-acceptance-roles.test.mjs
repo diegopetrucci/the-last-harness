@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +45,57 @@ function readBundledDefinitions() {
   });
 }
 
+function createBundledFixture(t, definitions) {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-bundled-acceptance-roles-"));
+  const home = join(fixtureRoot, "home");
+  const agentDir = join(fixtureRoot, "agent");
+  const workspace = join(fixtureRoot, "workspace");
+  const canonicalAgentsDir = join(agentDir, "tlh", "agents", "subagents");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(canonicalAgentsDir, { recursive: true });
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  for (const definition of definitions) {
+    const target = join(canonicalAgentsDir, definition.relativePath);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(definition.filePath, target);
+  }
+
+  return { home, agentDir, workspace };
+}
+
+function writeJson(filePath, value) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(value)}\n`, "utf8");
+}
+
+function assertAcceptanceRoles(discovered, definitions, overrides, scope, metadataScopes = {}) {
+  const discoveredByName = new Map(discovered.agents.map((agent) => [agent.name, agent]));
+  for (const definition of definitions) {
+    const configured = overrides[definition.name];
+    const expected =
+      configured === false
+        ? undefined
+        : configured === undefined
+          ? definition.acceptanceRole
+          : configured;
+    assert.equal(
+      discoveredByName.get(definition.name)?.acceptanceRole,
+      expected,
+      `${definition.name} must resolve its ${scope} acceptanceRole setting`,
+    );
+    if (configured !== undefined) {
+      const expectedScope = metadataScopes[definition.name] ?? scope;
+      assert.equal(
+        discoveredByName.get(definition.name)?.override?.scope,
+        expectedScope,
+        `${definition.name} must retain ${expectedScope} override metadata`,
+      );
+    }
+  }
+}
+
 test("all bundled minor agents declare acceptance roles through runtime discovery", async (t) => {
   const definitions = readBundledDefinitions();
   assert.equal(
@@ -68,21 +127,7 @@ test("all bundled minor agents declare acceptance roles through runtime discover
     );
   }
 
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-bundled-acceptance-roles-"));
-  const home = join(fixtureRoot, "home");
-  const agentDir = join(fixtureRoot, "agent");
-  const workspace = join(fixtureRoot, "workspace");
-  const canonicalAgentsDir = join(agentDir, "tlh", "agents", "subagents");
-  mkdirSync(home, { recursive: true });
-  mkdirSync(workspace, { recursive: true });
-  mkdirSync(canonicalAgentsDir, { recursive: true });
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
-
-  for (const definition of definitions) {
-    const target = join(canonicalAgentsDir, definition.relativePath);
-    mkdirSync(dirname(target), { recursive: true });
-    cpSync(definition.filePath, target);
-  }
+  const { home, agentDir, workspace } = createBundledFixture(t, definitions);
 
   const discovered = await withEnv({ HOME: home, PI_CODING_AGENT_DIR: agentDir }, () =>
     discoverAgents(workspace, "user"),
@@ -105,5 +150,69 @@ test("all bundled minor agents declare acceptance roles through runtime discover
       definition.acceptanceRole,
       `${definition.name} acceptanceRole must survive runtime discovery`,
     );
+    assert.equal(
+      discoveredByName.get(definition.name)?.override,
+      undefined,
+      `${definition.name} must retain no-override identity metadata`,
+    );
   }
+});
+
+test("canonical bundled roles accept profile and project acceptanceRole overrides", async (t) => {
+  const definitions = readBundledDefinitions();
+  const { home, agentDir, workspace } = createBundledFixture(t, definitions);
+  const profileOverrides = {
+    developer: { acceptanceRole: "read-only" },
+    "code-reviewer": { acceptanceRole: "writer" },
+    librarian: { acceptanceRole: false },
+    oracle: { acceptanceRole: "writer" },
+  };
+  writeJson(join(agentDir, "settings.json"), {
+    subagents: { agentOverrides: profileOverrides },
+  });
+
+  const profile = await withEnv({ HOME: home, PI_CODING_AGENT_DIR: agentDir }, () =>
+    discoverAgents(workspace, "user"),
+  );
+  assertAcceptanceRoles(
+    profile,
+    definitions,
+    {
+      developer: "read-only",
+      "code-reviewer": "writer",
+      librarian: false,
+      oracle: "writer",
+    },
+    "user",
+  );
+
+  const projectOverrides = {
+    developer: { acceptanceRole: "writer" },
+    "code-reviewer": { acceptanceRole: false },
+    librarian: { acceptanceRole: "read-only" },
+  };
+  writeJson(join(workspace, ".pi", "settings.json"), {
+    subagents: { agentOverrides: projectOverrides },
+  });
+
+  const both = await withEnv({ HOME: home, PI_CODING_AGENT_DIR: agentDir }, () =>
+    discoverAgents(workspace, "both"),
+  );
+  assertAcceptanceRoles(
+    both,
+    definitions,
+    {
+      developer: "writer",
+      "code-reviewer": false,
+      librarian: "read-only",
+      oracle: "writer",
+    },
+    "project",
+    { oracle: "user" },
+  );
+  assert.equal(
+    both.agents.find((agent) => agent.name === "oracle")?.override?.scope,
+    "user",
+    "an absent project entry must retain the selected profile override",
+  );
 });
