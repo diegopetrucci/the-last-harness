@@ -10,6 +10,7 @@ const {
   resolveProviderAwareSubagentResolution,
   resolveProviderThinking,
   selectProviderAwareAgentDefaults,
+  xaiAvailable,
 } = createModelDefaultsTestContext();
 
 // --- tlhOpenrouterThinking: parsing and provider resolution ---
@@ -343,6 +344,75 @@ test("openrouter follow rule: opposite-role agents (preferOppositeProvider) are 
     0,
   );
   assert.equal(input.model, undefined);
+});
+
+test("OpenRouter x-ai vendor detection orders direct xAI after other families", () => {
+  const reviewer = {
+    name: "openrouter-xai-reviewer",
+    tlhModelDefaults: [
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "medium",
+      },
+      {
+        provider: "xai",
+        models: [{ provider: "xai", id: "grok-4" }],
+        effort: "low",
+      },
+      { provider: "openrouter", effort: "low" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferOppositeProvider: true,
+  };
+  const allDirectModels = [...anthropicAvailable, ...codexAvailable, ...xaiAvailable];
+  const xaiOpenrouterModel = { provider: "openrouter", id: "x-ai/grok-4" };
+
+  // x-ai/* is classified as xAI, so Anthropic and OpenAI are tried before the
+  // same-family direct xAI candidate.
+  const xaiSession = resolveProviderAwareSubagentResolution(
+    reviewer,
+    allDirectModels,
+    "openrouter",
+    xaiOpenrouterModel,
+  );
+  assert.deepEqual(xaiSession.model, anthropicAvailable[1]);
+  assert.equal(xaiSession.independence, "preferred");
+  assert.deepEqual(xaiSession.fallbackModels, [{ model: xaiOpenrouterModel, thinking: "low" }]);
+
+  // With the other families unavailable, the last xAI candidate is still usable,
+  // but independence is correctly reported as degraded.
+  const xaiOnlySession = resolveProviderAwareSubagentResolution(
+    reviewer,
+    xaiAvailable,
+    "openrouter",
+    xaiOpenrouterModel,
+  );
+  assert.deepEqual(xaiOnlySession.model, xaiAvailable[0]);
+  assert.equal(xaiOnlySession.independence, "degraded");
+  assert.deepEqual(xaiOnlySession.fallbackModels, [{ model: xaiOpenrouterModel, thinking: "low" }]);
+
+  // The established family-first orders remain unchanged while xAI fills the
+  // next independent-family slot.
+  const anthropicSession = resolveProviderAwareSubagentResolution(
+    reviewer,
+    [...xaiAvailable],
+    "openrouter",
+    { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" },
+  );
+  assert.deepEqual(anthropicSession.model, xaiAvailable[0]);
+  const openaiSession = resolveProviderAwareSubagentResolution(
+    reviewer,
+    [...xaiAvailable],
+    "openrouter",
+    { provider: "openrouter", id: "openai/gpt-5.6" },
+  );
+  assert.deepEqual(openaiSession.model, xaiAvailable[0]);
 });
 
 test("openrouter follow rule: non-openrouter sessions behave exactly as before", () => {

@@ -175,6 +175,21 @@ test("normalization ignores generic compatibility fields when a provider block i
 
 const OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
+const EXPECTED_XAI_DEFAULTS = new Map([
+  ["architect", { model: "grok-4.6", effort: "high" }],
+  ["rush", { model: "grok-4.6", effort: "low" }],
+  ["product", { model: "grok-4.6", effort: "high" }],
+  ["bug-hunter", { model: "grok-4.6", effort: "high" }],
+  ["developer", { model: "grok-4.6", effort: "medium" }],
+  ["code-reviewer", { model: "grok-4.6", effort: "high" }],
+  ["oracle", { model: "grok-4.6", effort: "xhigh" }],
+  ["contrarian", { model: "grok-4.6", effort: "xhigh" }],
+  ["repo-scout", { model: "grok-4.3", effort: "medium" }],
+  ["web-scout", { model: "grok-4.3", effort: "medium" }],
+  ["librarian", { model: "grok-4.3", effort: "medium" }],
+  ["diff-summarizer", { model: "grok-4.3", effort: "medium" }],
+  ["test-runner", { model: "grok-4.3", effort: "low" }],
+]);
 
 function loadedModelEntries(agent) {
   return (agent.tlhModelDefaults ?? []).flatMap((entry) =>
@@ -193,6 +208,33 @@ function effortForModel(agent, model) {
     ({ model: candidate }) => candidate.provider === model.provider && candidate.id === model.id,
   )?.entry.effort;
 }
+
+test("production bundled agents declare the approved xAI Grok defaults", () => {
+  const agents = [...loadPrimaryAgents().values(), ...loadSubagentMetadata()];
+  assert.equal(
+    agents.length,
+    EXPECTED_XAI_DEFAULTS.size,
+    "every bundled agent must be loaded exactly once",
+  );
+  assert.deepEqual(
+    new Set(agents.map((agent) => agent.name)),
+    new Set(EXPECTED_XAI_DEFAULTS.keys()),
+    "every bundled role must be covered exactly once",
+  );
+
+  for (const [name, expected] of EXPECTED_XAI_DEFAULTS) {
+    const agent = agents.find((candidate) => candidate.name === name);
+    assert.ok(agent, `${name} must be loaded from production frontmatter`);
+    const entries = (agent.tlhModelDefaults ?? []).filter((entry) => entry.provider === "xai");
+    assert.equal(entries.length, 1, `${name} must declare exactly one xAI default`);
+    assert.deepEqual(
+      entries[0].models,
+      [{ provider: "xai", id: expected.model }],
+      `${name} xAI model`,
+    );
+    assert.equal(entries[0].effort, expected.effort, `${name} xAI effort`);
+  }
+});
 
 test("loaded primaries preserve preferred selection relationships", () => {
   const primaryAgents = [...loadPrimaryAgents().values()];

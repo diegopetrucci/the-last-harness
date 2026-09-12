@@ -9,6 +9,9 @@ tlhModelDefaults:
   - provider: anthropic
     models: [claude-opus-5]
     effort: max
+  - provider: xai
+    models: [grok-4.6]
+    effort: high
   - provider: openrouter
     effort: high
 preferOppositeProvider: true
