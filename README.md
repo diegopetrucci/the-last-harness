@@ -41,7 +41,7 @@ The architect has access to a few subagents, which can be divided in three big c
 - Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
-Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Anthropic sessions get OpenAI/Codex and OpenAI/Codex sessions get Anthropic; OpenRouter sessions use vendor-aware direct-provider selection with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
+Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Direct Anthropic sessions try OpenAI Codex first, then xAI; direct OpenAI/Codex sessions try Anthropic first, then xAI; direct xAI sessions try Anthropic first, then OpenAI Codex. OpenRouter sessions use the same three-family vendor-aware order with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
 
 Again, the core idea: explore and plan with the architect. Double check with the oracle/contrarian. Go back and forth. This is where you, as a human, are required. Once happy, the implementation follows, until ready for your review.
 
@@ -99,6 +99,10 @@ All bundled subagents:
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
+
+### Direct model providers
+
+TLH treats Anthropic, OpenAI Codex, and xAI as first-class direct providers. Its bundled xAI defaults use Grok 4.6 for primary and higher-reasoning roles and Grok 4.3 for utility roles. For xAI subscription access, use `/login xai` when available; OpenAI defaults intentionally use `openai-codex` for the Codex subscription provider. Anthropic and xAI subscription and API-key authentication share the provider IDs `anthropic` and `xai`, so Pi's stored `/login` credential takes precedence over the corresponding environment key (`ANTHROPIC_API_KEY` or `XAI_API_KEY`). TLH does not select among multiple simultaneous credentials, add auth storage, or mutate user credentials.
 
 ### Customisation
 
@@ -176,3 +180,21 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
+
+## Third-party attribution
+
+The compact live-progress display shows whimsical thinking phrases while a subagent is reasoning. The phrase pool is adapted from [`mitsuhiko/agent-stuff`](https://github.com/mitsuhiko/agent-stuff) under the Apache-2.0 license. The full license text is at [`licenses/agent-stuff-Apache-2.0.txt`](licenses/agent-stuff-Apache-2.0.txt).
+
+### Bundled terminal skills
+
+TLH packages three upstream terminal-integration skills from reproducible commit pins. The consolidated license texts and attribution notices for all packaged upstream skills are in [`licenses/terminal-skills.txt`](licenses/terminal-skills.txt).
+
+- **Herdr** — [`herdrdev/herdr`](https://github.com/herdrdev/herdr/tree/b99002ac99b09e00b4ca692436cb15a6b0d676f1/skills/herdr), pinned to commit `b99002ac99b09e00b4ca692436cb15a6b0d676f1` (`herdr v0.9.0`, Apache-2.0). Runtime prerequisite: the `herdr` binary must be on `PATH`, and the agent must be inside a Herdr-managed pane with `HERDR_ENV=1`.
+- **cmux CLI** — [`manaflow-ai/cmux-skills`](https://github.com/manaflow-ai/cmux-skills/tree/c669666f8607529a39a1f74ac0e8462e922dd13f/skills/cmux-cli), pinned to commit `c669666f8607529a39a1f74ac0e8462e922dd13f` (MIT). Runtime prerequisite: the `cmux` binary must be on `PATH` and able to reach the cmux app/socket for the requested workflow. Its `scripts/reload.sh` and `scripts/cmux-debug-cli.sh` references are only for a tagged cmux source checkout and are intentionally not part of the packaged runtime closure.
+- **tmux** — [`openclaw/openclaw`](https://github.com/openclaw/openclaw/tree/793669c8f6ddfad07b40009068f532832685b7d6/skills/tmux), pinned to commit `793669c8f6ddfad07b40009068f532832685b7d6` (MIT). Runtime prerequisite: `tmux` must be on `PATH`; the upstream skill targets Darwin and Linux, and its helper scripts require Bash and standard `grep`, `date`, and `sleep` utilities.
+
+Only the runtime files directly referenced by these skills are bundled; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded. The optional related cmux skills named by the upstream guide are source-repository references, not runtime dependencies, and are not bundled.
+
+### Bundled show-me skill
+
+- **show-me** — [`humanlayer/skills`](https://github.com/humanlayer/skills/tree/6ab9013a10c28f5046f7f999549cd5328a0b30d7/plugins/show-me/skills/show-me), pinned to commit `6ab9013a10c28f5046f7f999549cd5328a0b30d7` (MIT).

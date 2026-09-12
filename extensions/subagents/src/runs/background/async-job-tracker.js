@@ -10,6 +10,7 @@ import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../sh
 import { scanAsyncRunsForRestore } from "./async-status.js";
 import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
@@ -21,6 +22,9 @@ const COMPLETION_RETENTION_STATES = new Set([
     "cancelled",
     "continued",
 ]);
+function isRecordValue(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function hasUsableProjectSessionFile(sessionFile) {
     if (typeof sessionFile !== "string" || sessionFile.trim().length === 0)
         return false;
@@ -279,21 +283,24 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
                     return;
                 }
-                if (!parsed ||
-                    typeof parsed !== "object" ||
-                    parsed.type !== "subagent.control")
+                if (!isRecordValue(parsed) || parsed.type !== "subagent.control")
                     return;
-                const record = parsed;
-                const event = parseControlEvent(record.event);
-                if (!event || !Array.isArray(record.channels))
+                const channels = parsed.channels;
+                const event = parseControlEvent(parsed.event);
+                if (!event ||
+                    !Array.isArray(channels) ||
+                    channels.some((channel) => typeof channel !== "string"))
                     return;
+                const noticeText = typeof parsed.noticeText === "string"
+                    ? parsed.noticeText
+                    : formatControlNoticeMessage(event);
                 const payload = {
                     event,
                     source: "async",
                     asyncDir: job.asyncDir,
-                    noticeText: record.noticeText ?? formatControlNoticeMessage(event),
+                    noticeText,
                 };
-                if (record.channels.includes("event")) {
+                if (channels.includes("event")) {
                     pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
                 }
             };
@@ -458,7 +465,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             cancelProjectReferenceCleanup(job.asyncId);
                         }
                         if (status.steps?.length) {
-                            const visibleSteps = status.steps.map((step, index) => ({ ...step, index }));
+                            const visibleSteps = status.steps.map((step, index) => ({
+                                ...step,
+                                index,
+                                childLocation: parsePersistedChildLocationSnapshot(step.childLocation),
+                            }));
                             job.agents = visibleSteps.map((step) => step.agent);
                             job.steps = visibleSteps;
                             refreshNestedProjection();

@@ -101,17 +101,15 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
                     done(undefined);
                     return;
                 }
-                void (async () => {
-                    try {
-                        const result = persistTlhThinkingDefault(ctx.cwd, nextLevel);
-                        ctx.ui.notify(`Thinking level set to ${nextLevel} and saved as the default for future sessions.${formatBackupNotice(result)}`, "info");
-                        done({ level: nextLevel, persisted: true });
-                    }
-                    catch (error) {
-                        ctx.ui.notify(`Thinking level set to ${nextLevel} for this session only; TLH could not save the persistent default: ${errorMessage(error)}`, "warning");
-                        done({ level: nextLevel, persisted: false });
-                    }
-                })();
+                try {
+                    const result = persistTlhThinkingDefault(ctx.cwd, nextLevel);
+                    ctx.ui.notify(`Thinking level set to ${nextLevel} and saved as the default for future sessions.${formatBackupNotice(result)}`, "info");
+                    done({ level: nextLevel, persisted: true });
+                }
+                catch (error) {
+                    ctx.ui.notify(`Thinking level set to ${nextLevel} for this session only; TLH could not save the persistent default: ${errorMessage(error)}`, "warning");
+                    done({ level: nextLevel, persisted: false });
+                }
             };
             return new ThinkingSelectorComponent(currentLevel, pickerLevels, selectForSession, () => done(undefined), selectAsDefault, readTlhThinkingDefault());
         });

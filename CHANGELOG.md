@@ -7,11 +7,23 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - Main-ref installs now persist the installed commit subject and display `TLH main • <commit subject>` in the footer, with the bullet-and-subject suffix dimmed; legacy main state without metadata remains `TLH main`.
+- When a child subagent runs in a different working directory from the parent session, a dim location line now appears in the subagent widget and foreground displays, showing the child's path and any relevant repo, worktree, or branch information. Parts that match the parent are omitted. The snapshot is taken once at dispatch and never polled, so no git work happens during rendering.
+- First-class xAI support now includes bundled Grok 4.6/Grok 4.3 defaults and three-family opposite-provider routing across Anthropic, OpenAI Codex, and xAI.
 
 ### Changed
 
 - Bundled minor agents now declare acceptance roles so implementation work uses writer semantics while read-only workers retain read-only acceptance inference; canonical minor roles may still override that default through `subagents.agentOverrides.<role>.acceptanceRole`, including `false` to restore legacy inference.
-- Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. OpenAI Codex and OpenRouter defaults are unchanged.
+- Managed Git package reconciliation now delegates fetch/ref/dependency work to the pinned upstream Pi install, keeping TLH's finalization local and avoiding duplicate normal-path fetch/npm work. A conservative marker- and dependency-aware TLH repair remains for interrupted or ambiguous installs, custom package-manager semantics, and incomplete dependency trees; opt-in benchmark instrumentation reports the two paths separately.
+- The schema-1→2 completion-marker migration performs a one-time conservative repair for existing Git checkouts before reuse, revalidating their dependencies. Symlinked completion markers now fail closed; remove the symlink itself (not its target) and rerun the installer.
+- Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` uses OpenAI Codex GPT-6 Astra at medium effort; `code-reviewer` and `contrarian` retain OpenAI Codex GPT-5.6 Sol at high effort, while `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. Their OpenRouter effort defaults remain high.
+- Refreshed bundled default-extension pins: `pi-fast` 0.1.0 to 0.1.2, `pi-inline-bash` 0.1.9 to 0.1.11, `pi-context-inspector` 0.1.11 to 0.1.13, `pi-quiet-tools` 0.1.10 to 0.1.12, `pi-dirty-repo-guard` 0.1.9 to 0.1.11, and `pi-transcribe` commit `e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1` to `f673cad478885c81fdaa5c7977eb4d291fd87816`. Contributor tooling also moves `@oxlint/plugins` and `oxlint` from 1.78.0 to 1.82.0, `@types/node` from 26.2.0 to 26.5.0, and `oxfmt` from 0.63.0 to 0.67.0.
+- Refreshed the bundled Herdr skill from v0.8.0 (commit `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7`) to v0.9.0 (commit `b99002ac99b09e00b4ca692436cb15a6b0d676f1`).
+
+### Fixed
+
+- Switching an isolated profile from a local TLH package source back to a canonical source now removes only local registrations confirmed by a valid TLH `package.json` manifest.
+- Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
+- Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.
 
 ## [0.40.0] - 2026-09-06
 

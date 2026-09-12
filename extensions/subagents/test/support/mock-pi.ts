@@ -21,6 +21,8 @@ interface MockPiResponse {
   writeMarker?: string;
   /** Wait for a marker file at this path before any delay or jsonl output. */
   waitForMarker?: string;
+  /** Write a marker file after the response output has been flushed. */
+  writeMarkerAfter?: string;
   steps?: Array<{
     delay?: number;
     jsonl?: unknown[];
@@ -29,6 +31,8 @@ interface MockPiResponse {
     writeMarker?: string;
     /** Wait for a marker file at this path before step delay/jsonl. */
     waitForMarker?: string;
+    /** Write a marker file after this step's output has been flushed. */
+    writeMarkerAfter?: string;
   }>;
   echoEnv?: string[];
   matchArgIncludes?: string | string[];

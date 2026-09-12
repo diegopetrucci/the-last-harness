@@ -20,6 +20,7 @@ import { parseContextPressureCrossedThresholds, parseContextPressureProjection, 
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
+import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
 const piPackageRoot = resolvePiPackageRoot();
 function saturatingAsyncDeadlineAt(startedAt, durationMs) {
     return Math.min(Number.MAX_SAFE_INTEGER, startedAt + durationMs);
@@ -245,6 +246,7 @@ export function buildAsyncRunnerPlan(id, params) {
             return { error: `Unknown agent: ${task.agent}` };
         }
     }
+    const asyncParentFacts = makeParentGitFactsAccessor(ctx.cwd);
     let progressInstructionCreated = false;
     const buildStepOverrides = (task) => ({
         ...(task.output !== undefined ? { output: task.output } : {}),
@@ -252,13 +254,16 @@ export function buildAsyncRunnerPlan(id, params) {
         ...(task.model ? { model: task.model } : {}),
         ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
     });
-    const buildTask = (taskSpec, sessionFile, progressPrecreated = false, resolvedBehavior) => {
+    const buildTask = (taskSpec, sessionFile, progressPrecreated = false, resolvedBehavior, precomputedChildLocation) => {
         const agent = agents.find((candidate) => candidate.name === taskSpec.agent);
         const toolBudgetInput = taskSpec.toolBudget ?? params.toolBudget ?? agent.toolBudget;
         const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, taskSpec.toolBudget ? "toolBudget" : agent.toolBudget ? "agent.toolBudget" : "toolBudget");
         if (resolvedToolBudget.error)
             throw new AsyncStartValidationError(resolvedToolBudget.error);
         const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+        const childLocation = precomputedChildLocation !== undefined
+            ? precomputedChildLocation
+            : captureChildLocationSnapshot(ctx.cwd, stepCwd, undefined, asyncParentFacts);
         const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(agent, buildStepOverrides(taskSpec)), taskSpec.task);
         const skillNames = behavior.skills === false ? [] : behavior.skills;
         const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, stepCwd, ctx.cwd);
@@ -352,6 +357,7 @@ export function buildAsyncRunnerPlan(id, params) {
             acceptanceRole: agent.acceptanceRole,
             ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
             ...(agent.maxExecutionTimeMs !== undefined ? { timeoutMs: agent.maxExecutionTimeMs } : {}),
+            ...(childLocation ? { childLocation } : {}),
         };
     };
     const progressBehaviors = tasks.map((task) => {
@@ -363,12 +369,16 @@ export function buildAsyncRunnerPlan(id, params) {
         writeInitialProgressFile(progressDir);
         progressInstructionCreated = true;
     }
+    const asyncTaskSnapshots = tasks.map((taskSpec) => {
+        const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+        return captureChildLocationSnapshot(ctx.cwd, stepCwd, undefined, asyncParentFacts);
+    });
     let flatStepIndex = 0;
     let builtTasks;
     try {
         builtTasks = tasks.map((task, index) => {
             const sessionFile = sessionFilesByFlatIndex?.[flatStepIndex++];
-            return buildTask(task, sessionFile, progressPrecreated, progressBehaviors[index]);
+            return buildTask(task, sessionFile, progressPrecreated, progressBehaviors[index], asyncTaskSnapshots[index]);
         });
     }
     catch (error) {
@@ -575,7 +585,7 @@ export function executeAsyncParallel(id, params) {
 }
 function buildAsyncSingleRunnerPlan(params, inputs) {
     const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, continuationAcceptance, acceptance, toolBudget, activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
-    const { task, taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, outputPath, outputMode, runDeadlineAt, } = inputs;
+    const { task, taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, outputPath, outputMode, runDeadlineAt, childLocation, } = inputs;
     const thinkingSuffixOptions = {
         availableModels,
         preferredModelProvider: ctx.currentModelProvider,
@@ -706,6 +716,7 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                 ...(resolvedActiveRuntimeCheckpointAt !== undefined
                     ? { activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt }
                     : {}),
+                ...(childLocation ? { childLocation } : {}),
             },
         }),
         effectiveTimeoutMs,
@@ -723,6 +734,7 @@ export function executeAsyncSingle(id, params) {
     if (acceptanceErrors.length > 0)
         return formatAsyncStartError("single", acceptanceErrors.join(" "));
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+    const childLocation = captureChildLocationSnapshot(ctx.cwd, runnerCwd);
     const skillNames = params.skills ?? agentConfig.skills ?? [];
     const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, runnerCwd, ctx.cwd);
     if (missingSkills.includes("pi-subagents"))
@@ -773,6 +785,7 @@ export function executeAsyncSingle(id, params) {
         outputPath,
         outputMode,
         runDeadlineAt,
+        ...(childLocation ? { childLocation } : {}),
     });
     if ("error" in launchPlan)
         return formatAsyncStartError("single", launchPlan.error);

@@ -258,6 +258,8 @@ The runtime distinguishes these controls:
 
 Control signals distinguish `active_long_running` from `needs_attention`. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. When an async notification arrives while the parent session is idle, the runtime wakes the parent by sending a short machine-marked user message prefixed `[tlh]` (e.g. `[tlh] Background subagent completed — see notification above.`). This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
 
+**Current health versus history.** An idle `needs_attention` projection describes the child’s current health and is cleared by validated activity; that recovery rearms idle detection for a later, distinct episode. Compaction and in-flight tools are active operations, not idle recovery notices. Durable causes such as context pressure, tool failures, or a completion guard retain their own notification policy and are not erased when idle health recovers. Historical control notices remain historical records. Older status records without episode or durable-reason metadata are kept compatible, but their timestamps do not invent a new legacy reason.
+
 **Completion notification sizing.** Each async completion embeds up to 8,000 characters of the child's result inline; roughly 96 percent of real-world results now arrive complete in the notification, up from about 35 percent under the previous 1,200-character cap. Every completion notification is bounded by a 32,000-character ceiling, an increase from the previous 8,000. That ceiling applies whatever the notification's shape: a single parallel dispatch with four children can approach it on its own, as can a batch grouping several completions that arrived within a short window. Architect sessions that previously treated the completion notice as a teaser and always fetched the artifact separately should find that practice unnecessary in the common case.
 
 **Pointer-survival invariant.** `formatSingleCompletion` emits the artifact path and session reference lines last, and the send-time cap in `sendCompletion` truncates from the end. An overflow therefore destroys the recovery pointer before it destroys summary text, turning *truncated but recoverable* into *truncated and unrecoverable*. The invariant is enforced across six sites with no single home: `resolvePerChildSummaryBudget` and the non-summary cost computation in `formatResultPreview` perform the primary reservation by subtracting all fixed scaffold costs before dividing the remainder among child summaries; `fitPreviewWithinCeiling` and `joinedLineCost` enforce the per-entry ceiling in grouped messages; and the per-entry bound in `formatGroupedCompletion` and the send-time cap in `sendCompletion` provide final guardrails. The failure mode is under-reservation — reserving too little space for scaffolding, so the assembled message quietly overshoots the ceiling and the end-cut eats the pointer. Over-reservation is always safe and is the deliberate choice here: `joinedLineCost` over-counts by one character per line for exactly this reason. If you are editing header lines, formatting, or constants in `notify.ts`, keep the arithmetic erring towards reserving more space, never less.
@@ -283,6 +285,28 @@ A child that needs a decision, structured interview, or meaningful progress upda
 Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state. The optional debug artifact profile retains those protocol observations in the diagnostic child transcript for investigation. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail. Foreground compact failures retain only that tail; async runs always stream raw stderr to `output-N.log` regardless of artifact profile, and debug mode additionally records it in the diagnostic child transcript. An oversized stderr line is diagnostic overflow, not a second control protocol.
 
 Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
+
+### Child location line
+
+The TLH footer always reflects the **parent** session's working directory and branch. When a child runs in the same directory as the parent, that footer is sufficient. When it does not — for example, a developer dispatched to a different worktree or an entirely separate repository — the footer alone cannot distinguish the two. To fill that gap, a child location line is captured once, at dispatch time, whenever the child's working directory differs from the parent session's working directory. Same-directory dispatches capture nothing and perform no git work.
+
+The line renders as one dim line per child in the subagent widget (both single and parallel step lines) and in the foreground compact and expanded displays; the live-detail view uses the same expanded render path. It appears in every lifecycle state, including terminal ones, because it is parent-supplied dispatch metadata rather than child-reported telemetry. No git subprocess ever runs in a render or refresh path; the snapshot is taken once and stored, so display updates are free.
+
+Rendered forms, from simplest to most detailed:
+
+```
+cwd: some/path
+cwd: some/path · branch: feature-x
+cwd: some/path · branch: detached@abc1234
+cwd: some/path · repo: other-repo
+cwd: some/path · repo: other-repo · branch: main
+cwd: some/path · linked worktree · branch: feature-x
+cwd: some/path · no git repo
+```
+
+Parts are ordered broad to narrow: the working directory first, then the repository name when the child is in a different repository from the parent, then a linked-worktree marker, then branch or detached HEAD, then a no-git-repo marker when the directory is not inside any git repository. Parts that match the parent are omitted, which is why a child working in the same repository but on a different branch shows only `branch:`, not `repo:`.
+
+**Known limitation:** the snapshot is written to the status step when a step starts. A queued run, or a task still waiting behind a concurrency limit, shows no location line until the step actually begins.
 
 ## Prompt-cache heartbeat
 

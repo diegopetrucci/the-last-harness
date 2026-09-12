@@ -151,6 +151,7 @@ export function runStage1LocalPackageInstall(
     force = false,
     verbose = false,
     existingSupportFiles,
+    existingAgentFiles,
     existingLibrarianConfig,
     existingManagedRtk = false,
     envOverrides = {},
@@ -167,6 +168,13 @@ export function runStage1LocalPackageInstall(
   const npmLog = join(root, "npm.log");
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(packageDir, { recursive: true });
+  if (existingAgentFiles) {
+    for (const [relativePath, content] of Object.entries(existingAgentFiles)) {
+      const target = join(agentDir, relativePath);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, content);
+    }
+  }
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   // Fake npm so installPiIfNeeded never hits the network. The fake npm copies a

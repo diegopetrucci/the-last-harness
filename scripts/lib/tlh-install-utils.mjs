@@ -94,6 +94,33 @@ export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
         throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });
     }
 }
+/**
+ * Parse Pi's configured package-manager command with the same validation used
+ * by installer package cleanup. An absent or empty setting means the default
+ * npm command; malformed settings fail closed instead of silently falling
+ * back to a different package manager.
+ */
+export function configuredNpmCommand(settings) {
+    if (!settings || typeof settings !== "object" || Array.isArray(settings))
+        return undefined;
+    const value = settings.npmCommand;
+    if (value === undefined)
+        return undefined;
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+        throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
+    }
+    if (value.length === 0)
+        return undefined;
+    if (!value[0]) {
+        throw new Error("invalid npmCommand in isolated settings: first entry must be a non-empty command");
+    }
+    return [...value];
+}
+export function readConfiguredNpmCommand(settingsPath) {
+    if (!settingsPath || !existsSync(settingsPath))
+        return undefined;
+    return configuredNpmCommand(readJsonFile(settingsPath));
+}
 function throwSymlinkedBackupSource(path, label) {
     throw new Error(`refusing to back up symlinked ${label} source: ${path}`);
 }
@@ -174,6 +201,16 @@ export function backupPathWithTimestamp(path, { marker = "", date = new Date(), 
 // ---------------------------------------------------------------------------
 // Backup-retention helpers (pure / deterministic)
 // ---------------------------------------------------------------------------
+function isValidBackupCalendarDate(datePart) {
+    const year = Number(datePart.slice(0, 4));
+    const month = Number(datePart.slice(5, 7));
+    const day = Number(datePart.slice(8, 10));
+    if (month < 1 || month > 12 || day < 1)
+        return false;
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const monthLengths = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day <= monthLengths[month - 1];
+}
 /**
  * Parse the ISO-8601-derived timestamp embedded in a backup filename produced
  * by backupPathWithTimestamp. Handles all four naming variants:
@@ -191,6 +228,8 @@ export function parseBackupTimestamp(filename) {
     if (!match)
         return undefined;
     const [, datePart, hh, mm, ss, ms] = match;
+    if (!isValidBackupCalendarDate(datePart))
+        return undefined;
     const iso = ms ? `${datePart}T${hh}:${mm}:${ss}.${ms}Z` : `${datePart}T${hh}:${mm}:${ss}Z`;
     const date = new Date(iso);
     if (Number.isNaN(date.getTime()))

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -9,6 +9,18 @@ import {
   cleanupRetiredProfileFiles,
 } from "../scripts/tlh-install.mjs";
 import { captureConsole, makeTempDir } from "./install-stage1-test-helpers.mjs";
+
+function metadataReaderWithFailures(failures) {
+  return (path) => {
+    const failure = failures.get(path);
+    if (failure) {
+      const error = new Error(failure.message);
+      error.code = failure.code;
+      throw error;
+    }
+    return lstatSync(path);
+  };
+}
 
 test("cleanupLegacyManagedProfileArtifacts removes regular legacy managed RTK files", (t) => {
   const root = makeTempDir("tlh-cleanup-legacy-rtk-present-");
@@ -45,6 +57,65 @@ test("cleanupLegacyManagedProfileArtifacts preserves symlinked and parent-symlin
   assert.equal(existsSync(externalRtk), true);
   assert.equal(existsSync(join(agentDir, "bin", "rtk")), true);
   assert.equal(existsSync(join(agentDir, "tlh", "tlh-rtk.mjs")), true);
+});
+
+test("cleanupLegacyManagedProfileArtifacts skips missing metadata and processes later files", (t) => {
+  const root = makeTempDir("tlh-cleanup-legacy-rtk-missing-metadata-");
+  const agentDir = join(root, "agent");
+  const missingFile = join(agentDir, "bin", "rtk");
+  const laterFile = join(agentDir, "tlh", "tlh-rtk.mjs");
+  mkdirSync(dirname(missingFile), { recursive: true });
+  mkdirSync(dirname(laterFile), { recursive: true });
+  writeFileSync(missingFile, "legacy rtk\n", "utf8");
+  writeFileSync(laterFile, "legacy helper\n", "utf8");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const metadataReader = metadataReaderWithFailures(
+    new Map([[missingFile, { code: "ENOENT", message: "simulated missing entry" }]]),
+  );
+  assert.doesNotThrow(() =>
+    cleanupLegacyManagedProfileArtifacts({
+      agentDir,
+      dryRun: false,
+      quiet: true,
+      verbose: false,
+      cleanupMetadata: metadataReader,
+    }),
+  );
+
+  assert.equal(existsSync(missingFile), true, "missing metadata entry must be preserved");
+  assert.equal(existsSync(laterFile), false, "later eligible file must still be removed");
+});
+
+test("cleanupLegacyManagedProfileArtifacts warns on metadata errors and processes later files", (t) => {
+  const root = makeTempDir("tlh-cleanup-legacy-rtk-metadata-error-");
+  const agentDir = join(root, "agent");
+  const unreadableFile = join(agentDir, "bin", "rtk");
+  const laterFile = join(agentDir, "tlh", "tlh-rtk.mjs");
+  mkdirSync(dirname(unreadableFile), { recursive: true });
+  mkdirSync(dirname(laterFile), { recursive: true });
+  writeFileSync(unreadableFile, "legacy rtk\n", "utf8");
+  writeFileSync(laterFile, "legacy helper\n", "utf8");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const metadataReader = metadataReaderWithFailures(
+    new Map([[unreadableFile, { code: "EIO", message: "simulated metadata failure" }]]),
+  );
+  const stderr = captureConsole("error", () => {
+    assert.doesNotThrow(() =>
+      cleanupLegacyManagedProfileArtifacts({
+        agentDir,
+        dryRun: false,
+        quiet: true,
+        verbose: false,
+        cleanupMetadata: metadataReader,
+      }),
+    );
+  });
+
+  assert.equal(existsSync(unreadableFile), true, "unreadable metadata entry must be preserved");
+  assert.equal(existsSync(laterFile), false, "later eligible file must still be removed");
+  assert.match(stderr, /simulated metadata failure/);
 });
 
 test("cleanupLegacyManagedProfileArtifacts preserves non-files and unrelated profile content", (t) => {

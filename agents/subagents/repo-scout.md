@@ -9,6 +9,9 @@ tlhModelDefaults:
   - provider: anthropic
     models: [claude-haiku-4-5]
     effort: high
+  - provider: xai
+    models: [grok-4.3]
+    effort: medium
   - provider: openrouter
     effort: high
 toolBudget: {"soft":20,"hard":30}

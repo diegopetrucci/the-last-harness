@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
+import { parsePersistedChildLocationSnapshot, } from "../../shared/child-location.js";
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
@@ -14,6 +15,7 @@ import { safeTerminalDocument, safeTerminalText } from "../../shared/display-tex
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
+import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -51,6 +53,43 @@ function outputFileMtime(outputFile) {
         });
     }
 }
+const DURABLE_ATTENTION_REASONS = new Set([
+    "context_pressure",
+    "tool_failures",
+    "completion_guard",
+]);
+const COMPACTION_REASONS = new Set([
+    "manual",
+    "threshold",
+    "overflow",
+]);
+function normalizePersistedActivityState(value) {
+    return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+}
+function normalizePersistedDurableAttentionReasons(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const reasons = value.filter((reason) => typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason));
+    return reasons.length > 0 ? [...new Set(reasons)] : undefined;
+}
+function normalizePersistedCompaction(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const reason = value.reason;
+    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
+        ? { reason: reason }
+        : undefined;
+}
+function normalizePersistedHealth(value) {
+    const activityState = normalizePersistedActivityState(value.activityState);
+    const idleEpisodeId = normalizeIdleEpisodeId(value.idleEpisodeId);
+    const durableAttentionReasons = normalizePersistedDurableAttentionReasons(value.durableAttentionReasons);
+    const compaction = normalizePersistedCompaction(value.compaction);
+    value.activityState = activityState;
+    value.idleEpisodeId = idleEpisodeId;
+    value.durableAttentionReasons = durableAttentionReasons;
+    value.compaction = compaction;
+}
 function deriveAsyncActivityState(asyncDir, status) {
     if (status.state !== "running")
         return { activityState: status.activityState, lastActivityAt: status.lastActivityAt };
@@ -70,6 +109,7 @@ function deriveAsyncActivityState(asyncDir, status) {
     };
 }
 export function validatePersistedAsyncStatus(asyncDir, status) {
+    normalizePersistedHealth(status);
     if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
         throw createAsyncStatusValidationError({
             asyncDir,
@@ -117,6 +157,7 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
     else
         status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
     for (const step of status.steps ?? []) {
+        normalizePersistedHealth(step);
         const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
         const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
         if (activeRuntimeMs === undefined)
@@ -138,6 +179,7 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
         step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
         step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+        step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
     }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
@@ -164,6 +206,11 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             status: step.status,
             ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
             ...(stepActivityState ? { activityState: stepActivityState } : {}),
+            ...(step.idleEpisodeId ? { idleEpisodeId: step.idleEpisodeId } : {}),
+            ...(step.durableAttentionReasons?.length
+                ? { durableAttentionReasons: [...step.durableAttentionReasons] }
+                : {}),
+            ...(step.compaction ? { compaction: { ...step.compaction } } : {}),
             ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
             ...(step.currentTool ? { currentTool: step.currentTool } : {}),
             ...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
@@ -201,6 +248,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.error ? { error: step.error } : {}),
             ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
             ...(step.children?.length ? { children: step.children } : {}),
+            ...(step.childLocation ? { childLocation: step.childLocation } : {}),
         };
     });
     attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);

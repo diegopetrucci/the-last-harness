@@ -203,6 +203,44 @@ function explicitAcceptanceCanDisable(explicit) {
         typeof explicit.reason === "string" &&
         explicit.reason.trim().length > 0);
 }
+function validateAcceptanceCriteria(value, pathLabel, errors) {
+    if (value.criteria !== undefined && !Array.isArray(value.criteria))
+        errors.push(`${pathLabel}.criteria must be an array.`);
+    if (Array.isArray(value.criteria)) {
+        for (const [index, criterion] of value.criteria.entries()) {
+            if (typeof criterion === "string")
+                continue;
+            const criterionPath = `${pathLabel}.criteria[${index}]`;
+            if (!criterion || typeof criterion !== "object" || Array.isArray(criterion)) {
+                errors.push(`${criterionPath} must be a string or an object.`);
+                continue;
+            }
+            const gate = criterion;
+            for (const key of Object.keys(gate)) {
+                if (!ACCEPTANCE_GATE_KEYS.has(key))
+                    errors.push(`${criterionPath}.${key} is not supported.`);
+            }
+            if (typeof gate.id !== "string" || !gate.id.trim())
+                errors.push(`${criterionPath}.id is required.`);
+            if (typeof gate.must !== "string" || !gate.must.trim())
+                errors.push(`${criterionPath}.must is required.`);
+            if (gate.evidence !== undefined && !Array.isArray(gate.evidence))
+                errors.push(`${criterionPath}.evidence must be an array.`);
+            if (Array.isArray(gate.evidence)) {
+                for (const [evidenceIndex, item] of gate.evidence.entries()) {
+                    if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {
+                        errors.push(`${criterionPath}.evidence[${evidenceIndex}] is not a supported evidence kind.`);
+                    }
+                }
+            }
+            if (gate.severity !== undefined &&
+                gate.severity !== "required" &&
+                gate.severity !== "recommended") {
+                errors.push(`${criterionPath}.severity must be required or recommended.`);
+            }
+        }
+    }
+}
 function validateAcceptanceReview(reviewInput, pathLabel, errors) {
     if (reviewInput === undefined || reviewInput === false)
         return;
@@ -251,42 +289,7 @@ export function validateAcceptanceInput(input, pathLabel = "acceptance") {
     }
     if (value.reason !== undefined && typeof value.reason !== "string")
         errors.push(`${pathLabel}.reason must be a string.`);
-    if (value.criteria !== undefined && !Array.isArray(value.criteria))
-        errors.push(`${pathLabel}.criteria must be an array.`);
-    if (Array.isArray(value.criteria)) {
-        for (const [index, criterion] of value.criteria.entries()) {
-            if (typeof criterion === "string")
-                continue;
-            const criterionPath = `${pathLabel}.criteria[${index}]`;
-            if (!criterion || typeof criterion !== "object" || Array.isArray(criterion)) {
-                errors.push(`${criterionPath} must be a string or an object.`);
-                continue;
-            }
-            const gate = criterion;
-            for (const key of Object.keys(gate)) {
-                if (!ACCEPTANCE_GATE_KEYS.has(key))
-                    errors.push(`${criterionPath}.${key} is not supported.`);
-            }
-            if (typeof gate.id !== "string" || !gate.id.trim())
-                errors.push(`${criterionPath}.id is required.`);
-            if (typeof gate.must !== "string" || !gate.must.trim())
-                errors.push(`${criterionPath}.must is required.`);
-            if (gate.evidence !== undefined && !Array.isArray(gate.evidence))
-                errors.push(`${criterionPath}.evidence must be an array.`);
-            if (Array.isArray(gate.evidence)) {
-                for (const [evidenceIndex, item] of gate.evidence.entries()) {
-                    if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {
-                        errors.push(`${criterionPath}.evidence[${evidenceIndex}] is not a supported evidence kind.`);
-                    }
-                }
-            }
-            if (gate.severity !== undefined &&
-                gate.severity !== "required" &&
-                gate.severity !== "recommended") {
-                errors.push(`${criterionPath}.severity must be required or recommended.`);
-            }
-        }
-    }
+    validateAcceptanceCriteria(value, pathLabel, errors);
     if (Array.isArray(value.evidence)) {
         for (const [index, item] of value.evidence.entries()) {
             if (typeof item !== "string" || !VALID_EVIDENCE.has(item)) {
@@ -646,11 +649,6 @@ function parseReportJson(body) {
     }
     throw new Error("Acceptance report JSON must contain a JSON value.");
 }
-function fencedBlocks(output, tag) {
-    return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
-        .map((match) => match[1]?.trim())
-        .filter((value) => Boolean(value));
-}
 function parseAcceptanceReportBody(body) {
     const parsed = unwrapAcceptanceReport(parseReportJson(body));
     return validateAcceptanceReport(parsed.value, parsed.wrapper);
@@ -661,54 +659,6 @@ function parseGenericJsonAcceptanceReportBody(body) {
     if (!validation.report)
         return undefined;
     return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
-}
-export function parseAcceptanceReport(output) {
-    const fenced = fencedBlocks(output, "acceptance-report");
-    const parseErrors = [];
-    for (const body of fenced) {
-        try {
-            const validation = parseAcceptanceReportBody(body);
-            if (validation.report)
-                return { report: validation.report };
-            parseErrors.push(`Invalid acceptance-report: ${validation.errors.join("; ")}`);
-        }
-        catch (error) {
-            parseErrors.push(error instanceof Error ? error.message : String(error));
-        }
-    }
-    if (parseErrors.length > 0)
-        return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
-    for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
-        try {
-            const report = parseGenericJsonAcceptanceReportBody(body);
-            if (report)
-                return { report };
-        }
-        catch {
-        }
-    }
-    const markerIndex = output.search(/ACCEPTANCE_REPORT\s*:/i);
-    if (markerIndex !== -1) {
-        const jsonStart = output.indexOf("{", markerIndex);
-        if (jsonStart !== -1) {
-            const json = extractBalancedJson(output, jsonStart);
-            if (json) {
-                try {
-                    const parsed = unwrapAcceptanceReport(parseReportJson(json));
-                    const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
-                    if (validation.report)
-                        return { report: validation.report };
-                    return {
-                        error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`,
-                    };
-                }
-                catch (error) {
-                    return { error: error instanceof Error ? error.message : String(error) };
-                }
-            }
-        }
-    }
-    return { error: "Structured acceptance report not found." };
 }
 export function parseAndStripAcceptanceReport(output) {
     const trailingFencePattern = /\n?```(acceptance-report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;

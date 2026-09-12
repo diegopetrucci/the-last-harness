@@ -7,7 +7,6 @@ import {
   type AsyncJobState,
   type AsyncStatus,
   type AsyncStartedEvent,
-  type ControlEvent,
   type SubagentState,
   normalizeSubagentRunMode,
   POLL_INTERVAL_MS,
@@ -30,6 +29,7 @@ import {
   type AsyncStatusQuarantineOptions,
 } from "./async-status-quarantine.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
 import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   lookupProjectAgentRunReference,
@@ -60,6 +60,10 @@ const COMPLETION_RETENTION_STATES = new Set<string>([
   "cancelled",
   "continued",
 ]);
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function hasUsableProjectSessionFile(sessionFile: unknown): boolean {
   if (typeof sessionFile !== "string" || sessionFile.trim().length === 0) return false;
@@ -354,26 +358,26 @@ export function createAsyncJobTracker(
           console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
           return;
         }
+        if (!isRecordValue(parsed) || parsed.type !== "subagent.control") return;
+        const channels = parsed.channels;
+        const event = parseControlEvent(parsed.event);
         if (
-          !parsed ||
-          typeof parsed !== "object" ||
-          (parsed as { type?: unknown }).type !== "subagent.control"
+          !event ||
+          !Array.isArray(channels) ||
+          channels.some((channel) => typeof channel !== "string")
         )
           return;
-        const record = parsed as {
-          event?: ControlEvent;
-          channels?: string[];
-          noticeText?: string;
-        };
-        const event = parseControlEvent(record.event);
-        if (!event || !Array.isArray(record.channels)) return;
+        const noticeText =
+          typeof parsed.noticeText === "string"
+            ? parsed.noticeText
+            : formatControlNoticeMessage(event);
         const payload = {
           event,
           source: "async" as const,
           asyncDir: job.asyncDir,
-          noticeText: record.noticeText ?? formatControlNoticeMessage(event),
+          noticeText,
         };
-        if (record.channels.includes("event")) {
+        if (channels.includes("event")) {
           pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
         }
       };
@@ -542,7 +546,15 @@ export function createAsyncJobTracker(
               cancelProjectReferenceCleanup(job.asyncId);
             }
             if (status.steps?.length) {
-              const visibleSteps = status.steps.map((step, index) => ({ ...step, index }));
+              const visibleSteps = status.steps.map((step, index) => ({
+                ...step,
+                index,
+                // Normalize childLocation through the shared validator so a
+                // malformed value read from status.json never reaches the
+                // renderer.  A bad shape is dropped (→ undefined) rather than
+                // propagated, matching the existing async-status.ts boundary.
+                childLocation: parsePersistedChildLocationSnapshot(step.childLocation),
+              }));
               job.agents = visibleSteps.map((step) => step.agent);
               job.steps = visibleSteps;
               refreshNestedProjection();

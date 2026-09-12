@@ -8,6 +8,9 @@ tlhModelDefaults:
   - provider: openai-codex
     models: [gpt-5.6-luna]
     effort: medium
+  - provider: xai
+    models: [grok-4.6]
+    effort: low
   - provider: openrouter
     effort: low
 preferCurrentOpenaiModel: true

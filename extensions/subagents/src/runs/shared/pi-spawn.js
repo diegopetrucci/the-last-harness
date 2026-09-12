@@ -125,9 +125,6 @@ function resolvePiCliScriptWithStatus(deps = {}) {
         return { cliPath: argvCliScript };
     return resolvePiCliScriptFromPackageJson(deps, resolvePiCliPackageRoot(deps));
 }
-export function resolvePiCliScript(deps = {}) {
-    return resolvePiCliScriptWithStatus(deps).cliPath;
-}
 function getPiCliResolutionFailureSpawnCommand(resolution, deps) {
     const message = resolution.error
         ? `Resolved Pi package root from ${resolution.packageRoot.source} is unusable (${resolution.packageRoot.rootPath}): ${resolution.error}. Refusing ambient pi fallback.`

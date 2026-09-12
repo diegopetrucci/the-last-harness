@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.js";
 export function formatTokens(n) {
     return n < 1000
@@ -71,7 +72,7 @@ export function formatToolCall(name, args, _expanded = false) {
 }
 export function shortenPath(p) {
     const home = process.env.HOME;
-    if (home && p.startsWith(home)) {
+    if (home && (p === home || p.startsWith(home + path.sep))) {
         return `~${p.slice(home.length)}`;
     }
     return p;

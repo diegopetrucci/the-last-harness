@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 
@@ -12,9 +21,13 @@ import {
   readJson,
   repoRoot,
   runHelper,
+  runInstaller,
   runStage1LocalPackageInstall,
   scrubInstallerEnv,
+  writeFakeCommand,
+  writeFakeNpmInstaller,
   writeFakePi,
+  writeFakeTk,
 } from "./install-stage1-core-test-helpers.mjs";
 
 import { buildInstallConfig, parseArgs, usage } from "../scripts/tlh-install.mjs";
@@ -47,6 +60,141 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
       assert.doesNotMatch(output, refreshDetailPattern);
     }
   }
+});
+
+test("managed Pi child gets a normal Git index namespace during a foreign clone", (t) => {
+  const root = makeTempDir();
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const templateDir = join(root, "pi-template");
+  const seedDir = join(root, "seed");
+  const originDir = join(root, "origin.git");
+  const targetDir = join(agentDir, "git", "github.com", "example", "repo");
+  const foreignDir = join(root, "foreign-clone");
+  const ambientIndex = join(root, "ambient-index");
+  const childEnvLog = join(root, "pi-child-env.log");
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(seedDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  execFileSync("git", ["init", "--quiet", "-b", "main", seedDir]);
+  execFileSync("git", ["-C", seedDir, "config", "user.email", "tlh-tests@example.invalid"]);
+  execFileSync("git", ["-C", seedDir, "config", "user.name", "TLH tests"]);
+  execFileSync("git", ["-C", seedDir, "config", "core.hooksPath", join(seedDir, "missing-hooks")]);
+  execFileSync("git", ["-C", seedDir, "config", "core.fileMode", "false"]);
+  writeFileSync(
+    join(seedDir, "package.json"),
+    JSON.stringify({
+      name: "managed-fixture",
+      version: "1.0.0",
+      dependencies: { "some-dep": "^1.0.0" },
+    }) + "\n",
+  );
+  writeFileSync(join(seedDir, ".gitignore"), "node_modules/\n");
+  execFileSync("git", ["-C", seedDir, "add", "."]);
+  execFileSync("git", ["-C", seedDir, "commit", "--quiet", "-m", "fixture"]);
+  execFileSync("git", ["clone", "--quiet", "--bare", seedDir, originDir]);
+  mkdirSync(dirname(targetDir), { recursive: true });
+  execFileSync("git", ["clone", "--quiet", originDir, targetDir]);
+  execFileSync("git", [
+    "-C",
+    targetDir,
+    "remote",
+    "set-url",
+    "origin",
+    "https://github.com/example/repo",
+  ]);
+  const targetIndexBefore = readFileSync(join(targetDir, ".git", "index"));
+  const targetIndexMode = lstatSync(join(targetDir, ".git", "index")).mode & 0o777;
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: ["pnpm"] }));
+
+  const fakePiBody = [
+    'if [[ "${1:-}" == "--version" ]]; then printf "0.85.1\\n"; exit 0; fi',
+    'if [[ "${1:-}" == "install" ]]; then',
+    '  if [[ -n "${GIT_INDEX_FILE+x}" ]]; then printf "%s\\n" "$GIT_INDEX_FILE" >"$PI_CHILD_ENV_LOG"; else printf "<unset>\\n" >"$PI_CHILD_ENV_LOG"; fi',
+    '  rm -rf "$FOREIGN_DIR"',
+    '  git clone --quiet "$FAKE_ORIGIN" "$FOREIGN_DIR"',
+    '  test -f "$FOREIGN_DIR/.git/index"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+  ].join("\n");
+  writeFakePi(fakebin, fakePiBody);
+  mkdirSync(templateDir, { recursive: true });
+  writeFakePi(templateDir, fakePiBody);
+  writeFakeTk(fakebin);
+  const pnpmLog = join(root, "pnpm.log");
+  writeFakeCommand(
+    fakebin,
+    "pnpm",
+    [`printf '%s\\n' "$*" >>"${pnpmLog}"`, 'mkdir -p "$PWD/node_modules/some-dep"'].join("\n"),
+  );
+  writeFakeNpmInstaller(fakebin, {
+    npmLog: join(root, "npm.log"),
+    templatePiPath: join(templateDir, "pi"),
+    installedPiPath: join(root, "runtime", "bin", "pi"),
+  });
+
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"],
+    scrubInstallerEnv({
+      HOME: homeDir,
+      PATH: `${fakebin}:${process.env.PATH || ""}`,
+      TLH_REPO: "example/repo",
+      TLH_REF: "main",
+      TLH_SKIP_GNOSIS_INSTALL: "1",
+      GIT_INDEX_FILE: ambientIndex,
+      FAKE_ORIGIN: originDir,
+      FOREIGN_DIR: foreignDir,
+      PI_CHILD_ENV_LOG: childEnvLog,
+      PNPM_LOG: pnpmLog,
+      TLH_INSTALL_RECONCILIATION_TRACE: "1",
+    }),
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.equal(readFileSync(childEnvLog, "utf8").trim(), "<unset>");
+  assert.equal(existsSync(ambientIndex), false, "a foreign clone must not use an ambient index");
+  assert.deepEqual(readFileSync(join(targetDir, ".git", "index")), targetIndexBefore);
+  assert.equal(lstatSync(join(targetDir, ".git", "index")).mode & 0o777, targetIndexMode);
+  assert.equal(existsSync(join(foreignDir, ".git", "index")), true);
+  assert.equal(readFileSync(pnpmLog, "utf8").trim(), "install");
+  assert.match(output, /TLH_INSTALL_RECONCILIATION_EVENT .*"type":"pi-reconciliation"/);
+  assert.match(output, /TLH_INSTALL_RECONCILIATION_EVENT .*"type":"tlh-repair"/);
+  assert.match(
+    output,
+    /TLH_INSTALL_RECONCILIATION_EVENT .*"type":"managed-checkout-summary".*"tlhGitFetches":0.*"tlhPackageManagerInstalls":1/,
+  );
+
+  const firstRunSettingsBackups = readdirSync(agentDir).filter((entry) =>
+    entry.startsWith("settings.json.backup-before-install-"),
+  );
+  assert.equal(firstRunSettingsBackups.length, 1);
+  rmSync(join(agentDir, firstRunSettingsBackups[0]), { force: true });
+
+  const untracedEnv = scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: `${fakebin}:${process.env.PATH || ""}`,
+    TLH_REPO: "example/repo",
+    TLH_REF: "main",
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+    GIT_INDEX_FILE: ambientIndex,
+    FAKE_ORIGIN: originDir,
+    FOREIGN_DIR: foreignDir,
+    PI_CHILD_ENV_LOG: childEnvLog,
+    PNPM_LOG: pnpmLog,
+  });
+  assert.equal(Object.hasOwn(untracedEnv, "TLH_INSTALL_RECONCILIATION_TRACE"), false);
+  const untracedResult = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"],
+    untracedEnv,
+  );
+  const untracedOutput = `${untracedResult.stdout}\n${untracedResult.stderr}`;
+  assert.equal(untracedResult.status, 0, untracedOutput);
+  assert.doesNotMatch(untracedOutput, /TLH_INSTALL_RECONCILIATION_EVENT/u);
 });
 
 test("stage-1 records checkout subjects that begin with a hyphen", (t) => {

@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -44,7 +45,7 @@ function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
 
 function runMerge(
   fixture,
-  { dryRun = false, force = false, quiet = true, packageSource = "" } = {},
+  { dryRun = false, force = false, quiet = true, packageSource = "", env = process.env } = {},
 ) {
   const args = [
     mergeScript,
@@ -60,13 +61,21 @@ function runMerge(
   if (quiet) args.push("--quiet");
   return execFileSync(process.execPath, args, {
     cwd: repoRoot,
-    env: process.env,
+    env,
     encoding: "utf8",
   });
 }
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function writePackageManifest(packageDir, value) {
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, "package.json"),
+    typeof value === "string" ? value : JSON.stringify(value),
+  );
 }
 
 function backupFiles(settingsPath) {
@@ -730,6 +739,214 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
 });
 
 // ── Non-canonical (local) package source tests (tlhmf-14h1) ─────────────────
+
+test("canonical source cleanup removes a confirmed local TLH package entry", () => {
+  const fixture = tempFixture({ packages: [harnessPackage] }, { packages: ["./local-tlh"] });
+  const localDir = join(dirname(fixture.settings), "local-tlh");
+  mkdirSync(localDir);
+  writeFileSync(
+    join(localDir, "package.json"),
+    JSON.stringify({ name: "the-last-harness", version: "0.39.0" }),
+  );
+
+  runMerge(fixture, { packageSource: `${harnessPackage}@v0.40.0` });
+
+  assert.deepEqual(readJson(fixture.settings).packages, [`${harnessPackage}@v0.40.0`]);
+});
+
+test("omitting the package source preserves a confirmed local TLH registration", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    {
+      packages: [
+        {
+          source: "./local-tlh",
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    },
+  );
+  writePackageManifest(join(dirname(fixture.settings), "local-tlh"), {
+    name: "the-last-harness",
+  });
+
+  const beforeDryRun = readFileSync(fixture.settings, "utf8");
+  const dryRunOutput = runMerge(fixture, { dryRun: true, quiet: false });
+  assert.doesNotMatch(dryRunOutput, /remove local TLH package superseded by canonical source/);
+  assert.equal(readFileSync(fixture.settings, "utf8"), beforeDryRun);
+
+  runMerge(fixture);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    {
+      source: "./local-tlh",
+      extensions: ["keep"],
+      customField: { preserve: true },
+    },
+    harnessPackage,
+  ]);
+});
+
+test("canonical source cleanup resolves supported local source forms from the isolated profile", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    {
+      packages: [
+        "./relative-tlh",
+        { source: "./absolute-tlh", extensions: ["old"] },
+        "file:/file-path-tlh",
+        "file:///file-url-tlh",
+        "file://localhost/file-localhost-tlh",
+        "~/home-tlh",
+        {
+          source: "./object-tlh",
+          extensions: ["old"],
+          customField: { preserve: true },
+        },
+        {
+          source: "./the-last-harness",
+          extensions: ["keep"],
+          customField: { preserve: "unrelated" },
+        },
+        { source: "npm:unrelated-package", customField: { preserve: "npm" } },
+      ],
+      theme: "user-theme",
+      tlh: { disabledDefaultExtensions: ["notify"], userFlag: true },
+      userSetting: { preserve: true },
+    },
+  );
+  const profileDir = dirname(fixture.settings);
+  const homeDir = join(profileDir, "home");
+  const absoluteTlhDir = join(profileDir, "absolute-tlh");
+  const filePathTlhDir = join(profileDir, "file-path-tlh");
+  const fileUrlTlhDir = join(profileDir, "file-url-tlh");
+  const fileLocalhostTlhDir = join(profileDir, "file-localhost-tlh");
+  const settingsWithAbsoluteSources = readJson(fixture.settings);
+  settingsWithAbsoluteSources.packages[1].source = absoluteTlhDir;
+  settingsWithAbsoluteSources.packages[2] = `file:${filePathTlhDir}`;
+  settingsWithAbsoluteSources.packages[3] = `file://${fileUrlTlhDir}`;
+  settingsWithAbsoluteSources.packages[4] = `file://localhost${fileLocalhostTlhDir}`;
+  writeFileSync(fixture.settings, JSON.stringify(settingsWithAbsoluteSources));
+
+  writePackageManifest(join(profileDir, "relative-tlh"), {
+    name: "the-last-harness",
+    version: "0.39.0",
+  });
+  writePackageManifest(absoluteTlhDir, { name: "the-last-harness" });
+  writePackageManifest(filePathTlhDir, { name: "the-last-harness" });
+  writePackageManifest(fileUrlTlhDir, { name: "the-last-harness" });
+  writePackageManifest(fileLocalhostTlhDir, { name: "the-last-harness" });
+  writePackageManifest(join(homeDir, "home-tlh"), { name: "the-last-harness" });
+  writePackageManifest(join(profileDir, "object-tlh"), { name: "the-last-harness" });
+  writePackageManifest(join(profileDir, "the-last-harness"), { name: "other-package" });
+
+  const canonicalSource = `${harnessPackage}@v0.40.0`;
+  const output = runMerge(fixture, {
+    packageSource: canonicalSource,
+    quiet: false,
+    env: { ...process.env, HOME: homeDir },
+  });
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    {
+      source: "./the-last-harness",
+      extensions: ["keep"],
+      customField: { preserve: "unrelated" },
+    },
+    { source: "npm:unrelated-package", customField: { preserve: "npm" } },
+    canonicalSource,
+  ]);
+  assert.equal(settings.theme, "user-theme");
+  assert.deepEqual(settings.tlh, {
+    disabledDefaultExtensions: ["notify"],
+    userFlag: true,
+    defaultExtensionProvenance: { managedPackageIdentities: [] },
+  });
+  assert.deepEqual(settings.userSetting, { preserve: true });
+  assert.equal(output.match(/remove local TLH package superseded by canonical source/g)?.length, 7);
+});
+
+test("canonical source cleanup preserves local entries without manifest proof", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    {
+      packages: [
+        "./missing-tlh",
+        "./malformed-tlh",
+        "./the-last-harness",
+        "./directory-manifest-tlh",
+        { source: "./object-malformed-tlh", customField: { preserve: true } },
+        "file://remotehost/unknown-tlh",
+      ],
+    },
+  );
+  const profileDir = dirname(fixture.settings);
+  writePackageManifest(join(profileDir, "malformed-tlh"), "not json");
+  writePackageManifest(join(profileDir, "the-last-harness"), { name: "other-package" });
+  const directoryManifest = join(profileDir, "directory-manifest-tlh");
+  mkdirSync(join(directoryManifest, "package.json"), { recursive: true });
+  writePackageManifest(join(profileDir, "object-malformed-tlh"), {
+    name: " the-last-harness ",
+  });
+
+  const canonicalSource = `${harnessPackage}@v0.40.0`;
+  assert.doesNotThrow(() => runMerge(fixture, { packageSource: canonicalSource }));
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    "./missing-tlh",
+    "./malformed-tlh",
+    "./the-last-harness",
+    "./directory-manifest-tlh",
+    { source: "./object-malformed-tlh", customField: { preserve: true } },
+    "file://remotehost/unknown-tlh",
+    canonicalSource,
+  ]);
+});
+
+test("canonical source cleanup dry-run writes nothing, backs up the original, and is idempotent", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    { packages: ["./local-tlh"], userSetting: "preserved" },
+  );
+  writePackageManifest(join(dirname(fixture.settings), "local-tlh"), {
+    name: "the-last-harness",
+  });
+  const before = readFileSync(fixture.settings, "utf8");
+  const canonicalSource = `${harnessPackage}@v0.40.0`;
+
+  const dryRunOutput = runMerge(fixture, {
+    packageSource: canonicalSource,
+    dryRun: true,
+    quiet: false,
+  });
+  assert.match(dryRunOutput, /Would remove local TLH package superseded by canonical source/);
+  assert.equal(readFileSync(fixture.settings, "utf8"), before);
+  assert.deepEqual(backupFiles(fixture.settings), []);
+
+  runMerge(fixture, { packageSource: canonicalSource });
+  const afterFirst = readFileSync(fixture.settings, "utf8");
+  const backupsAfterFirst = backupFiles(fixture.settings);
+  assert.equal(backupsAfterFirst.length, 1);
+  assert.equal(readFileSync(join(dirname(fixture.settings), backupsAfterFirst[0]), "utf8"), before);
+
+  const secondOutput = runMerge(fixture, { packageSource: canonicalSource, quiet: false });
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst);
+  assert.deepEqual(backupFiles(fixture.settings), backupsAfterFirst);
+});
+
+test("switching from canonical to a confirmed local source preserves the local registration", () => {
+  const fixture = tempFixture({ packages: [harnessPackage] }, { packages: [harnessPackage] });
+  const localDir = join(dirname(fixture.settings), "local-tlh");
+  writePackageManifest(localDir, { name: "the-last-harness" });
+
+  runMerge(fixture, { packageSource: localDir });
+
+  assert.deepEqual(readJson(fixture.settings).packages, [localDir]);
+});
 
 test("merge with a local path source registers exactly one TLH entry and omits the canonical git entry", () => {
   const localSource = "/Users/test/tlh-repo";

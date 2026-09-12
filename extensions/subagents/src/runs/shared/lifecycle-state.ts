@@ -10,8 +10,11 @@ import type {
   AsyncPauseMetadata,
   AsyncPauseState,
   AsyncStatus,
+  DurableAttentionReason,
+  CompactionReason,
   ForegroundSupervisorRequestMetadata,
 } from "../../shared/types.ts";
+import { normalizeIdleEpisodeId } from "./health-transition.ts";
 
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
@@ -40,6 +43,35 @@ export function normalizeActiveRuntimeMs(value: unknown): number | undefined {
 export function normalizeActiveRuntimeCheckpointAt(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+    : undefined;
+}
+
+const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
+  "context_pressure",
+  "tool_failures",
+  "completion_guard",
+]);
+const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
+  "manual",
+  "threshold",
+  "overflow",
+]);
+
+function normalizeDurableAttentionReasons(value: unknown): DurableAttentionReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.filter(
+    (reason): reason is DurableAttentionReason =>
+      typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
+  );
+  const unique = [...new Set(reasons)];
+  return unique.length > 0 ? unique : undefined;
+}
+
+function normalizeCompactionProjection(value: unknown): { reason: CompactionReason } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const reason = (value as { reason?: unknown }).reason;
+  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
+    ? { reason: reason as CompactionReason }
     : undefined;
 }
 
@@ -195,6 +227,26 @@ class LifecycleLockExhaustedError extends Error {
     super(message, options);
     this.name = "LifecycleLockExhaustedError";
   }
+}
+
+/**
+ * Thrown when a lifecycle CAS reaches the lock but the persisted generation has
+ * already advanced. Callers can treat this as benign contention without relying
+ * on the human-readable error message.
+ */
+export class LifecycleGenerationConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "LifecycleGenerationConflictError";
+  }
+}
+
+/** Recognize only the lifecycle errors that represent expected contention. */
+export function isLifecycleTransitionContentionError(error: unknown): boolean {
+  return (
+    error instanceof LifecycleGenerationConflictError ||
+    error instanceof LifecycleLockExhaustedError
+  );
 }
 
 interface LifecycleLockOptions {
@@ -529,15 +581,28 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
   const steps = status.steps?.map((step) => {
     const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
     const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+    const stepIdleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
+    const stepDurableAttentionReasons = normalizeDurableAttentionReasons(
+      step.durableAttentionReasons,
+    );
+    const stepCompaction = normalizeCompactionProjection(step.compaction);
     const {
       activeRuntimeMs: _stepActiveRuntimeMs,
       activeRuntimeCheckpointAt: _stepCheckpointAt,
+      idleEpisodeId: _stepIdleEpisodeId,
+      durableAttentionReasons: _stepDurableAttentionReasons,
+      compaction: _stepCompaction,
       ...stepRest
     } = step;
     return {
       ...stepRest,
       ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
       ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
+      ...(stepIdleEpisodeId !== undefined ? { idleEpisodeId: stepIdleEpisodeId } : {}),
+      ...(stepDurableAttentionReasons
+        ? { durableAttentionReasons: [...stepDurableAttentionReasons] }
+        : {}),
+      ...(stepCompaction ? { compaction: { ...stepCompaction } } : {}),
     };
   });
   return {
@@ -1009,7 +1074,7 @@ export function transitionLifecycleStatus(
       const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
       const currentGeneration = lifecycleGeneration(normalizedCurrent);
       if (currentGeneration !== options.expectedGeneration) {
-        throw new Error(
+        throw new LifecycleGenerationConflictError(
           `Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`,
         );
       }
@@ -1099,7 +1164,7 @@ export function markLifecycleContinuationSpawned(
     });
     return { status: transitioned.status, transitioned: true, final: false, lost: false };
   } catch (error) {
-    if (error instanceof Error && /expected generation/.test(error.message)) {
+    if (error instanceof LifecycleGenerationConflictError) {
       return markLifecycleContinuationSpawned(
         asyncDir,
         index,
@@ -1150,7 +1215,7 @@ export function finalizeLifecycleContinuationLaunch(
     });
     return { status: transitioned.status, finalized: true, lost: false };
   } catch (error) {
-    if (error instanceof Error && /expected generation/.test(error.message)) {
+    if (error instanceof LifecycleGenerationConflictError) {
       return finalizeLifecycleContinuationLaunch(
         asyncDir,
         index,

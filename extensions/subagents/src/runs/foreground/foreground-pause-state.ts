@@ -27,6 +27,42 @@ import {
 } from "../shared/lifecycle-state.ts";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.ts";
 
+type ForegroundPauseHealth = Pick<
+  NonNullable<AsyncStatus["steps"]>[number],
+  "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
+>;
+
+function cloneForegroundPauseHealth(
+  source: ForegroundPauseHealth | undefined,
+  clearMissing = false,
+): ForegroundPauseHealth {
+  return {
+    ...(clearMissing || source?.activityState !== undefined
+      ? { activityState: source?.activityState }
+      : {}),
+    ...(clearMissing || source?.idleEpisodeId !== undefined
+      ? { idleEpisodeId: source?.idleEpisodeId }
+      : {}),
+    ...(clearMissing || source?.durableAttentionReasons !== undefined
+      ? {
+          durableAttentionReasons: source?.durableAttentionReasons
+            ? [...source.durableAttentionReasons]
+            : source?.durableAttentionReasons,
+        }
+      : {}),
+    ...(clearMissing || source?.compaction !== undefined
+      ? { compaction: source?.compaction ? { ...source.compaction } : source?.compaction }
+      : {}),
+  };
+}
+
+export function pausedForegroundHealthFromResult(
+  result: SingleResult,
+  clearMissing = false,
+): ForegroundPauseHealth {
+  return cloneForegroundPauseHealth(result.progress, clearMissing);
+}
+
 export function indexedLifecycleContinuation(
   status: AsyncStatus | null | undefined,
   index = 0,
@@ -158,6 +194,8 @@ export function persistPausedForegroundCohortRun(input: {
           }
         : {}),
       ...(result.cancel ? { cancel: result.cancel } : {}),
+      ...cloneForegroundPauseHealth(result.progress),
+      ...(result.childLocation ? { childLocation: result.childLocation } : {}),
     })) ??
     []
   ).map((step) =>
@@ -324,6 +362,8 @@ export function buildPausedStepFromResult(
         }
       : {}),
     ...(result.cancel ? { cancel: result.cancel } : {}),
+    ...cloneForegroundPauseHealth(result.progress),
+    ...(result.childLocation ? { childLocation: result.childLocation } : {}),
     ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
     ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
     ...(result.contextPressureCrossedThresholds
@@ -349,10 +389,16 @@ export function buildCohortPauseStep(input: {
   thinking?: string;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
+  activityState?: import("../../shared/types.ts").ActivityState;
+  idleEpisodeId?: string;
+  durableAttentionReasons?: import("../../shared/types.ts").DurableAttentionReason[];
+  compaction?: { reason: import("../../shared/types.ts").CompactionReason };
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  /** Dispatch-time child-location snapshot; kept for display during cohort pause. */
+  childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }): NonNullable<AsyncStatus["steps"]>[number] {
   const modelIdentity =
     input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
@@ -365,11 +411,13 @@ export function buildCohortPauseStep(input: {
     ...(input.thinking ? { thinking: input.thinking } : {}),
     ...(modelIdentity ? { modelIdentity } : {}),
     ...(input.modelResolution ? { modelResolution: input.modelResolution } : {}),
+    ...cloneForegroundPauseHealth(input),
     ...(input.contextUsage ? { contextUsage: input.contextUsage } : {}),
     ...(input.contextPressure ? { contextPressure: { ...input.contextPressure } } : {}),
     ...(input.contextPressureCrossedThresholds
       ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
       : {}),
+    ...(input.childLocation ? { childLocation: input.childLocation } : {}),
     ...(input.status === "pausing" || input.status === "paused"
       ? {
           pause: {
@@ -466,6 +514,8 @@ export function persistPausedForegroundSingleRun(input: {
             ? { terminationReason: pausedForegroundTerminationReason(input.result) }
             : {}),
           ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+          ...cloneForegroundPauseHealth(input.result.progress),
+          ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
           ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
           ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         },
@@ -539,6 +589,7 @@ export function persistPausedForegroundSingleRun(input: {
                 ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                 : {}),
               ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+              ...cloneForegroundPauseHealth(input.result.progress, true),
               ...(activeRuntimeMs !== undefined
                 ? {
                     activeRuntimeMs: Math.max(
@@ -555,6 +606,15 @@ export function persistPausedForegroundSingleRun(input: {
                     ),
                   }
                 : {}),
+              // Carry the dispatch-time child-location snapshot; prefer live
+              // result over any previously stored value, but keep the stored
+              // value when the live result has no snapshot (e.g. a restore path
+              // where the live result was not yet captured).
+              ...(input.result.childLocation
+                ? { childLocation: input.result.childLocation }
+                : step.childLocation
+                  ? { childLocation: step.childLocation }
+                  : {}),
             }
           : step,
       ),

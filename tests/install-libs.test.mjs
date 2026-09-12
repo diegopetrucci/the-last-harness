@@ -890,10 +890,10 @@ test("refreshGitCheckout reuses npm install only with a matching TLH marker", (t
 
   const markerPath = npmInstallMarkerPath(targetDir);
   const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
-  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), {
-    schemaVersion: 1,
-    head,
-  });
+  const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(marker.schemaVersion, 2);
+  assert.equal(marker.head, head);
+  assert.deepEqual(marker.dependencyInputs.dependencies, {});
   assert.equal(npmInstallCalls.length, 1, "the first refresh must repair the absent marker");
 
   refreshGitCheckout({ agentDir }, options, io);
@@ -1031,7 +1031,7 @@ test("refreshGitCheckout stores its marker in the resolved Git directory", (t) =
   assert.equal(npmInstallCalls.length, 1);
 });
 
-test("refreshGitCheckout does not follow a symlinked completion marker", (t) => {
+test("refreshGitCheckout refuses a symlinked completion marker", (t) => {
   const { root, agentDir, originDir, targetDir } = createManagedGitCheckout(t);
   addPackageJsonToCheckout(targetDir, originDir);
   mkdirSync(join(targetDir, "node_modules"), { recursive: true });
@@ -1042,25 +1042,29 @@ test("refreshGitCheckout does not follow a symlinked completion marker", (t) => 
   symlinkSync(externalMarkerPath, markerPath);
 
   const npmInstallCalls = [];
-  refreshGitCheckout(
-    { agentDir },
-    {
-      targetDir,
-      repo: originDir,
-      ref: "main",
-      label: "test checkout",
-      missingMessage: `missing checkout: ${targetDir}`,
-    },
-    trackingCheckoutIo([], npmInstallCalls, {
-      onNpmInstall(dir) {
-        mkdirSync(join(dir, "node_modules"), { recursive: true });
-      },
-    }),
+  assert.throws(
+    () =>
+      refreshGitCheckout(
+        { agentDir },
+        {
+          targetDir,
+          repo: originDir,
+          ref: "main",
+          label: "test checkout",
+          missingMessage: `missing checkout: ${targetDir}`,
+        },
+        trackingCheckoutIo([], npmInstallCalls, {
+          onNpmInstall(dir) {
+            mkdirSync(join(dir, "node_modules"), { recursive: true });
+          },
+        }),
+      ),
+    /refusing to invalidate symlinked npm install marker.*remove the symlink.*rerun the installer/,
   );
 
   assert.equal(readFileSync(externalMarkerPath, "utf8"), "keep this external file\n");
-  assert.equal(lstatSync(markerPath).isFile(), true);
-  assert.equal(npmInstallCalls.length, 1);
+  assert.equal(lstatSync(markerPath).isSymbolicLink(), true);
+  assert.equal(npmInstallCalls.length, 0);
 });
 
 test("refreshGitCheckout forces npm install when a direct dependency directory is missing from node_modules", (t) => {
@@ -1099,7 +1103,10 @@ test("refreshGitCheckout forces npm install when a direct dependency directory i
   refreshGitCheckout({ agentDir }, options, io);
   const markerPath = npmInstallMarkerPath(targetDir);
   const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
-  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+  const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(marker.schemaVersion, 2);
+  assert.equal(marker.head, head);
+  assert.deepEqual(marker.dependencyInputs.dependencies, { "some-dep": "^1.0.0" });
   assert.equal(npmInstallCalls.length, 1);
 
   // Second refresh: all gates pass, including the dependency directory — reuse.
@@ -1116,7 +1123,10 @@ test("refreshGitCheckout forces npm install when a direct dependency directory i
     2,
     "a missing direct dependency directory must force npm install",
   );
-  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+  const repairedMarker = JSON.parse(readFileSync(markerPath, "utf8"));
+  assert.equal(repairedMarker.schemaVersion, 2);
+  assert.equal(repairedMarker.head, head);
+  assert.deepEqual(repairedMarker.dependencyInputs.dependencies, { "some-dep": "^1.0.0" });
 });
 
 test("refreshGitCheckout forces npm install when a scoped direct dependency directory is missing", (t) => {

@@ -39,6 +39,8 @@ run_static_checks() {
   node --check scripts/lib/tlh-install-paths.mjs
   node --check scripts/lib/tlh-install-utils.mjs
   node --check scripts/lib/tlh-install-git.mjs
+  node --check scripts/lib/tlh-install-npm.mjs
+  node --check scripts/lib/tlh-install-profile-cleanup.mjs
   node --check scripts/lib/tlh-install-subagents.mjs
   node --check scripts/lib/tlh-install-support-files.mjs
   node --check scripts/lib/tlh-install-support-manifest.mjs

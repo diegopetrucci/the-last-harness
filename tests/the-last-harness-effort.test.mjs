@@ -487,6 +487,8 @@ test("native Ctrl+S persists a same-level selection with a guarded backup and un
     assert.ok(interactive.picker);
     interactive.picker.getSelectList().setSelectedIndex(4);
     interactive.picker.handleInput(String.fromCharCode(19));
+    // A second save keypress must not duplicate the guarded persistence callback.
+    interactive.picker.handleInput(String.fromCharCode(19));
     await commandPromise;
 
     const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json")));

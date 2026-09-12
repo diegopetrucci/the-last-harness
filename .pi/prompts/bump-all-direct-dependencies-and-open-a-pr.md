@@ -2,7 +2,7 @@ Refresh all direct npm dependencies and bundled default extensions to the latest
 
 Also audit the three pinned terminal-skill closures whenever dependencies or bundled resources are bumped. For each source below, compare the checked-in files byte-for-byte with the exact upstream commit, then update the closure and its documented provenance together when the source changes:
 
-- Herdr: `herdrdev/herdr`, commit `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7`, `skills/herdr/SKILL.md`.
+- Herdr: `herdrdev/herdr`, commit `b99002ac99b09e00b4ca692436cb15a6b0d676f1`, `skills/herdr/SKILL.md`.
 - cmux CLI: `manaflow-ai/cmux-skills`, commit `c669666f8607529a39a1f74ac0e8462e922dd13f`, `skills/cmux-cli/SKILL.md` and `skills/cmux-cli/references/commands.md`.
 - OpenClaw tmux: `openclaw/openclaw`, commit `793669c8f6ddfad07b40009068f532832685b7d6`, `skills/tmux/SKILL.md`, `skills/tmux/scripts/find-sessions.sh`, and `skills/tmux/scripts/wait-for-text.sh`.
 

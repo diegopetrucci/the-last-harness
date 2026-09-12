@@ -11,7 +11,7 @@
 
 import { Buffer } from "node:buffer";
 import type { Message, Usage } from "@earendil-works/pi-ai";
-import type { ProtocolOutputLimit } from "../../shared/types.ts";
+import type { CompactionReason, ProtocolOutputLimit } from "../../shared/types.ts";
 
 export type { ProtocolOutputLimit } from "../../shared/types.ts";
 
@@ -84,7 +84,15 @@ export type ChildProtocolEvent =
   | ({ type: "message_end" | "tool_result_end"; message: ChildProtocolMessage } & Record<
       string,
       unknown
-    >);
+    >)
+  | ({ type: "compaction_start"; reason: CompactionReason } & Record<string, unknown>)
+  | ({
+      type: "compaction_end";
+      reason: CompactionReason;
+      aborted: boolean;
+      willRetry: boolean;
+      errorMessage?: string;
+    } & Record<string, unknown>);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -162,6 +170,10 @@ function isStopReason(value: unknown): boolean {
     value === "aborted" ||
     value === "deferred"
   );
+}
+
+function isCompactionReason(value: unknown): value is CompactionReason {
+  return value === "manual" || value === "threshold" || value === "overflow";
 }
 
 function isChildProtocolMessage(value: unknown): value is ChildProtocolMessage {
@@ -255,6 +267,15 @@ export function isChildProtocolEvent(value: unknown): value is ChildProtocolEven
     case "message_end":
     case "tool_result_end":
       return isChildProtocolMessage(value.message);
+    case "compaction_start":
+      return isCompactionReason(value.reason);
+    case "compaction_end":
+      return (
+        isCompactionReason(value.reason) &&
+        typeof value.aborted === "boolean" &&
+        typeof value.willRetry === "boolean" &&
+        (value.errorMessage === undefined || typeof value.errorMessage === "string")
+      );
     default:
       return false;
   }
@@ -282,12 +303,6 @@ export function parseChildProtocolInput(line: string): ChildProtocolLine {
   return isChildProtocolEvent(parsed)
     ? { kind: "event", event: parsed }
     : { kind: "unknown", value: parsed };
-}
-
-/** Parse and validate one known child protocol event. */
-export function parseChildProtocolLine(line: string): ChildProtocolEvent | undefined {
-  const parsed = parseChildProtocolInput(line);
-  return parsed.kind === "event" ? parsed.event : undefined;
 }
 
 /** Format a bounded protocol overflow without embedding unbounded child data. */

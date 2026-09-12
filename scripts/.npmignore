@@ -13,6 +13,14 @@ check-package-contents.mjs
 check-package-versions.mjs
 check-release-tag-ancestry.mjs
 check-startup-performance.mjs
+check-installer-performance.mjs
+check-installer-performance.mts
+lib/check-installer-performance-process.mjs
+lib/check-installer-performance-process.mts
+lib/check-installer-performance-workspace.mjs
+lib/check-installer-performance-workspace.mts
+lib/tlh-startup-readiness.mjs
+lib/tlh-startup-readiness.mts
 release-notes.mjs
 run-subagents-tests.mjs
 run-lane.mjs

@@ -82,6 +82,9 @@ function isStopReason(value) {
         value === "aborted" ||
         value === "deferred");
 }
+function isCompactionReason(value) {
+    return value === "manual" || value === "threshold" || value === "overflow";
+}
 function isChildProtocolMessage(value) {
     if (!isRecord(value) || !isFiniteNumber(value.timestamp))
         return false;
@@ -146,6 +149,13 @@ export function isChildProtocolEvent(value) {
         case "message_end":
         case "tool_result_end":
             return isChildProtocolMessage(value.message);
+        case "compaction_start":
+            return isCompactionReason(value.reason);
+        case "compaction_end":
+            return (isCompactionReason(value.reason) &&
+                typeof value.aborted === "boolean" &&
+                typeof value.willRetry === "boolean" &&
+                (value.errorMessage === undefined || typeof value.errorMessage === "string"));
         default:
             return false;
     }
@@ -163,10 +173,6 @@ export function parseChildProtocolInput(line) {
     return isChildProtocolEvent(parsed)
         ? { kind: "event", event: parsed }
         : { kind: "unknown", value: parsed };
-}
-export function parseChildProtocolLine(line) {
-    const parsed = parseChildProtocolInput(line);
-    return parsed.kind === "event" ? parsed.event : undefined;
 }
 export function formatProtocolOutputLimit(limit) {
     return `${limit.code}: child ${limit.stream} line exceeded ${limit.limitBytes} bytes (observed at least ${limit.observedBytes} bytes without a newline); the line is not retained in full: a bounded prefix and tail remain in the protocol_output_limit record, and subsequent input on that stream is dropped. Inspect the bounded result/session diagnostics, and set artifacts.mode to "debug" before reproducing if the surrounding child protocol is required.`;

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { isLocalPackageSource, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
@@ -210,6 +212,42 @@ function applyHarnessPackageDedupes(settings, ensuredSource, changes) {
     for (const removedSource of removeDuplicatePackagesByIdentity(settings, HARNESS_PACKAGE_IDENTITY)) {
         changes.push(`remove duplicate harness package: ${removedSource} (same identity as ${ensuredSource})`);
     }
+}
+function isTlhPackageManifest(path) {
+    try {
+        const parsed = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, ""));
+        return isPlainObject(parsed) && parsed.name === "the-last-harness";
+    }
+    catch {
+        return false;
+    }
+}
+function isConfirmedLocalTlhPackage(source, profileDir, homeDir) {
+    const trimmedSource = source.trim();
+    if (!trimmedSource || !isLocalPackageSource(trimmedSource))
+        return false;
+    // packageSourcePiSource returns the original value for unsupported file: forms;
+    // do not reinterpret those values as profile-relative directory names.
+    if (/^file:/i.test(trimmedSource) &&
+        packageSourcePiSource(trimmedSource, { agentDir: profileDir, homeDir }) === trimmedSource) {
+        return false;
+    }
+    const packageDir = packageSourceInstallDir(trimmedSource, { agentDir: profileDir, homeDir });
+    return Boolean(packageDir) && isTlhPackageManifest(join(packageDir, "package.json"));
+}
+function applyCanonicalHarnessCleanup(settings, ensuredSource, profileDir, homeDir, changes) {
+    if (packageIdentity(ensuredSource) !== HARNESS_PACKAGE_IDENTITY)
+        return;
+    if (!Array.isArray(settings.packages))
+        return;
+    settings.packages = settings.packages.filter((entry) => {
+        const source = packageSourceOf(entry);
+        if (source === undefined || !isConfirmedLocalTlhPackage(source, profileDir, homeDir)) {
+            return true;
+        }
+        changes.push(`remove local TLH package superseded by canonical source: ${source}`);
+        return false;
+    });
 }
 function applyNonCanonicalHarnessCleanup(settings, ensuredSource, changes) {
     // When re-installing or updating from a non-canonical source (local path,
@@ -650,6 +688,12 @@ function main() {
     });
     const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
     applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
+    // An omitted source uses the default for ordinary merge behavior, but does
+    // not authorize destructive local-registration cleanup (for example, doctor).
+    if (args.packageSource?.trim() &&
+        packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY) {
+        applyCanonicalHarnessCleanup(next, ensuredHarnessSource, dirname(settingsPath), process.env.HOME || homedir(), changes);
+    }
     applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
     const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
     const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
