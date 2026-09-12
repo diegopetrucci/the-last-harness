@@ -536,6 +536,12 @@ make_fake_remote_stage1_support_root() {
     cp "${ROOT_DIR}/${compatibility_path}" "${root}/${compatibility_path}"
   done
 
+  local prompt
+  for prompt in developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md; do
+    mkdir -p "${root}/agents/subagents"
+    cp "${ROOT_DIR}/agents/subagents/${prompt}" "${root}/agents/subagents/${prompt}"
+  done
+
   cat >"${root}/scripts/tlh-install.mjs" <<'EOF_FAKE_REMOTE_STAGE1'
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
@@ -548,6 +554,8 @@ for (const [label, targetPath] of [
   ["compat_librarian_present", join(repoRoot, "config", "librarian.defaults.json")],
   ["compat_query_present", join(scriptDir, "tlh-install-query.mjs")],
   ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
+  ["optional_update_present", join(scriptDir, "tlh-update.mjs")],
+  ["developer_prompt_present", join(repoRoot, "agents", "subagents", "developer.md")],
 ]) {
   console.log(`${label}=${existsSync(targetPath)}`);
 }

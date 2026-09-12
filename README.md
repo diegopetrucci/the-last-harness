@@ -23,6 +23,8 @@ If this resonates with you, welcome aboard:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
+The official release installer verifies SHA-256 checksums for every successfully fetched remote stage-0 support file before running stage 1. Raw source, mutable/custom refs, and local checkouts remain supported but are not release-integrity verified; see [the install and recovery notes](docs/install.md#release-installer-integrity).
+
 ## Workflows
 
 `tlh` has a few primary workflows/personas: architect, rush, product, bug-hunter, disabled. Each of them has different purpose, encoded with a different system prompt, available tools, and subagents. You can switch between primary agents at any time by pressing `shift` + `tab` — but I would suggest to try not to cross-contaminate the same session (start new ones!).
