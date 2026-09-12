@@ -638,12 +638,13 @@ function applyCustomAgentOverride(
   if (override.inheritSkills !== undefined) {
     fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
   }
-  if (override.acceptanceRole !== undefined) {
-    fill(
-      "acceptanceRole",
-      ["acceptanceRole"],
-      override.acceptanceRole === false ? undefined : override.acceptanceRole,
-    );
+  // Unlike every other field, the bundled minor role is a settings-overridable
+  // default. Keep this exception path-gated so embedded and other custom agents
+  // remain isolated from profile/project role settings.
+  if (override.acceptanceRole !== undefined && isCanonicalPackagedMinorAgent(agent)) {
+    mutable().acceptanceRole =
+      override.acceptanceRole === false ? undefined : override.acceptanceRole;
+    anyFilled = true;
   }
   if (override.disabled !== undefined && agent.disabled === undefined) {
     mutable().disabled = override.disabled;
