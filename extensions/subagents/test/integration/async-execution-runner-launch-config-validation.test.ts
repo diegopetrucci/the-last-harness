@@ -337,7 +337,7 @@ describe("async execution runner launch and configuration validation", () => {
       agent: "test-runner",
       task: "Run validation and report the result without editing files.",
       agentConfig: makeAgent("test-runner", {
-        tools: ["bash"],
+        tools: ["bash", "mcp"],
         supervisorBridge: false,
         systemPrompt: "Prompt prose is not a capability signal.",
       }),
@@ -359,7 +359,7 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(payload.success, true);
 
     const args = readMockPiArgs(mockPi, 0);
-    assert.equal(args[args.indexOf("--tools") + 1], "bash");
+    assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
     assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
     assert.equal(args.includes("--no-tools"), false);
   });

@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- The packaged `test-runner` can now use the generic `mcp` gateway alongside `bash`, enabling ordered final-validation sequences that mix shell commands with MCP status, discovery, connection, search, and call operations.
 - Official generated release installers now embed tag-bound SHA-256 inventories for stage-0 support files and verify fetched support bytes before running stage 1; mutable/custom and raw-source paths remain explicitly integrity-unverified.
 - Main-ref installs now persist the installed commit subject and display `TLH main • <commit subject>` in the footer, with the bullet-and-subject suffix dimmed; legacy main state without metadata remains `TLH main`.
 - When a child subagent runs in a different working directory from the parent session, a dim location line now appears in the subagent widget and foreground displays, showing the child's path and any relevant repo, worktree, or branch information. Parts that match the parent are omitted. The snapshot is taken once at dispatch and never polled, so no git work happens during rendering.
