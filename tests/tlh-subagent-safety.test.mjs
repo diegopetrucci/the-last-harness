@@ -33,7 +33,7 @@ function createPiHarness() {
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
   const testRunner = {
     agent: "test-runner",
-    task: "Run the assigned validation commands and report the results",
+    task: "Run the assigned ordered shell/MCP validation steps and report the results",
   };
   assertAllowed(testRunner);
   assert.equal(testRunner.agentScope, "user");
@@ -104,7 +104,7 @@ test("validateSubagentToolInput allows approved execution", () => {
       { agent: "oracle", task: "provide a second opinion" },
       { agent: "developer", task: "fix one issue" },
       { agent: "repo-scout", task: "inspect one area" },
-      { agent: "test-runner", task: "run the exact validation commands" },
+      { agent: "test-runner", task: "run the exact shell and MCP validation steps" },
     ],
   };
   assertAllowed(batched);

@@ -1046,7 +1046,7 @@ MCP-only tools field.
       `---
 name: diff-summarizer
 description: Named tools
-tools: read, bash, mcp:server/lookup
+tools: read, bash, mcp, mcp:server/lookup
 ---
 
 Named tools field.
@@ -1060,12 +1060,13 @@ Named tools field.
     assert.deepEqual(agents.find((agent) => agent.name === "diff-summarizer")?.tools, [
       "read",
       "bash",
+      "mcp",
     ]);
   });
 });
 
 describe("agent frontmatter completionGuard", () => {
-  it("loads test-runner completionGuard false without widening its bash-only tools", () => {
+  it("loads test-runner completionGuard false with bash and generic MCP tools", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
     tempDirs.push(dir);
     const agentsDir = canonicalAgentDir(dir);
@@ -1075,7 +1076,7 @@ describe("agent frontmatter completionGuard", () => {
       `---
 name: test-runner
 description: Test runner
-tools: bash
+tools: bash, mcp
 completionGuard: false
 supervisorBridge: false
 ---
@@ -1089,7 +1090,7 @@ Validate changes without edits.
     const runner = result.agents.find((agent) => agent.name === "test-runner");
     assert.equal(runner?.completionGuard, false);
     assert.equal(runner?.supervisorBridge, false);
-    assert.deepEqual(runner?.tools, ["bash"]);
+    assert.deepEqual(runner?.tools, ["bash", "mcp"]);
     assert.equal(runner?.extraFields?.completionGuard, undefined);
     assert.equal(runner?.extraFields?.supervisorBridge, undefined);
   });

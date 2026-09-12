@@ -430,6 +430,7 @@ test("trace-policy fixture importer correlates Pi toolResult failures onto the c
       status: "failed",
       exitCode: 7,
       ok: false,
+      details: { error: "blocking reply unavailable" },
       input: {
         reason: "need_decision",
         message: "Need approval for <HOME>/project",
@@ -450,6 +451,445 @@ test("trace-policy fixture importer correlates Pi toolResult failures onto the c
     evaluateTracePolicy(fixture.transcript).violations.map((violation) => violation.code),
     ["developer.blocking_escalation_stop_required"],
   );
+});
+
+test("trace-policy fixture importer preserves MCP details.error and validation stops on it", () => {
+  const fixture = importTracePolicyFixtureFromText(
+    JSON.stringify({
+      agent: "test-runner",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call_bash_1",
+              name: "bash",
+              arguments: { command: "tk show tlht-0qod" },
+            },
+            {
+              type: "toolCall",
+              id: "call_mcp_1",
+              name: "mcp",
+              arguments: {
+                server: "repo-checks",
+                tool: "check_status",
+                args: "{}",
+              },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call_mcp_1",
+          toolName: "mcp",
+          details: { error: "tool_error" },
+        },
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "bash", arguments: { command: "npm test" } }],
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(fixture.transcript.steps, [
+    { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
+    {
+      type: "tool",
+      tool: "mcp",
+      input: { server: "repo-checks", tool: "check_status", args: "{}" },
+      ok: false,
+      status: "failed",
+      details: { error: "tool_error" },
+    },
+    { type: "tool", tool: "bash", command: "npm test" },
+  ]);
+  fixture.transcript.metadata = {
+    assignedValidationSteps: [
+      { kind: "mcp", input: { server: "repo-checks", tool: "check_status", args: "{}" } },
+      { kind: "shell", command: "npm test" },
+    ],
+  };
+  assert.deepEqual(
+    evaluateTracePolicy(fixture.transcript).violations.map((violation) => violation.code),
+    ["test-runner.validation_stop_required"],
+  );
+});
+
+test("trace-policy fixture importer keeps MCP non-failure details stable across re-import", () => {
+  for (const error of [
+    "auth_required",
+    "not_connected",
+    "not_found",
+    "empty_query",
+    "tool_not_found",
+    "connect_failed",
+  ]) {
+    const firstImport = importTracePolicyFixtureFromText(
+      JSON.stringify({
+        agent: "test-runner",
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "call_bash_1",
+                name: "bash",
+                arguments: { command: "tk show tlht-0qod" },
+              },
+              {
+                type: "toolCall",
+                id: "call_mcp_1",
+                name: "mcp",
+                arguments: { server: "repo-checks" },
+              },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_mcp_1",
+            toolName: "mcp",
+            details: { error },
+          },
+        ],
+      }),
+    );
+    const reimport = importTracePolicyFixtureFromText(JSON.stringify(firstImport));
+    const expectedSteps = [
+      { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
+      {
+        type: "tool",
+        tool: "mcp",
+        input: { server: "repo-checks" },
+        details: { error },
+      },
+    ];
+
+    assert.deepEqual(firstImport.transcript.steps, expectedSteps, error);
+    assert.deepEqual(reimport.transcript.steps, expectedSteps, error);
+    for (const imported of [firstImport, reimport]) {
+      imported.transcript.metadata = {
+        assignedValidationSteps: [{ kind: "mcp", input: { server: "repo-checks" } }],
+      };
+      assert.deepEqual(evaluateTracePolicy(imported.transcript).violations, [], error);
+    }
+  }
+});
+
+test("trace-policy fixture importer keeps nested MCP failure when top-level error is falsy", () => {
+  for (const error of [false, 0, "", null]) {
+    const firstImport = importTracePolicyFixtureFromText(
+      JSON.stringify({
+        agent: "test-runner",
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "call_bash_1",
+                name: "bash",
+                arguments: { command: "tk show tlht-0qod" },
+              },
+              {
+                type: "toolCall",
+                id: "call_mcp_1",
+                name: "mcp",
+                arguments: { server: "repo-checks" },
+              },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_mcp_1",
+            toolName: "mcp",
+            error,
+            details: { error: "tool_error" },
+          },
+        ],
+      }),
+    );
+    const reimport = importTracePolicyFixtureFromText(JSON.stringify(firstImport));
+
+    for (const imported of [firstImport, reimport]) {
+      assert.deepEqual(
+        imported.transcript.steps,
+        [
+          { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
+          {
+            type: "tool",
+            tool: "mcp",
+            input: { server: "repo-checks" },
+            ok: false,
+            status: "failed",
+            details: { error: "tool_error" },
+          },
+        ],
+        String(error),
+      );
+      imported.transcript.metadata = {
+        assignedValidationSteps: [
+          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "shell", command: "npm test" },
+        ],
+      };
+      assert.deepEqual(
+        evaluateTracePolicy({
+          ...imported.transcript,
+          steps: [
+            ...imported.transcript.steps,
+            { type: "tool", tool: "bash", command: "npm test" },
+          ],
+        }).violations.map((violation) => violation.code),
+        ["test-runner.validation_stop_required"],
+        String(error),
+      );
+    }
+  }
+});
+
+test("trace-policy fixture importer preserves top-level and details status=error failures", () => {
+  for (const result of [{ status: "error" }, { details: { status: "error" } }]) {
+    const fixture = importTracePolicyFixtureFromText(
+      JSON.stringify({
+        agent: "test-runner",
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "call_bash_1",
+                name: "bash",
+                arguments: { command: "tk show tlht-0qod" },
+              },
+              {
+                type: "toolCall",
+                id: "call_mcp_1",
+                name: "mcp",
+                arguments: { server: "repo-checks", tool: "check_status", args: "{}" },
+              },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "call_mcp_1",
+            toolName: "mcp",
+            ...result,
+          },
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", name: "bash", arguments: { command: "npm test" } }],
+          },
+        ],
+      }),
+    );
+    fixture.transcript.metadata = {
+      assignedValidationSteps: [
+        { kind: "mcp", input: { server: "repo-checks", tool: "check_status", args: "{}" } },
+        { kind: "shell", command: "npm test" },
+      ],
+    };
+
+    assert.deepEqual(fixture.transcript.steps, [
+      { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
+      {
+        type: "tool",
+        tool: "mcp",
+        input: { server: "repo-checks", tool: "check_status", args: "{}" },
+        ok: false,
+        status: "error",
+      },
+      { type: "tool", tool: "bash", command: "npm test" },
+    ]);
+    assert.deepEqual(
+      evaluateTracePolicy(fixture.transcript).violations.map((violation) => violation.code),
+      ["test-runner.validation_stop_required"],
+    );
+  }
+});
+
+test("trace-policy fixture importer narrows nested failure details and redacts retained values", () => {
+  const fixture = importTracePolicyFixtureFromText(
+    JSON.stringify({
+      agent: "test-runner",
+      steps: [
+        {
+          type: "tool",
+          tool: "mcp",
+          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          details: {
+            ok: false,
+            status: "error",
+            exitCode: 7,
+            error: {
+              message: "failed at /Users/alice/project",
+              apiToken: "secret-value",
+            },
+            output: "raw output /Users/alice/private.log",
+            results: [{ output: "unrelated tool result" }],
+            session: { token: "another-secret" },
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(fixture.transcript.steps[0].details, {
+    ok: false,
+    status: "error",
+    exitCode: 7,
+    error: {
+      message: "failed at <HOME>/project",
+      apiToken: "<REDACTED>",
+    },
+  });
+  assert.deepEqual(Object.keys(fixture.transcript.steps[0].details), [
+    "ok",
+    "status",
+    "exitCode",
+    "error",
+  ]);
+  assert.equal(JSON.stringify(fixture.transcript.steps).includes("unrelated tool result"), false);
+  assert.equal(JSON.stringify(fixture.transcript.steps).includes("another-secret"), false);
+});
+
+test("trace-policy fixture importer preserves top-level failure flags through re-import", () => {
+  const input = {
+    server: "repo-checks",
+    tool: "check_status",
+    args: "{}",
+  };
+  const cases = [
+    { name: "isError", failure: { isError: true } },
+    {
+      name: "error",
+      failure: { error: "top-level API_TOKEN=secret at /Users/alice/project" },
+    },
+  ];
+
+  for (const { name, failure } of cases) {
+    const firstImport = importTracePolicyFixtureFromText(
+      JSON.stringify({
+        agent: "test-runner",
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+          { type: "tool", tool: "mcp", input, ...failure },
+          { type: "tool", tool: "bash", command: "npm test" },
+        ],
+      }),
+    );
+    const reimport = importTracePolicyFixtureFromText(JSON.stringify(firstImport));
+
+    assert.deepEqual(reimport.transcript.steps, firstImport.transcript.steps, name);
+    if (name === "isError") {
+      assert.equal(reimport.transcript.steps[1].isError, true);
+    } else {
+      assert.equal(
+        reimport.transcript.steps[1].error,
+        "top-level API_TOKEN=<REDACTED> at <HOME>/project",
+      );
+    }
+
+    for (const imported of [firstImport, reimport]) {
+      imported.transcript.metadata = {
+        assignedValidationSteps: [
+          { kind: "mcp", input },
+          { kind: "shell", command: "npm test" },
+        ],
+      };
+      assert.deepEqual(
+        evaluateTracePolicy(imported.transcript).violations.map((violation) => violation.code),
+        ["test-runner.validation_stop_required"],
+        name,
+      );
+    }
+  }
+});
+
+test("trace-policy fixture importer ignores falsy tool-result errors", () => {
+  const cases = [
+    { name: "false", error: false },
+    { name: "zero", error: 0 },
+    { name: "empty string", error: "" },
+    { name: "null", error: null },
+    { name: "undefined", error: undefined },
+  ];
+
+  for (const { name, error } of cases) {
+    const toolCallId = `call_mcp_${name.replaceAll(" ", "-")}`;
+    const fixture = importTracePolicyFixtureFromText(
+      JSON.stringify({
+        agent: "test-runner",
+        messages: [
+          {
+            role: "assistant",
+            content: [{ type: "toolCall", id: toolCallId, name: "mcp", arguments: {} }],
+          },
+          {
+            role: "toolResult",
+            toolCallId,
+            toolName: "mcp",
+            error,
+          },
+        ],
+      }),
+    );
+
+    assert.deepEqual(fixture.transcript.steps, [{ type: "tool", tool: "mcp" }], name);
+  }
+});
+
+test("trace-policy fixture importer canonicalizes ordered MCP status calls", () => {
+  const fixture = importTracePolicyFixtureFromText(
+    JSON.stringify({
+      agent: "test-runner",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              id: "call_bash_1",
+              name: "bash",
+              arguments: { command: "tk show tlht-0qod" },
+            },
+            {
+              type: "toolCall",
+              id: "call_mcp_status_1",
+              name: "mcp",
+              arguments: {},
+            },
+            {
+              type: "toolCall",
+              id: "call_mcp_call_1",
+              name: "mcp",
+              arguments: { tool: "check_status", args: "{}" },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  fixture.transcript.metadata = {
+    assignedValidationSteps: [
+      { kind: "mcp", input: {} },
+      { kind: "mcp", input: { tool: "check_status", args: "{}" } },
+    ],
+  };
+
+  assert.deepEqual(fixture.transcript.steps, [
+    { type: "tool", tool: "bash", command: "tk show tlht-0qod" },
+    { type: "tool", tool: "mcp" },
+    {
+      type: "tool",
+      tool: "mcp",
+      input: { tool: "check_status", args: "{}" },
+    },
+  ]);
+  assert.deepEqual(evaluateTracePolicy(fixture.transcript).violations, []);
 });
 
 test("trace-policy fixture importer preserves successful Pi toolCall imports without a duplicate result step", () => {

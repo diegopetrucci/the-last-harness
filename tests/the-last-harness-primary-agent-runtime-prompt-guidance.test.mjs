@@ -902,7 +902,7 @@ test("disabled primary mode keeps neutral TLH delegation guidance without the ar
         { name: "developer", description: "Implements exactly one approved task at a time." },
         {
           name: "test-runner",
-          description: "Executes exact final-validation commands without editing.",
+          description: "Executes exact ordered shell/MCP final-validation steps without editing.",
         },
         contrarianMetadata(),
       ],
@@ -930,7 +930,7 @@ test("disabled primary mode keeps neutral TLH delegation guidance without the ar
     );
     assert.match(
       disabledPrompt.systemPrompt,
-      /- test-runner: Executes exact final-validation commands without editing\./,
+      /- test-runner: Executes exact ordered shell\/MCP final-validation steps without editing\./,
     );
     assert.match(disabledPrompt.systemPrompt, /Trusted `embedded\.<slug>` agents/);
     assert.doesNotMatch(disabledPrompt.systemPrompt, /You are the TLH architect/);
@@ -981,11 +981,15 @@ test("before_agent_start includes permanent architect final-validation guidance 
       assert.match(systemPrompt, /implementation-ticket validation narrow and ticket-scoped/i);
       assert.match(
         systemPrompt,
-        /Every final-validation ticket must list the exact commands, including arguments, that `test-runner` must execute/i,
+        /Every final-validation ticket must list the exact ordered validation steps that `test-runner` must execute/i,
       );
       assert.match(
         systemPrompt,
-        /VALIDATING\.md.*otherwise use repo-discovered validation commands/i,
+        /complete shell command.*exact adapter-shaped input for the generic `mcp` gateway.*only the fields required by the selected status, discovery, search, connect, or call operation.*`server`, `tool`, and `args` are optional overall.*JSON string for tool calls/i,
+      );
+      assert.match(
+        systemPrompt,
+        /VALIDATING\.md.*otherwise use repo-discovered validation checks/i,
       );
       assert.match(systemPrompt, /implementation tickets go to `developer`/i);
       assert.match(systemPrompt, /final-validation tickets go to `test-runner`/i);
