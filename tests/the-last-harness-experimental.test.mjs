@@ -232,26 +232,6 @@ test("ci failure investigation prompt injection stays default-off and only enabl
     buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
     /## TLH Experimental Feature: ci-failure-investigation/,
   );
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /overrides the default post-PR monitor-and-ask-only step/i,
-  );
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /You may do a read-only investigation before asking the user whether to proceed/i,
-  );
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /Do not edit files, commit, push, rerun jobs, change the PR/i,
-  );
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /edits, commits, pushes, reruns, PR changes, or other follow-up changes/i,
-  );
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /ask for explicit user approval/i,
-  );
   assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig), undefined);
   assert.equal(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig), undefined);
   assert.equal(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig), undefined);

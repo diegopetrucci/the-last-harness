@@ -1,3 +1,5 @@
+import { TRACE_POLICY_MCP_FIXTURES } from "./trace-policy-mcp-fixtures.mjs";
+
 export const TRACE_POLICY_FIXTURES = [
   {
     id: "architect-valid-approval-ticket-handoff",
@@ -653,6 +655,7 @@ export const TRACE_POLICY_FIXTURES = [
       ],
     },
   },
+  ...TRACE_POLICY_MCP_FIXTURES,
   {
     id: "test-runner-invalid-contact-supervisor",
     name: "test-runner invalid if it uses contact_supervisor despite generic bridge guidance",

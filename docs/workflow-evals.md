@@ -36,14 +36,16 @@ Deterministic boundaries for the hermetic integration test:
 
 ### Trace-policy fixtures
 
-`tests/evals/trace-policy/trace-policy-evals.test.mjs` replays curated transcript fixtures against deterministic policy assertions. Use it when changing agent prompts, workflow rules, transcript interpretation, or policy-sensitive docs. Architect implementation tickets route to `developer`; final-validation tickets must carry exact commands and route to the command-only `test-runner`, whose policy allows `tk show` and non-mutating validation commands while rejecting edits, mutating shell/package/ticket commands, and delegation.
+`tests/evals/trace-policy/trace-policy-evals.test.mjs` replays curated transcript fixtures against deterministic policy assertions. Use it when changing agent prompts, workflow rules, transcript interpretation, or policy-sensitive docs. Architect implementation tickets route to `developer`; final-validation tickets must carry exact ordered shell/MCP steps and route to the execution-only `test-runner`, whose policy allows `tk show`, non-mutating shell validation, and explicitly assigned generic MCP calls while rejecting edits, direct `mcp:*` tools, mutating shell/package/ticket commands, and delegation.
+
+For test-runner fixtures, `metadata.assignedValidationSteps` records the exact ordered validation scope. Use `{ kind: "shell", command: "..." }` for a complete shell command. Generic MCP input is exact adapter-shaped gateway input with only the fields required by the selected operation; `server`, `tool`, and `args` are optional, with `args` encoded as a JSON string for tool calls. Status is `{ kind: "mcp", input: {} }`, discovery is `{ kind: "mcp", input: { server: "..." } }`, search is `{ kind: "mcp", input: { search: "..." } }`, connect is `{ kind: "mcp", input: { connect: "..." } }`, and a tool call can be `{ kind: "mcp", input: { tool: "...", args: "{\"scope\":\"working-tree\"}" } }`. Discovery, status, search, and connect calls do not need both `server` and `tool`. The legacy string-array `assignedValidationCommands` metadata remains supported for shell-only fixtures.
 
 The fixtures are designed to stay reviewable:
 
 - explicit actor/tool/output sequences;
 - stable fixture IDs and expected outcomes;
 - deterministic assertions instead of model scoring;
-- direct deterministic trace-policy coverage for architect, developer, test-runner, code-reviewer, product, Rush, bug-hunter, web-scout, oracle, contrarian, diff-summarizer, librarian, and repo-scout boundaries, including final-validation routing and the test-runner's command-only policy.
+- direct deterministic trace-policy coverage for architect, developer, test-runner, code-reviewer, product, Rush, bug-hunter, web-scout, oracle, contrarian, diff-summarizer, librarian, and repo-scout boundaries, including final-validation routing, ordered shell/MCP steps, and the test-runner's repository/ticket-safety policy.
 
 ### Incident-to-fixture loop
 
