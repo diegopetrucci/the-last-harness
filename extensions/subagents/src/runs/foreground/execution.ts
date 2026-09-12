@@ -82,7 +82,6 @@ import {
   createMutatingFailureState,
   didMutatingToolFail,
   isMutatingTool,
-  nextLongRunningTrigger,
   recordMutatingFailure,
   resetMutatingFailureState,
   resolveCurrentPath,
@@ -819,33 +818,6 @@ async function runSingleAttempt(
       emitControlEvent(event);
       return transition.changed;
     };
-    const emitActiveLongRunning = (now: number, reason: ControlEvent["reason"]): boolean => {
-      if (!controlConfig.enabled) return false;
-      const previous = progress.activityState;
-      const transition = applyHealthTransition({ type: "active_long_running" });
-      if (!transition.activeLongRunningNotice) return false;
-      emitControlEvent(
-        buildControlEvent({
-          type: "active_long_running",
-          from: previous,
-          to: "active_long_running",
-          runId: options.runId,
-          agent: agent.name,
-          index: options.index,
-          ts: now,
-          message: `${agent.name} is still active but long-running`,
-          reason,
-          turns: result.usage.turns,
-          tokens: progress.tokens,
-          toolCount: progress.toolCount,
-          currentTool: progress.currentTool,
-          currentToolDurationMs: currentToolDurationMs(now),
-          currentPath: progress.currentPath,
-          elapsedMs: now - startTime,
-        }),
-      );
-      return true;
-    };
     const updateActivityState = (now: number, monitorTick = false): boolean => {
       if (!controlConfig.enabled) return false;
       const observation = observeActivityWindow({
@@ -869,13 +841,7 @@ async function runSingleAttempt(
             now,
           });
       if (idleState === "needs_attention") return emitNeedsAttention(now);
-      const activeReason = nextLongRunningTrigger(controlConfig, {
-        startedAt: startTime,
-        now,
-        turns: result.usage.turns,
-        tokens: progress.tokens,
-      });
-      return activeReason ? emitActiveLongRunning(now, activeReason) : false;
+      return false;
     };
 
     const emitUpdateSnapshot = (text: string) => {

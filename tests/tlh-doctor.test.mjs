@@ -591,6 +591,22 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   const fixture = configureHealthyFixture(t);
   const packageRoot = createFakeDoctorPackageRoot(fixture.root);
   const settingsPath = join(fixture.agentDir, "settings.json");
+  const subagentConfigDir = join(fixture.agentDir, "extensions", "subagent");
+  const subagentConfigPath = join(subagentConfigDir, "config.json");
+  mkdirSync(subagentConfigDir, { recursive: true });
+  writeFileSync(
+    subagentConfigPath,
+    JSON.stringify({
+      control: {
+        activeNoticeAfterMs: 1,
+        activeNoticeAfterTurns: 2,
+        activeNoticeAfterTokens: 3,
+        needsAttentionAfterMs: 4,
+        notifyOn: ["active_long_running", "needs_attention"],
+      },
+      userValue: "preserve",
+    }) + "\n",
+  );
   writeFileSync(
     settingsPath,
     JSON.stringify(
@@ -611,6 +627,9 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   const backupsBeforeRepair = readdirSync(fixture.agentDir).filter((entry) =>
     entry.startsWith("settings.json.backup-"),
   ).length;
+  const subagentBackupsBeforeRepair = readdirSync(subagentConfigDir).filter((entry) =>
+    entry.startsWith("config.json.backup-"),
+  ).length;
 
   const result = runDoctor(
     ["--repair", "--agent-dir", fixture.agentDir, "--package-root", packageRoot],
@@ -624,11 +643,22 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   );
   const output = `${result.stdout}\n${result.stderr}`;
   const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const repairedSubagentConfig = JSON.parse(readFileSync(subagentConfigPath, "utf8"));
   const backupsAfterRepair = readdirSync(fixture.agentDir).filter((entry) =>
     entry.startsWith("settings.json.backup-"),
   ).length;
+  const subagentBackupsAfterRepair = readdirSync(subagentConfigDir).filter((entry) =>
+    entry.startsWith("config.json.backup-"),
+  ).length;
 
   assert.equal(result.status, 0, output);
+  assert.deepEqual(repairedSubagentConfig.control, {
+    needsAttentionAfterMs: 180000,
+    notifyOn: ["needs_attention"],
+  });
+  assert.equal(repairedSubagentConfig.userValue, "preserve");
+  assert.equal(subagentBackupsAfterRepair, subagentBackupsBeforeRepair + 1);
+  assert.match(output, /OK\s+subagent attention config: enforced/);
   assert.equal(repairedSettings.subagents.agentDirs, undefined);
   assert.deepEqual(repairedSettings.subagents.agentOverrides, { developer: { model: "kept" } });
   assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));

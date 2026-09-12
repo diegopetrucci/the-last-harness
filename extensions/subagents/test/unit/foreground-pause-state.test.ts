@@ -351,7 +351,7 @@ describe("foreground pause health persistence", () => {
         "completed",
         1,
         {
-          activityState: "active_long_running",
+          activityState: "needs_attention",
           idleEpisodeId: "completed-episode",
           durableAttentionReasons: ["completion_guard"],
           compaction: { reason: "manual" },
@@ -381,7 +381,7 @@ describe("foreground pause health persistence", () => {
       assert.deepEqual(checkpointRaw.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
       assert.equal(checkpointRaw.steps?.[0]?.activityState, "needs_attention");
       assert.deepEqual(checkpointRaw.steps?.[1]?.durableAttentionReasons, ["completion_guard"]);
-      assert.equal(checkpointRaw.steps?.[1]?.activityState, "active_long_running");
+      assert.equal(checkpointRaw.steps?.[1]?.activityState, "needs_attention");
       assert.equal(checkpointRaw.steps?.[1]?.idleEpisodeId, "completed-episode");
       assert.deepEqual(checkpointRaw.steps?.[1]?.compaction, { reason: "manual" });
 
@@ -427,7 +427,7 @@ describe("foreground pause health persistence", () => {
       assert.equal(finalRaw.steps?.[0]?.compaction, undefined);
       assert.equal(finalRaw.steps?.[1]?.status, "completed");
       assert.equal(finalRaw.steps?.[1]?.agent, "completed");
-      assert.equal(finalRaw.steps?.[1]?.activityState, "active_long_running");
+      assert.equal(finalRaw.steps?.[1]?.activityState, "needs_attention");
       assert.equal(finalRaw.steps?.[1]?.idleEpisodeId, "completed-episode");
       assert.deepEqual(finalRaw.steps?.[1]?.durableAttentionReasons, ["completion_guard"]);
       assert.deepEqual(finalRaw.steps?.[1]?.compaction, { reason: "manual" });

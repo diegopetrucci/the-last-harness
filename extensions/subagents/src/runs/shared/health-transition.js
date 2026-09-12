@@ -51,14 +51,12 @@ export function createHealthTransitionState(attemptId) {
         attemptId: normalizeAttemptId(attemptId),
         idleEpisodeCount: 0,
         durableAttentionReasons: [],
-        activeLongRunningNoticeSent: false,
     };
 }
 function projectActivityState(state) {
-    if (state.durableAttentionReasons.length > 0 || state.idleEpisodeId !== undefined) {
-        return "needs_attention";
-    }
-    return state.activeLongRunningNoticeSent ? "active_long_running" : undefined;
+    return state.durableAttentionReasons.length > 0 || state.idleEpisodeId !== undefined
+        ? "needs_attention"
+        : undefined;
 }
 function cloneState(state) {
     return {
@@ -84,7 +82,6 @@ export function transitionHealth(current, action) {
     let next = cloneState(current);
     let idleEpisodeStarted = false;
     let idleEpisodeEnded = false;
-    let activeLongRunningNotice = false;
     let idleAttentionEligible = false;
     let clearProjection = false;
     switch (action.type) {
@@ -110,15 +107,6 @@ export function transitionHealth(current, action) {
             }
             break;
         }
-        case "active_long_running": {
-            if (!next.activeLongRunningNoticeSent &&
-                next.idleEpisodeId === undefined &&
-                next.durableAttentionReasons.length === 0) {
-                next.activeLongRunningNoticeSent = true;
-                activeLongRunningNotice = true;
-            }
-            break;
-        }
         case "compaction_start": {
             next.compaction = { reason: action.reason };
             break;
@@ -140,7 +128,6 @@ export function transitionHealth(current, action) {
             next = {
                 ...createHealthTransitionState(attemptId),
                 durableAttentionReasons: [...current.durableAttentionReasons],
-                activeLongRunningNoticeSent: current.activeLongRunningNoticeSent,
             };
             idleEpisodeEnded = previousIdleEpisodeId !== undefined;
             break;
@@ -153,7 +140,6 @@ export function transitionHealth(current, action) {
         previousIdleEpisodeId !== next.idleEpisodeId ||
         current.attemptId !== next.attemptId ||
         current.idleEpisodeCount !== next.idleEpisodeCount ||
-        current.activeLongRunningNoticeSent !== next.activeLongRunningNoticeSent ||
         current.durableAttentionReasons.length !== next.durableAttentionReasons.length ||
         current.durableAttentionReasons.some((reason, index) => reason !== next.durableAttentionReasons[index]) ||
         !sameCompaction(previousCompaction, next.compaction);
@@ -164,7 +150,6 @@ export function transitionHealth(current, action) {
         projection: next.activityState,
         idleEpisodeStarted,
         idleEpisodeEnded,
-        activeLongRunningNotice,
         idleAttentionEligible,
     };
 }

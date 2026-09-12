@@ -215,7 +215,7 @@ function parseHealthCompaction(value: unknown): { reason: CompactionReason } | u
 }
 
 function parseHealthActivityState(value: unknown): ActivityState | undefined {
-  return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+  return value === "needs_attention" ? value : undefined;
 }
 
 function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {

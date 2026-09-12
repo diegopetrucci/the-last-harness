@@ -16,7 +16,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropN
 import { captureSingleOutputSnapshot, injectOutputPathSystemPrompt, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
-import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
+import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, composeAcceptanceFailureError, formatAcceptancePrompt, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -574,33 +574,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             emitControlEvent(event);
             return transition.changed;
         };
-        const emitActiveLongRunning = (now, reason) => {
-            if (!controlConfig.enabled)
-                return false;
-            const previous = progress.activityState;
-            const transition = applyHealthTransition({ type: "active_long_running" });
-            if (!transition.activeLongRunningNotice)
-                return false;
-            emitControlEvent(buildControlEvent({
-                type: "active_long_running",
-                from: previous,
-                to: "active_long_running",
-                runId: options.runId,
-                agent: agent.name,
-                index: options.index,
-                ts: now,
-                message: `${agent.name} is still active but long-running`,
-                reason,
-                turns: result.usage.turns,
-                tokens: progress.tokens,
-                toolCount: progress.toolCount,
-                currentTool: progress.currentTool,
-                currentToolDurationMs: currentToolDurationMs(now),
-                currentPath: progress.currentPath,
-                elapsedMs: now - startTime,
-            }));
-            return true;
-        };
         const updateActivityState = (now, monitorTick = false) => {
             if (!controlConfig.enabled)
                 return false;
@@ -627,13 +600,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 });
             if (idleState === "needs_attention")
                 return emitNeedsAttention(now);
-            const activeReason = nextLongRunningTrigger(controlConfig, {
-                startedAt: startTime,
-                now,
-                turns: result.usage.turns,
-                tokens: progress.tokens,
-            });
-            return activeReason ? emitActiveLongRunning(now, activeReason) : false;
+            return false;
         };
         const emitUpdateSnapshot = (text) => {
             if (!options.onUpdate || processClosed)

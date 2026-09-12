@@ -75,7 +75,6 @@ function ignoredHealthTransition(state: HealthTransitionState): HealthTransition
     projection: state.activityState,
     idleEpisodeStarted: false,
     idleEpisodeEnded: false,
-    activeLongRunningNotice: false,
     idleAttentionEligible: false,
   };
 }

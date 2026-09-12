@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -75,6 +75,32 @@ function spawnUpdate(agentDir, args = [], env = {}) {
   });
 }
 
+function writeDownloadedInstallerFixture(dir, body) {
+  const installerPath = join(dir, "downloaded-installer.sh");
+  writeFileSync(installerPath, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`);
+  const fetchHookPath = join(dir, "fetch-hook.mjs");
+  writeFileSync(
+    fetchHookPath,
+    `import { readFileSync } from "node:fs";\nglobalThis.fetch = async () => new Response(readFileSync(process.env.TLH_TEST_INSTALLER_PATH), { status: 200 });\n`,
+  );
+  return { installerPath, fetchHookPath };
+}
+
+function spawnPlainUpdate(agentDir, installerFixture, args = [], env = {}) {
+  return spawnSync(
+    process.execPath,
+    ["--import", installerFixture.fetchHookPath, updateScript, ...args],
+    {
+      cwd: repoRoot,
+      env: buildChildEnv(agentDir, {
+        TLH_TEST_INSTALLER_PATH: installerFixture.installerPath,
+        ...env,
+      }),
+      encoding: "utf8",
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 1. --dry-run plan rendering for each track
 // ---------------------------------------------------------------------------
@@ -93,6 +119,19 @@ test("dry-run latest-release: shows Track and releases/latest URL", (t) => {
   assert.match(output, /The Last Harness update plan/);
   assert.match(output, /Track: latest-release/);
   assert.match(output, /releases\/latest\/download\/install\.sh/);
+});
+
+test("plain update dry-run refuses migration under the normal Pi config root", () => {
+  const agentDir = join(homedir(), ".pi", "agent", "tlh-aohm-migration-test");
+  const result = spawnUpdate(agentDir, ["--dry-run", "--track", "latest-release"]);
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    result.stderr,
+    /refusing to migrate TLH subagent attention config under normal Pi config root/,
+  );
+  assert.doesNotMatch(output, /Would enforce TLH subagent attention config/);
 });
 
 test("dry-run pinned-tag with --ref: shows Track and releases/download URL", (t) => {
@@ -289,7 +328,100 @@ test("dry-run custom file source preserves the raw package source in update plan
 });
 
 // ---------------------------------------------------------------------------
-// 4. --extensions path
+// 4. Plain update post-step
+// ---------------------------------------------------------------------------
+
+test("plain update enforces the subagent attention config after a successful installer", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      control: {
+        activeNoticeAfterMs: 1,
+        needsAttentionAfterMs: 2,
+        notifyOn: ["active_long_running", "needs_attention"],
+      },
+      userValue: "preserve",
+    }) + "\n",
+  );
+  const installer = writeDownloadedInstallerFixture(dir, "");
+
+  const result = spawnPlainUpdate(agentDir, installer, ["--track", "latest-release"]);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.match(output, /Enforced TLH subagent attention config/);
+  assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), {
+    control: { needsAttentionAfterMs: 180000, notifyOn: ["needs_attention"] },
+    userValue: "preserve",
+  });
+  assert.equal(
+    readdirSync(configDir).filter((entry) => entry.startsWith("config.json.backup-")).length,
+    1,
+    "successful plain update backs up a changed config",
+  );
+});
+
+test("plain update does not create a second backup when the installer already converged config", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(
+    configPath,
+    JSON.stringify({ control: { activeNoticeAfterMs: 1 }, userValue: "preserve" }) + "\n",
+  );
+  const convergedContent =
+    JSON.stringify({
+      control: { needsAttentionAfterMs: 180000, notifyOn: ["needs_attention"] },
+      userValue: "preserve",
+    }) + "\n";
+  const installer = writeDownloadedInstallerFixture(
+    dir,
+    `agent_dir=""\nwhile (($# > 0)); do\n  if [[ "$1" == "--agent-dir" ]]; then\n    agent_dir="$2"\n    shift 2\n  else\n    shift\n  fi\ndone\nprintf '%s\\n' '${convergedContent.trim()}' > "$agent_dir/extensions/subagent/config.json"`,
+  );
+
+  const result = spawnPlainUpdate(agentDir, installer, ["--track", "latest-release"]);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.equal(readFileSync(configPath, "utf8"), convergedContent);
+  assert.equal(
+    readdirSync(configDir).filter((entry) => entry.startsWith("config.json.backup-")).length,
+    0,
+    "a converged post-step creates no second backup",
+  );
+  assert.doesNotMatch(output, /Enforced TLH subagent attention config/);
+});
+
+test("plain update does not migrate config when the downloaded installer fails", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(configDir, { recursive: true });
+  const originalContent =
+    JSON.stringify({
+      control: { activeNoticeAfterMs: 1, needsAttentionAfterMs: 2 },
+      userValue: "preserve",
+    }) + "\n";
+  writeFileSync(configPath, originalContent);
+  const installer = writeDownloadedInstallerFixture(dir, "exit 23");
+
+  const result = spawnPlainUpdate(agentDir, installer, ["--track", "latest-release"]);
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 23, output);
+  assert.equal(readFileSync(configPath, "utf8"), originalContent);
+  assert.equal(
+    readdirSync(configDir).filter((entry) => entry.startsWith("config.json.backup-")).length,
+    0,
+    "a failed installer does not trigger the migration post-step",
+  );
+  assert.doesNotMatch(output, /Enforced TLH subagent attention config/);
+});
+
+// ---------------------------------------------------------------------------
+// 5. --extensions path
 // ---------------------------------------------------------------------------
 
 test("--extensions: unsupported --track flag causes non-zero exit with message", (t) => {
@@ -333,7 +465,7 @@ test("--extensions --dry-run: shows extension update plan output", (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. PI_OFFLINE=1 without --dry-run refuses with error
+// 6. PI_OFFLINE=1 without --dry-run refuses with error
 // ---------------------------------------------------------------------------
 
 test("PI_OFFLINE=1 without --dry-run refuses with 'PI_OFFLINE is set' error", (t) => {

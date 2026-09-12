@@ -628,16 +628,6 @@ export function didMutatingToolFail(text) {
     const lowered = text.toLowerCase();
     return MUTATING_FAILURE_HINTS.some((hint) => lowered.includes(hint));
 }
-export function nextLongRunningTrigger(config, metrics) {
-    if (metrics.now - metrics.startedAt >= config.activeNoticeAfterMs)
-        return "time_threshold";
-    if (config.activeNoticeAfterTurns !== undefined && metrics.turns >= config.activeNoticeAfterTurns)
-        return "turn_threshold";
-    if (config.activeNoticeAfterTokens !== undefined &&
-        metrics.tokens >= config.activeNoticeAfterTokens)
-        return "token_threshold";
-    return undefined;
-}
 export function resetMutatingFailureState(state) {
     state.consecutiveFailures = 0;
     state.lastFailureAt = undefined;

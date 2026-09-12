@@ -271,6 +271,10 @@ function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState
     : fallback;
 }
 
+function sanitizeActivityState(value: unknown): "needs_attention" | undefined {
+  return value === "needs_attention" ? value : undefined;
+}
+
 type ProjectAgentProjection = {
   capture?: ProjectAgentRunCapture;
   malformed: boolean;
@@ -314,6 +318,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
     raw.activeRuntimeCheckpointAt,
   );
   const projectAgent = projectAgentProjection(raw);
+  const activityState = sanitizeActivityState(raw.activityState);
   return {
     agent,
     ...(projectAgent.capture ? { projectAgent: projectAgent.capture } : {}),
@@ -323,9 +328,7 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
       ? { terminationReason: terminationReason as SubagentTerminationReason }
       : {}),
     ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-    ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
-      ? { activityState: raw.activityState }
-      : {}),
+    ...(activityState ? { activityState } : {}),
     ...(clampNumber(raw.lastActivityAt) !== undefined
       ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
       : {}),
@@ -392,6 +395,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     raw.activeRuntimeCheckpointAt,
   );
   const projectAgent = projectAgentProjection(raw);
+  const activityState = sanitizeActivityState(raw.activityState);
   return {
     id: raw.id,
     parentRunId: raw.parentRunId,
@@ -443,9 +447,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     ...(clampNumber(raw.currentStep) !== undefined
       ? { currentStep: clampNumber(raw.currentStep) }
       : {}),
-    ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
-      ? { activityState: raw.activityState }
-      : {}),
+    ...(activityState ? { activityState } : {}),
     ...(clampNumber(raw.lastActivityAt) !== undefined
       ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
       : {}),
@@ -1022,6 +1024,7 @@ export function nestedSummaryFromAsyncStatus(
   },
 ): NestedRunSummary {
   const projectAgent = projectAgentProjectionFromAsyncStatus(status);
+  const activityState = sanitizeActivityState(status.activityState);
   return {
     id: status.runId || fallback.id,
     parentRunId: fallback.parentRunId,
@@ -1042,7 +1045,7 @@ export function nestedSummaryFromAsyncStatus(
     mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
     state: nestedStateFromAsyncState(status.state),
     ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-    ...(status.activityState ? { activityState: status.activityState } : {}),
+    ...(activityState ? { activityState } : {}),
     ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
     ...(status.currentTool ? { currentTool: status.currentTool } : {}),
     ...(status.currentToolStartedAt !== undefined
@@ -1073,13 +1076,14 @@ export function nestedSummaryFromAsyncStatus(
           steps: status.steps
             .map((step) => {
               const stepProjectAgent = projectAgentProjection(step);
+              const stepActivityState = sanitizeActivityState(step.activityState);
               return {
                 agent: step.agent,
                 ...(stepProjectAgent.capture ? { projectAgent: stepProjectAgent.capture } : {}),
                 ...(stepProjectAgent.malformed ? { projectAgentMarker: true as const } : {}),
                 status: nestedStepStatusFromAsyncStepStatus(step.status),
                 ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-                ...(step.activityState ? { activityState: step.activityState } : {}),
+                ...(stepActivityState ? { activityState: stepActivityState } : {}),
                 ...(step.lastActivityAt !== undefined
                   ? { lastActivityAt: step.lastActivityAt }
                   : {}),

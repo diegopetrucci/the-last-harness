@@ -7,7 +7,7 @@ import { projectNestedEvents, resolveNestedAsyncDir } from "../shared/nested-eve
 import { deliverInterruptRequest, deliverTimeoutRequest } from "./control-channel.js";
 import { childUsageNumber } from "../shared/child-protocol.js";
 import { appendRecentProgressItem } from "../../shared/recent-progress.js";
-import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
+import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { extractTextFromContent, extractToolArgsPreview } from "../../shared/utils.js";
 import { canonicalSubagentModelIdentity, resolveRuntimeModelContext, } from "../shared/model-fallback.js";
 import { detectContextPressureCrossing, formatContextPressureGuidance, updateContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
@@ -196,46 +196,6 @@ export function createBackgroundRunControlOwner(input) {
         statusPayload.currentTool = activeStep?.currentTool;
         statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
         statusPayload.currentPath = activeStep?.currentPath;
-    }
-    function maybeEmitActiveLongRunning(flatIndex, now) {
-        if (!controlConfig.enabled)
-            return false;
-        const step = statusPayload.steps[flatIndex];
-        if (!step || step.status !== "running")
-            return false;
-        const reason = nextLongRunningTrigger(controlConfig, {
-            startedAt: step.startedAt ?? overallStartTime,
-            now,
-            turns: step.turnCount ?? 0,
-            tokens: step.tokens?.total ?? 0,
-        });
-        if (!reason)
-            return false;
-        const previous = step.activityState;
-        const transition = status.transitionStepHealth(flatIndex, { type: "active_long_running" });
-        if (!transition.activeLongRunningNotice)
-            return false;
-        appendControlEvent(buildControlEvent({
-            type: "active_long_running",
-            from: previous,
-            to: "active_long_running",
-            runId: id,
-            agent: step.agent,
-            index: flatIndex,
-            ts: now,
-            message: `${step.agent} is still active but long-running`,
-            reason,
-            turns: step.turnCount,
-            tokens: step.tokens?.total,
-            toolCount: step.toolCount,
-            currentTool: step.currentTool,
-            currentToolDurationMs: step.currentToolStartedAt
-                ? Math.max(0, now - step.currentToolStartedAt)
-                : undefined,
-            currentPath: step.currentPath,
-            elapsedMs: now - (step.startedAt ?? overallStartTime),
-        }));
-        return true;
     }
     function deliverChildMessageRequest(request) {
         const now = Date.now();
@@ -531,7 +491,6 @@ export function createBackgroundRunControlOwner(input) {
         observedActivityAt[flatIndex] = now;
         statusPayload.lastActivityAt = now;
         statusPayload.lastUpdate = now;
-        maybeEmitActiveLongRunning(flatIndex, now);
         status.syncTopLevelHealthProjection();
         status.writeStatusPayload();
     }
@@ -630,8 +589,6 @@ export function createBackgroundRunControlOwner(input) {
                     changed = true;
                 }
             }
-            else if (maybeEmitActiveLongRunning(index, now))
-                changed = true;
         }
         if (statusPayload.lastActivityAt !== runLastActivityAt) {
             statusPayload.lastActivityAt = runLastActivityAt;

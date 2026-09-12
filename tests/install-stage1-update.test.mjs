@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -121,8 +122,10 @@ test("tlh update --extensions dry-run prints the isolated package update plan an
   assert.match(defaultResult.stdout, /Would run: PI_CODING_AGENT_DIR='/);
   assert.match(defaultResult.stdout, /'update' '--extensions'/);
   assert.equal(defaultResult.stdout.includes(join(homeDir, ".pi", "agent")), false);
+  assert.match(defaultResult.stdout, /Would enforce TLH subagent attention config/);
   assert.equal(defaultResult.stderr, "");
   assert.equal(existsSync(dryRunPiLog), false);
+  assert.equal(existsSync(join(agentDir, "extensions")), false, "dry-run creates no config dirs");
 
   const unsupportedFlags = [
     ["--track", "ref"],
@@ -140,6 +143,56 @@ test("tlh update --extensions dry-run prints the isolated package update plan an
     assert.match(result.stderr, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.equal(result.stdout, "");
   }
+});
+
+test("tlh update --extensions enforces the isolated subagent attention config", (t) => {
+  const root = makeTempDir();
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const runtimeBinDir = join(root, "runtime", "bin");
+  const piLog = join(root, "pi.log");
+  const configDir = join(agentDir, "extensions", "subagent");
+  const configPath = join(configDir, "config.json");
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(configDir, { recursive: true });
+  writeVersionedWrapperPi(runtimeBinDir, piLog);
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      control: {
+        activeNoticeAfterMs: 1,
+        needsAttentionAfterMs: 2,
+        notifyOn: ["active_long_running", "needs_attention"],
+      },
+      userValue: "preserve",
+    }) + "\n",
+  );
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const result = spawnSync(
+    process.execPath,
+    [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir],
+    {
+      cwd: repoRoot,
+      env: scrubInstallerEnv({ HOME: homeDir, PATH: process.env.PATH || "" }),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.equal(result.status, 0, output);
+  assert.match(output, /Enforced TLH subagent attention config/);
+  const migrated = JSON.parse(readFileSync(configPath, "utf8"));
+  assert.deepEqual(migrated.control, {
+    needsAttentionAfterMs: 180000,
+    notifyOn: ["needs_attention"],
+  });
+  assert.equal(migrated.userValue, "preserve");
+  assert.equal(
+    readdirSync(configDir).filter((entry) => entry.startsWith("config.json.backup-")).length,
+    1,
+    "update backs up a changed existing config",
+  );
 });
 
 test("tlh update --extensions refuses to target normal Pi config via explicit or inherited agent dir selection", (t) => {

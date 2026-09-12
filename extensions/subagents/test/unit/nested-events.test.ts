@@ -356,6 +356,46 @@ describe("nested event parsing and projection", () => {
     assert.equal(invalid?.steps?.[0]?.terminationReason, undefined);
   });
 
+  it("drops retired active-long-running state from nested event and status projections", () => {
+    const route = trackRoute();
+    const legacyChild = child("nested-retired-health", "running", 100);
+    Reflect.set(legacyChild, "activityState", "active_long_running");
+    Reflect.set(legacyChild.steps![0]!, "activityState", "active_long_running");
+    writeNestedEvent(route, {
+      type: "subagent.nested.updated",
+      ts: 100,
+      parentRunId: "root-run",
+      parentStepIndex: 1,
+      child: legacyChild,
+    });
+
+    const projectedEventChild = projectNestedEvents(route).children[0];
+    assert.equal(projectedEventChild?.activityState, undefined);
+    assert.equal(projectedEventChild?.steps?.[0]?.activityState, undefined);
+
+    const projectedStatus = nestedSummaryFromAsyncStatus(
+      {
+        runId: "nested-retired-status",
+        mode: "single",
+        state: "running",
+        startedAt: 1,
+        lastUpdate: 2,
+        activityState: "active_long_running",
+        steps: [
+          {
+            agent: "leaf",
+            status: "running",
+            activityState: "active_long_running",
+          },
+        ],
+      } as never,
+      "/tmp/nested-retired-status",
+      { id: "nested-retired-status", parentRunId: "parent", depth: 1, ts: 2 },
+    );
+    assert.equal(projectedStatus.activityState, undefined);
+    assert.equal(projectedStatus.steps?.[0]?.activityState, undefined);
+  });
+
   it("retains malformed project-agent markers through nested event and status sanitization", () => {
     const route = trackRoute();
     const malformedRun = child("nested-malformed-project", "complete", 100);

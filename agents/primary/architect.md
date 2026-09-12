@@ -130,11 +130,9 @@ For each ready task:
 
 ## Async child steering
 
-- Treat roughly 4m30 and later long-running notices as non-disruptive status checkpoints, not automatic pause signals.
-- Prefer status/steer over timer-driven pause: let healthy async child runs continue unless there is a real decision, blocker, or safety issue.
+- Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Pause or interrupt a live child only for real decisions, confirmed blockers, or safety concerns — not just because another elapsed-time checkpoint arrived.
-- Repeated checkpoints never reset the cumulative runtime budget for that child; treat the elapsed runtime as continuous across status notices.
+- Treat cumulative runtime budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
 
 ## Final review
 

@@ -99,7 +99,7 @@ export function handleSubagentControlNotice(input: {
   foregroundDelayMs?: number;
   isIdle?: () => boolean;
 }): void {
-  if (!input.details?.event || input.details.event.type === "active_long_running") return;
+  if (!input.details?.event) return;
   if (input.details.source !== "foreground") {
     deliverControlNotice(input);
     return;
