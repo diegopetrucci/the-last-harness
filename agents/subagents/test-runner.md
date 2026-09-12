@@ -17,6 +17,7 @@ tlhModelDefaults:
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
+acceptanceRole: read-only
 completionGuard: false
 supervisorBridge: false
 ---

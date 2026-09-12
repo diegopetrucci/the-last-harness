@@ -364,6 +364,8 @@ describe("acceptance gates", () => {
     assert.match(prompt, /Patch the bug/);
     assert.match(prompt, /```acceptance-report/);
     assert.match(prompt, /array fields contain strings/);
+    assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied.*not-satisfied.*not-applicable/);
+    assert.match(prompt, /partial results.*not-satisfied.*evidence.*partial status/i);
     assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
   });
 
@@ -502,7 +504,7 @@ describe("acceptance gates", () => {
 
     const invalidCriteriaReport = parseAndStripAcceptanceReport(
       report({
-        criteriaSatisfied: [{ id: 7, status: "done", evidence: "" }],
+        criteriaSatisfied: [{ id: 7, status: 42, evidence: "" }],
       }),
     );
     assert.equal(invalidCriteriaReport.report, undefined);
@@ -512,12 +514,54 @@ describe("acceptance gates", () => {
     );
     assert.match(
       invalidCriteriaReport.error ?? "",
-      /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"; got "done"/,
+      /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"; got number 42/,
     );
     assert.match(
       invalidCriteriaReport.error ?? "",
       /criteriaSatisfied\[0\]\.evidence: expected non-empty string; got ""/,
     );
+  });
+
+  it("normalizes unknown criterion statuses while preserving extension fields", () => {
+    const parsed = parseAndStripAcceptanceReport(
+      report({
+        futureReportField: { keep: true },
+        criteriaSatisfied: [
+          {
+            id: "criterion-1",
+            status: "partial",
+            evidence: "incomplete but useful",
+            futureCriterionField: { keep: true },
+          },
+        ],
+      }),
+    );
+
+    assert.ok(parsed.report);
+    assert.equal(parsed.report?.criteriaSatisfied?.[0]?.status, "not-satisfied");
+    assert.deepEqual((parsed.report as Record<string, unknown>).futureReportField, { keep: true });
+    assert.deepEqual(
+      (parsed.report?.criteriaSatisfied?.[0] as Record<string, unknown> | undefined)
+        ?.futureCriterionField,
+      { keep: true },
+    );
+  });
+
+  it("rejects missing and non-string criterion statuses", () => {
+    for (const criterion of [
+      { id: "criterion-1", evidence: "missing status" },
+      { id: "criterion-1", status: null, evidence: "null status" },
+      { id: "criterion-1", status: 42, evidence: "numeric status" },
+      { id: "criterion-1", status: { value: "partial" }, evidence: "object status" },
+    ]) {
+      const parsed = parseAndStripAcceptanceReport(report({ criteriaSatisfied: [criterion] }));
+      assert.equal(parsed.report, undefined, JSON.stringify(criterion));
+      assert.match(
+        parsed.error ?? "",
+        /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"/,
+        JSON.stringify(criterion),
+      );
+    }
   });
 
   it('commandsRun[].result accepts annotated strings like "failed as expected"', () => {
@@ -735,6 +779,49 @@ describe("acceptance gates", () => {
       });
 
       assert.equal(ledger.status, "rejected");
+      assert.match(
+        acceptanceFailureMessage(ledger) ?? "",
+        /Required criterion 'regression' was reported as not-satisfied/,
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("checked mode preserves unknown-status reports as not-satisfied", async () => {
+    const cwd = tempRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: {
+          level: "checked",
+          criteria: [{ id: "regression", must: "Regression is covered" }],
+        },
+      });
+      const ledger = await evaluateAcceptance({
+        acceptance,
+        output: report({
+          criteriaSatisfied: [
+            {
+              id: "regression",
+              status: "partial",
+              evidence: "implementation is incomplete",
+              futureCriterionField: "preserved",
+            },
+          ],
+        }),
+        cwd,
+      });
+
+      assert.equal(ledger.status, "rejected");
+      assert.equal(ledger.childReportParseError, undefined);
+      assert.equal(ledger.childReport?.criteriaSatisfied?.[0]?.status, "not-satisfied");
+      assert.equal(
+        (ledger.childReport?.criteriaSatisfied?.[0] as Record<string, unknown> | undefined)
+          ?.futureCriterionField,
+        "preserved",
+      );
       assert.match(
         acceptanceFailureMessage(ledger) ?? "",
         /Required criterion 'regression' was reported as not-satisfied/,

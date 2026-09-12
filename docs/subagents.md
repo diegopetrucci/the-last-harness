@@ -121,7 +121,7 @@ skill: tlh-dev-hygiene, python-style
 
 There is no `skill` or `skills` parameter on the model-facing `subagent` tool. Skills are configured exclusively through agent frontmatter (or through settings-based overrides described below).
 
-For built-in agents, an entry keyed by the agent's plain name under `subagents.agentOverrides` in `settings.json` also accepts `skills` as a string array, or `false` to disable skills for that agent. The frontmatter value takes precedence over the override for any field both define:
+For built-in agents, an entry keyed by the agent's plain name under `subagents.agentOverrides` in `settings.json` also accepts `skills` as a string array, or `false` to disable skills for that agent. The frontmatter value normally takes precedence over the override when both define a field; the canonical packaged `acceptanceRole` exception is described in [Acceptance and artifacts](#acceptance-and-artifacts):
 
 ```json
 {
@@ -445,6 +445,8 @@ To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbea
 TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.
 
 Acceptance evaluates and strips the same report candidate; malformed or invalid candidates remain in output. Blank or whitespace-only entries in report evidence arrays are ignored, and review wording such as `must-fix` or `no-fix` does not by itself imply a write task. When a saved deliverable is rejected by acceptance, its saved-output reference remains visible, including in `file-only` mode; ordinary failures, timeouts, and interruptions do not gain that reference. Rejection reasons remain attached even when child diagnostics must be bounded.
+
+The nine canonical packaged minor roles are the exception to normal frontmatter precedence for `acceptanceRole`: `subagents.agentOverrides.<role>.acceptanceRole` may override their declared default. The selected project entry wins the isolated profile entry, and `false` clears the role so legacy inference resumes. Other fields still let explicit frontmatter win, while project custom/embedded roles remain isolated from these settings.
 
 ### Fallback filtering and retry classification
 

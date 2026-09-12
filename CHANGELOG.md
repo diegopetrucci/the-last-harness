@@ -6,12 +6,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Official generated release installers now embed tag-bound SHA-256 inventories for stage-0 support files and verify fetched support bytes before running stage 1; mutable/custom and raw-source paths remain explicitly integrity-unverified.
 - Main-ref installs now persist the installed commit subject and display `TLH main • <commit subject>` in the footer, with the bullet-and-subject suffix dimmed; legacy main state without metadata remains `TLH main`.
 - When a child subagent runs in a different working directory from the parent session, a dim location line now appears in the subagent widget and foreground displays, showing the child's path and any relevant repo, worktree, or branch information. Parts that match the parent are omitted. The snapshot is taken once at dispatch and never polled, so no git work happens during rendering.
 - First-class xAI support now includes bundled Grok 4.6/Grok 4.3 defaults and three-family opposite-provider routing across Anthropic, OpenAI Codex, and xAI.
 
 ### Changed
 
+- Bundled minor agents now declare acceptance roles so implementation work uses writer semantics while read-only workers retain read-only acceptance inference; canonical minor roles may still override that default through `subagents.agentOverrides.<role>.acceptanceRole`, including `false` to restore legacy inference.
 - Managed Git package reconciliation now delegates fetch/ref/dependency work to the pinned upstream Pi install, keeping TLH's finalization local and avoiding duplicate normal-path fetch/npm work. A conservative marker- and dependency-aware TLH repair remains for interrupted or ambiguous installs, custom package-manager semantics, and incomplete dependency trees; opt-in benchmark instrumentation reports the two paths separately.
 - The schema-1→2 completion-marker migration performs a one-time conservative repair for existing Git checkouts before reuse, revalidating their dependencies. Symlinked completion markers now fail closed; remove the symlink itself (not its target) and rerun the installer.
 - Updated packaged review-agent defaults: `code-reviewer` uses Anthropic Claude Opus 5 at max effort; `oracle` uses OpenAI Codex GPT-6 Astra at medium effort; `code-reviewer` and `contrarian` retain OpenAI Codex GPT-5.6 Sol at high effort, while `oracle` and `contrarian` use Anthropic Claude Fable 5.1 at medium effort. Their OpenRouter effort defaults remain high.
@@ -24,6 +26,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Switching an isolated profile from a local TLH package source back to a canonical source now removes only local registrations confirmed by a valid TLH `package.json` manifest.
 - Installer backup cleanup now rejects impossible calendar days and skips disappearing or unreadable cleanup candidates without aborting the install.
 - Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.
+- Acceptance reports now normalize unrecognized criterion status strings to `not-satisfied` with evidence, preserving partial-result reports while still rejecting malformed criterion fields.
 
 ## [0.40.0] - 2026-09-06
 

@@ -29,6 +29,11 @@ const VALID_EVIDENCE = new Set([
     "review-findings",
     "manual-notes",
 ]);
+const VALID_CRITERION_STATUSES = new Set([
+    "satisfied",
+    "not-satisfied",
+    "not-applicable",
+]);
 const ACCEPTANCE_CONFIG_KEYS = new Set([
     "level",
     "criteria",
@@ -521,6 +526,9 @@ export function formatAcceptancePrompt(acceptance) {
             : ["- Return the requested result."]),
         "",
         `Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
+        "",
+        'Each criteriaSatisfied[].status must be one of "satisfied", "not-satisfied", or "not-applicable".',
+        'Partial results must use "not-satisfied" with evidence; do not invent a separate partial status.',
     ];
     if (acceptance.verify.length > 0) {
         lines.push("", "Runtime verification commands configured by parent:");
@@ -792,6 +800,13 @@ function describeValidationValue(value) {
 function pushTypeError(errors, pathLabel, expected, value) {
     errors.push(`${pathLabel}: expected ${expected}; got ${describeValidationValue(value)}`);
 }
+function normalizeAcceptanceCriterionStatus(value) {
+    if (typeof value !== "string")
+        return undefined;
+    return VALID_CRITERION_STATUSES.has(value)
+        ? value
+        : "not-satisfied";
+}
 function validateStringArrayField(errors, value, pathLabel) {
     if (!Array.isArray(value)) {
         pushTypeError(errors, pathLabel, "string[]", value);
@@ -825,12 +840,13 @@ function validateAcceptanceReport(value, pathLabel = "") {
         return { errors };
     }
     const report = value;
-    if (report.criteriaSatisfied !== undefined) {
-        if (!Array.isArray(report.criteriaSatisfied)) {
-            pushTypeError(errors, pathFor(pathLabel, "criteriaSatisfied"), "array", report.criteriaSatisfied);
+    const criteriaSatisfied = report.criteriaSatisfied;
+    if (criteriaSatisfied !== undefined) {
+        if (!Array.isArray(criteriaSatisfied)) {
+            pushTypeError(errors, pathFor(pathLabel, "criteriaSatisfied"), "array", criteriaSatisfied);
         }
         else {
-            for (const [index, item] of report.criteriaSatisfied.entries()) {
+            for (const [index, item] of criteriaSatisfied.entries()) {
                 const itemPath = `${pathFor(pathLabel, "criteriaSatisfied")}[${index}]`;
                 if (!item || typeof item !== "object" || Array.isArray(item)) {
                     pushTypeError(errors, itemPath, "object", item);
@@ -839,10 +855,13 @@ function validateAcceptanceReport(value, pathLabel = "") {
                 const criterion = item;
                 if (criterion.id !== undefined && typeof criterion.id !== "string")
                     pushTypeError(errors, `${itemPath}.id`, "string", criterion.id);
-                if (criterion.status !== "satisfied" &&
-                    criterion.status !== "not-satisfied" &&
-                    criterion.status !== "not-applicable") {
-                    pushTypeError(errors, `${itemPath}.status`, 'one of "satisfied", "not-satisfied", "not-applicable"', criterion.status);
+                const status = criterion.status;
+                const normalizedStatus = normalizeAcceptanceCriterionStatus(status);
+                if (normalizedStatus === undefined) {
+                    pushTypeError(errors, `${itemPath}.status`, 'one of "satisfied", "not-satisfied", "not-applicable"', status);
+                }
+                else if (normalizedStatus !== status) {
+                    criterion.status = normalizedStatus;
                 }
                 if (typeof criterion.evidence !== "string" || !criterion.evidence.trim())
                     pushTypeError(errors, `${itemPath}.evidence`, "non-empty string", criterion.evidence);
