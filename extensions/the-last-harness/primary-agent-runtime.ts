@@ -949,6 +949,25 @@ function createTlhPrimaryAgentRuntime(
     return projectEffortIsEffective ? targetThinking : undefined;
   }
 
+  function applyDisabledPrimaryDefaults(
+    ctx: ExtensionContext,
+    warnOnMissing: boolean,
+    sessionStartOperation: SessionStartOperation | undefined,
+  ): void {
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
+    try {
+      applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
+    } catch (error) {
+      // Resource-loader lifecycle smoke tests can invoke disabled session
+      // handlers before the action runtime is bound. Retry on the next
+      // lifecycle hook instead of failing the session; real runtime errors
+      // must still surface.
+      if (!isExtensionRuntimeNotInitializedError(error)) {
+        throw error;
+      }
+    }
+  }
+
   async function applyPrimaryDefaults(
     ctx: ExtensionContext,
     options: {
@@ -963,18 +982,7 @@ function createTlhPrimaryAgentRuntime(
     if (!isEnabledPrimaryAgentSelection(selection)) {
       // Disabled mode keeps the architect capability surface (tools only) while
       // omitting the architect persona and all of its model/thinking defaults.
-      if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
-      try {
-        applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
-      } catch (error) {
-        // Resource-loader lifecycle smoke tests can invoke disabled session
-        // handlers before the action runtime is bound. Retry on the next
-        // lifecycle hook instead of failing the session; real runtime errors
-        // must still surface.
-        if (!isExtensionRuntimeNotInitializedError(error)) {
-          throw error;
-        }
-      }
+      applyDisabledPrimaryDefaults(ctx, warnOnMissing, sessionStartOperation);
       return;
     }
 
