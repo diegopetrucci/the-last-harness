@@ -211,6 +211,11 @@ function effortForModel(agent, model) {
 
 test("production bundled agents declare the approved xAI Grok defaults", () => {
   const agents = [...loadPrimaryAgents().values(), ...loadSubagentMetadata()];
+  assert.equal(
+    agents.length,
+    EXPECTED_XAI_DEFAULTS.size,
+    "every bundled agent must be loaded exactly once",
+  );
   assert.deepEqual(
     new Set(agents.map((agent) => agent.name)),
     new Set(EXPECTED_XAI_DEFAULTS.keys()),
