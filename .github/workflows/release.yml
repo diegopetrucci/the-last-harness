@@ -63,29 +63,17 @@ jobs:
       - name: Build pinned installer asset
         run: |
           mkdir -p dist
-          node <<'NODE'
-          const fs = require('node:fs');
-          const tag = process.env.GITHUB_REF_NAME;
-          const source = fs.readFileSync('install.sh', 'utf8');
-          const replacements = [
-            ['REF="${TLH_REF:-main}"', `REF="\${TLH_REF:-${tag}}"`],
-            ['UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"', 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'],
-          ];
-          let output = source;
-          for (const [oldText, newText] of replacements) {
-            if (!output.includes(oldText)) {
-              throw new Error(`Expected installer default line not found: ${oldText}`);
-            }
-            output = output.replace(oldText, newText);
-          }
-          fs.writeFileSync('dist/install.sh', output, 'utf8');
-          NODE
+          node scripts/generate-release-installer.mjs \
+            --tag "${GITHUB_REF_NAME}" \
+            --output dist/install.sh
           chmod +x dist/install.sh
           bash -n dist/install.sh
           expected_ref_line="REF=\"\${TLH_REF:-${GITHUB_REF_NAME}}\""
           expected_track_line='UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'
           grep -F "${expected_ref_line}" dist/install.sh
           grep -F "${expected_track_line}" dist/install.sh
+          grep -F 'TLH_RELEASE_INTEGRITY_REPO="diegopetrucci/the-last-harness"' dist/install.sh
+          grep -F "TLH_RELEASE_INTEGRITY_REF=\"${GITHUB_REF_NAME}\"" dist/install.sh
           if grep -F 'REF="${TLH_REF:-main}"' dist/install.sh; then
             echo "Generated installer still defaults to main instead of ${GITHUB_REF_NAME}." >&2
             exit 1

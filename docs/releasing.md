@@ -6,14 +6,16 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 2. verifies the tag matches `package.json`;
 3. runs the release checks;
 4. builds an npm-style package tarball;
-5. generates a pinned stage-0 `install.sh` asset with the tag baked in for support-file fetches and the `latest-release` update track baked in for future updates;
+5. generates a pinned stage-0 `install.sh` asset with the tag and SHA-256 inventory for every stage-0 support fetch baked in, plus the `latest-release` update track for future updates;
 6. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
 
-There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
+There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-0 release asset verifies the bytes it fetches for stage 1 before executing them; explicitly repeating that asset's baked tag is still verified, while raw source/custom-ref/custom-base installers intentionally do not reuse another tag's hashes. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
+
+The release build fails closed if the stage-0 inventory is incomplete, duplicated, unsafe, out of sync with stage 1, or points at anything other than regular checkout files. `scripts/generate-release-installer.mjs` is the single generator used by CI; do not hand-edit `dist/install.sh` or copy the old manual fallback. If a required release support file reports an integrity failure, no stage-1 code is run and the temporary support root is cleaned up; optional or bundled subagent mismatches are removed, warned about, and stage 1 continues with those resources unavailable. Recover by rerunning the official latest-release installer or a known-good pinned tag; use the isolated settings backup to roll back an install if stage 1 had already completed.
 
 ## Installer compatibility boundary
 
-Only the generated GitHub Release `install.sh` asset is immutable and self-contained with its tag’s stage-1/support files: the release workflow bakes the matching tag into that stage-0 asset, so later changes on `main` do not change or invalidate that released asset. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; only generated GitHub Release installer assets are baked/pinned to their tag. The v0.27 boundary is the canonical stage-0 handoff: remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
+Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. The v0.27 boundary otherwise means remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
 
 Through **2026-09-29**, compatibility is retained only for locally saved **pre-v0.27 raw source installers from published/tagged releases whose baked manifests requested the retained query/librarian assets**. It excludes arbitrary snapshots of `main` or unreleased intermediate states, including the never-released profile-writer manifest window; this compatibility window does not extend support for every older TLH runtime. After **2026-09-29**, the supported recovery is to download and run the current installer rather than continuing to use the saved file:
 
@@ -115,21 +117,7 @@ If GitHub Actions is unavailable, create the release manually with GitHub CLI:
 
 ```sh
 mkdir -p dist
-TAG="v$version" node <<'NODE'
-const fs = require('node:fs');
-const tag = process.env.TAG;
-const source = fs.readFileSync('install.sh', 'utf8');
-const replacements = [
-  ['REF="${TLH_REF:-main}"', `REF="\${TLH_REF:-${tag}}"`],
-  ['UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-}"', 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'],
-];
-let output = source;
-for (const [oldText, newText] of replacements) {
-  if (!output.includes(oldText)) throw new Error(`Expected installer default line not found: ${oldText}`);
-  output = output.replace(oldText, newText);
-}
-fs.writeFileSync('dist/install.sh', output, 'utf8');
-NODE
+node scripts/generate-release-installer.mjs --tag "v$version" --output dist/install.sh
 chmod +x dist/install.sh
 bash -n dist/install.sh
 node scripts/release-notes.mjs --tag "v$version" --output release-notes.md

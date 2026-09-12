@@ -65,5 +65,6 @@ run_stale_stage0_manifest_compatibility_smoke
 run_stage0_canonical_handoff_smoke
 run_wrapper_install_state_normal_pi_guard_smoke
 run_release_pinning_smoke
+run_release_integrity_smoke
 
 log "Installer smoke checks passed."
