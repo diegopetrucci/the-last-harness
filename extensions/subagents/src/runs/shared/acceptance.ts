@@ -50,6 +50,14 @@ const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
   "review-findings",
   "manual-notes",
 ]);
+type AcceptanceCriterionStatus = NonNullable<
+  AcceptanceReport["criteriaSatisfied"]
+>[number]["status"];
+const VALID_CRITERION_STATUSES = new Set<AcceptanceCriterionStatus>([
+  "satisfied",
+  "not-satisfied",
+  "not-applicable",
+]);
 const ACCEPTANCE_CONFIG_KEYS = new Set([
   "level",
   "criteria",
@@ -676,6 +684,9 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
       : ["- Return the requested result."]),
     "",
     `Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
+    "",
+    'Each criteriaSatisfied[].status must be one of "satisfied", "not-satisfied", or "not-applicable".',
+    'Partial results must use "not-satisfied" with evidence; do not invent a separate partial status.',
   ];
   if (acceptance.verify.length > 0) {
     lines.push("", "Runtime verification commands configured by parent:");
@@ -1032,6 +1043,13 @@ function pushTypeError(
   errors.push(`${pathLabel}: expected ${expected}; got ${describeValidationValue(value)}`);
 }
 
+function normalizeAcceptanceCriterionStatus(value: unknown): AcceptanceCriterionStatus | undefined {
+  if (typeof value !== "string") return undefined;
+  return VALID_CRITERION_STATUSES.has(value as AcceptanceCriterionStatus)
+    ? (value as AcceptanceCriterionStatus)
+    : "not-satisfied";
+}
+
 function validateStringArrayField(errors: string[], value: unknown, pathLabel: string): void {
   if (!Array.isArray(value)) {
     pushTypeError(errors, pathLabel, "string[]", value);
@@ -1072,36 +1090,33 @@ function validateAcceptanceReport(
     pushTypeError(errors, pathLabel || "acceptance-report", "object", value);
     return { errors };
   }
-  const report = value as AcceptanceReport;
-  if (report.criteriaSatisfied !== undefined) {
-    if (!Array.isArray(report.criteriaSatisfied)) {
-      pushTypeError(
-        errors,
-        pathFor(pathLabel, "criteriaSatisfied"),
-        "array",
-        report.criteriaSatisfied,
-      );
+  const report = value as Record<string, unknown>;
+  const criteriaSatisfied = report.criteriaSatisfied;
+  if (criteriaSatisfied !== undefined) {
+    if (!Array.isArray(criteriaSatisfied)) {
+      pushTypeError(errors, pathFor(pathLabel, "criteriaSatisfied"), "array", criteriaSatisfied);
     } else {
-      for (const [index, item] of report.criteriaSatisfied.entries()) {
+      for (const [index, item] of criteriaSatisfied.entries()) {
         const itemPath = `${pathFor(pathLabel, "criteriaSatisfied")}[${index}]`;
         if (!item || typeof item !== "object" || Array.isArray(item)) {
           pushTypeError(errors, itemPath, "object", item);
           continue;
         }
-        const criterion = item as { id?: unknown; status?: unknown; evidence?: unknown };
+        const criterion = item as Record<string, unknown>;
         if (criterion.id !== undefined && typeof criterion.id !== "string")
           pushTypeError(errors, `${itemPath}.id`, "string", criterion.id);
-        if (
-          criterion.status !== "satisfied" &&
-          criterion.status !== "not-satisfied" &&
-          criterion.status !== "not-applicable"
-        ) {
+        const status = criterion.status;
+        const normalizedStatus = normalizeAcceptanceCriterionStatus(status);
+        if (normalizedStatus === undefined) {
           pushTypeError(
             errors,
             `${itemPath}.status`,
             'one of "satisfied", "not-satisfied", "not-applicable"',
-            criterion.status,
+            status,
           );
+        } else if (normalizedStatus !== status) {
+          // Keep extension fields intact while recovering unknown string statuses.
+          criterion.status = normalizedStatus;
         }
         if (typeof criterion.evidence !== "string" || !criterion.evidence.trim())
           pushTypeError(errors, `${itemPath}.evidence`, "non-empty string", criterion.evidence);
@@ -1160,9 +1175,10 @@ function validateAcceptanceReport(
   if (report.notes !== undefined && typeof report.notes !== "string")
     pushTypeError(errors, pathFor(pathLabel, "notes"), "string", report.notes);
   if (errors.length > 0) return { errors };
+  // All consumed fields are validated above; retain unknown report and criterion fields.
+  const normalizedReport = normalizeAcceptanceReportStringArrays(report as AcceptanceReport);
   // Empty string-array entries are not evidence. Normalize them before the
   // field-presence check so a report containing only blank entries is rejected.
-  const normalizedReport = normalizeAcceptanceReportStringArrays(report);
   const hasReportField =
     normalizedReport.criteriaSatisfied !== undefined ||
     normalizedReport.changedFiles !== undefined ||
