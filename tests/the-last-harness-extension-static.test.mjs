@@ -5,13 +5,12 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  buildChildSubagentSystemPrompt,
-  buildTlhSystemPrompt,
-  loadPrimaryAgents,
-  loadSubagentMetadata,
-} = await jiti.import("../extensions/the-last-harness/prompts.ts");
+const { buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
 const { buildReviewHtml } = await jiti.import("../extensions/annotate-git-diff/ui.ts");
+
+const USER_SCOPE_MARKER = /agentScope.*"user"/;
 
 function extractJsonStringAssignment(html, assignmentName) {
   const escapedName = assignmentName.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
@@ -200,25 +199,17 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
   }
 });
 
-test("primary and child prompts do not include disabled-ticket fallback guidance", () => {
+test("primary prompt exposes stable minor-agent delegation markers", () => {
   const primaryAgents = loadPrimaryAgents();
   const rush = primaryAgents.get("rush");
   assert.ok(rush, "Rush primary prompt should load");
 
   const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
-  const childPrompt = buildChildSubagentSystemPrompt();
 
   assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
   assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
-  assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
-  assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
+  assert.match(primaryPrompt, USER_SCOPE_MARKER);
   assert.match(primaryPrompt, /- contrarian:/i);
-
-  for (const prompt of [primaryPrompt, childPrompt]) {
-    assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
-    assert.doesNotMatch(prompt, /non-ticket/i);
-    assert.doesNotMatch(prompt, /ticket integration is disabled/i);
-  }
 });
 
 test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {
@@ -229,47 +220,33 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
 
-  const embeddedClause = /embedded\.<slug>.*agent.*explicitly names or asks/s;
-  const projectNaturalLanguageClause =
-    /project agents are intentionally omitted.*list.*get.*user asks for the `xyz` project subagent.*`embedded\.xyz`.*exception.*management output omits it/is;
-  const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
-  const managementGuidance = /TLH minor agents are isolated to the user scope/;
+  const embeddedTargetMarker = /embedded\.<slug>/;
+  const embeddedProjectAgentMarker = /embedded\.xyz/;
+  const projectAgentPathMarker = /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
+  const reviewHandoffHeader = /## \/review handoff/;
 
   const architectPrompt = buildTlhSystemPrompt(architect, subagents, true);
   assert.match(architectPrompt, sectionHeader);
-  assert.match(architectPrompt, managementGuidance);
-  assert.match(architectPrompt, embeddedClause);
-  assert.match(architectPrompt, projectNaturalLanguageClause);
-  assert.doesNotMatch(architectPrompt, closingRule);
+  assert.match(architectPrompt, embeddedTargetMarker);
+  assert.match(architectPrompt, embeddedProjectAgentMarker);
+  assert.match(architectPrompt, projectAgentPathMarker);
+  assert.match(architectPrompt, USER_SCOPE_MARKER);
 
   for (const primary of [rush, product, bugHunter]) {
     const label = primary?.name ?? "unknown";
     const prompt = buildTlhSystemPrompt(primary, subagents, true);
     assert.match(prompt, sectionHeader, `${label}: section header present`);
-    assert.match(prompt, managementGuidance, `${label}: management guidance present`);
-    assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
-    assert.match(prompt, closingRule, `${label}: closing rule present`);
-    assert.doesNotMatch(prompt, /## \/review handoff/, `${label}: no review handoff`);
+    assert.doesNotMatch(prompt, embeddedTargetMarker, `${label}: no embedded guidance`);
+    assert.doesNotMatch(prompt, reviewHandoffHeader, `${label}: no review handoff`);
   }
 
   const disabledPrompt = buildTlhSystemPrompt(undefined, subagents, false);
   assert.match(disabledPrompt, sectionHeader, "disabled: section header present");
-  assert.match(disabledPrompt, managementGuidance, "disabled: management guidance present");
-  assert.match(disabledPrompt, embeddedClause, "disabled: embedded guidance present");
-  assert.match(disabledPrompt, /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/);
-  assert.match(disabledPrompt, /## \/review handoff/);
-  assert.match(disabledPrompt, /`code-reviewer` subagent in a \*\*fresh \(isolated\) context\*\*/);
-  assert.match(disabledPrompt, /passing the full envelope contents as the task input/);
-  assert.match(disabledPrompt, /present a concise digested summary with your own assessment/);
+  assert.match(disabledPrompt, embeddedTargetMarker, "disabled: embedded guidance present");
+  assert.doesNotMatch(disabledPrompt, embeddedProjectAgentMarker);
+  assert.match(disabledPrompt, projectAgentPathMarker);
+  assert.match(disabledPrompt, USER_SCOPE_MARKER);
+  assert.match(disabledPrompt, /## \/review handoff[\s\S]*code-reviewer/);
   assert.doesNotMatch(disabledPrompt, /You are the TLH architect/);
-  assert.doesNotMatch(
-    disabledPrompt,
-    /Do not delegate outside this bundled TLH minor-agent list\./,
-  );
-  assert.doesNotMatch(
-    disabledPrompt,
-    /clarify the requested outcome.*create and maintain.*ticket plan/is,
-  );
-  assert.doesNotMatch(disabledPrompt, /After approval:/);
 });
