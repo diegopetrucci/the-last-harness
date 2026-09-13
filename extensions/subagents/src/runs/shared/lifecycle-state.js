@@ -47,6 +47,9 @@ function normalizeCompactionProjection(value) {
         ? { reason: reason }
         : undefined;
 }
+function normalizeHealthActivityState(value) {
+    return value === "needs_attention" ? value : undefined;
+}
 export function boundedActiveRuntimeMs(value, fallback = 0) {
     return normalizeActiveRuntimeMs(value) ?? normalizeActiveRuntimeMs(fallback) ?? 0;
 }
@@ -376,18 +379,21 @@ export function normalizeAsyncLifecycleStatus(status) {
     const generation = lifecycleGeneration(status);
     const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
-    const { activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _checkpointAt, ...rest } = status;
+    const activityState = normalizeHealthActivityState(status.activityState);
+    const { activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _checkpointAt, activityState: _activityState, ...rest } = status;
     const steps = status.steps?.map((step) => {
         const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
         const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
         const stepIdleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
         const stepDurableAttentionReasons = normalizeDurableAttentionReasons(step.durableAttentionReasons);
         const stepCompaction = normalizeCompactionProjection(step.compaction);
-        const { activeRuntimeMs: _stepActiveRuntimeMs, activeRuntimeCheckpointAt: _stepCheckpointAt, idleEpisodeId: _stepIdleEpisodeId, durableAttentionReasons: _stepDurableAttentionReasons, compaction: _stepCompaction, ...stepRest } = step;
+        const stepActivityState = normalizeHealthActivityState(step.activityState);
+        const { activeRuntimeMs: _stepActiveRuntimeMs, activeRuntimeCheckpointAt: _stepCheckpointAt, activityState: _stepActivityState, idleEpisodeId: _stepIdleEpisodeId, durableAttentionReasons: _stepDurableAttentionReasons, compaction: _stepCompaction, ...stepRest } = step;
         return {
             ...stepRest,
             ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
             ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
+            ...(stepActivityState !== undefined ? { activityState: stepActivityState } : {}),
             ...(stepIdleEpisodeId !== undefined ? { idleEpisodeId: stepIdleEpisodeId } : {}),
             ...(stepDurableAttentionReasons
                 ? { durableAttentionReasons: [...stepDurableAttentionReasons] }
@@ -399,6 +405,7 @@ export function normalizeAsyncLifecycleStatus(status) {
         ...rest,
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+        ...(activityState !== undefined ? { activityState } : {}),
         ...(typeof status.state === "string"
             ? { state: status.state }
             : { state: "failed" }),

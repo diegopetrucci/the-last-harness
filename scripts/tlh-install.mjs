@@ -11,7 +11,7 @@ import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, is
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl, cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, } from "./lib/tlh-install-profile-cleanup.mjs";
 import { preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
+import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -966,6 +966,13 @@ async function mergeSettings(config) {
     verboseLog(config, `Keybindings path: ${config.keybindingsPath}`);
     runNodeScript(config, keybindingArgs[0], keybindingArgs.slice(1));
 }
+function reportSubagentExtensionConfigMigration(config, result) {
+    if (result.warning)
+        return warn(result.warning);
+    const message = formatSubagentExtensionConfigMigration(result, config);
+    if (message)
+        log(config, message);
+}
 async function installSupportFilesToProfile(config) {
     if (!installableSupportFilesArePrepared(config))
         await ensureSupportFilesPrepared(config, supportFileIo(config));
@@ -992,13 +999,7 @@ async function installSupportFilesToProfile(config) {
         else {
             throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
         }
-        const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
-        if (missingSubagentExtensionDefaults.length > 0) {
-            log(config, `Would provision missing TLH subagent extension defaults (extensions/subagent/config.json): ${missingSubagentExtensionDefaults.join("; ")}.`);
-        }
-        else {
-            log(config, "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.");
-        }
+        reportSubagentExtensionConfigMigration(config, migrateSubagentExtensionConfig({ ...config, dryRun: true }));
         return;
     }
     ensureSafeProfileDir(config, "tlh", "TLH support directory");
@@ -1007,7 +1008,7 @@ async function installSupportFilesToProfile(config) {
         if (sourcePath)
             copySafeProfileFile(config, sourcePath, `tlh/${file.installName}`, `TLH support file ${file.installName}`);
     }
-    provisionSubagentExtensionConfig(config);
+    reportSubagentExtensionConfigMigration(config, migrateSubagentExtensionConfig(config));
     if (!subagentsSrc) {
         throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
     }

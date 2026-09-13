@@ -51,6 +51,11 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
       /Running settings-wide extension refresh from merged settings; fallback retries only 9 non-critical bundled default source\(s\) individually\./;
 
     assert.equal(result.status, 0, output);
+    assert.deepEqual(
+      readJson(join(agentDir, "extensions", "subagent", "config.json")).control,
+      { needsAttentionAfterMs: 180000 },
+      "fresh install creates the enforced subagent attention config",
+    );
     assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).commitSubject, undefined);
     if (verbose) {
       assert.ok(output.includes(pathNotice), output);

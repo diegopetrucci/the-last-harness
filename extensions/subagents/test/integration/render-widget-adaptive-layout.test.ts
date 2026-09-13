@@ -715,7 +715,7 @@ describe("subagent async widget rendering", () => {
         runningSteps: 12,
         completedSteps: 0,
         stepsTotal: 12,
-        activityState: "active_long_running",
+        activityState: "needs_attention",
         lastActivityAt: now,
         updatedAt: now + 5_000,
         steps: Array.from({ length: 12 }, (_, i) => ({
@@ -728,13 +728,13 @@ describe("subagent async widget rendering", () => {
       renderWidget(ui.ctx as never, [idleJob]);
       const idleLines = renderWidgetLines(ui.widgets.at(-1));
 
-      // The job-level long-running health state is a staleness signal and must survive
-      // the compact step-detail render: jobHealthWarningLines surfaces it under the
-      // header because no step carries a step-level health state here.
+      // The job-level health state is a staleness signal and must survive the compact
+      // step-detail render: jobHealthWarningLines surfaces it under the header because
+      // no step carries a step-level health state here.
       assert.match(
         idleLines.join("\n"),
-        /active but long-running/,
-        "job-level long-running health signal must survive the compact single-job render",
+        /no activity for/,
+        "job-level health signal must survive the compact single-job render",
       );
       // Single-job full tier: compact form with 12 idle step rows (no currentTool) =
       // header(2) + 1 job health row + 12 rows + 1 hint = 16 lines, truncated to

@@ -10,8 +10,6 @@ function agelessActivityLabel(activityState) {
         return undefined;
     if (activityState === "needs_attention")
         return "needs attention";
-    if (activityState === "active_long_running")
-        return "active but long-running";
     void activityState;
 }
 export function formatActivityLabel(lastActivityAt, activityState, now = Date.now()) {
@@ -22,8 +20,6 @@ export function formatActivityLabel(lastActivityAt, activityState, now = Date.no
         return agelessActivityLabel(activityState) ?? "active now";
     if (activityState === "needs_attention")
         return `no activity for ${age}`;
-    if (activityState === "active_long_running")
-        return `active but long-running · last activity ${age} ago`;
     if (activityState !== undefined)
         void activityState;
     return `active ${age} ago`;

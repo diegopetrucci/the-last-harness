@@ -28,7 +28,6 @@ import {
   createMutatingFailureState,
   didMutatingToolFail,
   isMutatingTool,
-  nextLongRunningTrigger,
   recordMutatingFailure,
   resetMutatingFailureState,
   resolveCurrentPath,
@@ -316,45 +315,6 @@ export function createBackgroundRunControlOwner(
     statusPayload.currentPath = activeStep?.currentPath;
   }
 
-  function maybeEmitActiveLongRunning(flatIndex: number, now: number): boolean {
-    if (!controlConfig.enabled) return false;
-    const step = statusPayload.steps[flatIndex];
-    if (!step || step.status !== "running") return false;
-    const reason = nextLongRunningTrigger(controlConfig, {
-      startedAt: step.startedAt ?? overallStartTime,
-      now,
-      turns: step.turnCount ?? 0,
-      tokens: step.tokens?.total ?? 0,
-    });
-    if (!reason) return false;
-    const previous = step.activityState;
-    const transition = status.transitionStepHealth(flatIndex, { type: "active_long_running" });
-    if (!transition.activeLongRunningNotice) return false;
-    appendControlEvent(
-      buildControlEvent({
-        type: "active_long_running",
-        from: previous,
-        to: "active_long_running",
-        runId: id,
-        agent: step.agent,
-        index: flatIndex,
-        ts: now,
-        message: `${step.agent} is still active but long-running`,
-        reason,
-        turns: step.turnCount,
-        tokens: step.tokens?.total,
-        toolCount: step.toolCount,
-        currentTool: step.currentTool,
-        currentToolDurationMs: step.currentToolStartedAt
-          ? Math.max(0, now - step.currentToolStartedAt)
-          : undefined,
-        currentPath: step.currentPath,
-        elapsedMs: now - (step.startedAt ?? overallStartTime),
-      }),
-    );
-    return true;
-  }
-
   function deliverChildMessageRequest(request: ChildMessageRequest): void {
     const now = Date.now();
     if (statusPayload.state !== "running") {
@@ -426,8 +386,7 @@ export function createBackgroundRunControlOwner(
     const step = statusPayload.steps[flatIndex];
     if (!step) return;
     // A dispatched fallback is a new health segment. Reset the recoverable idle
-    // episode and any in-flight compaction while retaining durable causes and
-    // an already-earned long-running notice.
+    // episode and any in-flight compaction while retaining durable causes.
     status.resetStepHealth(flatIndex);
     // A fallback attempt starts a fresh observed-idle segment. Keep the
     // previous attempt's activity timestamp intact for truthful status output.
@@ -689,7 +648,6 @@ export function createBackgroundRunControlOwner(
     observedActivityAt[flatIndex] = now;
     statusPayload.lastActivityAt = now;
     statusPayload.lastUpdate = now;
-    maybeEmitActiveLongRunning(flatIndex, now);
     status.syncTopLevelHealthProjection();
     status.writeStatusPayload();
   }
@@ -792,7 +750,7 @@ export function createBackgroundRunControlOwner(
           }
           changed = true;
         }
-      } else if (maybeEmitActiveLongRunning(index, now)) changed = true;
+      }
     }
     if (statusPayload.lastActivityAt !== runLastActivityAt) {
       statusPayload.lastActivityAt = runLastActivityAt;

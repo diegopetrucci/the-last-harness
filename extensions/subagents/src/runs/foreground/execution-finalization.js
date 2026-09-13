@@ -21,7 +21,6 @@ function ignoredHealthTransition(state) {
         projection: state.activityState,
         idleEpisodeStarted: false,
         idleEpisodeEnded: false,
-        activeLongRunningNotice: false,
         idleAttentionEligible: false,
     };
 }

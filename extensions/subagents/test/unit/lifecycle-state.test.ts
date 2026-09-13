@@ -149,7 +149,8 @@ describe("lifecycle state helpers", () => {
             mode: "single",
             state: "paused",
             startedAt: 100,
-            steps: [{ agent: "worker", status: "paused" }],
+            activityState: "active_long_running",
+            steps: [{ agent: "worker", status: "paused", activityState: "active_long_running" }],
             pause: {
               kind: "awaiting_supervisor",
               summary: "  need\nhelp  ",
@@ -178,6 +179,8 @@ describe("lifecycle state helpers", () => {
 
       const status = readStatus(asyncDir);
       assert.equal(status?.state, "paused");
+      assert.equal(status?.activityState, undefined);
+      assert.equal(status?.steps?.[0]?.activityState, undefined);
       assert.equal(status?.pause?.kind, "awaiting_supervisor");
       assert.equal(status?.pause?.summary, "need help");
       assert.equal(status?.pause?.ownerPid, undefined);

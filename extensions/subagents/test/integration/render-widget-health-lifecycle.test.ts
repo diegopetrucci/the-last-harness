@@ -197,17 +197,6 @@ describe("subagent async widget rendering", () => {
         updatedAt: now,
       },
       {
-        asyncId: "health-long-running",
-        asyncDir: "/tmp/health-long-running",
-        status: "running",
-        mode: "single",
-        agents: ["long-running"],
-        activityState: "active_long_running",
-        turnCount: 12,
-        lastActivityAt: now - 5_000,
-        updatedAt: now,
-      },
-      {
         asyncId: "health-parallel",
         asyncDir: "/tmp/health-parallel",
         status: "running",
@@ -235,8 +224,7 @@ describe("subagent async widget rendering", () => {
     const text = buildWidgetLines(jobs, theme, 180).join("\n");
 
     assert.match(text, /no activity for 5s/);
-    assert.match(text, /active but long-running · last activity 5s ago/);
-    for (const turnCount of [11, 12, 13])
+    for (const turnCount of [11, 13])
       assert.doesNotMatch(text, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 
     const expanded = buildWidgetLines(jobs, theme, 180, true).join("\n");
@@ -309,15 +297,12 @@ describe("subagent async widget rendering", () => {
       true,
     ).join("\n");
     assert.match(legacyText, /legacy[\s\S]*active 1m ago/);
-    assert.doesNotMatch(legacyText, /no activity for|active but long-running/);
+    assert.doesNotMatch(legacyText, /no activity for|needs attention/);
   });
 
   it("keeps aggregate parallel health in progressive summaries without smearing child details", () => {
     const now = 20_000;
-    const healthCases = [
-      { state: "needs_attention", warning: "no activity for 5s" },
-      { state: "active_long_running", warning: "active but long-running · last activity 5s ago" },
-    ] as const;
+    const healthCases = [{ state: "needs_attention", warning: "no activity for 5s" }] as const;
 
     const makeJobs = (state: (typeof healthCases)[number]["state"]): AsyncJobState[] => [
       {
@@ -388,7 +373,7 @@ describe("subagent async widget rendering", () => {
       assert.ok(attentionStart > recoveredStart, "expanded layout must keep child order");
       const recoveredSection = expandedText.slice(recoveredStart, attentionStart);
       assert.match(recoveredSection, /active 1s ago/);
-      assert.doesNotMatch(recoveredSection, /no activity for|active but long-running/);
+      assert.doesNotMatch(recoveredSection, /no activity for|needs attention/);
       assert.match(expandedText.slice(attentionStart), new RegExp(escapeRegExp(warning)));
     }
     resetWidgetLayout();
@@ -474,7 +459,7 @@ describe("subagent async widget rendering", () => {
     ).join("\n");
     assert.match(parallelText, /Agent 1\/1: worker · pausing · pausing…/);
     const parallelStep = parallelText.split("\n").find((line) => line.includes("Agent 1/1")) ?? "";
-    assert.doesNotMatch(parallelStep, /no activity for|active but long-running/);
+    assert.doesNotMatch(parallelStep, /no activity for|needs attention/);
     assert.doesNotMatch(parallelText, new RegExp(escapeRegExp(whimsicalThinkingPhrase(23))));
 
     resetWidgetLayout();
@@ -513,7 +498,7 @@ describe("subagent async widget rendering", () => {
       const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
       const progressiveRow = text.split("\n").find((line) => line.includes("pausing-worker")) ?? "";
       assert.match(progressiveRow, /pausing-worker · pausing…/);
-      assert.doesNotMatch(progressiveRow, /no activity for|active but long-running/);
+      assert.doesNotMatch(progressiveRow, /no activity for|needs attention/);
       assert.doesNotMatch(progressiveRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(24))));
     });
     resetWidgetLayout();
@@ -523,11 +508,6 @@ describe("subagent async widget rendering", () => {
     const now = 20_000;
     const healthCases = [
       { state: "needs_attention", turnCount: 25, warning: /no activity for 5s/ },
-      {
-        state: "active_long_running",
-        turnCount: 26,
-        warning: /active but long-running · last activity 5s ago/,
-      },
     ] as const;
 
     for (const { state, turnCount, warning } of healthCases) {
@@ -791,11 +771,6 @@ describe("subagent async widget rendering", () => {
     const now = 20_000;
     const healthCases = [
       { state: "needs_attention", turnCount: 27, warning: "no activity for 5s" },
-      {
-        state: "active_long_running",
-        turnCount: 28,
-        warning: "active but long-running · last activity 5s ago",
-      },
     ] as const;
 
     for (const width of [40, 50]) {
@@ -877,7 +852,7 @@ describe("subagent async widget rendering", () => {
             status: "running",
             mode: "single",
             agents: ["health-job"],
-            activityState: "active_long_running",
+            activityState: "needs_attention",
             lastActivityAt: now - 5_000,
             updatedAt: now,
           },
@@ -905,12 +880,20 @@ describe("subagent async widget rendering", () => {
             agents: ["writer"],
             currentTool: "write",
           },
+          {
+            asyncId: "progressive-extra",
+            asyncDir: "/tmp/progressive-extra",
+            status: "running",
+            mode: "single",
+            agents: ["extra"],
+            currentTool: "test",
+          },
         ]);
 
         const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
         const harnessRow = harnessLines.find((line) => line.includes("health-job")) ?? "";
         assert.match(harnessRow, /health-job/);
-        assertWrappedSource(harnessLines, "active but long-running · last activity 5s ago");
+        assertWrappedSource(harnessLines, "no activity for 5s");
         assert.match(harnessLines.join(""), /\+\d+ more/);
         for (const line of harnessLines)
           assert.ok(
@@ -926,7 +909,7 @@ describe("subagent async widget rendering", () => {
         );
         const realRow = realLines.find((line) => line.includes("health-job")) ?? "";
         assert.match(realRow, /health-job/);
-        assertWrappedSource(realLines, "active but long-running · last activity 5s ago", true);
+        assertWrappedSource(realLines, "no activity for 5s", true);
         for (const line of realLines)
           assert.equal(
             visibleWidth(line),
@@ -940,10 +923,7 @@ describe("subagent async widget rendering", () => {
 
   it("keeps widgetParallelAgentDetails identity with compact health warnings at 40/50 columns", () => {
     const now = 20_000;
-    const healthCases = [
-      { state: "needs_attention", warning: "no activity for 5s" },
-      { state: "active_long_running", warning: "active but long-running · last activity 5s ago" },
-    ] as const;
+    const healthCases = [{ state: "needs_attention", warning: "no activity for 5s" }] as const;
     for (const width of [40, 50]) {
       for (const { state, warning } of healthCases) {
         const lines = buildWidgetLines(
@@ -1015,10 +995,7 @@ describe("subagent async widget rendering", () => {
     //                      widgetActivityDetailLines(job, ...))
     const now = 200_000;
     const lastActivityAt = now - 180_000; // 3m gap: avoids the "now ago" strings owned by tlhmf-6y0z
-    for (const [activityState, expected] of [
-      ["active_long_running", /active but long-running · last activity 3m ago/],
-      ["needs_attention", /no activity for 3m/],
-    ] as const) {
+    for (const [activityState, expected] of [["needs_attention", /no activity for 3m/] as const]) {
       for (const [label, mode, steps, expectedHeight] of [
         ["single mode with steps", "single", 1, 5],
         ["single mode without steps", "single", 0, 3],
@@ -1093,7 +1070,7 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "single",
           agents: ["developer"],
-          activityState: "active_long_running",
+          activityState: "needs_attention",
           lastActivityAt,
           updatedAt: now,
           steps: [
@@ -1101,7 +1078,7 @@ describe("subagent async widget rendering", () => {
               index: 0,
               agent: "developer",
               status: "running",
-              activityState: "active_long_running",
+              activityState: "needs_attention",
               lastActivityAt,
             },
           ],
@@ -1111,7 +1088,7 @@ describe("subagent async widget rendering", () => {
       // Step already shows the health text; job-level line is deduped, so appears
       // exactly once (under the agent row, not the header).
       assert.equal(
-        lines.filter((line) => /active but long-running/.test(line)).length,
+        lines.filter((line) => /no activity for 3m/.test(line)).length,
         1,
         "health text must appear exactly once when step already surfaces the same state",
       );
@@ -1122,7 +1099,7 @@ describe("subagent async widget rendering", () => {
       );
       // The health line must be at 4-space indent (under the agent row), not the
       // 2-space indent that would place it under the header.
-      const healthLine = lines.find((l) => /active but long-running/.test(l));
+      const healthLine = lines.find((l) => /no activity for 3m/.test(l));
       assert.ok(
         healthLine?.startsWith("    "),
         "health line must be at 4-space indent (nested under agent row)",
@@ -1135,7 +1112,7 @@ describe("subagent async widget rendering", () => {
       // Ordering: agent row is at index 1 (header is 0); health text (from step
       // activity in details.slice(1)) must follow the agent row.
       const agentRowIndex = 1;
-      const healthIndex = lines.findIndex((l) => /active but long-running/.test(l));
+      const healthIndex = lines.findIndex((l) => /no activity for 3m/.test(l));
       assert.ok(healthIndex > agentRowIndex, "health text must appear after the agent row");
       // The live-detail hint must be the last line of the agent block.
       assert.match(
@@ -1163,7 +1140,7 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "single",
           agents: ["developer"],
-          activityState: "active_long_running",
+          activityState: "needs_attention",
           lastActivityAt,
           updatedAt: now,
           steps: [
@@ -1179,7 +1156,7 @@ describe("subagent async widget rendering", () => {
         },
       ]);
       const lines = renderWidgetLines(ui.widgets.at(-1));
-      const healthLine = lines.find((l) => /active but long-running/.test(l));
+      const healthLine = lines.find((l) => /no activity for 3m/.test(l));
       assert.ok(healthLine !== undefined, "health warning must appear");
       // Must be at 4-space indent (under the agent row).
       assert.ok(
@@ -1192,14 +1169,10 @@ describe("subagent async widget rendering", () => {
         "health line must not be at 2-space (header-level) indent",
       );
       // Header line must NOT contain the health text (it stays as 'async subagent').
-      assert.doesNotMatch(
-        lines[0]!,
-        /active but long-running/,
-        "header must not carry health text",
-      );
+      assert.doesNotMatch(lines[0]!, /no activity for 3m/, "header must not carry health text");
       // Ordering: health line must be immediately after the agent row (index 1).
       const agentRowIndex = 1;
-      const healthIdx = lines.findIndex((l) => /active but long-running/.test(l));
+      const healthIdx = lines.findIndex((l) => /no activity for 3m/.test(l));
       assert.equal(
         healthIdx,
         agentRowIndex + 1,
@@ -1231,7 +1204,7 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["agent-0", "agent-1"],
-          activityState: "active_long_running",
+          activityState: "needs_attention",
           lastActivityAt,
           updatedAt: now,
           stepsTotal: 2,
@@ -1244,7 +1217,7 @@ describe("subagent async widget rendering", () => {
         },
       ]);
       const lines = renderWidgetLines(ui.widgets.at(-1));
-      const healthIndex = lines.findIndex((l) => /active but long-running/.test(l));
+      const healthIndex = lines.findIndex((l) => /no activity for 3m/.test(l));
       assert.ok(healthIndex !== -1, "health warning must appear");
       // For parallel mode the health line is at 2-space indent (header region).
       assert.ok(
@@ -1269,7 +1242,7 @@ describe("subagent async widget rendering", () => {
     // job-level warning under the header (the only truncation-safe region).
     //
     // Shape: parallel job, 15 steps. The FIRST 13 steps carry currentTool (so their rows
-    // render without an inline health signal). Steps 13-14 carry active_long_running without
+    // render without an inline health signal). Steps 13-14 carry needs_attention without
     // currentTool (the steps that would trigger the old dedupe). At 30 rows,
     // collapsedWidgetLineBudget(30)=10; with 2-line header + 15 step rows + hint = 18+
     // lines the budget forces truncation, cutting steps 7-14 (the health-carrying ones).
@@ -1287,13 +1260,13 @@ describe("subagent async widget rendering", () => {
         status: "running" as const,
         currentTool: "read",
       }));
-      // Last 2 steps: running with active_long_running, no currentTool
+      // Last 2 steps: running with needs_attention, no currentTool
       // These are the steps that trigger the old dedupe AND would appear beyond the budget.
       const lateSteps: AsyncJobStep[] = Array.from({ length: 2 }, (_, i) => ({
         index: 13 + i,
         agent: `agent-${13 + i}`,
         status: "running" as const,
-        activityState: "active_long_running" as const,
+        activityState: "needs_attention" as const,
         lastActivityAt,
       }));
       const steps = [...earlySteps, ...lateSteps];
@@ -1304,7 +1277,7 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: steps.map((s) => s.agent),
-          activityState: "active_long_running",
+          activityState: "needs_attention",
           lastActivityAt,
           updatedAt: now,
           stepsTotal: 15,
@@ -1322,53 +1295,8 @@ describe("subagent async widget rendering", () => {
       // The health-carrying late steps are beyond the budget, so no step-level signal
       // survives. Only the job-level warning (truncation-safe header region) remains.
       assert.ok(
-        lines.some((l) => /active but long-running/.test(l)),
+        lines.some((l) => /no activity for 3m/.test(l)),
         "job-level health warning must survive fitWidgetLineBudget truncation even when health-carrying step rows are cut",
-      );
-    });
-    resetWidgetLayout();
-  });
-
-  it("job-level needs_attention is not suppressed by a weaker step-level active_long_running", () => {
-    // tlhmf-ve09 (severity disagreement): reviewer probe – a needs_attention job with a
-    // running step carrying active_long_running rendered only 'active but long-running'.
-    // The old dedupe checked only whether any running step had *any* health state, not
-    // whether the step-level severity matched the job-level one. The fix: always emit
-    // the job-level warning unconditionally so needs_attention is never downgraded.
-    const now = 200_000;
-    const lastActivityAt = now - 180_000;
-    resetWidgetLayout();
-    withStdoutSize(30, 120, () => {
-      const ui = createUiContext();
-      renderWidget(ui.ctx as never, [
-        {
-          asyncId: "health-severity",
-          asyncDir: "/tmp/health-severity",
-          status: "running",
-          mode: "single",
-          agents: ["developer"],
-          // Job is needs_attention (stronger signal)
-          activityState: "needs_attention",
-          lastActivityAt,
-          updatedAt: now,
-          steps: [
-            {
-              index: 0,
-              agent: "developer",
-              status: "running",
-              // Step is only active_long_running (weaker signal)
-              activityState: "active_long_running",
-              lastActivityAt,
-            },
-          ],
-        },
-      ]);
-      const lines = renderWidgetLines(ui.widgets.at(-1));
-      const text = lines.join("\n");
-      // The stronger job-level needs_attention signal must appear.
-      assert.ok(
-        /no activity for/.test(text),
-        "job-level needs_attention must surface even when step carries weaker active_long_running",
       );
     });
     resetWidgetLayout();

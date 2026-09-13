@@ -963,8 +963,8 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
   ];
 }
 
-// Job-level health state (active_long_running / needs_attention) is a staleness
-// signal, not flavour text: it tells the user a run may be stuck. The step-detail
+// Job-level health state (needs_attention) is a staleness signal, not flavour
+// text: it tells the user a run may be stuck. The step-detail
 // render paths (singleWidgetAgentDetails' `if (step)` branch,
 // foregroundStyleWidgetDetails' steps branch, and compactSingleWidgetLines' own
 // loop) build rows per step and never call widgetActivityDetailLines(job, ...),

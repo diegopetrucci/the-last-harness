@@ -61,9 +61,9 @@ import {
   copyTlhSubagentPrompts,
   defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall,
   findTlhSubagentsDir as findTlhSubagentsDirFromSources,
+  formatSubagentExtensionConfigMigration,
+  migrateSubagentExtensionConfig,
   missingTlhSubagentPrompts,
-  provisionSubagentExtensionConfig,
-  subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 type GitInstallConfig = gitInstall.GitInstallConfig;
@@ -1303,6 +1303,15 @@ async function mergeSettings(config: InstallConfig): Promise<void> {
   runNodeScript(config, keybindingArgs[0], keybindingArgs.slice(1));
 }
 
+function reportSubagentExtensionConfigMigration(
+  config: Pick<InstallConfig, "dryRun" | "quiet">,
+  result: ReturnType<typeof migrateSubagentExtensionConfig>,
+): void {
+  if (result.warning) return warn(result.warning);
+  const message = formatSubagentExtensionConfigMigration(result, config);
+  if (message) log(config, message);
+}
+
 async function installSupportFilesToProfile(config: InstallConfig): Promise<void> {
   if (!installableSupportFilesArePrepared(config))
     await ensureSupportFilesPrepared(config, supportFileIo(config));
@@ -1330,18 +1339,10 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
         "TLH subagent prompts not found; re-run installer from a complete checkout or package.",
       );
     }
-    const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
-    if (missingSubagentExtensionDefaults.length > 0) {
-      log(
-        config,
-        `Would provision missing TLH subagent extension defaults (extensions/subagent/config.json): ${missingSubagentExtensionDefaults.join("; ")}.`,
-      );
-    } else {
-      log(
-        config,
-        "Would leave existing subagent extension config (extensions/subagent/config.json) untouched.",
-      );
-    }
+    reportSubagentExtensionConfigMigration(
+      config,
+      migrateSubagentExtensionConfig({ ...config, dryRun: true }),
+    );
     return;
   }
 
@@ -1356,7 +1357,7 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
         `TLH support file ${file.installName}`,
       );
   }
-  provisionSubagentExtensionConfig(config);
+  reportSubagentExtensionConfigMigration(config, migrateSubagentExtensionConfig(config));
   if (!subagentsSrc) {
     throw new Error(
       "TLH subagent prompts not found; re-run installer from a complete checkout or package.",

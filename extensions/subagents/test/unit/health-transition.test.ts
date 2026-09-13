@@ -71,24 +71,6 @@ describe("shared health transitions", () => {
     assert.equal(completion.projection, "needs_attention");
   });
 
-  it("preserves an earned active-long-running projection without re-noticing it", () => {
-    const initial = createHealthTransitionState("attempt-a");
-    const longRunning = transitionHealth(initial, { type: "active_long_running" });
-    const idle = enterIdle(longRunning.state);
-    const recovered = recoverValidatedActivity(idle.state);
-    const repeatedLongRunning = transitionHealth(recovered.state, {
-      type: "active_long_running",
-    });
-
-    assert.equal(longRunning.activeLongRunningNotice, true);
-    assert.equal(longRunning.projection, "active_long_running");
-    assert.equal(idle.projection, "needs_attention");
-    assert.equal(recovered.projection, "active_long_running");
-    assert.equal(recovered.state.activeLongRunningNoticeSent, true);
-    assert.equal(repeatedLongRunning.activeLongRunningNotice, false);
-    assert.equal(repeatedLongRunning.changed, false);
-  });
-
   it("tracks compaction as an independent operation and clears it on end or attempt reset", () => {
     const initial = createHealthTransitionState("attempt-a");
     const started = transitionHealth(initial, {
@@ -128,10 +110,9 @@ describe("shared health transitions", () => {
     );
   });
 
-  it("clears ephemeral projection while retaining durable causes and earned notices", () => {
+  it("clears ephemeral projection while retaining durable causes", () => {
     const initial = createHealthTransitionState("attempt-a");
-    const longRunning = transitionHealth(initial, { type: "active_long_running" });
-    const durable = transitionHealth(longRunning.state, {
+    const durable = transitionHealth(initial, {
       type: "durable_attention",
       reason: "context_pressure",
     });
@@ -146,7 +127,6 @@ describe("shared health transitions", () => {
     assert.equal(cleared.state.idleEpisodeId, undefined);
     assert.equal(cleared.state.compaction, undefined);
     assert.deepEqual(cleared.state.durableAttentionReasons, ["context_pressure"]);
-    assert.equal(cleared.state.activeLongRunningNoticeSent, true);
     assert.equal(cleared.idleEpisodeEnded, true);
     assert.equal(cleared.projectionChanged, true);
 
@@ -155,11 +135,8 @@ describe("shared health transitions", () => {
     assert.deepEqual(nextActivity.state.durableAttentionReasons, ["context_pressure"]);
   });
 
-  it("preserves durable causes and earned notices while replacing the child attempt", () => {
-    const longRunning = transitionHealth(createHealthTransitionState("attempt-a"), {
-      type: "active_long_running",
-    });
-    const durable = transitionHealth(longRunning.state, {
+  it("preserves durable causes while replacing the child attempt", () => {
+    const durable = transitionHealth(createHealthTransitionState("attempt-a"), {
       type: "durable_attention",
       reason: "context_pressure",
     });
@@ -170,7 +147,6 @@ describe("shared health transitions", () => {
     const replaced = resetHealthTransitionState(compacting.state, "attempt-b");
 
     assert.deepEqual(replaced.state.durableAttentionReasons, ["context_pressure"]);
-    assert.equal(replaced.state.activeLongRunningNoticeSent, true);
     assert.equal(replaced.state.compaction, undefined);
     assert.equal(replaced.state.idleEpisodeId, undefined);
     assert.equal(replaced.projection, "needs_attention");

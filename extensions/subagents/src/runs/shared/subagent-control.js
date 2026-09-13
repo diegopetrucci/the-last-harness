@@ -1,26 +1,22 @@
 import {} from "../../shared/types.js";
 import { normalizeIdleEpisodeId } from "./health-transition.js";
-const CONTROL_EVENT_TYPES = ["active_long_running", "needs_attention"];
+const CONTROL_EVENT_TYPES = ["needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS = ["event", "async"];
 const CONTROL_EVENT_REASONS = {
     idle: true,
     completion_guard: true,
-    active_long_running: true,
     tool_failures: true,
-    time_threshold: true,
-    turn_threshold: true,
-    token_threshold: true,
     context_pressure: true,
 };
 function isControlEventReason(value) {
     return typeof value === "string" && Object.hasOwn(CONTROL_EVENT_REASONS, value);
 }
 const DEFAULT_NOTIFY_CHANNELS = ["event", "async"];
-const DEFAULT_NOTIFY_ON = ["active_long_running", "needs_attention"];
+const DEFAULT_NOTIFY_ON = ["needs_attention"];
+const RETIRED_CONTROL_EVENT_TYPES = ["active_long_running"];
 export const DEFAULT_CONTROL_CONFIG = {
     enabled: true,
-    needsAttentionAfterMs: 60_000,
-    activeNoticeAfterMs: 240_000,
+    needsAttentionAfterMs: 180_000,
     failedToolAttemptsBeforeAttention: 3,
     notifyOn: DEFAULT_NOTIFY_ON,
     notifyChannels: DEFAULT_NOTIFY_CHANNELS,
@@ -35,32 +31,29 @@ function parsePositiveInt(value) {
 function parseFiniteNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-function parseControlList(value, allowed) {
+function parseControlList(value, allowed, retired = []) {
     if (!Array.isArray(value))
         return undefined;
     if (value.length === 0)
         return [];
     const allowedSet = new Set(allowed);
     const parsed = value.filter((entry) => typeof entry === "string" && allowedSet.has(entry));
-    return parsed.length > 0 ? Array.from(new Set(parsed)) : undefined;
+    if (parsed.length > 0)
+        return Array.from(new Set(parsed));
+    return value.some((entry) => typeof entry === "string" && retired.includes(entry))
+        ? []
+        : undefined;
 }
 export function resolveControlConfig(globalConfig, override) {
     const enabled = override?.enabled ?? globalConfig?.enabled ?? DEFAULT_CONTROL_CONFIG.enabled;
     const needsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs) ??
         parsePositiveInt(globalConfig?.needsAttentionAfterMs) ??
         DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
-    const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs) ??
-        parsePositiveInt(globalConfig?.activeNoticeAfterMs) ??
-        DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
-    const activeNoticeAfterTurns = parsePositiveInt(override?.activeNoticeAfterTurns) ??
-        parsePositiveInt(globalConfig?.activeNoticeAfterTurns);
-    const activeNoticeAfterTokens = parsePositiveInt(override?.activeNoticeAfterTokens) ??
-        parsePositiveInt(globalConfig?.activeNoticeAfterTokens);
     const failedToolAttemptsBeforeAttention = parsePositiveInt(override?.failedToolAttemptsBeforeAttention) ??
         parsePositiveInt(globalConfig?.failedToolAttemptsBeforeAttention) ??
         DEFAULT_CONTROL_CONFIG.failedToolAttemptsBeforeAttention;
-    const notifyOn = parseControlList(override?.notifyOn, CONTROL_EVENT_TYPES) ??
-        parseControlList(globalConfig?.notifyOn, CONTROL_EVENT_TYPES) ??
+    const notifyOn = parseControlList(override?.notifyOn, CONTROL_EVENT_TYPES, RETIRED_CONTROL_EVENT_TYPES) ??
+        parseControlList(globalConfig?.notifyOn, CONTROL_EVENT_TYPES, RETIRED_CONTROL_EVENT_TYPES) ??
         DEFAULT_CONTROL_CONFIG.notifyOn;
     const notifyChannels = parseControlList(override?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS) ??
         parseControlList(globalConfig?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS) ??
@@ -68,9 +61,6 @@ export function resolveControlConfig(globalConfig, override) {
     return {
         enabled,
         needsAttentionAfterMs,
-        activeNoticeAfterMs,
-        activeNoticeAfterTurns,
-        activeNoticeAfterTokens,
         failedToolAttemptsBeforeAttention,
         notifyOn: [...notifyOn],
         notifyChannels: [...notifyChannels],
@@ -86,19 +76,17 @@ export function deriveActivityState(input) {
 }
 export function buildControlEvent(input) {
     const ts = input.ts ?? Date.now();
-    const type = input.type ?? (input.to === "active_long_running" ? "active_long_running" : "needs_attention");
-    const reason = input.reason ?? (type === "active_long_running" ? "active_long_running" : "idle");
-    const idleEpisodeId = type === "needs_attention" && input.to === "needs_attention" && reason === "idle"
+    const type = input.type ?? "needs_attention";
+    const reason = input.reason ?? "idle";
+    const idleEpisodeId = input.to === "needs_attention" && reason === "idle"
         ? normalizeIdleEpisodeId(input.idleEpisodeId)
         : undefined;
     const elapsedMs = input.elapsedMs ?? (input.lastActivityAt ? Math.max(0, ts - input.lastActivityAt) : undefined);
     const elapsedSeconds = elapsedMs !== undefined ? Math.floor(elapsedMs / 1000) : undefined;
     const message = input.message ??
-        (type === "active_long_running"
-            ? `${input.agent} is still active but long-running`
-            : elapsedSeconds !== undefined
-                ? `${input.agent} needs attention (no observed activity for ${elapsedSeconds}s)`
-                : `${input.agent} needs attention`);
+        (elapsedSeconds !== undefined
+            ? `${input.agent} needs attention (no observed activity for ${elapsedSeconds}s)`
+            : `${input.agent} needs attention`);
     return {
         type,
         ...(input.from ? { from: input.from } : {}),
@@ -135,8 +123,8 @@ export function parseControlEvent(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return undefined;
     const raw = value;
-    if ((raw.type !== "active_long_running" && raw.type !== "needs_attention") ||
-        (raw.to !== "active_long_running" && raw.to !== "needs_attention") ||
+    if (raw.type !== "needs_attention" ||
+        raw.to !== "needs_attention" ||
         typeof raw.runId !== "string" ||
         typeof raw.agent !== "string" ||
         typeof raw.message !== "string" ||
@@ -158,11 +146,9 @@ export function parseControlEvent(value) {
         ? normalizeIdleEpisodeId(raw.idleEpisodeId)
         : undefined;
     return {
-        type: raw.type,
-        ...(raw.from === "active_long_running" || raw.from === "needs_attention"
-            ? { from: raw.from }
-            : {}),
-        to: raw.to,
+        type: "needs_attention",
+        ...(raw.from === "needs_attention" ? { from: raw.from } : {}),
+        to: "needs_attention",
         ts: raw.ts,
         runId: raw.runId,
         agent: raw.agent,
@@ -203,22 +189,6 @@ export function claimControlNotification(config, event, seenKeys) {
     seenKeys.add(key);
     return true;
 }
-function formatLongRunningFacts(event) {
-    const facts = [];
-    if (event.elapsedMs !== undefined)
-        facts.push(`elapsed ${Math.floor(Math.max(0, event.elapsedMs) / 1000)}s`);
-    if (event.turns !== undefined)
-        facts.push(`${event.turns} turns`);
-    if (event.tokens !== undefined)
-        facts.push(`${event.tokens} tokens`);
-    if (event.toolCount !== undefined)
-        facts.push(`${event.toolCount} tools`);
-    if (event.currentTool)
-        facts.push(`tool ${event.currentTool}${event.currentToolDurationMs !== undefined ? ` ${Math.floor(Math.max(0, event.currentToolDurationMs) / 1000)}s` : ""}`);
-    if (event.currentPath)
-        facts.push(`path ${event.currentPath}`);
-    return facts.length > 0 ? facts.join(" | ") : undefined;
-}
 export function formatControlNoticeMessage(event) {
     const runTarget = event.runId;
     if (event.reason === "completion_guard") {
@@ -240,19 +210,6 @@ export function formatControlNoticeMessage(event) {
     }
     const nudgeMessage = "What are you blocked on? Reply with the smallest next step or ask for a decision.";
     const nudgeCommand = `subagent({ action: "resume", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: "${nudgeMessage}" })`;
-    if (event.type === "active_long_running") {
-        const facts = formatLongRunningFacts(event);
-        return [
-            `Subagent active but long-running: ${event.agent}`,
-            `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
-            `Signal: ${event.message}`,
-            ...(facts ? [`Facts: ${facts}`] : []),
-            "Hint: Inspect status, then nudge if the work seems stuck. Live async nudges interrupt the child before sending the follow-up.",
-            `Nudge: ${nudgeCommand}`,
-            `Status: subagent({ action: "status", id: "${runTarget}" })`,
-            `Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
-        ].join("\n");
-    }
     return [
         `Subagent needs attention: ${event.agent}`,
         `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,

@@ -321,7 +321,7 @@ describe(
         const active = result(
           "active",
           progress("active", {
-            activityState: "active_long_running",
+            activityState: "needs_attention",
             durableAttentionReasons: ["context_pressure"],
           }),
         );
@@ -427,7 +427,7 @@ describe(
           assert.equal(mixed.steps?.[0]?.idleEpisodeId, "requester-idle");
           assert.deepEqual(mixed.steps?.[0]?.durableAttentionReasons, ["tool_failures"]);
           assert.deepEqual(mixed.steps?.[0]?.compaction, { reason: "manual" });
-          assert.equal(mixed.steps?.[1]?.activityState, "active_long_running");
+          assert.equal(mixed.steps?.[1]?.activityState, "needs_attention");
           assert.equal(mixed.steps?.[1]?.idleEpisodeId, "live-idle");
           assert.deepEqual(mixed.steps?.[1]?.durableAttentionReasons, ["context_pressure"]);
           assert.deepEqual(mixed.steps?.[1]?.compaction, { reason: "threshold" });

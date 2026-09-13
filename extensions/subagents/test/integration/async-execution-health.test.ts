@@ -18,6 +18,7 @@ import {
   transitionLifecycleStatus,
   withLifecycleContinuation,
 } from "../../src/runs/shared/lifecycle-state.ts";
+import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
 import {
   ASYNC_DIR,
   type AsyncResultPayload,
@@ -97,11 +98,8 @@ describe("async execution health", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
-        activeNoticeAfterTurns: 999_999,
-        activeNoticeAfterMs: 999_999,
-        activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
-        notifyOn: ["active_long_running", "needs_attention"],
+        notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
     });
@@ -227,11 +225,8 @@ describe("async execution health", () => {
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 2_000,
-          activeNoticeAfterTurns: 999_999,
-          activeNoticeAfterMs: 999_999,
-          activeNoticeAfterTokens: 999_999,
           failedToolAttemptsBeforeAttention: 3,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
           notifyChannels: ["event", "async"],
         },
       });
@@ -322,7 +317,7 @@ describe("async execution health", () => {
     },
   );
 
-  it("background compaction suppresses idle but preserves long-running and post-operation stall detection", async () => {
+  it("background compaction suppresses idle but preserves post-operation stall detection", async () => {
     for (const variant of [
       { name: "normal", reason: "manual" as const, options: {} },
       { name: "abort", reason: "threshold" as const, options: { aborted: true, willRetry: true } },
@@ -372,27 +367,32 @@ describe("async execution health", () => {
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 200,
-          activeNoticeAfterMs: 200,
-          activeNoticeAfterTurns: 999_999,
-          activeNoticeAfterTokens: 999_999,
           failedToolAttemptsBeforeAttention: 3,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
           notifyChannels: ["event", "async"],
         },
       });
       await waitForMarker(started);
-      const activeObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
-        const hasActive = eventText.includes('"type":"active_long_running"');
-        const hasIdle = eventText.includes('"reason":"idle"');
+      const compacting = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.steps?.[0]?.compaction?.reason === variant.reason,
+        `compaction ${variant.name}`,
+      );
+      assert.equal(compacting.activityState, undefined);
+      const monitorOpportunityAt =
+        Date.now() +
+        Math.max(
+          ACTIVITY_MONITOR_INTERVAL_MS * 2,
+          scaleTestTimeout(ACTIVITY_MONITOR_INTERVAL_MS * 2),
+        );
+      const monitorObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
+        assert.doesNotMatch(eventText, /"reason":"idle"/);
         return (
-          hasActive &&
-          !hasIdle &&
-          status.activityState === "active_long_running" &&
-          status.steps?.[0]?.activityState === "active_long_running" &&
-          status.steps?.[0]?.compaction?.reason === variant.reason
+          status.steps?.[0]?.compaction?.reason === variant.reason &&
+          Date.now() >= monitorOpportunityAt
         );
       });
-      assert.equal(activeObserved.status.steps?.[0]?.compaction?.reason, variant.reason);
+      assert.doesNotMatch(monitorObserved.eventText, /"reason":"idle"/);
       fs.writeFileSync(release, "", "utf-8");
 
       const idleObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
@@ -412,7 +412,7 @@ describe("async execution health", () => {
       ) as AsyncStatusPayload;
       assert.equal(payload.success, true);
       assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
-      assert.equal(finalStatus.steps?.[0]?.activityState, "active_long_running");
+      assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
     }
   });
 
@@ -482,10 +482,7 @@ describe("async execution health", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
-        activeNoticeAfterTurns: 999_999,
-        activeNoticeAfterMs: 999_999,
-        activeNoticeAfterTokens: 999_999,
-        notifyOn: ["active_long_running", "needs_attention"],
+        notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
     });
@@ -787,10 +784,7 @@ describe("async execution health", () => {
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 200,
-          activeNoticeAfterTurns: 999_999,
-          activeNoticeAfterMs: 999_999,
-          activeNoticeAfterTokens: 999_999,
-          notifyOn: ["active_long_running", "needs_attention"],
+          notifyOn: ["needs_attention"],
           notifyChannels: ["event", "async"],
         },
       });
@@ -943,11 +937,8 @@ describe("async execution health", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
-        activeNoticeAfterTurns: 999_999,
-        activeNoticeAfterMs: 999_999,
-        activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
-        notifyOn: ["active_long_running", "needs_attention"],
+        notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
     });
@@ -1008,7 +999,7 @@ describe("async execution health", () => {
       maxSubagentDepth: 2,
       controlConfig: {
         enabled: true,
-        notifyOn: ["active_long_running", "needs_attention"],
+        notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
     });
@@ -1092,10 +1083,7 @@ describe("async execution health", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs,
-        activeNoticeAfterTurns: 999_999,
-        activeNoticeAfterMs: 999_999,
-        activeNoticeAfterTokens: 999_999,
-        notifyOn: ["active_long_running", "needs_attention"],
+        notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
     });

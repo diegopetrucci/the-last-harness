@@ -20,6 +20,10 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 
 import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
 import {
+  formatSubagentExtensionConfigMigration,
+  migrateSubagentExtensionConfig,
+} from "./lib/tlh-install-subagents.mjs";
+import {
   assignOptionValue,
   defaultTlhAgentDir,
   defaultTlhBinDir,
@@ -665,6 +669,15 @@ function printPackageUpdateDryRun(piCommand: string, args: Pick<CliArgs, "agentD
   );
 }
 
+function reportSubagentExtensionConfigMigration(
+  args: Pick<CliArgs, "dryRun" | "quiet">,
+  result: ReturnType<typeof migrateSubagentExtensionConfig>,
+): void {
+  if (result.warning) return console.error(`warning: ${result.warning}`);
+  const message = formatSubagentExtensionConfigMigration(result, args);
+  if (message && !args.quiet) console.log(message);
+}
+
 function runPackageUpdate(args: CliArgs): void {
   assertPackageUpdateTargetSafe(args.agentDir);
   assertPackageUpdateArgs(args);
@@ -674,6 +687,10 @@ function runPackageUpdate(args: CliArgs): void {
   const piCommand = join(dirname(args.agentDir), "runtime", "bin", "pi");
   if (args.dryRun) {
     printPackageUpdateDryRun(piCommand, args);
+    reportSubagentExtensionConfigMigration(
+      args,
+      migrateSubagentExtensionConfig({ agentDir: args.agentDir, dryRun: true }),
+    );
     return;
   }
   if (!existsSync(piCommand)) {
@@ -703,6 +720,10 @@ function runPackageUpdate(args: CliArgs): void {
     process.exitCode = exitCode;
     return;
   }
+  reportSubagentExtensionConfigMigration(
+    args,
+    migrateSubagentExtensionConfig({ agentDir: args.agentDir }),
+  );
   process.exitCode = 0;
 }
 
@@ -763,6 +784,10 @@ async function main(): Promise<void> {
 
   if (args.dryRun) {
     printDryRun(plan, installerArgs, childEnv);
+    reportSubagentExtensionConfigMigration(
+      args,
+      migrateSubagentExtensionConfig({ agentDir: args.agentDir, dryRun: true }),
+    );
     return;
   }
   if (isTruthyEnv(process.env.PI_OFFLINE)) {
@@ -786,7 +811,14 @@ async function main(): Promise<void> {
     if (result.error) {
       throw result.error;
     }
-    process.exitCode = result.status ?? (result.signal ? 1 : 0);
+    const exitCode = result.status ?? (result.signal ? 1 : 0);
+    process.exitCode = exitCode;
+    if (exitCode === 0) {
+      reportSubagentExtensionConfigMigration(
+        args,
+        migrateSubagentExtensionConfig({ agentDir: args.agentDir }),
+      );
+    }
   } finally {
     if (temp?.dir) {
       rmSync(temp.dir, { recursive: true, force: true });

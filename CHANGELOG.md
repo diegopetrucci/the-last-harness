@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 - Installing / updating TLH should be faster.
 - Updated default models for the oracle, contrarian, and code reviewer.
 
+### Removed
+
+- Retired the non-waking `active_long_running` supervision bookkeeping and `activeNoticeAfterMs`/`activeNoticeAfterTurns`/`activeNoticeAfterTokens` controls: they had no delivery path and did not affect prompt-cache heartbeat. `needs_attention` synthetic wakeups remain actionable and can wake an idle parent, thereby ending or disarming a heartbeat gap. Install/update and `tlh doctor --repair` now remove the retired keys and notify entries and enforce `control.needsAttentionAfterMs: 180000` in valid isolated profiles, preserving unrelated config and backing up changed configs; dry runs remain non-mutating, and later installs/updates re-enforce the managed value after rollback or manual customization.
+
 ### Fixed
 
 - Async subagent idle recovery now clears current health in foreground/background widgets without masking durable warnings or sibling health, while preserving episode-aware notice delivery and legacy status compatibility.

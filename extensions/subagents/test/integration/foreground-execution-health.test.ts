@@ -26,10 +26,7 @@ type ControlEvent = NonNullable<RunSyncResult["controlEvents"]>[number];
 const IDLE_CONTROL_CONFIG = {
   enabled: true,
   needsAttentionAfterMs: 200,
-  activeNoticeAfterMs: 999_999,
-  activeNoticeAfterTurns: 999_999,
-  activeNoticeAfterTokens: 999_999,
-  notifyOn: ["active_long_running", "needs_attention"],
+  notifyOn: ["needs_attention"],
 } as const;
 
 describe(

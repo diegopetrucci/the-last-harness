@@ -649,9 +649,7 @@ export function createBackgroundRunStatusOwner(
       (step) => step.activityState === "needs_attention",
     )
       ? "needs_attention"
-      : statusPayload.steps.some((step) => step.activityState === "active_long_running")
-        ? "active_long_running"
-        : undefined;
+      : undefined;
     const changed = nextRunState !== currentActivityState;
     currentActivityState = nextRunState;
     statusPayload.activityState = nextRunState;
@@ -677,7 +675,6 @@ export function createBackgroundRunStatusOwner(
       projection: state.activityState,
       idleEpisodeStarted: false,
       idleEpisodeEnded: false,
-      activeLongRunningNotice: false,
       idleAttentionEligible: false,
     };
   }
