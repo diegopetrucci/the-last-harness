@@ -29,6 +29,8 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze([
   "steer",
 ]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
+export const STAFF_DEVELOPER_ROUTING_FEATURE = "staff-developer-routing";
+export const STAFF_DEVELOPER_SUBAGENT = "staff-developer";
 
 // Provider-aware model policy attaches generated fallback candidates to an
 // in-process dispatch object without exposing them as caller-facing tool
@@ -38,7 +40,7 @@ export const PROVIDER_AWARE_FALLBACK_MODELS = Symbol.for("tlh.providerAwareFallb
 
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
 const ALLOWED_SUBAGENTS_BY_ID = new Map(
-  ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]),
+  [...ALLOWED_SUBAGENTS, STAFF_DEVELOPER_SUBAGENT].map((agent) => [agent.toLowerCase(), agent]),
 );
 
 const EMBEDDED_SUBAGENT_TARGET_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
@@ -99,8 +101,12 @@ export function readEnabledExperimentalFeatures(config) {
   return normalizeEnabledExperimentalFeatures(config.enabledFeatures);
 }
 
-export function allowedSubagentsForExperimentalConfig(_config) {
-  return DEFAULT_ALLOWED_SUBAGENTS;
+export function allowedSubagentsForExperimentalConfig(config) {
+  const enabledFeatures = readEnabledExperimentalFeatures(config);
+  if (!enabledFeatures.includes(STAFF_DEVELOPER_ROUTING_FEATURE)) {
+    return DEFAULT_ALLOWED_SUBAGENTS;
+  }
+  return Object.freeze([...DEFAULT_ALLOWED_SUBAGENTS, STAFF_DEVELOPER_SUBAGENT]);
 }
 
 function normalizeAllowedSubagent(agent) {

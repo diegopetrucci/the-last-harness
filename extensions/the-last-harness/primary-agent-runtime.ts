@@ -60,10 +60,11 @@ import {
   isSubagentResumeAction,
   isSubagentSteerAction,
   primaryToolAllowlist,
+  bugHunterImplementationDelegationReason,
+  productImplementationDelegationReason,
   rushDeveloperDelegationReason,
   rushResumeDelegationReason,
   rushSteerDelegationReason,
-  subagentCallTargetsAgent,
 } from "./primary-agent-runtime-delegation.js";
 import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -84,6 +85,10 @@ import {
   TLH_PACKAGE_NAME,
 } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import {
+  disabledStaffControlBlockReason,
+  rerouteUnavailableStaffTargets,
+} from "./primary-agent-runtime-staff-routing.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   followsOpenrouterSession,
@@ -631,6 +636,7 @@ function createTlhPrimaryAgentRuntime(
         subagentMetadata,
         primaryEnabled,
         projectAgentLifecycle.projectAgentGuidanceSnapshot(),
+        settings.tlh?.experimental,
       ),
       // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
@@ -1601,30 +1607,16 @@ function createTlhPrimaryAgentRuntime(
       if (event.toolName !== "subagent") {
         return undefined;
       }
+      const staffControlReason = disabledStaffControlBlockReason(event.input, ctx.cwd);
+      if (staffControlReason) return { block: true, reason: staffControlReason };
+      const settings = getTlhGlobalSettings(ctx.cwd);
       const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
       const projectDefaults = activeProjectDefaultsForCwd(ctx.cwd);
       const subagentProjectDefaults = projectDefaults?.subagents;
-      applyProviderAwareModelsToNonProjectTargets(
-        event.input,
-        subagentsByName,
-        getUnfilteredAvailableModels(ctx.modelRegistry),
-        ctx.model?.provider,
-        ctx.model,
-        {
-          agentOverrides: subagentOverrides,
-          projectDefaults: subagentProjectDefaults,
-          onWarning: ({ agent, message, source }) => {
-            if (source === "project-default") {
-              warnProjectDefaultsOnce(ctx, projectDefaults?.projectRoot, agent, message);
-              return;
-            }
-            warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message);
-          },
-        },
-      );
+      const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
-      const allowedSubagents = allowedSubagentsForExperimentalConfig();
+      const allowedSubagents = allowedSubagentsForExperimentalConfig(settings.tlh?.experimental);
       const retainedProjectAction = await retainedProjectActionLookup(event.input);
       const retainedProjectTargets = retainedProjectAction.targetNames;
       const projectControlRequest =
@@ -1684,8 +1676,34 @@ function createTlhPrimaryAgentRuntime(
           reason: `TLH ${selection} may not control a project-agent run; resume/steer is reserved for the architect primary agent. Target(s): ${retainedProjectLabel}.`,
         };
       }
-      if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
-        return { block: true, reason: rushDeveloperDelegationReason() };
+      const implementationTarget = collectSubagentCallTargetsMatching(event.input, (target) => {
+        const normalized = target.trim().toLowerCase();
+        return normalized === "developer" || normalized === "staff-developer";
+      })[0];
+      const staffImplementationTarget = collectSubagentCallTargetsMatching(
+        event.input,
+        (target) => target.trim().toLowerCase() === "staff-developer",
+      )[0];
+      if (selection === "rush" && implementationTarget) {
+        return { block: true, reason: rushDeveloperDelegationReason(implementationTarget) };
+      }
+      if (selection === "product") {
+        const productForbiddenTarget = collectSubagentCallTargetsMatching(
+          event.input,
+          (target) => target.trim().toLowerCase() === "staff-developer",
+        )[0];
+        if (productForbiddenTarget) {
+          return {
+            block: true,
+            reason: productImplementationDelegationReason(productForbiddenTarget),
+          };
+        }
+      }
+      if (selection === "bug-hunter" && staffImplementationTarget) {
+        return {
+          block: true,
+          reason: bugHunterImplementationDelegationReason(staffImplementationTarget),
+        };
       }
       const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
       if (embeddedBlockReason) {
@@ -1729,6 +1747,45 @@ function createTlhPrimaryAgentRuntime(
           };
         }
       }
+
+      // A staff role may run only when its model is actually resolvable in the
+      // current runtime registry. This check intentionally happens after every
+      // role/allowlist guard and before provider-aware model injection, so a
+      // disabled or unauthorized request cannot be rewritten on its way out.
+      rerouteUnavailableStaffTargets(
+        event.input,
+        subagentsByName.get("staff-developer"),
+        availableModels,
+        ctx.model?.provider,
+        subagentOverrides.get("staff-developer"),
+        subagentProjectDefaults?.["staff-developer"],
+        (configuredModel, reason) => {
+          const modelLabel = configuredModel ? ` Model: ${configuredModel}.` : "";
+          warnOnce(
+            ctx,
+            `staff-developer-downgrade-${configuredModel ?? "none"}-${ctx.model?.provider ?? "unknown"}-${reason}`,
+            `TLH staff-developer routing downgraded to developer.${modelLabel} ${reason}. The run will execute as developer; staff-specific model and fallback settings were removed.`,
+          );
+        },
+      );
+      applyProviderAwareModelsToNonProjectTargets(
+        event.input,
+        subagentsByName,
+        availableModels,
+        ctx.model?.provider,
+        ctx.model,
+        {
+          agentOverrides: subagentOverrides,
+          projectDefaults: subagentProjectDefaults,
+          onWarning: ({ agent, message, source }) => {
+            if (source === "project-default") {
+              warnProjectDefaultsOnce(ctx, projectDefaults?.projectRoot, agent, message);
+              return;
+            }
+            warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message);
+          },
+        },
+      );
 
       // OpenRouter is the one provider-specific project-agent exception: an
       // omitted model follows the live session model. All other providers

@@ -114,6 +114,22 @@ function applyGeneratedProviderFallback(input: Record<string, unknown>): void {
   assert.equal(Object.hasOwn(input, "fallbackModels"), false);
 }
 
+function staffDeveloperAgent(overrides: Partial<ReturnType<typeof makeAgent>> = {}) {
+  return makeAgent("staff-developer", {
+    description: "Staff developer test agent",
+    model: "openai-codex/gpt-6-astra",
+    fallbackModels: ["openai-codex/gpt-5.6-luna"],
+    ...overrides,
+  });
+}
+
+function staffDeveloperAvailableModels() {
+  return [
+    makeModel("gpt-6-astra", { provider: "openai-codex" }),
+    makeModel("gpt-5.6-luna", { provider: "openai-codex" }),
+  ];
+}
+
 function providerErrorResponse(model: string) {
   return {
     jsonl: [
@@ -129,6 +145,17 @@ function providerErrorResponse(model: string) {
       },
     ],
     exitCode: 0,
+  };
+}
+
+function staffDeveloperSuccessResponse(message: string) {
+  return {
+    jsonl: [
+      events.toolStart("edit", { path: "approved-ticket.ts" }),
+      events.toolEnd("edit"),
+      events.toolResult("edit", "updated"),
+      events.assistantMessage(message),
+    ],
   };
 }
 
@@ -412,6 +439,78 @@ describe("subagent executor dispatch wiring", () => {
       "anthropic/fallback:high",
     ]);
     assert.equal(mockPi.callCount(), 2);
+  });
+
+  it("executes staff-developer through direct-provider fallback in foreground and parallel paths", async () => {
+    const availableModels = staffDeveloperAvailableModels();
+    const discoverAgents = () => ({
+      agents: [staffDeveloperAgent()],
+      projectAgentsDir: null,
+    });
+
+    for (const [label, params] of [
+      ["single", { agent: "staff-developer", task: "Implement the approved ticket" }],
+      [
+        "parallel",
+        { tasks: [{ agent: "staff-developer", task: "Implement the approved ticket" }] },
+      ],
+    ] as const) {
+      mockPi.reset();
+      mockPi.onCall(providerErrorResponse("openai-codex/gpt-6-astra"));
+      mockPi.onCall(staffDeveloperSuccessResponse(`Recovered staff ${label} dispatch`));
+      const result = await makeExecutorWithDiscoverAgents(discoverAgents).execute(
+        `staff-${label}-fallback`,
+        params,
+        new AbortController().signal,
+        undefined,
+        providerAwareContext(tempDir, availableModels),
+      );
+
+      assert.equal(result.isError, undefined, `${label}: ${JSON.stringify(result)}`);
+      assert.deepEqual(
+        result.details?.results?.[0]?.attemptedModels,
+        ["openai-codex/gpt-6-astra", "openai-codex/gpt-5.6-luna"],
+        label,
+      );
+      assert.equal(mockPi.callCount(), 2, label);
+    }
+  });
+
+  it("executes an explicitly qualified staff-developer through OpenRouter async parallel dispatch", async () => {
+    const availableModels = [makeModel("openai/gpt-6-astra", { provider: "openrouter" })];
+    const discoverAgents = () => ({
+      agents: [
+        staffDeveloperAgent({
+          model: "openrouter/openai/gpt-6-astra",
+          fallbackModels: [],
+        }),
+      ],
+      projectAgentsDir: null,
+    });
+    mockPi.reset();
+    mockPi.onCall(staffDeveloperSuccessResponse("OpenRouter staff dispatch complete"));
+
+    const context = providerAwareContext(tempDir, availableModels);
+    context.model = makeModel("openai/gpt-6-astra", { provider: "openrouter" });
+    const result = await makeExecutorWithDiscoverAgents(discoverAgents).execute(
+      "staff-openrouter-async",
+      {
+        tasks: [{ agent: "staff-developer", task: "Implement the approved ticket" }],
+        async: true,
+      },
+      new AbortController().signal,
+      undefined,
+      context,
+    );
+
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(result.details?.mode, "parallel");
+    assert.ok(result.details?.asyncId, "expected an async staff dispatch id");
+    const payload = await readAsyncPayload(result.details.asyncId);
+    assert.equal(payload.success, true, JSON.stringify(payload));
+    assert.equal(payload.mode, "parallel");
+    assert.equal(payload.results.length, 1);
+    assert.equal(mockPi.callCount(), 1);
   });
 
   it("accepts a model-defaults-mutated input without retired-control rejection", async () => {

@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { STAFF_DEVELOPER_ROUTING_FEATURE } from "../extensions/the-last-harness-subagent-safety.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
@@ -210,6 +212,22 @@ test("primary prompt exposes stable minor-agent delegation markers", () => {
   assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
   assert.match(primaryPrompt, USER_SCOPE_MARKER);
   assert.match(primaryPrompt, /- contrarian:/i);
+});
+
+test("staff-developer prompt guidance follows the experimental allowlist", () => {
+  const architect = loadPrimaryAgents().get("architect");
+  const subagents = loadSubagentMetadata();
+  assert.ok(architect, "Architect primary prompt should load");
+
+  const disabledPrompt = buildTlhSystemPrompt(architect, subagents, true, undefined, {
+    enabledFeatures: [],
+  });
+  const enabledPrompt = buildTlhSystemPrompt(architect, subagents, true, undefined, {
+    enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE],
+  });
+
+  assert.doesNotMatch(disabledPrompt, /^- staff-developer:/m);
+  assert.match(enabledPrompt, /^- staff-developer:/m);
 });
 
 test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {

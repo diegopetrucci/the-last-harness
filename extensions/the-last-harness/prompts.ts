@@ -20,6 +20,7 @@ import type {
   TlhModelDefault,
   TlhModelDefaultsSource,
   TlhPrimaryAgentSelection,
+  TlhExperimentalConfig,
 } from "./types.js";
 
 const SAFE_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -527,8 +528,9 @@ function formatAllowedSubagents(
   primary: AgentPrompt | undefined,
   subagents: SubagentMetadata[],
   options: { neutral?: boolean } = {},
+  experimentalConfig?: TlhExperimentalConfig,
 ): string {
-  const allowed = new Set(allowedSubagentsForExperimentalConfig());
+  const allowed = new Set(allowedSubagentsForExperimentalConfig(experimentalConfig));
   const lines = subagents
     .filter((agent) => allowed.has(agent.name))
     .map((agent) => `- ${agent.name}: ${agent.description}`);
@@ -551,6 +553,7 @@ export function buildTlhSystemPrompt(
   subagents: SubagentMetadata[],
   primaryEnabled: boolean,
   projectAgentGuidanceInventory?: ProjectAgentGuidanceInventory,
+  experimentalConfig?: TlhExperimentalConfig,
 ): string {
   const prompts = [HARNESS_PROMPT.trim()];
   if (primaryEnabled) {
@@ -558,11 +561,13 @@ export function buildTlhSystemPrompt(
       prompts.push(primary.systemPrompt.trim());
       prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
     }
-    prompts.push(formatAllowedSubagents(primary, subagents));
+    prompts.push(formatAllowedSubagents(primary, subagents, {}, experimentalConfig));
   } else {
     // Disabled mode retains TLH's infrastructure guidance without injecting a
     // primary-agent persona or its model/thinking/experimental defaults.
-    prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true }));
+    prompts.push(
+      formatAllowedSubagents(undefined, subagents, { neutral: true }, experimentalConfig),
+    );
     prompts.push(REVIEW_HANDOFF_PROMPT.trim());
   }
   return prompts.filter(Boolean).join("\n\n");

@@ -21,6 +21,7 @@ export type ProjectSubagentRoleName =
   | "code-reviewer"
   | "contrarian"
   | "developer"
+  | "staff-developer"
   | "test-runner"
   | "diff-summarizer"
   | "librarian"
@@ -38,6 +39,7 @@ const PROJECT_SUBAGENT_ROLE_NAMES: ReadonlySet<string> = new Set([
   "code-reviewer",
   "contrarian",
   "developer",
+  "staff-developer",
   "test-runner",
   "diff-summarizer",
   "librarian",

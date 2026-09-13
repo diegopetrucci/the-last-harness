@@ -82,8 +82,8 @@ export function createModelDefaultsTestContext() {
       },
       {
         provider: "xai",
-        models: [{ provider: "xai", id: "grok-4" }],
-        effort: "high",
+        models: [{ provider: "xai", id: "grok-4.6" }],
+        effort: "low",
       },
       { provider: "openrouter", effort: "medium" },
     ],
@@ -236,6 +236,7 @@ export function createModelDefaultsTestContext() {
 
   const openaiAvailable = [{ provider: "openai", id: "gpt-5.6" }];
 
+  const developerXaiAvailable = [{ provider: "xai", id: "grok-4.6" }];
   const xaiAvailable = [{ provider: "xai", id: "grok-4" }];
 
   const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({
@@ -264,6 +265,7 @@ export function createModelDefaultsTestContext() {
     codeReviewer,
     codexAvailable,
     developer,
+    developerXaiAvailable,
     findAvailableProviderModel,
     formatProviderModelReference,
     getProviderAwareFallbackModels,

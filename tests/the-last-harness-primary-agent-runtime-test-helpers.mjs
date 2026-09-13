@@ -237,6 +237,56 @@ export function contrarianMetadata() {
   };
 }
 
+export function writerMetadata(name, defaults) {
+  return {
+    name,
+    description: `Test ${name} writer`,
+    tools: ["read", "write", "edit", "grep", "find", "ls", "bash", "contact_supervisor"],
+    systemPrompt: "test",
+    filePath: `agents/subagents/${name}.md`,
+    tlhModelDefaults: defaults,
+    tlhModelDefaultsSource: "frontmatter",
+    systemPromptMode: "replace",
+    inheritProjectContext: true,
+    inheritSkills: false,
+    acceptanceRole: "writer",
+  };
+}
+
+export function developerMetadata() {
+  return writerMetadata("developer", [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "xai", models: [{ provider: "xai", id: "grok-4.6" }], effort: "low" },
+    { provider: "openrouter", effort: "medium" },
+  ]);
+}
+
+export function staffDeveloperMetadata() {
+  return writerMetadata("staff-developer", [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-6-astra" }],
+      effort: "low",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "medium",
+    },
+    { provider: "xai", models: [{ provider: "xai", id: "grok-4.6" }], effort: "medium" },
+    { provider: "openrouter", effort: "medium" },
+  ]);
+}
+
 export function rushLikePrimary(name = "architect") {
   return createPrimaryPrompt(name, {
     tlhModelDefaults: [

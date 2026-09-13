@@ -1,4 +1,5 @@
 import { TRACE_POLICY_MCP_FIXTURES } from "./trace-policy-mcp-fixtures.mjs";
+import { TRACE_POLICY_STAFF_ROUTING_FIXTURES } from "./trace-policy-staff-routing-fixtures.mjs";
 
 export const TRACE_POLICY_FIXTURES = [
   {
@@ -1914,4 +1915,5 @@ mutation CreateIssue { createIssue { issue { id } } }'`,
       ],
     },
   },
+  ...TRACE_POLICY_STAFF_ROUTING_FIXTURES,
 ];

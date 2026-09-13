@@ -4,6 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added the opt-in `staff-developer` implementation tier behind `/experimental enable staff-developer-routing`. The architect now has a documented semantic routing rubric with a conservative developer default, auditable worker reasons and staff-ticket counts, renewed approval for upgrades, downgrade announcements, a three-hour role ceiling, pre-launch downgrade to `developer` when the staff model is unavailable, and an explicit model override requirement on OpenRouter.
+
+### Changed
+
+- Updated the bundled `developer` xAI default to low effort on Grok 4.6 and documented the date-sensitive Intelligence Index benchmark-selection guidance for developer and staff-developer tiers. Launch telemetry now reports the staff model/effort and routing-feature state.
+
 ## [0.41.0] - 2026-09-13
 
 ### What's new

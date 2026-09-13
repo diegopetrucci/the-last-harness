@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ALLOWED_SUBAGENTS,
+  STAFF_DEVELOPER_ROUTING_FEATURE,
   SUBAGENT_CHILD_ENV,
   allowedSubagentsForExperimentalConfig,
   isEmbeddedSubagentTarget,
@@ -217,6 +219,17 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes", 
   };
   assertAllowed(allowedDeveloperResume, { resumeTargetAgent: " Developer " });
   assert.equal(allowedDeveloperResume.agentScope, "user");
+});
+
+test("staff-developer remains absent from the stable default allowlist", () => {
+  assert.equal(ALLOWED_SUBAGENTS.includes("staff-developer"), false);
+  assert.deepEqual(
+    allowedSubagentsForExperimentalConfig({ enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE] }),
+    [...ALLOWED_SUBAGENTS, "staff-developer"],
+  );
+
+  const staffTarget = { agent: "staff-developer", task: "implement the approved ticket" };
+  assert.match(validateSubagentToolInput(staffTarget), /Disallowed target\(s\): staff-developer/);
 });
 
 test("validateSubagentToolInput rejects disallowed agents", () => {

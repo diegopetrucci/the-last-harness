@@ -38,6 +38,7 @@ export type SubagentRoleName =
   | "code-reviewer"
   | "contrarian"
   | "developer"
+  | "staff-developer"
   | "test-runner"
   | "diff-summarizer"
   | "librarian"
@@ -170,6 +171,7 @@ const VALID_SUBAGENT_ROLES = new Set<SubagentRoleName>([
   "code-reviewer",
   "contrarian",
   "developer",
+  "staff-developer",
   "test-runner",
   "diff-summarizer",
   "librarian",

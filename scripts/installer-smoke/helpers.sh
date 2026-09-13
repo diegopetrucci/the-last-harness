@@ -537,7 +537,7 @@ make_fake_remote_stage1_support_root() {
   done
 
   local prompt
-  for prompt in developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md; do
+  for prompt in developer.md staff-developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md; do
     mkdir -p "${root}/agents/subagents"
     cp "${ROOT_DIR}/agents/subagents/${prompt}" "${root}/agents/subagents/${prompt}"
   done
@@ -556,6 +556,7 @@ for (const [label, targetPath] of [
   ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
   ["optional_update_present", join(scriptDir, "tlh-update.mjs")],
   ["developer_prompt_present", join(repoRoot, "agents", "subagents", "developer.md")],
+  ["staff_developer_prompt_present", join(repoRoot, "agents", "subagents", "staff-developer.md")],
 ]) {
   console.log(`${label}=${existsSync(targetPath)}`);
 }

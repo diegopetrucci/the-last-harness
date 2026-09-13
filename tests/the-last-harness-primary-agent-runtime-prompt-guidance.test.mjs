@@ -7,6 +7,7 @@ import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import { STAFF_DEVELOPER_ROUTING_FEATURE } from "../extensions/the-last-harness-subagent-safety.mjs";
 import {
   createIsolatedProfileFixture,
   createSyntheticGitWorktree,
@@ -933,6 +934,53 @@ test("disabled primary mode keeps neutral TLH delegation guidance without the ar
     assert.match(disabledPrompt.systemPrompt, /- test-runner: test-runner description sentinel/);
     assert.doesNotMatch(disabledPrompt.systemPrompt, /architect persona sentinel/);
     assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Experimental Feature:/);
+  });
+});
+
+test("before_agent_start gates staff-developer guidance behind the experimental setting", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const primaryAgents = selectablePrimaryAgents();
+  const subagentMetadata = [
+    { name: "developer", description: "developer description sentinel" },
+    { name: "staff-developer", description: "staff-developer description sentinel" },
+  ];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { beforeAgentStart } = registerRuntimeHarness({ primaryAgents, subagentMetadata });
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "architect" },
+        },
+      ],
+      undefined,
+      { cwd: fixture.cwd },
+    );
+
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
+    );
+    const offPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(offPrompt.systemPrompt, /- developer: developer description sentinel/);
+    assert.doesNotMatch(offPrompt.systemPrompt, /^- staff-developer:/m);
+
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify(
+        { tlh: { experimental: { enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE] } } },
+        null,
+        2,
+      )}\n`,
+    );
+    const onPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(onPrompt.systemPrompt, /- developer: developer description sentinel/);
+    assert.match(
+      onPrompt.systemPrompt,
+      /^- staff-developer: staff-developer description sentinel$/m,
+    );
   });
 });
 

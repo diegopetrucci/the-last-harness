@@ -66,6 +66,7 @@ import {
   type SubagentParamsLike,
 } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
+import { registerSubagentControlTargetLookup } from "../runs/background/control-target-lookup.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
@@ -406,6 +407,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       clear: () => {},
     },
   };
+  const unregisterControlTargetLookup = registerSubagentControlTargetLookup(state, {
+    asyncDirRoot: ASYNC_DIR,
+    resultsDir: RESULTS_DIR,
+  });
   const toolResultBridge = createSubagentToolResultBridge();
 
   const toggleLiveDetail = (ctx: ExtensionContext): void => {
@@ -447,6 +452,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   primeExistingResults();
 
   const runtimeCleanup = () => {
+    unregisterControlTargetLookup();
     // Disarm heartbeat gap (with summary) on extension reload so any active gap is
     // closed before the new extension instance takes over.  The session is still
     // active at this point so the session entry CAN be emitted.

@@ -35,13 +35,14 @@ function listBundledMarkdownFiles(directory) {
 function readBundledDefinitions() {
   return listBundledMarkdownFiles(bundledAgentsRoot).map((filePath) => {
     const content = readFileSync(filePath, "utf8");
-    const { frontmatter } = parseFrontmatter(content);
+    const { frontmatter, body } = parseFrontmatter(content);
     return {
       filePath,
       relativePath: relative(bundledAgentsRoot, filePath),
       name: frontmatter.name,
       tools: frontmatter.tools,
       acceptanceRole: frontmatter.acceptanceRole,
+      body,
     };
   });
 }
@@ -101,8 +102,8 @@ test("all bundled minor agents declare acceptance roles through runtime discover
   const definitions = readBundledDefinitions();
   assert.equal(
     definitions.length,
-    9,
-    "the bundled minor-agent inventory must cover all nine roles",
+    10,
+    "the bundled minor-agent inventory must cover all ten roles (including opt-in staff-developer)",
   );
 
   const names = definitions.map((definition) => definition.name);
@@ -116,6 +117,21 @@ test("all bundled minor agents declare acceptance roles through runtime discover
     names.includes("developer"),
     "the bundled minor-agent inventory must include developer",
   );
+  const staffDeveloper = definitions.find((definition) => definition.name === "staff-developer");
+  assert.ok(staffDeveloper, "the bundled minor-agent inventory must include staff-developer");
+  assert.equal(staffDeveloper.acceptanceRole, "writer");
+  for (const contract of [
+    "exactly one approved architect `tk` ticket",
+    "Keep one writer per cwd",
+    "Do not delegate, launch subagents, or create nested implementation work",
+    "Do not create commits",
+    "contact_supervisor",
+    "high-ROI tests for meaningful behavior, regressions, edge cases, error handling, or security-sensitive logic",
+    "Avoid low-value tests that merely restate implementation details",
+    "ticket defines a specific validation scope",
+  ]) {
+    assert.ok(staffDeveloper.body.includes(contract), `staff-developer must include: ${contract}`);
+  }
 
   for (const definition of definitions) {
     assert.ok(
@@ -128,7 +144,7 @@ test("all bundled minor agents declare acceptance roles through runtime discover
     );
     assert.equal(
       definition.acceptanceRole,
-      definition.name === "developer" ? "writer" : "read-only",
+      ["developer", "staff-developer"].includes(definition.name) ? "writer" : "read-only",
       `${definition.name} must use its assigned acceptance role`,
     );
   }

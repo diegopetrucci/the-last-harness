@@ -165,6 +165,11 @@ const developerSubagent = {
       models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
       effort: "medium",
     },
+    {
+      provider: "xai",
+      models: [{ provider: "xai", id: "grok-4.6" }],
+      effort: "low",
+    },
     { provider: "openrouter", effort: "medium" },
   ],
 };
@@ -391,6 +396,19 @@ test("subagent thinking-only drift with anthropic provider", () => {
   assert.equal(entry.packaged.thinking, "medium");
 });
 
+test("subagent model-only drift with xAI provider reports the low Grok default", () => {
+  const settings = {
+    subagents: { agentOverrides: { developer: { model: "xai/grok-4.6" } } },
+  };
+  const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "xai");
+  assert.equal(entry.role, "subagent");
+  assert.equal(entry.name, "developer");
+  assert.deepEqual(entry.override, { model: "xai/grok-4.6" });
+  assert.equal(entry.packaged.model, "xai/grok-4.6");
+  assert.equal(entry.packaged.thinking, "low");
+  assert.equal(entry.packagedDefaultsChanged, false);
+});
+
 test("subagent model-only drift with openai provider", () => {
   const settings = {
     subagents: { agentOverrides: { developer: { model: "openai-codex/gpt-5.6-sol" } } },
@@ -550,7 +568,7 @@ test("packaged defaults agree with selectProviderAwareAgentDefaults across a fix
   // The fixture uses the same provider-filtered candidate set that resolvePackagedDefaults
   // uses internally: only models whose provider is exactly P are offered to the selector.
   // For undefined provider the filtered list is empty, so no model is resolved.
-  const providers = [undefined, "anthropic", "openai-codex", "openai", "unknown-provider"];
+  const providers = [undefined, "anthropic", "openai-codex", "openai", "xai", "unknown-provider"];
   const agents = [...primaryAgents.values(), ...subagentMetadata, rushOpenaiAgent];
 
   for (const agent of agents) {

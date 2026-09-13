@@ -11,7 +11,7 @@ tlhModelDefaults:
     effort: medium
   - provider: xai
     models: [grok-4.6]
-    effort: medium
+    effort: low
   - provider: openrouter
     effort: medium
 systemPromptMode: replace
