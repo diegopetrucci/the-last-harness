@@ -19,6 +19,7 @@ import {
   withLifecycleContinuation,
 } from "../../src/runs/shared/lifecycle-state.ts";
 import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
+import { deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import {
   ASYNC_DIR,
   type AsyncResultPayload,
@@ -780,7 +781,6 @@ describe("async execution health", () => {
         shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
-        ...(variant === "timeout" ? { timeoutMs: scaleTestTimeout(3_000) } : {}),
         controlConfig: {
           enabled: true,
           needsAttentionAfterMs: 200,
@@ -805,6 +805,7 @@ describe("async execution health", () => {
         true,
       );
       if (variant === "interrupt") requestAsyncInterrupt(asyncDir);
+      else deliverTimeoutRequest({ asyncDir });
       const cleanupObserved = await waitForAsyncStatusPredicate(
         asyncDir,
         (status) =>
