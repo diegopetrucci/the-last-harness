@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.41.0] - 2026-09-13
+
 ### What's new
 
 - The test-runner agent can now use MCPs.
