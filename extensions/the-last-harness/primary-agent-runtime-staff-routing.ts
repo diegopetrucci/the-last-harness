@@ -25,23 +25,56 @@ function staffDeveloperRoutingEnabled(cwd: string): boolean {
   );
 }
 
-export function disabledStaffControlBlockReason(input: unknown, cwd: string): string | undefined {
-  if (staffDeveloperRoutingEnabled(cwd) || !isRecord(input)) return undefined;
+type StaffControlTargetAccess =
+  | { status: "found"; runId?: string; agents: string[] }
+  | { status: "missing" | "ambiguous" | "opaque" }
+  | undefined;
+
+type StaffControlRequest = {
+  action: "resume" | "steer";
+  id?: string;
+  dir?: string;
+  index?: number;
+};
+
+function staffControlRequest(input: unknown): StaffControlRequest | undefined {
+  if (!isRecord(input)) return undefined;
   const action = typeof input.action === "string" ? input.action.trim().toLowerCase() : undefined;
   if (action !== "resume" && action !== "steer") return undefined;
-
-  const request = {
+  return {
     action,
     ...(typeof input.id === "string" ? { id: input.id } : {}),
     ...(typeof input.dir === "string" ? { dir: input.dir } : {}),
     ...(typeof input.index === "number" ? { index: input.index } : {}),
   };
-  const target = getTlhSubagentControlTargetAccess(request);
-  if (target?.status !== "found") return undefined;
-  const targetsStaffDeveloper = target.agents.some(
-    (agent) => typeof agent === "string" && agent.trim().toLowerCase() === "staff-developer",
+}
+
+export function getStaffControlTargetAccess(input: unknown): StaffControlTargetAccess {
+  const request = staffControlRequest(input);
+  return request ? getTlhSubagentControlTargetAccess(request) : undefined;
+}
+
+export function staffControlTargetsStaffDeveloper(
+  target: StaffControlTargetAccess,
+): target is Extract<StaffControlTargetAccess, { status: "found" }> {
+  return (
+    target?.status === "found" &&
+    Array.isArray(target.agents) &&
+    target.agents.some(isStaffDeveloperTarget)
   );
-  if (!targetsStaffDeveloper) return undefined;
+}
+
+export function disabledStaffControlBlockReason(
+  input: unknown,
+  cwd: string,
+  targetAccess?: StaffControlTargetAccess,
+): string | undefined {
+  if (staffDeveloperRoutingEnabled(cwd) || !isRecord(input)) return undefined;
+  const action = typeof input.action === "string" ? input.action.trim().toLowerCase() : undefined;
+  if (action !== "resume" && action !== "steer") return undefined;
+
+  const target = targetAccess ?? getStaffControlTargetAccess(input);
+  if (!staffControlTargetsStaffDeveloper(target)) return undefined;
 
   const targetLabel = target.runId ? ` run '${target.runId}'` : " target";
   return `TLH ${action} blocked: staff-developer routing is disabled, so controls may not target staff-developer${targetLabel}. Enable the experimental feature 'staff-developer-routing' before retrying.`;

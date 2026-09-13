@@ -87,7 +87,9 @@ import {
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import {
   disabledStaffControlBlockReason,
+  getStaffControlTargetAccess,
   rerouteUnavailableStaffTargets,
+  staffControlTargetsStaffDeveloper,
 } from "./primary-agent-runtime-staff-routing.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
@@ -1607,7 +1609,12 @@ function createTlhPrimaryAgentRuntime(
       if (event.toolName !== "subagent") {
         return undefined;
       }
-      const staffControlReason = disabledStaffControlBlockReason(event.input, ctx.cwd);
+      const staffControlTarget = getStaffControlTargetAccess(event.input);
+      const staffControlReason = disabledStaffControlBlockReason(
+        event.input,
+        ctx.cwd,
+        staffControlTarget,
+      );
       if (staffControlReason) return { block: true, reason: staffControlReason };
       const settings = getTlhGlobalSettings(ctx.cwd);
       const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
@@ -1688,10 +1695,12 @@ function createTlhPrimaryAgentRuntime(
         return { block: true, reason: rushDeveloperDelegationReason(implementationTarget) };
       }
       if (selection === "product") {
-        const productForbiddenTarget = collectSubagentCallTargetsMatching(
-          event.input,
-          (target) => target.trim().toLowerCase() === "staff-developer",
-        )[0];
+        const productForbiddenTarget =
+          collectSubagentCallTargetsMatching(
+            event.input,
+            (target) => target.trim().toLowerCase() === "staff-developer",
+          )[0] ??
+          (staffControlTargetsStaffDeveloper(staffControlTarget) ? "staff-developer" : undefined);
         if (productForbiddenTarget) {
           return {
             block: true,
@@ -1699,11 +1708,16 @@ function createTlhPrimaryAgentRuntime(
           };
         }
       }
-      if (selection === "bug-hunter" && staffImplementationTarget) {
-        return {
-          block: true,
-          reason: bugHunterImplementationDelegationReason(staffImplementationTarget),
-        };
+      if (selection === "bug-hunter") {
+        const bugHunterForbiddenTarget =
+          staffImplementationTarget ??
+          (staffControlTargetsStaffDeveloper(staffControlTarget) ? "staff-developer" : undefined);
+        if (bugHunterForbiddenTarget) {
+          return {
+            block: true,
+            reason: bugHunterImplementationDelegationReason(bugHunterForbiddenTarget),
+          };
+        }
       }
       const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
       if (embeddedBlockReason) {

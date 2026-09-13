@@ -4,6 +4,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import {
+  clearTlhSubagentControlTargetAccessProvider,
+  setTlhSubagentControlTargetAccessProvider,
+} from "../extensions/the-last-harness/subagent-control-access.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
   createToolCallContext,
@@ -572,6 +576,166 @@ test("Bug-Hunter blocks staff-developer after developer in a parallel batch", as
       assert.deepEqual(notifications, []);
     },
   );
+});
+
+test("Product and Bug-Hunter block known staff control targets without guessing opaque controls", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-staff-runtime-", { cwd: true, test: t });
+  writeSettings(fixture.agent, staffSettings());
+  const requests = [];
+  const targetAccess = (request) => {
+    requests.push(request);
+    if (request.id === "staff-by-index" && request.index === 1) {
+      return { status: "found", runId: "staff-by-index", agents: ["staff-developer"] };
+    }
+    const targets = {
+      "staff-by-id": { status: "found", runId: "staff-by-id", agents: ["staff-developer"] },
+      "mixed-by-id": {
+        status: "found",
+        runId: "mixed-by-id",
+        agents: ["developer", "staff-developer"],
+      },
+      "stable-by-id": { status: "found", runId: "stable-by-id", agents: ["developer"] },
+      opaque: { status: "opaque" },
+      unreadable: { status: "opaque" },
+      ambiguous: { status: "ambiguous" },
+      missing: { status: "missing" },
+    };
+    return targets[request.id] ?? { status: "missing" };
+  };
+  setTlhSubagentControlTargetAccessProvider(targetAccess);
+
+  try {
+    await withEnv(
+      { HOME: fixture.home, USERPROFILE: fixture.home, PI_CODING_AGENT_DIR: fixture.agent },
+      async () => {
+        for (const selection of ["product", "bug-hunter"]) {
+          const { toolCall } = registerRuntimeHarness(runtimeOptions());
+          const cases = [
+            {
+              name: "staff by id",
+              input: { action: "resume", id: "staff-by-id", message: "Continue the run." },
+              blocked: true,
+            },
+            {
+              name: "staff by id and index",
+              input: {
+                action: "steer",
+                id: "staff-by-index",
+                index: 1,
+                message: "Focus on the approved ticket.",
+              },
+              blocked: true,
+            },
+            {
+              name: "mixed target",
+              input: { action: "resume", id: "mixed-by-id", message: "Continue the run." },
+              blocked: true,
+            },
+            {
+              name: "known stable target",
+              input: { action: "resume", id: "stable-by-id", message: "Continue the run." },
+              blocked: false,
+            },
+            {
+              name: "opaque target",
+              input: { action: "steer", id: "opaque", message: "Focus the run." },
+              blocked: false,
+            },
+            {
+              name: "unreadable target",
+              input: { action: "resume", id: "unreadable", message: "Continue the run." },
+              blocked: false,
+            },
+            {
+              name: "ambiguous target",
+              input: { action: "steer", id: "ambiguous", message: "Focus the run." },
+              blocked: false,
+            },
+            {
+              name: "missing target",
+              input: { action: "resume", id: "missing", message: "Continue the run." },
+              blocked: false,
+            },
+          ];
+          const ctx = createToolCallContext(
+            [
+              {
+                type: "custom",
+                customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+                data: { selected: selection },
+              },
+            ],
+            [],
+            {
+              cwd: fixture.cwd,
+              model: model("openai-codex", "gpt-5.6-luna"),
+              modelRegistry: { getAvailable: () => [model("openai-codex", "gpt-6-astra")] },
+            },
+          );
+
+          for (const testCase of cases) {
+            const event = { toolName: "subagent", input: { ...testCase.input } };
+            const result = await toolCall(event, ctx);
+            assert.equal(
+              Boolean(result?.block),
+              testCase.blocked,
+              `${selection}: ${testCase.name}`,
+            );
+            if (testCase.blocked) {
+              assert.match(result?.reason ?? "", /may not delegate implementation|code review/);
+            }
+          }
+        }
+      },
+    );
+  } finally {
+    clearTlhSubagentControlTargetAccessProvider(targetAccess);
+  }
+
+  assert.equal(
+    requests.some(
+      (request) =>
+        request.action === "steer" && request.id === "staff-by-index" && request.index === 1,
+    ),
+    true,
+  );
+});
+
+test("Rush keeps its control guard when staff metadata is available", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-staff-runtime-", { cwd: true, test: t });
+  writeSettings(fixture.agent, staffSettings());
+  const targetAccess = () => ({
+    status: "found",
+    runId: "staff-run",
+    agents: ["staff-developer"],
+  });
+  setTlhSubagentControlTargetAccessProvider(targetAccess);
+
+  try {
+    await withEnv(
+      { HOME: fixture.home, USERPROFILE: fixture.home, PI_CODING_AGENT_DIR: fixture.agent },
+      async () => {
+        const { toolCall } = registerRuntimeHarness(runtimeOptions());
+        const event = {
+          toolName: "subagent",
+          input: { action: "resume", id: "staff-run", message: "Continue the run." },
+        };
+        const ctx = createToolCallContext([
+          {
+            type: "custom",
+            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+            data: { selected: "rush" },
+          },
+        ]);
+
+        const result = await toolCall(event, ctx);
+        assert.equal(result?.block, true);
+        assert.match(result?.reason ?? "", /Rush may not use subagent action=resume/);
+      },
+    );
+  } finally {
+    clearTlhSubagentControlTargetAccessProvider(targetAccess);
+  }
 });
 
 test("role safeguards reject staff implementation targets outside architect mode", async (t) => {

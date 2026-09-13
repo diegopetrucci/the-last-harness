@@ -9,23 +9,36 @@ function staffDeveloperRoutingEnabled(cwd) {
         enabledFeatures.some((feature) => typeof feature === "string" &&
             feature.trim().toLowerCase() === STAFF_DEVELOPER_ROUTING_FEATURE));
 }
-export function disabledStaffControlBlockReason(input, cwd) {
-    if (staffDeveloperRoutingEnabled(cwd) || !isRecord(input))
+function staffControlRequest(input) {
+    if (!isRecord(input))
         return undefined;
     const action = typeof input.action === "string" ? input.action.trim().toLowerCase() : undefined;
     if (action !== "resume" && action !== "steer")
         return undefined;
-    const request = {
+    return {
         action,
         ...(typeof input.id === "string" ? { id: input.id } : {}),
         ...(typeof input.dir === "string" ? { dir: input.dir } : {}),
         ...(typeof input.index === "number" ? { index: input.index } : {}),
     };
-    const target = getTlhSubagentControlTargetAccess(request);
-    if (target?.status !== "found")
+}
+export function getStaffControlTargetAccess(input) {
+    const request = staffControlRequest(input);
+    return request ? getTlhSubagentControlTargetAccess(request) : undefined;
+}
+export function staffControlTargetsStaffDeveloper(target) {
+    return (target?.status === "found" &&
+        Array.isArray(target.agents) &&
+        target.agents.some(isStaffDeveloperTarget));
+}
+export function disabledStaffControlBlockReason(input, cwd, targetAccess) {
+    if (staffDeveloperRoutingEnabled(cwd) || !isRecord(input))
         return undefined;
-    const targetsStaffDeveloper = target.agents.some((agent) => typeof agent === "string" && agent.trim().toLowerCase() === "staff-developer");
-    if (!targetsStaffDeveloper)
+    const action = typeof input.action === "string" ? input.action.trim().toLowerCase() : undefined;
+    if (action !== "resume" && action !== "steer")
+        return undefined;
+    const target = targetAccess ?? getStaffControlTargetAccess(input);
+    if (!staffControlTargetsStaffDeveloper(target))
         return undefined;
     const targetLabel = target.runId ? ` run '${target.runId}'` : " target";
     return `TLH ${action} blocked: staff-developer routing is disabled, so controls may not target staff-developer${targetLabel}. Enable the experimental feature 'staff-developer-routing' before retrying.`;

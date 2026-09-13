@@ -13,7 +13,7 @@ import { SUBAGENT_ASYNC_COMPLETE_EVENT, dispatchPreflightBackoffMs, extractDispa
 import { lookupTlhProjectAgentRunReference, probeTlhProjectAgentRunMarker, } from "./project-agent-access.mjs";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
-import { disabledStaffControlBlockReason, rerouteUnavailableStaffTargets, } from "./primary-agent-runtime-staff-routing.js";
+import { disabledStaffControlBlockReason, getStaffControlTargetAccess, rerouteUnavailableStaffTargets, staffControlTargetsStaffDeveloper, } from "./primary-agent-runtime-staff-routing.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { followsOpenrouterSession, formatProviderModelReference, listAgentModelDefaultReferences, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -916,7 +916,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (event.toolName !== "subagent") {
                 return undefined;
             }
-            const staffControlReason = disabledStaffControlBlockReason(event.input, ctx.cwd);
+            const staffControlTarget = getStaffControlTargetAccess(event.input);
+            const staffControlReason = disabledStaffControlBlockReason(event.input, ctx.cwd, staffControlTarget);
             if (staffControlReason)
                 return { block: true, reason: staffControlReason };
             const settings = getTlhGlobalSettings(ctx.cwd);
@@ -984,7 +985,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 return { block: true, reason: rushDeveloperDelegationReason(implementationTarget) };
             }
             if (selection === "product") {
-                const productForbiddenTarget = collectSubagentCallTargetsMatching(event.input, (target) => target.trim().toLowerCase() === "staff-developer")[0];
+                const productForbiddenTarget = collectSubagentCallTargetsMatching(event.input, (target) => target.trim().toLowerCase() === "staff-developer")[0] ??
+                    (staffControlTargetsStaffDeveloper(staffControlTarget) ? "staff-developer" : undefined);
                 if (productForbiddenTarget) {
                     return {
                         block: true,
@@ -992,11 +994,15 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                     };
                 }
             }
-            if (selection === "bug-hunter" && staffImplementationTarget) {
-                return {
-                    block: true,
-                    reason: bugHunterImplementationDelegationReason(staffImplementationTarget),
-                };
+            if (selection === "bug-hunter") {
+                const bugHunterForbiddenTarget = staffImplementationTarget ??
+                    (staffControlTargetsStaffDeveloper(staffControlTarget) ? "staff-developer" : undefined);
+                if (bugHunterForbiddenTarget) {
+                    return {
+                        block: true,
+                        reason: bugHunterImplementationDelegationReason(bugHunterForbiddenTarget),
+                    };
+                }
             }
             const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
             if (embeddedBlockReason) {
