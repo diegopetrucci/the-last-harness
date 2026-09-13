@@ -884,6 +884,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", () => {
+    unregisterControlTargetLookup();
     // Heartbeat: destroy (cancel timers, abort in-flight, close gap without
     // session entry since session is going away).
     hbWiring.destroy();

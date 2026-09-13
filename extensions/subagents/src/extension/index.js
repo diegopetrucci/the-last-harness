@@ -620,6 +620,7 @@ export default function registerSubagentExtension(pi) {
         liveDetailController.clearToolRows();
     });
     pi.on("session_shutdown", () => {
+        unregisterControlTargetLookup();
         hbWiring.destroy();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();

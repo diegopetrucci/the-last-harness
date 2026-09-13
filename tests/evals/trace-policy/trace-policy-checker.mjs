@@ -217,8 +217,9 @@ function implementationTargetEntries(step) {
     const target = normalizeText(value).toLowerCase();
     if (IMPLEMENTATION_WORKERS.has(target)) entries.push(target);
   };
-  if (Array.isArray(step.targets)) {
+  if (Array.isArray(step.targets) && step.targets.length > 0) {
     for (const target of step.targets) push(target);
+    return entries;
   }
   if (typeof input.agent === "string") push(input.agent);
   if (Array.isArray(input.tasks)) {

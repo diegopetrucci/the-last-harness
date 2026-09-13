@@ -95,6 +95,65 @@ test("architect approved env split-string pure tk create stays allowed", () => {
   assert.deepEqual(result.violations, []);
 });
 
+test("architect target precedence preserves parallel writers and empty-target fallback", () => {
+  const normalizedTargetDispatch = evaluateTracePolicy({
+    agent: "architect",
+    steps: [
+      { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+      { type: "user", text: "approved" },
+      {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer"],
+        input: { tasks: [{ agent: "developer", prompt: "Implement the ticket." }] },
+      },
+    ],
+  });
+  assert.equal(normalizedTargetDispatch.ok, true);
+  assert.deepEqual(normalizedTargetDispatch.violations, []);
+
+  const duplicateNormalizedTargets = evaluateTracePolicy({
+    agent: "architect",
+    steps: [
+      { type: "assistant", action: "ask_ticket_approval", text: "Tickets are ready." },
+      { type: "user", text: "approved" },
+      {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer", "developer"],
+        input: { tasks: [{ agent: "developer", prompt: "The raw task matches the targets." }] },
+      },
+    ],
+  });
+  assert.deepEqual(
+    duplicateNormalizedTargets.violations.map((violation) => violation.code),
+    ["architect.one_writer_sequencing"],
+  );
+
+  const emptyTargetsFallback = evaluateTracePolicy({
+    agent: "architect",
+    steps: [
+      { type: "assistant", action: "ask_ticket_approval", text: "Tickets are ready." },
+      { type: "user", text: "approved" },
+      {
+        type: "tool",
+        tool: "subagent",
+        targets: [],
+        input: {
+          tasks: [
+            { agent: "developer", prompt: "Implement the ordinary change." },
+            { agent: "staff-developer", prompt: "Implement the boundary." },
+          ],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    emptyTargetsFallback.violations.map((violation) => violation.code),
+    ["architect.staff_routing_disabled", "architect.one_writer_sequencing"],
+  );
+});
+
 test("architect paused developer runs do not authorize direct source edits", () => {
   assert.deepEqual(
     violationCodes({

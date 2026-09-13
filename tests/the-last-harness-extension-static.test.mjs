@@ -214,20 +214,40 @@ test("primary prompt exposes stable minor-agent delegation markers", () => {
   assert.match(primaryPrompt, /- contrarian:/i);
 });
 
-test("staff-developer prompt guidance follows the experimental allowlist", () => {
-  const architect = loadPrimaryAgents().get("architect");
+test("staff-developer prompt guidance follows role-specific experimental allowlists", () => {
+  const primaryAgents = loadPrimaryAgents();
+  const architect = primaryAgents.get("architect");
+  const rush = primaryAgents.get("rush");
+  const product = primaryAgents.get("product");
+  const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
+  const enabledConfig = { enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE] };
   assert.ok(architect, "Architect primary prompt should load");
+  assert.ok(rush, "Rush primary prompt should load");
+  assert.ok(product, "Product primary prompt should load");
+  assert.ok(bugHunter, "Bug-Hunter primary prompt should load");
 
-  const disabledPrompt = buildTlhSystemPrompt(architect, subagents, true, undefined, {
-    enabledFeatures: [],
-  });
-  const enabledPrompt = buildTlhSystemPrompt(architect, subagents, true, undefined, {
-    enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE],
-  });
+  assert.match(
+    buildTlhSystemPrompt(architect, subagents, true, undefined, enabledConfig),
+    /^- staff-developer:/m,
+  );
+  for (const primary of [rush, product, bugHunter]) {
+    assert.doesNotMatch(
+      buildTlhSystemPrompt(primary, subagents, true, undefined, enabledConfig),
+      /^- staff-developer:/m,
+      `${primary.name} must not receive staff-developer in its enabled allowlist`,
+    );
+  }
 
-  assert.doesNotMatch(disabledPrompt, /^- staff-developer:/m);
-  assert.match(enabledPrompt, /^- staff-developer:/m);
+  assert.match(
+    buildTlhSystemPrompt(undefined, subagents, false, undefined, enabledConfig),
+    /^- staff-developer:/m,
+    "disabled mode must retain explicit staff-developer dispatch guidance",
+  );
+  assert.doesNotMatch(
+    buildTlhSystemPrompt(architect, subagents, true, undefined, { enabledFeatures: [] }),
+    /^- staff-developer:/m,
+  );
 });
 
 test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {
