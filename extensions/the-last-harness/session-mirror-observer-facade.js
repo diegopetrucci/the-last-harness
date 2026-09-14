@@ -1,4 +1,7 @@
+import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { dirname, join } from "node:path";
+import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, } from "./experimental.js";
 import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
 export const SESSION_MIRROR_OBSERVER_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
@@ -433,7 +436,7 @@ function safeShutdownProbe(probe) {
     }
 }
 function continueSessionMirrorObserverActivation(input) {
-    const { state, isCurrent, sessionManager, loadProbe, attest, now } = input;
+    const { state, isCurrent, sessionManager, loadProbe, attest, now, bridgeDirectory, sink } = input;
     const current = () => isCurrent(state);
     if (!current())
         return Promise.resolve();
@@ -477,6 +480,8 @@ function continueSessionMirrorObserverActivation(input) {
                 attest,
                 runtimeVersion: SESSION_MIRROR_OBSERVER_RUNTIME_VERSION,
                 sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION,
+                ...(bridgeDirectory === undefined ? {} : { bridgeDirectory }),
+                ...(sink === undefined ? {} : { sink }),
             });
         }
         catch {
@@ -529,6 +534,39 @@ function continueSessionMirrorObserverActivation(input) {
             return;
         state.load = "failed";
     });
+}
+function defaultBridgeDirectory() {
+    try {
+        const agentDirectory = getAgentDir();
+        if (typeof agentDirectory !== "string" || !agentDirectory.startsWith("/"))
+            return undefined;
+        const canonicalDirectory = realpathSync.native(agentDirectory);
+        if (typeof canonicalDirectory !== "string" || !canonicalDirectory.startsWith("/"))
+            return undefined;
+        return join(dirname(canonicalDirectory), "companion");
+    }
+    catch {
+        return undefined;
+    }
+}
+function resolvedBridgeDirectory(resolver) {
+    try {
+        const value = resolver();
+        return typeof value === "string" && value.startsWith("/") && !value.includes("\0")
+            ? value
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function companionDirectoryExists(path) {
+    try {
+        return lstatSync(path).isDirectory();
+    }
+    catch {
+        return false;
+    }
 }
 export function createSessionMirrorObserverFacade(options = {}) {
     const now = options.now ?? (() => performance.now());
@@ -616,6 +654,32 @@ export function createSessionMirrorObserverFacade(options = {}) {
             return Promise.resolve();
         }
         nextState.attestation = attestation.phase === "session-file" ? "attested" : "directory-only";
+        let bridgeResolver = defaultBridgeDirectory;
+        let customBridgeResolver = false;
+        let injectedSink;
+        try {
+            const configuredResolver = options.resolveBridgeDirectory;
+            customBridgeResolver = configuredResolver !== undefined;
+            if (configuredResolver !== undefined) {
+                bridgeResolver =
+                    typeof configuredResolver === "function" ? configuredResolver : () => undefined;
+            }
+            injectedSink = options.sink;
+        }
+        catch {
+            bridgeResolver = () => undefined;
+            customBridgeResolver = true;
+            injectedSink = undefined;
+        }
+        const bridgeDirectory = resolvedBridgeDirectory(bridgeResolver);
+        if (!isCurrent(nextState))
+            return Promise.resolve();
+        const usableBridgeDirectory = injectedSink === undefined &&
+            !customBridgeResolver &&
+            bridgeDirectory !== undefined &&
+            !companionDirectoryExists(bridgeDirectory)
+            ? undefined
+            : bridgeDirectory;
         return continueSessionMirrorObserverActivation({
             state: nextState,
             isCurrent,
@@ -623,6 +687,8 @@ export function createSessionMirrorObserverFacade(options = {}) {
             loadProbe,
             attest,
             now,
+            bridgeDirectory: usableBridgeDirectory,
+            sink: injectedSink,
         });
     };
     const sessionShutdown = () => {

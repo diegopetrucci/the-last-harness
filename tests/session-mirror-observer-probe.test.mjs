@@ -112,6 +112,36 @@ test("probe converts production envelopes into bounded aggregate metrics without
   assert.equal("envelope" in state, false);
 });
 
+test("probe defaults to a bounded recent window for an oversized active session", (t) => {
+  const fixture = makeFixture(t);
+  const entries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `recent-${index}`;
+    entries.push(entry(id, parentId, user(index === 1099 ? "x".repeat(64 * 1024) : "x")));
+    parentId = id;
+  }
+  const scheduled = [];
+  const probe = createSessionMirrorObserverProbe({
+    getSessionManager: () => manager(fixture, entries),
+    attest: attested,
+    scheduler: (task) => scheduled.push(task),
+  });
+
+  probe.sessionStart();
+  probe.requestSnapshot();
+  drain(scheduled);
+
+  const state = probe.getState();
+  assert.equal(state.envelopeCategory, "mixed");
+  assert.equal(state.entryCount, 64);
+  assert.equal(state.rootCount, 1);
+  assert.equal(state.maxDepth, 64);
+  assert.equal(state.envelopeBytes <= SESSION_MIRROR_OBSERVER_PROBE_BOUNDS.maxEnvelopeBytes, true);
+  assert.equal(state.snapshotRequired, false);
+  assert.equal(state.lastProjectionFailure, undefined);
+});
+
 test("probe lifecycle methods are nonthrowing around attestation and projection failures", (t) => {
   const fixture = makeFixture(t);
   const scheduled = [];
@@ -186,6 +216,39 @@ test("probe sink measurement errors are bounded and nonthrowing", (t) => {
   assert.equal(state.diagnostics.sinkThrow, 1);
   assert.equal(state.snapshotRequired, true);
   assert.doesNotMatch(JSON.stringify(state), /SENTINEL/);
+});
+
+test("probe session shutdown synchronously tears down a pending sink", async (t) => {
+  const fixture = makeFixture(t);
+  const scheduled = [];
+  let release;
+  let shutdownCalls = 0;
+  const pending = new Promise((resolve) => {
+    release = resolve;
+  });
+  const sink = Object.assign(() => pending, {
+    shutdown() {
+      shutdownCalls += 1;
+      release();
+    },
+  });
+  const probe = createSessionMirrorObserverProbe({
+    getSessionManager: () => manager(fixture, []),
+    attest: attested,
+    sink,
+    scheduler: (task) => scheduled.push(task),
+  });
+
+  probe.sessionStart();
+  probe.agentSettled();
+  drain(scheduled);
+  assert.equal(probe.getState().sinkInFlight, true);
+  probe.sessionShutdown();
+  assert.equal(shutdownCalls, 1);
+  assert.equal(probe.getState().attestation, "shutdown");
+  assert.equal(probe.getState().sinkInFlight, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(probe.getState().sinkInFlight, false);
 });
 
 test("probe request and shutdown remain deferred and invalidate pending state", (t) => {

@@ -1,8 +1,9 @@
 import { performance } from "node:perf_hooks";
 
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
+import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";
 import {
-  projectSessionMirrorSnapshot,
+  projectRecentSessionMirrorSnapshot,
   type SessionMirrorReadonlySessionManager,
   type SessionMirrorSnapshotProjectionEnvelope,
 } from "./session-mirror/session-adapter.js";
@@ -75,6 +76,10 @@ export interface SessionMirrorObserverProbeOptions {
   readonly queueCapacity?: number;
   /** Injectable clock used only to select bounded timing buckets. */
   readonly now?: () => number;
+  /** Eagerly resolved, attested sibling companion directory. */
+  readonly bridgeDirectory?: string;
+  /** Test seam; production uses the lazy Unix-socket sink when configured. */
+  readonly sink?: SessionMirrorObserverSink;
 }
 
 export interface SessionMirrorObserverProbe {
@@ -256,11 +261,19 @@ function invokeLifecycle(action: () => void, metrics: InternalMetrics): void {
   }
 }
 
+function shutdownSink(sink: SessionMirrorObserverSink | undefined): void {
+  try {
+    sink?.shutdown?.();
+  } catch {
+    // Sink cleanup is best effort and must not block observer shutdown.
+  }
+}
+
 /**
  * Native-lazy observer/probe graph. It accepts the production attestor from
  * the eager facade rather than importing the peer-only upstream package.
  * No envelope is stored: the sink turns one production envelope into bounded
- * aggregate metrics and returns immediately.
+ * aggregate metrics and performs one bounded, fail-open publication attempt.
  */
 export function createSessionMirrorObserverProbe(
   options: SessionMirrorObserverProbeOptions = {},
@@ -268,8 +281,13 @@ export function createSessionMirrorObserverProbe(
   const now = options.now ?? (() => performance.now());
   const metrics = initialMetrics();
   const attest = options.attest ?? defaultAttestor;
-  const project = options.project ?? projectSessionMirrorSnapshot;
+  const project = options.project ?? projectRecentSessionMirrorSnapshot;
   const getSessionManager = options.getSessionManager ?? (() => options.sessionManager);
+  const publicationSink =
+    options.sink ??
+    (options.bridgeDirectory === undefined
+      ? undefined
+      : createSessionMirrorObserverSocketSink({ bridgeDirectory: options.bridgeDirectory }));
 
   const measuredAttest: SessionMirrorObserverAttestor = (input) => {
     const startedAt = readNow(now);
@@ -309,9 +327,28 @@ export function createSessionMirrorObserverProbe(
       metrics.rootCount = 0;
       metrics.maxDepth = 0;
       metrics.envelopeBytes = 0;
-      throw new Error("session-mirror envelope measurement failed");
-    } finally {
       setTiming(metrics, "sink", startedAt, now);
+      throw new Error("session-mirror envelope measurement failed");
+    }
+    if (!publicationSink) {
+      setTiming(metrics, "sink", startedAt, now);
+      return;
+    }
+    try {
+      const publication = publicationSink(envelope);
+      if (publication && typeof publication.then === "function") {
+        return publication.then(
+          () => setTiming(metrics, "sink", startedAt, now),
+          () => {
+            setTiming(metrics, "sink", startedAt, now);
+            throw new Error("session-mirror publication failed");
+          },
+        );
+      }
+      setTiming(metrics, "sink", startedAt, now);
+    } catch {
+      setTiming(metrics, "sink", startedAt, now);
+      throw new Error("session-mirror publication failed");
     }
   };
 
@@ -394,6 +431,7 @@ export function createSessionMirrorObserverProbe(
   const sessionTree = (): void => invokeLifecycle(() => runtime.sessionTree(), metrics);
   const sessionCompact = (): void => invokeLifecycle(() => runtime.sessionCompact(), metrics);
   const sessionShutdown = (): void => {
+    shutdownSink(publicationSink);
     invokeLifecycle(() => runtime.sessionShutdown(), metrics);
     metrics.envelopeCategory = "none";
     metrics.entryCount = 0;

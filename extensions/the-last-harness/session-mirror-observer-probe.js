@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
-import { projectSessionMirrorSnapshot, } from "./session-mirror/session-adapter.js";
+import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";
+import { projectRecentSessionMirrorSnapshot, } from "./session-mirror/session-adapter.js";
 export const SESSION_MIRROR_OBSERVER_PROBE_BOUNDS = Object.freeze({
     maxEnvelopeBytes: 256 * 1024,
     maxTreeEntries: 1024,
@@ -155,12 +156,23 @@ function invokeLifecycle(action, metrics) {
         metrics.envelopeCategory = "error";
     }
 }
+function shutdownSink(sink) {
+    try {
+        sink?.shutdown?.();
+    }
+    catch {
+    }
+}
 export function createSessionMirrorObserverProbe(options = {}) {
     const now = options.now ?? (() => performance.now());
     const metrics = initialMetrics();
     const attest = options.attest ?? defaultAttestor;
-    const project = options.project ?? projectSessionMirrorSnapshot;
+    const project = options.project ?? projectRecentSessionMirrorSnapshot;
     const getSessionManager = options.getSessionManager ?? (() => options.sessionManager);
+    const publicationSink = options.sink ??
+        (options.bridgeDirectory === undefined
+            ? undefined
+            : createSessionMirrorObserverSocketSink({ bridgeDirectory: options.bridgeDirectory }));
     const measuredAttest = (input) => {
         const startedAt = readNow(now);
         try {
@@ -202,10 +214,26 @@ export function createSessionMirrorObserverProbe(options = {}) {
             metrics.rootCount = 0;
             metrics.maxDepth = 0;
             metrics.envelopeBytes = 0;
+            setTiming(metrics, "sink", startedAt, now);
             throw new Error("session-mirror envelope measurement failed");
         }
-        finally {
+        if (!publicationSink) {
             setTiming(metrics, "sink", startedAt, now);
+            return;
+        }
+        try {
+            const publication = publicationSink(envelope);
+            if (publication && typeof publication.then === "function") {
+                return publication.then(() => setTiming(metrics, "sink", startedAt, now), () => {
+                    setTiming(metrics, "sink", startedAt, now);
+                    throw new Error("session-mirror publication failed");
+                });
+            }
+            setTiming(metrics, "sink", startedAt, now);
+        }
+        catch {
+            setTiming(metrics, "sink", startedAt, now);
+            throw new Error("session-mirror publication failed");
         }
     };
     const runtimeOptions = {
@@ -286,6 +314,7 @@ export function createSessionMirrorObserverProbe(options = {}) {
     const sessionTree = () => invokeLifecycle(() => runtime.sessionTree(), metrics);
     const sessionCompact = () => invokeLifecycle(() => runtime.sessionCompact(), metrics);
     const sessionShutdown = () => {
+        shutdownSink(publicationSink);
         invokeLifecycle(() => runtime.sessionShutdown(), metrics);
         metrics.envelopeCategory = "none";
         metrics.entryCount = 0;

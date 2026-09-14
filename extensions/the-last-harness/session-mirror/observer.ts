@@ -28,9 +28,11 @@ export const SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY = 32;
 export type SessionMirrorObserverScheduler = (task: () => void) => void;
 
 /** A sink receives one complete, already-projected snapshot at a time. */
-export type SessionMirrorObserverSink = (
-  envelope: SessionMirrorSnapshotProjectionEnvelope,
-) => void | PromiseLike<void>;
+export type SessionMirrorObserverSink = {
+  (envelope: SessionMirrorSnapshotProjectionEnvelope): void | PromiseLike<void>;
+  /** Optional synchronous cleanup for sinks that own external resources. */
+  readonly shutdown?: () => void;
+};
 
 /** Injectable attestation boundary used by the deferred worker. */
 export type SessionMirrorObserverAttestor = (

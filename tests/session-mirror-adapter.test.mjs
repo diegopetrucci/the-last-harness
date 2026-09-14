@@ -7,9 +7,11 @@ import { createJiti } from "jiti";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 const jiti = createJiti(import.meta.url);
-const { SESSION_MIRROR_PROJECTION_REASONS, projectSessionMirrorSnapshot } = await jiti.import(
-  "../extensions/the-last-harness/session-mirror/session-adapter.ts",
-);
+const {
+  SESSION_MIRROR_PROJECTION_REASONS,
+  projectRecentSessionMirrorSnapshot,
+  projectSessionMirrorSnapshot,
+} = await jiti.import("../extensions/the-last-harness/session-mirror/session-adapter.ts");
 const { validateSessionMirrorEnvelope } = await jiti.import(
   "../protocol/session-mirror/v1/conformance.ts",
 );
@@ -643,6 +645,194 @@ test("returns closed failures for invalid metadata, unavailable sessions, malfor
     }),
     { ok: false, reason: "bounds-exceeded" },
   );
+});
+
+test("recent projection keeps the newest active-branch window within wire bounds", () => {
+  const entries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `recent-${index}`;
+    entries.push(
+      sourceEntry("message", id, parentId, {
+        message: userMessage(index === 1099 ? "x".repeat(64 * 1024) : `turn ${index}`),
+      }),
+    );
+    parentId = id;
+  }
+
+  assert.deepEqual(projectSessionMirrorSnapshot(manager(entries), METADATA), {
+    ok: false,
+    reason: "bounds-exceeded",
+  });
+  const envelope = assertSuccessful(projectRecentSessionMirrorSnapshot(manager(entries), METADATA));
+  const tree = envelope.message.snapshot.tree;
+  assert.equal(tree.entries.length, 64);
+  assert.equal(tree.entries[0].id, "recent-1036");
+  assert.equal(tree.entries[0].parentId, null);
+  assert.equal(tree.activeLeafId, "recent-1099");
+  assert.deepEqual(tree.entries.at(-1), {
+    id: "recent-1099",
+    parentId: "recent-1098",
+    kind: "source-placeholder",
+    status: "completed",
+    payload: { sourceType: "unsupported" },
+  });
+  assert.doesNotMatch(JSON.stringify(envelope), /…/);
+  assert.equal(Buffer.byteLength(JSON.stringify(envelope), "utf8") <= 256 * 1024, true);
+});
+
+test("recent projection replaces escape-heavy payload overflow with an unsupported placeholder", () => {
+  const entries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `escaped-recent-${index}`;
+    entries.push(
+      sourceEntry("message", id, parentId, {
+        message: userMessage(index === 1099 ? "\u0000".repeat(32 * 1024) : `turn ${index}`),
+      }),
+    );
+    parentId = id;
+  }
+
+  const envelope = assertSuccessful(projectRecentSessionMirrorSnapshot(manager(entries), METADATA));
+  const tree = envelope.message.snapshot.tree;
+  assert.deepEqual(tree.entries.at(-1), {
+    id: "escaped-recent-1099",
+    parentId: "escaped-recent-1098",
+    kind: "source-placeholder",
+    status: "completed",
+    payload: { sourceType: "unsupported" },
+  });
+  assert.doesNotMatch(JSON.stringify(envelope), /\\u0000/);
+  assert.equal(Buffer.byteLength(JSON.stringify(envelope), "utf8") <= 256 * 1024, true);
+});
+
+test("recent projection shrinks an oversized envelope while retaining the newest entries", () => {
+  const entries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `shrink-recent-${index}`;
+    entries.push(
+      sourceEntry("message", id, parentId, {
+        message: userMessage("x".repeat(8 * 1024)),
+      }),
+    );
+    parentId = id;
+  }
+
+  const envelope = assertSuccessful(projectRecentSessionMirrorSnapshot(manager(entries), METADATA));
+  const tree = envelope.message.snapshot.tree;
+  assert.ok(tree.entries.length > 1);
+  assert.ok(tree.entries.length < 64);
+  assert.equal(tree.entries[0].parentId, null);
+  assert.equal(tree.entries.at(-1).id, "shrink-recent-1099");
+  assert.equal(tree.activeLeafId, "shrink-recent-1099");
+  assert.equal(Buffer.byteLength(JSON.stringify(envelope), "utf8") <= 256 * 1024, true);
+});
+
+test("recent projection fails closed above the source-entry bound", () => {
+  const entries = Array.from({ length: 50_001 }, (_, index) =>
+    sourceEntry("message", `too-many-recent-${index}`, null, {
+      message: userMessage("x"),
+    }),
+  );
+
+  assert.deepEqual(projectRecentSessionMirrorSnapshot(manager(entries), METADATA), {
+    ok: false,
+    reason: "bounds-exceeded",
+  });
+});
+
+test("recent projection preserves in-window compactions and omits out-of-window compaction targets", () => {
+  const entries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `recent-compaction-${index}`;
+    const fields =
+      index === 1050
+        ? {
+            type: "compaction",
+            summary: "synthetic in-window compaction",
+            firstKeptEntryId: "recent-compaction-1049",
+          }
+        : index === 1090
+          ? {
+              type: "compaction",
+              summary: "synthetic out-of-window compaction",
+              firstKeptEntryId: "recent-compaction-0",
+            }
+          : {
+              type: "message",
+              message: userMessage(`turn ${index}`),
+            };
+    entries.push(
+      sourceEntry(
+        fields.type,
+        id,
+        parentId,
+        fields.type === "message"
+          ? { message: fields.message }
+          : {
+              summary: fields.summary,
+              firstKeptEntryId: fields.firstKeptEntryId,
+            },
+      ),
+    );
+    parentId = id;
+  }
+
+  const envelope = assertSuccessful(projectRecentSessionMirrorSnapshot(manager(entries), METADATA));
+  const tree = envelope.message.snapshot.tree;
+  const inWindow = tree.entries.find((entry) => entry.id === "recent-compaction-1050");
+  assert.deepEqual(inWindow, {
+    id: "recent-compaction-1050",
+    parentId: "recent-compaction-1049",
+    kind: "compaction",
+    status: "completed",
+    payload: {
+      summary: "synthetic in-window compaction",
+      firstKeptEntryId: "recent-compaction-1049",
+    },
+  });
+  const outOfWindow = tree.entries.find((entry) => entry.id === "recent-compaction-1090");
+  assert.deepEqual(outOfWindow, {
+    id: "recent-compaction-1090",
+    parentId: "recent-compaction-1089",
+    kind: "source-placeholder",
+    status: "completed",
+    payload: { sourceType: "unsupported" },
+  });
+  assert.equal(Buffer.byteLength(JSON.stringify(envelope), "utf8") <= 256 * 1024, true);
+});
+
+test("recent projection preserves non-bounds failures", () => {
+  const entries = [
+    sourceEntry("message", "root", null, { message: userMessage("root") }),
+    sourceEntry("message", "dangling", "missing", { message: userMessage("dangling") }),
+  ];
+  assert.deepEqual(projectRecentSessionMirrorSnapshot(manager(entries), METADATA), {
+    ok: false,
+    reason: "unsafe-session-data",
+  });
+
+  const oversizedEntries = [];
+  let parentId = null;
+  for (let index = 0; index < 1100; index += 1) {
+    const id = `unsafe-recent-${index}`;
+    oversizedEntries.push(
+      sourceEntry("message", id, parentId, { message: userMessage(`turn ${index}`) }),
+    );
+    parentId = id;
+  }
+  const sparseContent = [];
+  sparseContent.length = 1;
+  oversizedEntries[1099] = sourceEntry("message", "unsafe-recent-1099", "unsafe-recent-1098", {
+    message: userMessage(sparseContent),
+  });
+  assert.deepEqual(projectRecentSessionMirrorSnapshot(manager(oversizedEntries), METADATA), {
+    ok: false,
+    reason: "unsafe-session-data",
+  });
 });
 
 test("rejects unavailable manager shapes without invoking accessors", () => {

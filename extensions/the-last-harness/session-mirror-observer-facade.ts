@@ -1,10 +1,13 @@
+import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { dirname, join } from "node:path";
 
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  SessionStartEvent,
+import {
+  getAgentDir,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -19,6 +22,7 @@ import type {
 } from "./session-mirror/profile-attestation.js";
 import type {
   SessionMirrorObserverAttestor,
+  SessionMirrorObserverSink,
   SessionMirrorObserverState,
 } from "./session-mirror/observer.js";
 import type {
@@ -176,6 +180,10 @@ export interface SessionMirrorObserverFacadeOptions {
   readonly loadProbe?: () => Promise<SessionMirrorObserverProbeModule>;
   readonly attest?: SessionMirrorObserverAttestor;
   readonly now?: () => number;
+  /** Test seam for the eager, post-attestation companion-directory lookup. */
+  readonly resolveBridgeDirectory?: () => string | undefined;
+  /** Test seam for publication; production uses the lazy probe sink. */
+  readonly sink?: SessionMirrorObserverSink;
 }
 
 export interface SessionMirrorObserverFacadeStatus {
@@ -610,6 +618,8 @@ type SessionMirrorObserverActivationInput = {
   readonly loadProbe: () => Promise<SessionMirrorObserverProbeModule>;
   readonly attest: SessionMirrorObserverAttestor;
   readonly now: () => number;
+  readonly bridgeDirectory: string | undefined;
+  readonly sink: SessionMirrorObserverSink | undefined;
 };
 
 /**
@@ -620,7 +630,7 @@ type SessionMirrorObserverActivationInput = {
 function continueSessionMirrorObserverActivation(
   input: SessionMirrorObserverActivationInput,
 ): Promise<void> {
-  const { state, isCurrent, sessionManager, loadProbe, attest, now } = input;
+  const { state, isCurrent, sessionManager, loadProbe, attest, now, bridgeDirectory, sink } = input;
   const current = (): boolean => isCurrent(state);
 
   if (!current()) return Promise.resolve();
@@ -658,6 +668,8 @@ function continueSessionMirrorObserverActivation(
           attest,
           runtimeVersion: SESSION_MIRROR_OBSERVER_RUNTIME_VERSION,
           sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION,
+          ...(bridgeDirectory === undefined ? {} : { bridgeDirectory }),
+          ...(sink === undefined ? {} : { sink }),
         });
       } catch {
         if (!current()) return;
@@ -711,6 +723,43 @@ function continueSessionMirrorObserverActivation(
  * attestation-before-import gating, command output, and lifecycle forwarding;
  * the observer/probe implementation remains behind one retryable lazy import.
  */
+function defaultBridgeDirectory(): string | undefined {
+  try {
+    const agentDirectory = getAgentDir();
+    if (typeof agentDirectory !== "string" || !agentDirectory.startsWith("/")) return undefined;
+    const canonicalDirectory = realpathSync.native(agentDirectory);
+    if (typeof canonicalDirectory !== "string" || !canonicalDirectory.startsWith("/"))
+      return undefined;
+    return join(dirname(canonicalDirectory), "companion");
+  } catch {
+    return undefined;
+  }
+}
+
+function resolvedBridgeDirectory(resolver: () => string | undefined): string | undefined {
+  try {
+    const value = resolver();
+    return typeof value === "string" && value.startsWith("/") && !value.includes("\0")
+      ? value
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Treat an absent default companion as an optional publication target. The
+ * observer still loads for aggregate in-process metrics, while the sink
+ * remains lazy and is only constructed when the directory is present.
+ */
+function companionDirectoryExists(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function createSessionMirrorObserverFacade(
   options: SessionMirrorObserverFacadeOptions = {},
 ): SessionMirrorObserverFacade {
@@ -800,6 +849,31 @@ export function createSessionMirrorObserverFacade(
       return Promise.resolve();
     }
     nextState.attestation = attestation.phase === "session-file" ? "attested" : "directory-only";
+    let bridgeResolver: () => string | undefined = defaultBridgeDirectory;
+    let customBridgeResolver = false;
+    let injectedSink: SessionMirrorObserverSink | undefined;
+    try {
+      const configuredResolver = options.resolveBridgeDirectory;
+      customBridgeResolver = configuredResolver !== undefined;
+      if (configuredResolver !== undefined) {
+        bridgeResolver =
+          typeof configuredResolver === "function" ? configuredResolver : () => undefined;
+      }
+      injectedSink = options.sink;
+    } catch {
+      bridgeResolver = () => undefined;
+      customBridgeResolver = true;
+      injectedSink = undefined;
+    }
+    const bridgeDirectory = resolvedBridgeDirectory(bridgeResolver);
+    if (!isCurrent(nextState)) return Promise.resolve();
+    const usableBridgeDirectory =
+      injectedSink === undefined &&
+      !customBridgeResolver &&
+      bridgeDirectory !== undefined &&
+      !companionDirectoryExists(bridgeDirectory)
+        ? undefined
+        : bridgeDirectory;
 
     return continueSessionMirrorObserverActivation({
       state: nextState,
@@ -808,6 +882,8 @@ export function createSessionMirrorObserverFacade(
       loadProbe,
       attest,
       now,
+      bridgeDirectory: usableBridgeDirectory,
+      sink: injectedSink,
     });
   };
 

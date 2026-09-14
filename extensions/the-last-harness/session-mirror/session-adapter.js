@@ -13,6 +13,8 @@ const MAX_IDENTITY_CHARACTERS = 128;
 const MAX_CURSOR_CHARACTERS = 256;
 const MAX_CONTENT_BLOCKS = 1024;
 const MAX_MANAGER_PROTOTYPE_DEPTH = 16;
+const MAX_RECENT_SOURCE_ENTRIES = 50_000;
+const MAX_RECENT_TREE_ENTRIES = 64;
 const STATUS_VALUES = new Set([
     "idle",
     "active",
@@ -478,6 +480,11 @@ function deepFreeze(value) {
         deepFreeze(child);
     return value;
 }
+function hasBoundedEntryPayload(entry) {
+    const serializedPayload = JSON.stringify(entry.payload);
+    return (serializedPayload !== undefined &&
+        Buffer.byteLength(serializedPayload, "utf8") <= MAX_ENTRY_PAYLOAD_BYTES);
+}
 function envelopeByteLength(envelope) {
     return Buffer.byteLength(JSON.stringify(envelope), "utf8");
 }
@@ -572,11 +579,8 @@ export function projectSessionMirrorSnapshot(sessionManager, metadata) {
             const projected = projectSourceEntry(sourceEntry);
             if (!projected.ok)
                 return failure(projected.reason);
-            const serializedPayload = JSON.stringify(projected.entry.payload);
-            if (serializedPayload === undefined ||
-                Buffer.byteLength(serializedPayload, "utf8") > MAX_ENTRY_PAYLOAD_BYTES) {
+            if (!hasBoundedEntryPayload(projected.entry))
                 return failure("bounds-exceeded");
-            }
             const serializedEntry = JSON.stringify(projected.entry);
             if (serializedEntry === undefined)
                 return failure("unsafe-session-data");
@@ -642,5 +646,174 @@ export function projectSessionMirrorSnapshot(sessionManager, metadata) {
     }
     catch {
         return failure("unsafe-session-data");
+    }
+}
+export function projectRecentSessionMirrorSnapshot(sessionManager, metadata) {
+    const complete = projectSessionMirrorSnapshot(sessionManager, metadata);
+    if (complete.ok || complete.reason !== "bounds-exceeded")
+        return complete;
+    const metadataResult = validateMetadata(metadata);
+    if (!metadataResult.ok)
+        return failure(metadataResult.reason);
+    const validatedMetadata = metadataResult.value;
+    if (sessionManager === null || typeof sessionManager !== "object") {
+        return failure("session-unavailable");
+    }
+    let sessionFile;
+    let sessionId;
+    let activeLeafId;
+    let sourceEntries;
+    try {
+        const getSessionFile = readSessionManagerMethod(sessionManager, "getSessionFile");
+        const getSessionId = readSessionManagerMethod(sessionManager, "getSessionId");
+        const getLeafId = readSessionManagerMethod(sessionManager, "getLeafId");
+        const getEntries = readSessionManagerMethod(sessionManager, "getEntries");
+        if (!getSessionFile || !getSessionId || !getLeafId || !getEntries) {
+            return failure("session-unavailable");
+        }
+        sessionFile = getSessionFile.call(sessionManager);
+        sessionId = getSessionId.call(sessionManager);
+        activeLeafId = getLeafId.call(sessionManager);
+        sourceEntries = getEntries.call(sessionManager);
+    }
+    catch {
+        return failure("session-unavailable");
+    }
+    if (typeof sessionFile !== "string" || sessionFile.length === 0) {
+        return failure("session-unavailable");
+    }
+    if (!isNonEmptyString(sessionId))
+        return failure("unsafe-session-data");
+    const sessionIdFailure = sourceIdentityFailure(sessionId);
+    if (sessionIdFailure)
+        return failure(sessionIdFailure);
+    if (!(activeLeafId === null || typeof activeLeafId === "string")) {
+        return failure("unsafe-session-data");
+    }
+    if (typeof activeLeafId === "string") {
+        const activeLeafFailure = sourceIdentityFailure(activeLeafId);
+        if (activeLeafFailure)
+            return failure(activeLeafFailure);
+    }
+    if (!Array.isArray(sourceEntries))
+        return failure("unsafe-session-data");
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(sourceEntries, "length");
+    if (!lengthDescriptor ||
+        !("value" in lengthDescriptor) ||
+        !isNonNegativeSafeInteger(lengthDescriptor.value)) {
+        return failure("unsafe-session-data");
+    }
+    const sourceEntryCount = lengthDescriptor.value;
+    if (sourceEntryCount > MAX_RECENT_SOURCE_ENTRIES)
+        return failure("bounds-exceeded");
+    const entriesById = new Map();
+    let newestId = null;
+    try {
+        for (let index = 0; index < sourceEntryCount; index += 1) {
+            const descriptor = Object.getOwnPropertyDescriptor(sourceEntries, String(index));
+            if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+                return failure("unsafe-session-data");
+            }
+            if (!isPlainObject(descriptor.value))
+                return failure("unsafe-session-data");
+            const base = sourceEntryBase(descriptor.value);
+            if (!base.ok)
+                return failure(base.reason);
+            if (entriesById.has(base.id))
+                return failure("unsafe-session-data");
+            entriesById.set(base.id, { value: descriptor.value, id: base.id, parentId: base.parentId });
+            newestId = base.id;
+        }
+    }
+    catch {
+        return failure("unsafe-session-data");
+    }
+    const selectedNewestFirst = [];
+    const seen = new Set();
+    let currentId = typeof activeLeafId === "string" ? activeLeafId : newestId;
+    while (currentId !== null && selectedNewestFirst.length < MAX_RECENT_TREE_ENTRIES) {
+        if (seen.has(currentId))
+            return failure("unsafe-session-data");
+        seen.add(currentId);
+        const current = entriesById.get(currentId);
+        if (!current)
+            return failure("unsafe-session-data");
+        selectedNewestFirst.push(current);
+        currentId = current.parentId;
+    }
+    let projectedEntries = [];
+    try {
+        for (const sourceEntry of selectedNewestFirst.reverse()) {
+            const projected = projectSourceEntry(sourceEntry.value);
+            if (!projected.ok) {
+                if (projected.reason !== "bounds-exceeded")
+                    return failure(projected.reason);
+                projectedEntries.push(sourcePlaceholder(sourceEntry.id, sourceEntry.parentId, "unsupported"));
+                continue;
+            }
+            projectedEntries.push(hasBoundedEntryPayload(projected.entry)
+                ? projected.entry
+                : sourcePlaceholder(sourceEntry.id, sourceEntry.parentId, "unsupported"));
+        }
+    }
+    catch {
+        return failure("unsafe-session-data");
+    }
+    while (true) {
+        const includedIds = new Set(projectedEntries.map((entry) => entry.id));
+        const normalizedEntries = projectedEntries.map((entry) => {
+            const parentId = entry.parentId !== null && includedIds.has(entry.parentId) ? entry.parentId : null;
+            if (entry.kind === "compaction" && !includedIds.has(String(entry.payload.firstKeptEntryId))) {
+                return sourcePlaceholder(entry.id, parentId, "unsupported");
+            }
+            return parentId === entry.parentId ? entry : { ...entry, parentId };
+        });
+        const treeCheck = checkTreeStructure(normalizedEntries);
+        if (treeCheck !== "ok")
+            return failure(treeCheck);
+        const normalizedIds = new Set(normalizedEntries.map((entry) => entry.id));
+        const normalizedLeaf = typeof activeLeafId === "string" && normalizedIds.has(activeLeafId) ? activeLeafId : null;
+        const rootIds = normalizedEntries
+            .filter((entry) => entry.parentId === null)
+            .map((entry) => entry.id);
+        const envelope = {
+            protocol: { family: "session-mirror", major: 1, minor: 0 },
+            source: {
+                runtimeVersion: validatedMetadata.runtimeVersion,
+                sessionSchemaVersion: validatedMetadata.sessionSchemaVersion,
+            },
+            sessionId,
+            capabilities: [
+                "session-tree",
+                "completed-turns-only",
+                "snapshot",
+                "cursor-recovery",
+                "custom-entries",
+                "coarse-status",
+            ],
+            message: {
+                kind: "snapshot",
+                eventId: validatedMetadata.eventId,
+                revision: validatedMetadata.revision,
+                cursor: validatedMetadata.cursor,
+                operation: "replace",
+                snapshot: {
+                    snapshotId: validatedMetadata.snapshotId,
+                    status: validatedMetadata.status,
+                    tree: { rootIds, activeLeafId: normalizedLeaf, entries: normalizedEntries },
+                },
+            },
+        };
+        try {
+            if (envelopeByteLength(envelope) <= MAX_ENVELOPE_BYTES) {
+                return deepFreeze({ ok: true, envelope: deepFreeze(envelope) });
+            }
+        }
+        catch {
+            return failure("unsafe-session-data");
+        }
+        if (projectedEntries.length <= 1)
+            return failure("bounds-exceeded");
+        projectedEntries = projectedEntries.slice(1);
     }
 }
