@@ -16,6 +16,10 @@ import {
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import {
+  buildSkippedAcceptanceLedger,
+  resolveEffectiveAcceptance,
+} from "../../src/runs/shared/acceptance.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -73,6 +77,20 @@ describe(
 
     function waitForMockPiCall(index: number, timeoutMs?: ScaledMs): Promise<void> {
       return waitForMockPiCallFor(mockPi, index, timeoutMs);
+    }
+
+    function pausedAcceptanceLedger() {
+      return buildSkippedAcceptanceLedger({
+        acceptance: resolveEffectiveAcceptance({
+          agentName: "worker",
+          task: "Resume the paused child.",
+          mode: "single",
+        }),
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
     }
 
     it("resume action queues a live async follow-up in the native inbox", async () => {
@@ -1099,6 +1117,7 @@ describe(
         warnedAt: 123,
       };
       const contextPressureCrossedThresholds = ["warning", "critical"] as const;
+      const acceptance = pausedAcceptanceLedger();
       let revivedId: string | undefined;
       try {
         fs.mkdirSync(asyncDir, { recursive: true });
@@ -1124,6 +1143,7 @@ describe(
                   contextUsage,
                   contextPressure,
                   contextPressureCrossedThresholds,
+                  acceptance,
                 },
               ],
             },
@@ -1148,6 +1168,7 @@ describe(
               contextUsage,
               contextPressure,
               contextPressureCrossedThresholds,
+              acceptance,
             },
           ],
         });
@@ -1223,6 +1244,7 @@ describe(
       const runId = `resume-foreground-paused-missing-status-${Date.now()}`;
       const asyncDir = path.join(ASYNC_DIR, runId);
       const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      const acceptance = pausedAcceptanceLedger();
       const { executor, state } = makeExecutor();
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
@@ -1238,6 +1260,7 @@ describe(
             status: "paused",
             sessionFile,
             pause: { kind: "awaiting_supervisor" },
+            acceptance,
           },
         ],
       });

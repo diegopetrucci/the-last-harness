@@ -18,7 +18,26 @@ import {
   buildRevivedAsyncTask,
   resolveAsyncResumeTarget,
 } from "../../src/runs/background/async-resume.ts";
-import type { ResolvedAcceptanceConfig } from "../../src/shared/types.ts";
+import {
+  evaluateAcceptance,
+  resolveEffectiveAcceptance,
+} from "../../src/runs/shared/acceptance.ts";
+import type { AcceptanceEvidenceKind, ResolvedAcceptanceConfig } from "../../src/shared/types.ts";
+
+function acceptanceReportWithoutTests(criterionId: string): string {
+  return [
+    "done",
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [{ id: criterionId, status: "satisfied", evidence: "scope checked" }],
+      changedFiles: ["src/file.ts"],
+      commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+      residualRisks: ["none"],
+      noStagedFiles: true,
+    }),
+    "```",
+  ].join("\n");
+}
 
 describe("async resume lookup", () => {
   it("rejects continued awaiting-supervisor sources after continuation finalization", () => {
@@ -1134,6 +1153,142 @@ describe("async resume lookup", () => {
       assert.equal(target.kind, "revive");
       assert.equal(target.state, "paused");
       assert.deepEqual(target.continuationAcceptance, effectiveAcceptance);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves acceptance provenance across persisted async resume and rejects inconsistent provenance", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-acceptance-provenance-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const inferredAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+      });
+      const inferredSessionFile = path.join(root, "inferred.jsonl");
+      fs.writeFileSync(inferredSessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-inferred", "status.json"), {
+        runId: "run-inferred",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            sessionFile: inferredSessionFile,
+            acceptance: skippedPausedAcceptanceLedger(inferredAcceptance),
+          },
+        ],
+      });
+
+      const inferredTarget = resolveAsyncResumeTarget(
+        { id: "run-inferred" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      assert.deepEqual(
+        inferredTarget.continuationAcceptance?.inferredEvidence,
+        inferredAcceptance.inferredEvidence,
+      );
+      const inferredLedger = await evaluateAcceptance({
+        acceptance: inferredTarget.continuationAcceptance!,
+        output: acceptanceReportWithoutTests("criterion-1"),
+        cwd: root,
+      });
+      assert.equal(inferredLedger.status, "checked", JSON.stringify(inferredLedger));
+      assert.equal(
+        inferredLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "not-applicable",
+      );
+
+      const explicitAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+        explicit: {
+          level: "checked",
+          evidence: [
+            "changed-files",
+            "tests-added",
+            "commands-run",
+            "residual-risks",
+            "no-staged-files",
+          ],
+        },
+      });
+      const explicitSessionFile = path.join(root, "explicit.jsonl");
+      fs.writeFileSync(explicitSessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-explicit", "status.json"), {
+        runId: "run-explicit",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            sessionFile: explicitSessionFile,
+            acceptance: skippedPausedAcceptanceLedger(explicitAcceptance),
+          },
+        ],
+      });
+      const explicitTarget = resolveAsyncResumeTarget(
+        { id: "run-explicit" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      const explicitLedger = await evaluateAcceptance({
+        acceptance: explicitTarget.continuationAcceptance!,
+        output: acceptanceReportWithoutTests("criterion-1"),
+        cwd: root,
+      });
+      assert.equal(explicitLedger.status, "rejected");
+      assert.equal(
+        explicitLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "failed",
+      );
+
+      // A one-sided provenance rewrite is internally inconsistent and must fail
+      // closed. This does not attempt to authenticate a coherent full-contract
+      // rewrite by a same-privilege writer.
+      const inconsistentAcceptance = {
+        ...explicitAcceptance,
+        inferredEvidence: ["tests-added"] as AcceptanceEvidenceKind[],
+      };
+      const inconsistentSessionFile = path.join(root, "inconsistent.jsonl");
+      fs.writeFileSync(inconsistentSessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-inconsistent", "status.json"), {
+        runId: "run-inconsistent",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            sessionFile: inconsistentSessionFile,
+            acceptance: skippedPausedAcceptanceLedger(inconsistentAcceptance),
+          },
+        ],
+      });
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-inconsistent" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+            { readOnly: true },
+          ),
+        /incomplete or malformed; refusing to resume with an unverified acceptance contract/,
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

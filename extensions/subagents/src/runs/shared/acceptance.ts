@@ -474,6 +474,106 @@ export function validateDispatchAcceptanceInput(
   ];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEvidenceArray(value: unknown): value is AcceptanceEvidenceKind[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) => typeof item === "string" && VALID_EVIDENCE.has(item as AcceptanceEvidenceKind),
+    )
+  );
+}
+
+function isResolvedAcceptanceGate(value: unknown): value is ResolvedAcceptanceGate {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    typeof value.must !== "string" ||
+    !isEvidenceArray(value.evidence)
+  )
+    return false;
+  return value.severity === "required" || value.severity === "recommended";
+}
+
+function isResolvedVerifyCommand(value: unknown): value is AcceptanceVerifyCommand {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.command !== "string")
+    return false;
+  if (
+    value.timeoutMs !== undefined &&
+    (typeof value.timeoutMs !== "number" ||
+      !Number.isInteger(value.timeoutMs) ||
+      value.timeoutMs < 1)
+  )
+    return false;
+  if (value.cwd !== undefined && typeof value.cwd !== "string") return false;
+  if (value.env !== undefined) {
+    if (!isRecord(value.env) || !Object.values(value.env).every((item) => typeof item === "string"))
+      return false;
+  }
+  return value.allowFailure === undefined || typeof value.allowFailure === "boolean";
+}
+
+function isResolvedReview(value: unknown): boolean {
+  if (value === undefined || value === false) return true;
+  if (!isRecord(value)) return false;
+  return (
+    (value.agent === undefined || typeof value.agent === "string") &&
+    (value.focus === undefined || typeof value.focus === "string") &&
+    (value.required === undefined || typeof value.required === "boolean")
+  );
+}
+
+/**
+ * Narrow the TLH-owned effective acceptance shape before using it as a
+ * continuation contract. Unknown fields remain allowed for forward
+ * compatibility, but every field consumed by acceptance evaluation is checked.
+ * The provenance arrays are intentionally cross-checked against `evidence` to
+ * reject malformed or internally inconsistent persisted contracts. This local
+ * structural check is not authentication against a same-privilege writer; a
+ * coherent rewrite of the complete contract is outside this boundary.
+ */
+export function isWellFormedResolvedAcceptance(value: unknown): value is ResolvedAcceptanceConfig {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.level !== "string" ||
+    value.level === "auto" ||
+    !VALID_LEVELS.has(value.level as AcceptanceLevel) ||
+    typeof value.explicit !== "boolean" ||
+    !isStringArray(value.inferredReason) ||
+    !isEvidenceArray(value.evidence) ||
+    !Array.isArray(value.criteria) ||
+    !value.criteria.every(isResolvedAcceptanceGate) ||
+    !Array.isArray(value.verify) ||
+    !value.verify.every(isResolvedVerifyCommand) ||
+    !isStringArray(value.stopRules) ||
+    !isResolvedReview(value.review)
+  ) {
+    return false;
+  }
+
+  const hasInferredEvidence = Object.hasOwn(value, "inferredEvidence");
+  const hasExplicitEvidence = Object.hasOwn(value, "explicitEvidence");
+  if (!hasInferredEvidence && !hasExplicitEvidence) return true;
+  if (!hasInferredEvidence || !hasExplicitEvidence) return false;
+  if (!isEvidenceArray(value.inferredEvidence) || !isEvidenceArray(value.explicitEvidence)) {
+    return false;
+  }
+
+  const declaredEvidence = new Set(value.evidence);
+  const inferredEvidence = new Set(value.inferredEvidence);
+  const explicitEvidence = new Set(value.explicitEvidence);
+  for (const kind of inferredEvidence) {
+    if (explicitEvidence.has(kind) || !declaredEvidence.has(kind)) return false;
+  }
+  for (const kind of explicitEvidence) {
+    if (!declaredEvidence.has(kind)) return false;
+  }
+  return declaredEvidence.size === inferredEvidence.size + explicitEvidence.size;
+}
+
 function normalizeCriteria(
   criteria:
     | Array<
@@ -515,19 +615,28 @@ export function resolveEffectiveAcceptance(input: {
   const explicit = normalizeAcceptanceInput(input.explicit);
   const inferred = inferLevel(input);
   const explicitLevel = normalizeLevel(explicit.level);
+  const hasExplicitLevel =
+    explicitLevel !== "auto" &&
+    (explicitLevel !== "none" || explicitAcceptanceCanDisable(explicit));
   const level = explicitAcceptanceCanDisable(explicit)
     ? "none"
-    : explicitLevel === "auto"
-      ? inferred.level
-      : LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferred.level]
-        ? explicitLevel
-        : inferred.level;
-  const evidence = unique([
-    ...(level === inferred.level ? inferred.evidence : requiredEvidenceForLevel(level)),
-    ...(explicit.evidence ?? []),
-  ]);
+    : hasExplicitLevel
+      ? explicitLevel
+      : inferred.level;
+  const evidence = unique(
+    explicit.evidence !== undefined
+      ? explicit.evidence
+      : hasExplicitLevel
+        ? requiredEvidenceForLevel(level)
+        : inferred.evidence,
+  );
+  const inferredEvidence =
+    explicit.evidence === undefined && !hasExplicitLevel
+      ? inferred.evidence.filter((kind) => evidence.includes(kind))
+      : [];
+  const explicitEvidence = evidence.filter((kind) => !inferredEvidence.includes(kind));
   const criteria = normalizeCriteria(
-    (explicit.criteria?.length ? explicit.criteria : inferred.criteria) as Array<
+    (explicit.criteria !== undefined ? explicit.criteria : inferred.criteria) as Array<
       | string
       | {
           id?: string;
@@ -555,6 +664,8 @@ export function resolveEffectiveAcceptance(input: {
     inferredReason: inferred.reasons,
     criteria,
     evidence,
+    inferredEvidence,
+    explicitEvidence,
     verify: explicit.verify ?? [],
     review,
     stopRules: explicit.stopRules ?? [],
@@ -595,17 +706,24 @@ export function mergeContinuationAcceptance(
   const explicit = normalizeAcceptanceInput(override);
   if (explicitAcceptanceCanDisable(explicit)) return base;
   const overrideLevel = normalizeLevel(explicit.level);
+  const raisesLevel =
+    overrideLevel !== "auto" && LEVEL_RANK[overrideLevel] > LEVEL_RANK[base.level];
   const level =
     overrideLevel === "auto"
       ? base.level
       : LEVEL_RANK[overrideLevel] >= LEVEL_RANK[base.level]
         ? overrideLevel
         : base.level;
-  const evidence = unique([
-    ...requiredEvidenceForLevel(level),
-    ...base.evidence,
+  const addedLevelEvidence = raisesLevel ? requiredEvidenceForLevel(level) : [];
+  const evidence = unique([...addedLevelEvidence, ...base.evidence, ...(explicit.evidence ?? [])]);
+  const explicitEvidence = unique([
+    ...getExplicitEvidence(base),
+    ...addedLevelEvidence,
     ...(explicit.evidence ?? []),
   ]);
+  const inferredEvidence = getInferredEvidence(base).filter(
+    (kind) => !explicitEvidence.includes(kind) && evidence.includes(kind),
+  );
   const overrideCriteria = normalizeCriteria(explicit.criteria, evidence);
   const criteria = mergeAcceptanceCriteria(base.criteria, overrideCriteria);
   const verify = mergeVerifyCommands(base.verify, explicit.verify ?? []);
@@ -624,11 +742,24 @@ export function mergeContinuationAcceptance(
     inferredReason: base.inferredReason,
     criteria,
     evidence,
+    inferredEvidence,
+    explicitEvidence,
     verify,
     review,
     stopRules: unique([...base.stopRules, ...(explicit.stopRules ?? [])]),
     reason: explicit.reason ?? base.reason,
   };
+}
+
+function getInferredEvidence(acceptance: ResolvedAcceptanceConfig): AcceptanceEvidenceKind[] {
+  return acceptance.inferredEvidence ?? [];
+}
+
+function getExplicitEvidence(acceptance: ResolvedAcceptanceConfig): AcceptanceEvidenceKind[] {
+  return (
+    acceptance.explicitEvidence ??
+    acceptance.evidence.filter((kind) => !getInferredEvidence(acceptance).includes(kind))
+  );
 }
 
 function verifyCommandIdentity(command: AcceptanceVerifyCommand): string {
@@ -663,7 +794,7 @@ function mergeReviewGate(
   if (!base) return extra;
   if (!extra) return base;
   return {
-    agent: extra.agent ?? base.agent,
+    agent: base.agent ?? extra.agent,
     focus: uniqueStrings([base.focus, extra.focus]).join("; ") || undefined,
     required:
       base.required === true || extra.required === true ? true : (extra.required ?? base.required),
@@ -711,7 +842,11 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
     "```acceptance-report",
     JSON.stringify(
       {
-        criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "specific proof" }],
+        criteriaSatisfied: acceptance.criteria.map((criterion) => ({
+          id: criterion.id,
+          status: "satisfied",
+          evidence: "specific proof",
+        })),
         changedFiles: ["src/file.ts"],
         testsAddedOrUpdated: ["test/file.test.ts"],
         commandsRun: [{ command: "command", result: "passed", summary: "short result" }],
@@ -1061,9 +1196,10 @@ function validateStringArrayField(errors: string[], value: unknown, pathLabel: s
 }
 
 /**
- * Normalize report string arrays at the parse boundary: empty and
- * whitespace-only entries do not count as evidence. Non-string entries are
- * rejected by validation before this function runs.
+ * Normalize report string arrays at the parse boundary: blank entries do not
+ * count as evidence, while empty arrays remain available to declare that no
+ * items apply. Non-string entries are rejected by validation before this
+ * function runs.
  */
 function normalizeAcceptanceReportStringArrays(report: AcceptanceReport): AcceptanceReport {
   const normalizeArray = (items: string[] | undefined): string[] | undefined => {
@@ -1236,7 +1372,10 @@ function reportEvidencePresent(report: AcceptanceReport, kind: AcceptanceEvidenc
     case "changed-files":
       return isStringArray(report.changedFiles) && report.changedFiles.length > 0;
     case "tests-added":
-      return isStringArray(report.testsAddedOrUpdated) && report.testsAddedOrUpdated.length > 0;
+      // An empty list is an explicit, valid declaration that this run changed no
+      // test files. Inherited inferred evidence is advisory; a tests-added kind
+      // selected explicitly still requires the field to be present.
+      return isStringArray(report.testsAddedOrUpdated);
     case "commands-run":
       return Array.isArray(report.commandsRun) && report.commandsRun.length > 0;
     case "validation-output":
@@ -1283,12 +1422,16 @@ function runStructuralChecks(
   const checks: AcceptanceRuntimeCheck[] = [];
   for (const kind of acceptance.evidence) {
     const present = reportEvidencePresent(report, kind);
+    const inferredTestsOmitted =
+      kind === "tests-added" && getInferredEvidence(acceptance).includes(kind) && !present;
     checks.push({
       id: `evidence:${kind}`,
-      status: present ? "passed" : "failed",
-      message: present
-        ? `${kind} evidence present.`
-        : `${kind} evidence missing from child report.`,
+      status: inferredTestsOmitted ? "not-applicable" : present ? "passed" : "failed",
+      message: inferredTestsOmitted
+        ? "tests-added evidence omitted under inferred acceptance; no test-file changes declared."
+        : present
+          ? `${kind} evidence present.`
+          : `${kind} evidence missing from child report.`,
     });
   }
   if (acceptance.evidence.includes("no-staged-files")) checks.push(checkNoStagedFiles(cwd));

@@ -490,6 +490,10 @@ export interface ResolvedAcceptanceConfig {
   inferredReason: string[];
   criteria: ResolvedAcceptanceGate[];
   evidence: AcceptanceEvidenceKind[];
+  /** Evidence inherited from task/role inference rather than selected explicitly. */
+  inferredEvidence?: AcceptanceEvidenceKind[];
+  /** Evidence selected by the explicit contract, retained for resume provenance. */
+  explicitEvidence?: AcceptanceEvidenceKind[];
   verify: AcceptanceVerifyCommand[];
   review?: AcceptanceReviewGate | false;
   stopRules: string[];
