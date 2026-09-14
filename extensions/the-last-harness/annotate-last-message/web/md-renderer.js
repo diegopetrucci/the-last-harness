@@ -250,6 +250,36 @@
   }
 
   /**
+   * Try to parse a link span starting at position i.
+   * Returns { labelText, url, end } on success, null on failure.
+   */
+  function tryParseLink(text, i) {
+    let closeLabel = -1;
+    let depth = 0;
+    for (let k = i + 1; k < text.length; k++) {
+      if (text[k] === "[") depth++;
+      else if (text[k] === "]") {
+        if (depth === 0) {
+          closeLabel = k;
+          break;
+        }
+        depth--;
+      }
+    }
+    if (closeLabel === -1 || text[closeLabel + 1] !== "(") return null;
+
+    const urlStart = closeLabel + 2;
+    const closeUrl = text.indexOf(")", urlStart);
+    if (closeUrl === -1) return null;
+
+    return {
+      labelText: text.slice(i + 1, closeLabel),
+      url: text.slice(urlStart, closeUrl),
+      end: closeUrl + 1,
+    };
+  }
+
+  /**
    * tokenizeLine(text) → Token[]
    *
    * Parses inline markdown and returns a token tree.  Falls back to a single
@@ -310,29 +340,16 @@
 
       // Link: [label](url)
       if (ch === "[") {
-        let closeLabel = -1;
-        let depth = 0;
-        for (let k = i + 1; k < text.length; k++) {
-          if (text[k] === "[") depth++;
-          else if (text[k] === "]") {
-            if (depth === 0) {
-              closeLabel = k;
-              break;
-            }
-            depth--;
-          }
-        }
-        if (closeLabel !== -1 && text[closeLabel + 1] === "(") {
-          const urlStart = closeLabel + 2;
-          const closeUrl = text.indexOf(")", urlStart);
-          if (closeUrl !== -1) {
-            flush();
-            const labelText = text.slice(i + 1, closeLabel);
-            const url = text.slice(urlStart, closeUrl);
-            tokens.push({ type: "link", labelTokens: parseInlineSpans(labelText), url });
-            i = closeUrl + 1;
-            continue;
-          }
+        const link = tryParseLink(text, i);
+        if (link) {
+          flush();
+          tokens.push({
+            type: "link",
+            labelTokens: parseInlineSpans(link.labelText),
+            url: link.url,
+          });
+          i = link.end;
+          continue;
         }
         buf += ch;
         i++;

@@ -343,6 +343,31 @@ test("tokenizeLine: link whose label contains inline code", () => {
   assert.equal(codeToken.text, "code");
 });
 
+test("tokenizeLine: nested bracket link labels preserve recursive link tokens", () => {
+  assert.deepEqual(
+    n(tokenizeLine("[outer [inner](https://inner.example)](https://outer.example)")),
+    [
+      {
+        type: "link",
+        labelTokens: [
+          { type: "text", text: "outer " },
+          {
+            type: "link",
+            labelTokens: [{ type: "text", text: "inner" }],
+            url: "https://inner.example",
+          },
+        ],
+        url: "https://outer.example",
+      },
+    ],
+  );
+});
+
+test("tokenizeLine: malformed unclosed link falls back to literal text", () => {
+  const input = "[broken](https://example.com";
+  assert.deepEqual(n(tokenizeLine(input)), [{ type: "text", text: input }]);
+});
+
 test("tokenizeLine: whitespace-only text (spaces only) returns plain text token", () => {
   assert.deepEqual(n(tokenizeLine("   ")), [{ type: "text", text: "   " }]);
 });
