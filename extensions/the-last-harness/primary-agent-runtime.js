@@ -483,6 +483,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         setTlhThinkingLevel(targetThinking);
         return projectEffortIsEffective ? targetThinking : undefined;
     }
+    function applyDisabledPrimaryDefaults(ctx, warnOnMissing, sessionStartOperation) {
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        try {
+            applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
+        }
+        catch (error) {
+            if (!isExtensionRuntimeNotInitializedError(error)) {
+                throw error;
+            }
+        }
+    }
     async function applyPrimaryDefaults(ctx, options = {}) {
         const { warnOnMissing = true, sessionStartOperation } = options;
         if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
@@ -490,16 +502,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         lastObservedModel = ctx.model;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
-            if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
-                return;
-            try {
-                applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
-            }
-            catch (error) {
-                if (!isExtensionRuntimeNotInitializedError(error)) {
-                    throw error;
-                }
-            }
+            applyDisabledPrimaryDefaults(ctx, warnOnMissing, sessionStartOperation);
             return;
         }
         if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))

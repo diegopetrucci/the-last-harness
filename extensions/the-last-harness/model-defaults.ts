@@ -1227,6 +1227,106 @@ function formatEffectiveModelAndThinking(
   return formatResolvedProviderModelReference(model, thinking);
 }
 
+function applyExplicitModelThinking(
+  target: Record<string, unknown>,
+  agent: AgentModelDefaults | undefined,
+  agentName: string | undefined,
+  availableModels: readonly ReasoningProviderModelReference[],
+  override: TlhSubagentOverride | undefined,
+  effortSource: SubagentEffortSource | undefined,
+  options: ApplyProviderAwareSubagentModelOptions,
+): number {
+  if (
+    typeof target.model !== "string" ||
+    splitKnownThinkingSuffix(target.model).thinkingSuffix ||
+    override?.thinking === undefined
+  ) {
+    return 0;
+  }
+
+  const explicitModel = findAvailableProviderModel(availableModels, target.model);
+  const thinkingResolution = resolveStoredSubagentThinking(
+    agent,
+    explicitModel,
+    override,
+    false,
+    effortSource,
+  );
+  if (thinkingResolution.warning && agentName) {
+    options.onWarning?.({
+      agent: agentName,
+      message: thinkingResolution.warning,
+      source: effortSource === "project" ? "project-default" : "stored",
+    });
+  }
+  const modelWithThinking = applyThinkingSuffix(target.model, thinkingResolution.thinking);
+  if (!modelWithThinking || modelWithThinking === target.model) {
+    return 0;
+  }
+  target.model = modelWithThinking;
+  return 1;
+}
+
+function applyBundledModelDefaults(
+  target: Record<string, unknown>,
+  agent: AgentModelDefaults | undefined,
+  availableModels: readonly ReasoningProviderModelReference[],
+  currentProvider: string | undefined,
+  currentModel: ProviderModelReference | undefined,
+): number {
+  const defaults = selectProviderAwareAgentDefaults(
+    agent,
+    availableModels,
+    currentProvider,
+    currentModel,
+  );
+  const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
+  const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
+  if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
+    return 0;
+  }
+  const thinking = defaults.thinking;
+  target.model = thinking ? `${selectedModel}:${thinking}` : selectedModel;
+
+  const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(
+    agent,
+    availableModels,
+    currentProvider,
+    currentModel,
+  );
+  if (oppositeProviderModel) {
+    const fallbackModel = selectOppositeProviderFallbackModel(
+      agent,
+      availableModels,
+      currentProvider,
+      currentModel,
+    );
+    const fallbackModelBase = fallbackModel
+      ? formatProviderModelReference(fallbackModel)
+      : undefined;
+    if (fallbackModelBase && fallbackModelBase !== selectedModel) {
+      const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel!.provider);
+      const fallbackModelId = fallbackThinking
+        ? `${fallbackModelBase}:${fallbackThinking}`
+        : fallbackModelBase;
+      if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
+        (target as Record<PropertyKey, unknown>)[PROVIDER_AWARE_FALLBACK_MODELS] = [
+          fallbackModelId,
+        ];
+      }
+      if (
+        !Object.hasOwn(target, "modelFallbackNotice") ||
+        target.modelFallbackNotice === undefined
+      ) {
+        target.modelFallbackNotice = isOpenrouterProvider(currentProvider)
+          ? OPENROUTER_OPPOSITE_FALLBACK_NOTICE
+          : OPPOSITE_PROVIDER_FALLBACK_NOTICE;
+      }
+    }
+  }
+  return 1;
+}
+
 function applyModelToRunnableTarget(
   target: unknown,
   agents: ReadonlyMap<string, AgentModelDefaults>,
@@ -1273,94 +1373,22 @@ function applyModelToRunnableTarget(
   // Human-only model-choice rule: project model cannot override an explicit dispatch model.
   // Project effort (thinking) CAN still apply to an explicit dispatch.
   if (explicitModel) {
-    // If the model already carries a known thinking suffix, or there is no
-    // effective thinking preference, leave it untouched.
-    if (
-      typeof target.model !== "string" ||
-      splitKnownThinkingSuffix(target.model).thinkingSuffix ||
-      override?.thinking === undefined
-    ) {
-      return 0;
-    }
-    // Explicit model without suffix + effective thinking preference → append suffix.
-    const explicitModel = findAvailableProviderModel(availableModels, target.model);
-    const thinkingResolution = resolveStoredSubagentThinking(
+    return applyExplicitModelThinking(
+      target,
       agent,
-      explicitModel,
+      agentName,
+      availableModels,
       override,
-      false,
       effortSource,
+      options,
     );
-    if (thinkingResolution.warning && agentName) {
-      options.onWarning?.({
-        agent: agentName,
-        message: thinkingResolution.warning,
-        source: effortSource === "project" ? "project-default" : "stored",
-      });
-    }
-    const modelWithThinking = applyThinkingSuffix(target.model, thinkingResolution.thinking);
-    if (!modelWithThinking || modelWithThinking === target.model) {
-      return 0;
-    }
-    target.model = modelWithThinking;
-    return 1;
   }
 
   // No effective override — fast path preserving main's bundled-defaults behavior:
   // resolveThinkingForProvider's result is appended directly without
   // model-capability gating.
   if (override === undefined) {
-    const defaults = selectProviderAwareAgentDefaults(
-      agent,
-      availableModels,
-      currentProvider,
-      currentModel,
-    );
-    const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
-    const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
-    if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
-      return 0;
-    }
-    const thinking = defaults.thinking;
-    target.model = thinking ? `${selectedModel}:${thinking}` : selectedModel;
-
-    const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(
-      agent,
-      availableModels,
-      currentProvider,
-      currentModel,
-    );
-    if (oppositeProviderModel) {
-      const fallbackModel = selectOppositeProviderFallbackModel(
-        agent,
-        availableModels,
-        currentProvider,
-        currentModel,
-      );
-      const fallbackModelBase = fallbackModel
-        ? formatProviderModelReference(fallbackModel)
-        : undefined;
-      if (fallbackModelBase && fallbackModelBase !== selectedModel) {
-        const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel!.provider);
-        const fallbackModelId = fallbackThinking
-          ? `${fallbackModelBase}:${fallbackThinking}`
-          : fallbackModelBase;
-        if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
-          (target as Record<PropertyKey, unknown>)[PROVIDER_AWARE_FALLBACK_MODELS] = [
-            fallbackModelId,
-          ];
-        }
-        if (
-          !Object.hasOwn(target, "modelFallbackNotice") ||
-          target.modelFallbackNotice === undefined
-        ) {
-          target.modelFallbackNotice = isOpenrouterProvider(currentProvider)
-            ? OPENROUTER_OPPOSITE_FALLBACK_NOTICE
-            : OPPOSITE_PROVIDER_FALLBACK_NOTICE;
-        }
-      }
-    }
-    return 1;
+    return applyBundledModelDefaults(target, agent, availableModels, currentProvider, currentModel);
   }
 
   // model:false with no thinking stored means "inherit session model, no changes".

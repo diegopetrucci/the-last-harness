@@ -234,36 +234,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             currentTurn.discoveries.intercomTargets += discoveryCounts.intercomTargets;
         }
     }
-    const agentProviderUsage = new Map();
-    for (const run of subagentRuns.values()) {
-        if (run.usage) {
-            addUsage(subagentTotals, run.usage);
-        }
-        const model = firstNonEmptyString(run.model, run.attemptedModels?.[0]);
-        const provider = model ? splitProviderModel(model).provider : undefined;
-        if (model) {
-            const { modelId } = splitProviderModel(model);
-            addModelUsage(modelUsage, {
-                provider,
-                modelId,
-                source: "subagent",
-                usage: run.usage ?? createUsageTotals(),
-                countAsTurn: run.usage?.turns ?? 0,
-                countAsAssistantMessage: run.usage?.assistantMessages ?? 0,
-            });
-        }
-        if (run.usage) {
-            const agentKey = `${run.agent ?? ""}:${provider ?? ""}`;
-            const existing = agentProviderUsage.get(agentKey) ?? {
-                key: agentKey,
-                agent: run.agent,
-                provider,
-                usage: createUsageTotals(),
-            };
-            addUsage(existing.usage, run.usage);
-            agentProviderUsage.set(agentKey, existing);
-        }
-    }
+    const agentProviderUsage = aggregateSubagentUsage(subagentRuns, subagentTotals, modelUsage);
     const renderedTimeline = timeline.map(({ toolCallCounts, ...turn }) => ({
         ...turn,
         toolCalls: {
@@ -366,6 +337,39 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             "Artifact and session references are sanitized and do not expose absolute local paths.",
         ],
     };
+}
+function aggregateSubagentUsage(subagentRuns, subagentTotals, modelUsage) {
+    const agentProviderUsage = new Map();
+    for (const run of subagentRuns.values()) {
+        if (run.usage) {
+            addUsage(subagentTotals, run.usage);
+        }
+        const model = firstNonEmptyString(run.model, run.attemptedModels?.[0]);
+        const provider = model ? splitProviderModel(model).provider : undefined;
+        if (model) {
+            const { modelId } = splitProviderModel(model);
+            addModelUsage(modelUsage, {
+                provider,
+                modelId,
+                source: "subagent",
+                usage: run.usage ?? createUsageTotals(),
+                countAsTurn: run.usage?.turns ?? 0,
+                countAsAssistantMessage: run.usage?.assistantMessages ?? 0,
+            });
+        }
+        if (run.usage) {
+            const agentKey = `${run.agent ?? ""}:${provider ?? ""}`;
+            const existing = agentProviderUsage.get(agentKey) ?? {
+                key: agentKey,
+                agent: run.agent,
+                provider,
+                usage: createUsageTotals(),
+            };
+            addUsage(existing.usage, run.usage);
+            agentProviderUsage.set(agentKey, existing);
+        }
+    }
+    return agentProviderUsage;
 }
 function createCacheMissAnalyzer(priceSource) {
     const state = {
