@@ -1139,6 +1139,41 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("restores a persisted per-child ticket id without task-text reinjection", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-ticket-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "child.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf8");
+      writeJson(path.join(asyncRoot, "run-ticket", "status.json"), {
+        runId: "run-ticket",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "developer",
+            status: "complete",
+            sessionFile,
+            tkTicketId: "tlhm-o1qg",
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-ticket" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      assert.equal(target.tkTicketId, "tlhm-o1qg");
+      assert.doesNotMatch(buildRevivedAsyncTask(target, "Continue"), /tk show/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("frames the revived follow-up with original run context", () => {
     const task = buildRevivedAsyncTask(
       {

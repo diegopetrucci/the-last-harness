@@ -13,6 +13,7 @@ import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from ".
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { updateForegroundNestedProjection } from "../shared/nested-events.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 export function getForegroundControl(state, runId) {
     if (runId)
         return state.foregroundControls.get(runId);
@@ -151,6 +152,9 @@ export function rememberForegroundRun(state, input) {
             const child = {
                 agent: result.agent,
                 ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+                ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
+                    ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
+                    : {}),
                 index,
                 status: resolveSubagentResultStatus({
                     exitCode: result.exitCode,
@@ -215,6 +219,9 @@ export function updateRememberedForegroundChild(state, input) {
         ...child,
         agent: input.result.agent,
         ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+        ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
+            ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
+            : {}),
         index: input.index,
         status: resolveSubagentResultStatus({
             exitCode: input.result.exitCode,
@@ -323,6 +330,9 @@ export function resolveForegroundResumeTarget(params, state) {
         state: childState,
         agent: child.agent,
         ...(projectAgentMarker ? { projectAgent: projectAgentMarker } : {}),
+        ...(child.agent === "developer" && normalizeTkTicketId(child.tkTicketId)
+            ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
+            : {}),
         index,
         cwd: run.cwd,
         sessionFile,

@@ -95,6 +95,7 @@ import {
   resolveEffectiveAcceptance,
 } from "../shared/acceptance.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { inspectTkTicketReference, normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import {
   boundSupervisorSummary,
   createActiveRuntimeTracker,
@@ -149,6 +150,18 @@ import {
 
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE =
   "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
+
+function resolveAssignedDeveloperTkTicketId(
+  agent: AgentConfig,
+  task: string,
+  requestedId: string | undefined,
+): string | undefined {
+  if (agent.name !== "developer" || !isCanonicalPackagedMinorAgent(agent)) return undefined;
+  const reference = inspectTkTicketReference(task);
+  if (reference.kind === "valid") return reference.id;
+  if (reference.kind === "invalid") return undefined;
+  return normalizeTkTicketId(requestedId);
+}
 
 function settleForegroundAcceptance(
   result: SingleResult,
@@ -445,6 +458,7 @@ async function runSingleAttempt(
       childIndex: options.index ?? 0,
       parentSessionId: options.parentSessionId,
       steerInboxDir: options.steerInboxDir,
+      tkTicketId: options.tkTicketId,
       toolBudget: options.toolBudget,
     }));
   } catch (error) {
@@ -473,6 +487,7 @@ async function runSingleAttempt(
       task: shared.originalTask ?? task,
       exitCode: 1,
       ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+      ...(options.tkTicketId ? { tkTicketId: options.tkTicketId } : {}),
       ...(options.childLocation ? { childLocation: options.childLocation } : {}),
       messages: [],
       usage: emptyUsage(),
@@ -496,6 +511,7 @@ async function runSingleAttempt(
     task: shared.originalTask ?? task,
     exitCode: 0,
     ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+    ...(options.tkTicketId ? { tkTicketId: options.tkTicketId } : {}),
     ...(options.childLocation ? { childLocation: options.childLocation } : {}),
     messages: [],
     usage: emptyUsage(),
@@ -1423,6 +1439,11 @@ export async function runSync(
     };
   }
   const runStartedAt = Date.now();
+  const assignedTkTicketId = resolveAssignedDeveloperTkTicketId(agent, task, options.tkTicketId);
+  options = {
+    ...options,
+    ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : { tkTicketId: undefined }),
+  };
   const effectiveTimeoutMs = resolveEffectiveSingleTimeout(
     options.timeoutMs,
     agent.maxExecutionTimeMs,
@@ -1452,6 +1473,7 @@ export async function runSync(
       exitCode: 1,
       messages: [],
       usage: emptyUsage(),
+      ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
       outputMode: options.outputMode,
       error: outputModeValidationError,
     };
@@ -1490,6 +1512,7 @@ export async function runSync(
       exitCode: 1,
       messages: [],
       usage: emptyUsage(),
+      ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
       error: "Skills not found: pi-subagents",
     };
   }

@@ -657,6 +657,104 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("restores distinct per-child ticket ids from result-only artifacts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-tickets-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const firstSession = path.join(root, "first.jsonl");
+      const secondSession = path.join(root, "second.jsonl");
+      fs.writeFileSync(firstSession, "", "utf-8");
+      fs.writeFileSync(secondSession, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-tickets.json"), {
+        id: "run-result-tickets",
+        agent: "developer",
+        success: true,
+        state: "complete",
+        cwd: root,
+        results: [
+          {
+            agent: "developer",
+            success: true,
+            sessionFile: firstSession,
+            tkTicketId: "tlhm-child-a",
+          },
+          {
+            agent: "developer",
+            success: true,
+            sessionFile: secondSession,
+            tkTicketId: "tlhm-child-b",
+          },
+        ],
+      });
+
+      const firstTarget = resolveAsyncResumeTarget(
+        { id: "run-result-tickets", index: 0 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      const secondTarget = resolveAsyncResumeTarget(
+        { id: "run-result-tickets", index: 1 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+
+      assert.equal(firstTarget.tkTicketId, "tlhm-child-a");
+      assert.equal(secondTarget.tkTicketId, "tlhm-child-b");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits malformed per-child ticket ids during result-only recovery", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-ticket-boundary-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const firstSession = path.join(root, "first.jsonl");
+      const secondSession = path.join(root, "second.jsonl");
+      fs.writeFileSync(firstSession, "", "utf-8");
+      fs.writeFileSync(secondSession, "", "utf-8");
+      const malformedResult: unknown = {
+        id: "run-result-ticket-boundary",
+        agent: "developer",
+        success: true,
+        state: "complete",
+        cwd: root,
+        results: [
+          {
+            agent: "developer",
+            success: true,
+            sessionFile: firstSession,
+            tkTicketId: "not a ticket",
+          },
+          {
+            agent: "developer",
+            success: true,
+            sessionFile: secondSession,
+            tkTicketId: 42,
+          },
+        ],
+      };
+      fs.mkdirSync(resultsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(resultsDir, "run-result-ticket-boundary.json"),
+        JSON.stringify(malformedResult, null, 2),
+        "utf-8",
+      );
+
+      const firstTarget = resolveAsyncResumeTarget(
+        { id: "run-result-ticket-boundary", index: 0 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      const secondTarget = resolveAsyncResumeTarget(
+        { id: "run-result-ticket-boundary", index: 1 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+
+      assert.equal(firstTarget.tkTicketId, undefined);
+      assert.equal(secondTarget.tkTicketId, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to aggregate completion for legacy single-child result artifacts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-legacy-success-"));
     try {

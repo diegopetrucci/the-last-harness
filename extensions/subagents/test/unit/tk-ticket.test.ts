@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
   detectTkTicketId,
+  inspectTkTicketReference,
+  normalizeTkTicketId,
   normalizeTkTicketMetadata,
   parseTkTicketTitle,
   resolveTkTicketMetadata,
@@ -15,7 +17,56 @@ import {
 describe("tk ticket helpers", () => {
   it("detects explicit tk show commands from delegated tasks", () => {
     assert.equal(detectTkTicketId("First run `tk show psr-raw4` and follow it."), "psr-raw4");
+    assert.equal(detectTkTicketId("Run `tk show a` first."), "a");
     assert.equal(detectTkTicketId("No ticket here."), undefined);
+  });
+
+  it("keeps legacy detection separate from complete-token child inspection", () => {
+    const malformed = "Run `tk show psr-raw4.extra` first.";
+    assert.equal(detectTkTicketId(malformed), "psr-raw4");
+
+    const cases = [
+      ["No ticket here.", { kind: "absent" }],
+      ["Run `tk showcase` first.", { kind: "absent" }],
+      ["Run `tk showroom` first.", { kind: "absent" }],
+      ["Run `tk show-case` first.", { kind: "absent" }],
+      ["Run `tk show.case` first.", { kind: "absent" }],
+      ["Run `tk show/path` first.", { kind: "absent" }],
+      ["not-tk show ticket", { kind: "absent" }],
+      ["path/tk show ticket", { kind: "absent" }],
+      ["name.tk show ticket", { kind: "absent" }],
+      ["name_tk show ticket", { kind: "absent" }],
+      ["name-tk show ticket", { kind: "absent" }],
+      ["tk show", { kind: "invalid" }],
+      ["tk show ", { kind: "invalid" }],
+      ["Run `tk show psr-raw4` first.", { kind: "valid", id: "psr-raw4" }],
+      [":tk show psr-raw4", { kind: "valid", id: "psr-raw4" }],
+      ["(tk show psr-raw4", { kind: "valid", id: "psr-raw4" }],
+      [">tk show psr-raw4", { kind: "valid", id: "psr-raw4" }],
+      ["Run (tk show psr-raw4) first.", { kind: "valid", id: "psr-raw4" }],
+      ["Run [tk show psr-raw4] first.", { kind: "valid", id: "psr-raw4" }],
+      ["Run {tk show psr-raw4} first.", { kind: "valid", id: "psr-raw4" }],
+      ['Run "tk show psr-raw4" first.', { kind: "valid", id: "psr-raw4" }],
+      ["Run 'tk show psr-raw4' first.", { kind: "valid", id: "psr-raw4" }],
+      [malformed, { kind: "invalid" }],
+      ["Run `tk show _psr-raw4` first.", { kind: "invalid" }],
+      ["Run [tk show psr-raw4/path] first.", { kind: "invalid" }],
+      ["Run {tk show psr-raw4.extra} first.", { kind: "invalid" }],
+      ["Run (tk show _psr-raw4) first.", { kind: "invalid" }],
+      ["Run (tk show psr-raw4)) first.", { kind: "invalid" }],
+      ["Run (tk show psr-raw4)tail first.", { kind: "invalid" }],
+    ] as const;
+    for (const [task, expected] of cases) {
+      assert.deepEqual(inspectTkTicketReference(task), expected, task);
+    }
+  });
+
+  it("normalizes only ticket ids accepted by the restricted grammar", () => {
+    assert.equal(normalizeTkTicketId("psr-raw4"), "psr-raw4");
+    assert.equal(normalizeTkTicketId("a"), "a");
+    assert.equal(normalizeTkTicketId("bad id"), undefined);
+    assert.equal(normalizeTkTicketId("_bad"), undefined);
+    assert.equal(normalizeTkTicketId(42), undefined);
   });
 
   it("parses and sanitizes terminal-safe ticket titles without clipping", () => {
@@ -50,6 +101,13 @@ describe("tk ticket helpers", () => {
         ],
       }),
       undefined,
+    );
+    assert.deepEqual(
+      resolveTkTicketTaskContext({
+        runnerCwd: "/repo",
+        tasks: [{ task: "Run `tk show psr-raw4.extra` first." }],
+      }),
+      { task: "Run `tk show psr-raw4.extra` first.", cwd: "/repo", taskIndex: 0 },
     );
   });
 

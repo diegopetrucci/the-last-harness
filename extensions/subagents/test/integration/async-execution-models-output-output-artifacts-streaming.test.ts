@@ -13,6 +13,11 @@ import {
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
+} from "../../src/runs/shared/pi-args.ts";
 
 import {
   ASYNC_DIR,
@@ -888,6 +893,152 @@ describe("async execution output and event streaming", () => {
       fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
     ) as AsyncStatusPayload;
     assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
+  });
+
+  it("continuation and replacement launches forward inherited IDs and prefer fresh literals", async () => {
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "parent-ticket";
+    const canonicalDeveloper = makeAgent("developer", {
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+    });
+    const runIds: string[] = [];
+    const commonParams = {
+      agent: "developer",
+      agentConfig: canonicalDeveloper,
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    };
+    try {
+      const inheritedId = `async-ticket-inherited-${Date.now().toString(36)}`;
+      runIds.push(inheritedId);
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
+      const inherited = executeAsyncSingle(inheritedId, {
+        ...commonParams,
+        task: "Continue the paused developer work.",
+        inheritedTkTicketId: "persisted-ticket",
+        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
+      });
+      assert.equal(inherited.isError, undefined);
+      const inheritedPayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(inheritedId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(inheritedPayload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
+      });
+
+      const showroomId = `async-ticket-showroom-${Date.now().toString(36)}`;
+      runIds.push(showroomId);
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
+      const showroom = executeAsyncSingle(showroomId, {
+        ...commonParams,
+        task: "Continue with the non-command suffix `tk show.case`.",
+        inheritedTkTicketId: "persisted-ticket",
+        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
+      });
+      assert.equal(showroom.isError, undefined);
+      const showroomPayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(showroomId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(showroomPayload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
+      });
+
+      const freshId = `async-ticket-fresh-${Date.now().toString(36)}`;
+      runIds.push(freshId);
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
+      const fresh = executeAsyncSingle(freshId, {
+        ...commonParams,
+        task: "Continue with the fresh instruction `tk show fresh-ticket`.",
+        inheritedTkTicketId: "persisted-ticket",
+        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
+      });
+      assert.equal(fresh.isError, undefined);
+      const freshPayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(freshId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(freshPayload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: "fresh-ticket",
+      });
+
+      const malformedId = `async-ticket-malformed-${Date.now().toString(36)}`;
+      runIds.push(malformedId);
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
+      const malformed = executeAsyncSingle(malformedId, {
+        ...commonParams,
+        task: "Continue with the malformed fresh instruction `tk show fresh-ticket.extra`.",
+        inheritedTkTicketId: "persisted-ticket",
+        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
+      });
+      assert.equal(malformed.isError, undefined);
+      const malformedPayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(malformedId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(malformedPayload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: null,
+      });
+      const malformedStatus = JSON.parse(
+        fs.readFileSync(path.join(ASYNC_DIR, malformedId, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      assert.equal(malformedStatus.tkTicket, undefined);
+    } finally {
+      for (const id of runIds) {
+        fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+        fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
+      }
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      if (previousGuidanceMarker === undefined)
+        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
+      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
+    }
   });
 
   it("background parallel launches propagate step-cwd tk tickets and fail open for ambiguous matches", async () => {

@@ -5,7 +5,7 @@ import { lifecycleContinuationForIndex, normalizeActiveRuntimeCheckpointAt, norm
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
-import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { normalizeTkTicketId, normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
@@ -164,6 +164,7 @@ function validateResultFile(value, resultPath) {
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
+            const tkTicketId = normalizeTkTicketId(child.tkTicketId);
             const thinking = parseThinkingLevel(child.thinking);
             const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
             const modelResolution = parseResultModelResolution(child.modelResolution, resultPath, `results[${index}].modelResolution`);
@@ -198,6 +199,7 @@ function validateResultFile(value, resultPath) {
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(model ? { model } : {}),
+                ...(tkTicketId ? { tkTicketId } : {}),
                 ...(thinking ? { thinking } : {}),
                 ...(modelIdentity ? { modelIdentity } : {}),
                 ...(modelResolution ? { modelResolution } : {}),
@@ -554,6 +556,14 @@ function resolveResumeDiagnosticMetadata(index, statusStep, resultSteps, result)
         ...(terminationReason ? { terminationReason } : {}),
     };
 }
+function resolvePersistedTkTicketId(context, index, statusStep, agent) {
+    if (agent !== "developer")
+        return undefined;
+    const resultStep = context.resultSteps[index];
+    return (normalizeTkTicketId(statusStep?.tkTicketId) ??
+        normalizeTkTicketId(resultStep?.tkTicketId) ??
+        (context.stepCount === 1 ? normalizeTkTicketId(context.tkTicket?.id) : undefined));
+}
 function resolveProjectAgentMetadata(context, index, statusStep) {
     const selectedCandidate = statusStep?.projectAgent ?? context.resultSteps[index]?.projectAgent;
     let projectAgent;
@@ -594,8 +604,10 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
     const metadata = resolveResumeModelMetadata(index, statusStep, context.resultSteps, context.result);
     const healthMetadata = resolveResumeHealthMetadata(statusStep, context.resultSteps[index]);
     const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
+    const tkTicketId = resolvePersistedTkTicketId(context, index, statusStep, target.agent);
     return {
         ...target,
+        ...(tkTicketId ? { tkTicketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
         ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
@@ -683,8 +695,10 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const healthMetadata = resolveResumeHealthMetadata(selectedStatusStep, context.resultSteps[index]);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+    const tkTicketId = resolvePersistedTkTicketId(context, index, selectedStatusStep, target.agent);
     const targetWithModelMetadata = {
         ...target,
+        ...(tkTicketId ? { tkTicketId } : {}),
         ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
         ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
         ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),

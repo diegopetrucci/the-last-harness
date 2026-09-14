@@ -44,6 +44,7 @@ import {
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
 import { updateForegroundNestedProjection } from "../shared/nested-events.ts";
 import { projectRunAuthorizationError } from "./project-agent-control.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 
 export function getForegroundControl(state: SubagentState, runId: string | undefined) {
   if (runId) return state.foregroundControls.get(runId);
@@ -217,6 +218,9 @@ export function rememberForegroundRun(
       const child = {
         agent: result.agent,
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+        ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
+          ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
+          : {}),
         index,
         status: resolveSubagentResultStatus({
           exitCode: result.exitCode,
@@ -294,6 +298,9 @@ export function updateRememberedForegroundChild(
     ...child,
     agent: input.result.agent,
     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+    ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
+      ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
+      : {}),
     index: input.index,
     status: resolveSubagentResultStatus({
       exitCode: input.result.exitCode,
@@ -403,6 +410,7 @@ export function resolveForegroundResumeTarget(
       idleEpisodeId?: string;
       durableAttentionReasons?: import("../../shared/types.ts").DurableAttentionReason[];
       compaction?: { reason: import("../../shared/types.ts").CompactionReason };
+      tkTicketId?: string;
       activeRuntimeMs?: number;
       activeRuntimeCheckpointAt?: number;
       projectAgents?: ProjectAgentRunCapture[];
@@ -457,6 +465,9 @@ export function resolveForegroundResumeTarget(
     state: childState,
     agent: child.agent,
     ...(projectAgentMarker ? { projectAgent: projectAgentMarker } : {}),
+    ...(child.agent === "developer" && normalizeTkTicketId(child.tkTicketId)
+      ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
+      : {}),
     index,
     cwd: run.cwd,
     sessionFile,

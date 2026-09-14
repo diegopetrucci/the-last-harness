@@ -10,8 +10,14 @@ import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActive
 import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { readStatus } from "../../shared/utils.js";
 import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
+function validatedChildTkTicketId(task) {
+    return task.agent === "developer" && task.projectAgentGuidance === true
+        ? normalizeTkTicketId(task.tkTicketId)
+        : undefined;
+}
 function applyHealthStatusProjection(step, state) {
     step.activityState = state.activityState;
     step.idleEpisodeId = state.idleEpisodeId;
@@ -86,6 +92,7 @@ export function createBackgroundRunStatusOwner(input) {
         return {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
             status: "pending",
             ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
@@ -739,6 +746,7 @@ export function createBackgroundRunStatusOwner(input) {
         return {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
             output: "Paused after interrupt. Waiting for explicit next action.",
             exitCode: 0,
             interrupted: true,
@@ -753,6 +761,7 @@ export function createBackgroundRunStatusOwner(input) {
         return {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
             output: timeoutMessage ?? "Subagent timed out.",
             error: timeoutMessage ?? "Subagent timed out.",
             exitCode: 1,

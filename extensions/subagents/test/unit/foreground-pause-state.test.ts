@@ -9,6 +9,7 @@ import {
   type CompactionReason,
   type DurableAttentionReason,
   type SingleResult,
+  type SubagentState,
 } from "../../src/shared/types.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 import {
@@ -17,6 +18,10 @@ import {
   persistPausedForegroundCohortRun,
   persistPausedForegroundSingleRun,
 } from "../../src/runs/foreground/foreground-pause-state.ts";
+import {
+  rememberForegroundRun,
+  resolveForegroundResumeTarget,
+} from "../../src/runs/foreground/foreground-run-state.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import {
@@ -53,6 +58,7 @@ type RawStatusStep = {
   idleEpisodeId?: string;
   durableAttentionReasons?: string[];
   compaction?: { reason: string };
+  tkTicketId?: string;
 };
 
 type RawLifecycleContinuation = {
@@ -115,6 +121,7 @@ function parseRawStatus(value: unknown): RawStatus {
                 `steps[${index}].durableAttentionReasons`,
               ),
               compaction: optionalCompaction(rawStep.compaction, `steps[${index}].compaction`),
+              tkTicketId: optionalString(rawStep.tkTicketId, `steps[${index}].tkTicketId`),
             };
           })
         : (() => {
@@ -279,13 +286,10 @@ describe("foreground pause health persistence", () => {
         durableAttentionReasons: ["context_pressure", "tool_failures"],
       });
       const finalSessionFile = path.join(asyncDir, "session-0.jsonl");
-      const finalResult = makeResult(
-        "single",
-        0,
-        finalProgress,
-        { ...pause, pausedAt: 30 },
-        finalSessionFile,
-      );
+      const finalResult = {
+        ...makeResult("developer", 0, finalProgress, { ...pause, pausedAt: 30 }, finalSessionFile),
+        tkTicketId: "tlhm-o1qg",
+      };
       fs.writeFileSync(finalSessionFile, "", "utf8");
       persistPausedForegroundSingleRun({
         runId,
@@ -301,6 +305,7 @@ describe("foreground pause health persistence", () => {
       assert.equal(step?.activityState, undefined);
       assert.equal(step?.idleEpisodeId, undefined);
       assert.equal(step?.compaction, undefined);
+      assert.equal(step?.tkTicketId, "tlhm-o1qg");
       assert.equal(finalRaw.lifecycle?.continuation?.phase, "reserved");
       assert.equal(finalRaw.lifecycle?.continuation?.continuationRunId, `continuation-${runId}`);
 
@@ -318,6 +323,30 @@ describe("foreground pause health persistence", () => {
       assert.doesNotMatch(statusText, /needs attention|active long-running/i);
 
       assertResumeHealth(runId, 0, ["context_pressure", "tool_failures"]);
+
+      const state = {
+        baseCwd: "/tmp/foreground-single",
+        currentSessionId: "session-single",
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: "/tmp/foreground-single",
+        results: [{ ...finalResult, interrupted: true }],
+      });
+      const resumeTarget = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.equal(resumeTarget?.tkTicketId, "tlhm-o1qg");
     } finally {
       fs.rmSync(asyncDir, { recursive: true, force: true });
     }

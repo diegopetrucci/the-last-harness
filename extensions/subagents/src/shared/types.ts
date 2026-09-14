@@ -634,6 +634,8 @@ export interface SingleResult {
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
   tkTicket?: TkTicketMetadata;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   /**
    * Dispatch-time snapshot of child-location facts. Present only when the
    * child cwd differs from the parent session cwd at the time of dispatch;
@@ -925,6 +927,8 @@ export interface AsyncStatus {
     activeRuntimeMs?: number;
     /** Timestamp of the last authoritative active-runtime checkpoint. */
     activeRuntimeCheckpointAt?: number;
+    /** Validated per-child developer ticket assignment, when applicable. */
+    tkTicketId?: string;
     timeoutMs?: number;
     deadlineAt?: number;
     exitCode?: number | null;
@@ -1030,6 +1034,8 @@ export interface AsyncResultArtifactResultItem {
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
 }
 
 /**
@@ -1161,6 +1167,8 @@ export interface ForegroundResumeChild {
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   updatedAt?: number;
 }
 
@@ -1261,6 +1269,8 @@ export interface RunSyncOptions {
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentRunCapture;
   tkTicket?: TkTicketMetadata;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   onSupervisorPauseTransition?: (
     input:
       | { stage: "pausing"; result: SingleResult; ownerPid?: number }

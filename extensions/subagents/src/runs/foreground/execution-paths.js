@@ -6,7 +6,8 @@ import { clearForegroundInterrupt, registerForegroundInterrupt, } from "../share
 import { buildExecutionInstructions, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
 import { normalizeSkillInput } from "../../agents/skills.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
-import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.js";
+import { inspectTkTicketReference, normalizeTkTicketId, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, resolveChildCwd, sumResultsCost, sumResultsUsage, } from "../../shared/utils.js";
 import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
@@ -156,6 +157,19 @@ export function buildParallelModeError(message) {
 function resolveParallelTaskCwd(task, paramsCwd) {
     return resolveChildCwd(paramsCwd, task.cwd);
 }
+function resolveParallelTaskTkTicketId(input, task, index, result) {
+    if (task.agent !== "developer")
+        return undefined;
+    const agentConfig = input.agents.find((agent) => agent.name === task.agent);
+    if (!agentConfig || !isCanonicalPackagedMinorAgent(agentConfig))
+        return undefined;
+    const reference = inspectTkTicketReference(input.taskTexts[index]);
+    if (reference.kind === "invalid")
+        return undefined;
+    if (reference.kind === "valid")
+        return reference.id;
+    return result?.agent === "developer" ? normalizeTkTicketId(result.tkTicketId) : undefined;
+}
 function cohortPauseHealth(result, liveProgress) {
     return {
         activityState: result?.progress?.activityState ?? liveProgress?.activityState,
@@ -233,6 +247,7 @@ async function runForegroundParallelTasks(input) {
                     contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
                     projectAgent: result?.projectAgent ??
                         input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+                    tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                     childLocation: cohortChildLocation,
                 });
             }
@@ -251,6 +266,7 @@ async function runForegroundParallelTasks(input) {
                 contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
                 projectAgent: result?.projectAgent ??
                     input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
+                tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                 childLocation: cohortChildLocation,
             });
         });
@@ -294,6 +310,7 @@ async function runForegroundParallelTasks(input) {
                 messages: [],
                 usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
                 finalOutput: "Interrupted before starting queued task.",
+                tkTicketId: resolveParallelTaskTkTicketId(input, task, index, undefined),
                 ...(taskLocationSnapshots[index] !== undefined
                     ? { childLocation: taskLocationSnapshots[index] }
                     : {}),
@@ -334,6 +351,10 @@ async function runForegroundParallelTasks(input) {
         }
         const agentConfig = input.agents.find((agent) => agent.name === task.agent);
         const supervisorBridgeActive = agentConfig?.supervisorBridge !== false;
+        const taskReference = agentConfig?.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+            ? inspectTkTicketReference(task.task)
+            : undefined;
+        const tkTicketId = taskReference?.kind === "valid" ? taskReference.id : undefined;
         return (input.runSync ?? runSync)(input.ctx.cwd, input.agents, task.agent, taskText, {
             onSupervisorPauseTransition: (transition) => {
                 const { stage, result } = transition;
@@ -378,6 +399,7 @@ async function runForegroundParallelTasks(input) {
             preferredModelProvider: input.ctx.model?.provider,
             modelScope: input.modelScope,
             ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
+            ...(tkTicketId ? { tkTicketId } : {}),
             ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
             skills: effectiveSkills === false ? [] : effectiveSkills,
             acceptance: task.acceptance,
@@ -693,6 +715,10 @@ export async function runSinglePath(data, deps) {
     const { availableModels } = modelRegistrySnapshot;
     let task = params.task ?? "";
     const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
+    const taskReference = agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+        ? inspectTkTicketReference(params.task)
+        : undefined;
+    const tkTicketId = taskReference?.kind === "valid" ? taskReference.id : undefined;
     const modelOverride = resolveSubagentModelOverride(params.model ?? agentConfig.model, ctx.model, availableModels, currentProvider, {
         scope: data.modelScope,
         source: params.model ? "explicit" : "inherited",
@@ -822,6 +848,7 @@ export async function runSinglePath(data, deps) {
             preferredModelProvider: currentProvider,
             modelScope: data.modelScope,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(tkTicketId ? { tkTicketId } : {}),
             ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
             skills: effectiveSkills,
             acceptance: params.acceptance,

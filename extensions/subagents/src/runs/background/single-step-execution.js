@@ -14,6 +14,7 @@ import { scheduleDeadline } from "../shared/deadline-timer.js";
 import { detectSubagentError, extractTextFromContent, formatErrorWithOutput, } from "../../shared/utils.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { boundedActiveRuntimeMs, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, } from "../shared/lifecycle-state.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
 import { skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
@@ -207,6 +208,9 @@ function prepareSingleStepAttempt(input) {
     let env;
     let tempDir;
     let buildError;
+    const tkTicketId = step.agent === "developer" && step.projectAgentGuidance === true
+        ? normalizeTkTicketId(step.tkTicketId)
+        : undefined;
     try {
         ({ args, env, tempDir } = buildPiArgs({
             parentSessionId: step.parentSessionId,
@@ -230,6 +234,7 @@ function prepareSingleStepAttempt(input) {
             runId: ctx.id,
             childAgentName: step.agent,
             projectAgentGuidance: step.projectAgentGuidance === true,
+            tkTicketId,
             childIndex: ctx.flatIndex,
             steerInboxDir: ctx.steerInboxDir,
             toolBudget: step.toolBudget,
@@ -624,9 +629,13 @@ function cleanupSingleStepSetup(setup) {
 function buildSingleStepResult(input) {
     const { step, state, setup, output, outcome, activeRuntimeMs } = input;
     const finalResult = state.finalResult;
+    const tkTicketId = step.agent === "developer" && step.projectAgentGuidance === true
+        ? normalizeTkTicketId(step.tkTicketId)
+        : undefined;
     return {
         agent: step.agent,
         ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+        ...(tkTicketId ? { tkTicketId } : {}),
         output: output.outputForSummary,
         exitCode: outcome.effectiveFinalExitCode,
         exitSignal: finalResult?.exitSignal,

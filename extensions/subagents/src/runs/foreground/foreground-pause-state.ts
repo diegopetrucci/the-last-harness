@@ -26,11 +26,16 @@ import {
   writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 
 type ForegroundPauseHealth = Pick<
   NonNullable<AsyncStatus["steps"]>[number],
   "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
 >;
+
+function validatedForegroundTkTicketId(result: SingleResult): string | undefined {
+  return result.agent === "developer" ? normalizeTkTicketId(result.tkTicketId) : undefined;
+}
 
 function cloneForegroundPauseHealth(
   source: ForegroundPauseHealth | undefined,
@@ -145,6 +150,9 @@ export function persistPausedForegroundCohortRun(input: {
     input.results?.map((result) => ({
       agent: result.agent,
       ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+      ...(validatedForegroundTkTicketId(result)
+        ? { tkTicketId: validatedForegroundTkTicketId(result) }
+        : {}),
       status:
         input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
       sessionFile: result.sessionFile,
@@ -310,6 +318,9 @@ export function buildPausedStepFromResult(
   return {
     agent: result.agent,
     ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+    ...(validatedForegroundTkTicketId(result)
+      ? { tkTicketId: validatedForegroundTkTicketId(result) }
+      : {}),
     status,
     sessionFile: result.sessionFile,
     transcriptPath: result.transcriptPath,
@@ -397,14 +408,19 @@ export function buildCohortPauseStep(input: {
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   /** Dispatch-time child-location snapshot; kept for display during cohort pause. */
   childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }): NonNullable<AsyncStatus["steps"]>[number] {
   const modelIdentity =
     input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
+  const tkTicketId =
+    input.agent === "developer" ? normalizeTkTicketId(input.tkTicketId) : undefined;
   return {
     agent: input.agent,
     ...(input.projectAgent ? { projectAgent: input.projectAgent } : {}),
+    ...(tkTicketId ? { tkTicketId } : {}),
     status: input.status,
     sessionFile: input.sessionFile,
     ...(input.model ? { model: input.model } : {}),
@@ -463,6 +479,7 @@ export function persistPausedForegroundSingleRun(input: {
   const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
     input.result.activeRuntimeCheckpointAt,
   );
+  const tkTicketId = validatedForegroundTkTicketId(input.result);
   const current = readStatus(asyncDir);
   if (!current) {
     if (input.stage !== "pausing")
@@ -487,6 +504,7 @@ export function persistPausedForegroundSingleRun(input: {
         {
           agent: input.result.agent,
           ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+          ...(tkTicketId ? { tkTicketId } : {}),
           status: input.stage,
           sessionFile: input.result.sessionFile,
           transcriptPath: input.result.transcriptPath,
@@ -560,6 +578,7 @@ export function persistPausedForegroundSingleRun(input: {
               ...step,
               agent: input.result.agent,
               ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+              ...(tkTicketId ? { tkTicketId } : {}),
               status: input.stage,
               sessionFile: input.result.sessionFile ?? step.sessionFile,
               transcriptPath: input.result.transcriptPath ?? step.transcriptPath,

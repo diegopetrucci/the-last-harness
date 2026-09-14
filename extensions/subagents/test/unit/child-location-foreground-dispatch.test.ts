@@ -20,6 +20,7 @@
  */
 
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -32,6 +33,8 @@ import type { ChildLocationSnapshot } from "../../src/shared/child-location.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { resolveForegroundResumeTarget } from "../../src/runs/foreground/foreground-run-state.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,8 +148,25 @@ function makeExecutor(
     task: string,
     opts: RunSyncOptions,
   ) => Promise<SingleResult>,
+  options: {
+    agent?: AgentConfig;
+    state?: ReturnType<typeof makeState>;
+    concurrency?: number;
+  } = {},
 ) {
-  const state = makeState();
+  const state = options.state ?? makeState();
+  const agent =
+    options.agent ??
+    ({
+      name: "worker",
+      description: "test agent",
+      systemPrompt: "",
+      systemPromptMode: "replace" as const,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      source: "user" as const,
+      filePath: "",
+    } satisfies AgentConfig);
   return createSubagentExecutor({
     pi: {
       events: {
@@ -160,24 +180,17 @@ function makeExecutor(
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {} } as any,
+    config: {
+      maxSubagentDepth: 2,
+      control: {},
+      ...(options.concurrency !== undefined
+        ? { parallel: { concurrency: options.concurrency } }
+        : {}),
+    } as any,
     tempArtifactsDir: os.tmpdir(),
     getSubagentSessionRoot: () => os.tmpdir(),
     expandTilde: (v: string) => v,
-    discoverAgents: (_cwd: string) => ({
-      agents: [
-        {
-          name: "worker",
-          description: "test agent",
-          systemPrompt: "",
-          systemPromptMode: "replace" as const,
-          inheritProjectContext: false,
-          inheritSkills: false,
-          source: "user" as const,
-          filePath: "",
-        },
-      ],
-    }),
+    discoverAgents: (_cwd: string) => ({ agents: [agent] }),
     runSync: runSync as any,
   });
 }
@@ -720,6 +733,109 @@ describe("queued-task pause result carries childLocation into final persisted st
       queuedTaskCwd,
       "persisted childCwd must match the queued task's cwd",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Developer ticket assignment — queued pause results must retain their ID
+// ---------------------------------------------------------------------------
+
+describe("queued developer ticket survives foreground pause and resume state", () => {
+  it("keeps the queued child's ticket in remembered and persisted resume metadata", async () => {
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-unit-test-fg-ticket-"));
+    const agentDir = path.join(root, "agent");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const state = makeState();
+    const developer: AgentConfig = {
+      name: "developer",
+      description: "canonical developer test agent",
+      systemPrompt: "",
+      systemPromptMode: "replace",
+      inheritProjectContext: false,
+      inheritSkills: false,
+      source: "user",
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+    };
+    let runId: string | undefined;
+    try {
+      const runSync = async (
+        _runtimeCwd: string,
+        _agents: unknown[],
+        agentName: string,
+        task: string,
+        opts: RunSyncOptions,
+      ): Promise<SingleResult> => {
+        if (opts.sessionFile) {
+          fs.mkdirSync(path.dirname(opts.sessionFile), { recursive: true });
+          fs.writeFileSync(opts.sessionFile, "", "utf8");
+        }
+        const result: SingleResult = {
+          agent: agentName,
+          task,
+          exitCode: 0,
+          messages: [],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+          finalOutput: "paused",
+          sessionFile: opts.sessionFile,
+          ...(opts.tkTicketId ? { tkTicketId: opts.tkTicketId } : {}),
+          pause: {
+            kind: "awaiting_supervisor",
+            summary: "Pause requested for test.",
+            requestedAt: Date.now(),
+            pausedAt: Date.now() + 1,
+          },
+        };
+        opts.onSupervisorPauseTransition?.({
+          stage: "pausing",
+          ownerPid: process.pid,
+          result,
+        });
+        opts.onSupervisorPauseTransition?.({ stage: "paused", result });
+        return result;
+      };
+
+      const outcome = await executeParallelRun(
+        makeExecutor(runSync, { agent: developer, state, concurrency: 1 }),
+        [
+          { agent: "developer", task: "Pause after `tk show tlhm-first`." },
+          { agent: "developer", task: "Queued follow-up `tk show tlhm-second`." },
+        ],
+        parentCwd,
+      );
+
+      const runEntry = [...state.foregroundRuns.values()][0];
+      assert.ok(
+        runEntry,
+        `foregroundRuns must retain the paused cohort; outcome=${outcome.content
+          .map((item) => (item.type === "text" ? item.text : item.type))
+          .join(" | ")}`,
+      );
+      const pausedRunId = runEntry.runId;
+      runId = pausedRunId;
+      assert.equal(runEntry.children[1]?.tkTicketId, "tlhm-second");
+      const requester = resolveForegroundResumeTarget({ id: pausedRunId, index: 0 }, state);
+      assert.equal(requester?.tkTicketId, "tlhm-first");
+
+      const status = readStatus(path.join(ASYNC_DIR, pausedRunId));
+      assert.ok(status, "paused cohort status must exist");
+      assert.equal(status.steps?.[1]?.status, "pending");
+      assert.equal(status.steps?.[1]?.tkTicketId, "tlhm-second");
+      const queuedResumeTarget = resolveAsyncResumeTarget(
+        { id: pausedRunId, index: 1 },
+        {
+          asyncDirRoot: ASYNC_DIR,
+          resultsDir: path.join(path.dirname(ASYNC_DIR), "async-subagent-results"),
+        },
+        { readOnly: true, requireSessionFile: false },
+      );
+      assert.equal(queuedResumeTarget.tkTicketId, "tlhm-second");
+    } finally {
+      if (runId) fs.rmSync(path.join(ASYNC_DIR, runId), { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+      if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
   });
 });
 

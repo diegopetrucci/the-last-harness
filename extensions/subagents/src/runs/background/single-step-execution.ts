@@ -65,6 +65,7 @@ import {
 } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import {
   boundedActiveRuntimeMs,
   createActiveRuntimeTracker,
@@ -194,6 +195,8 @@ type SingleStepResultValue = {
   sessionFile?: string;
   completionGuardTriggered?: boolean;
   acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   modelFallbackNotice?: string;
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
@@ -449,6 +452,10 @@ function prepareSingleStepAttempt(input: {
   let env: Record<string, string | undefined> | undefined;
   let tempDir: string | undefined;
   let buildError: string | undefined;
+  const tkTicketId =
+    step.agent === "developer" && step.projectAgentGuidance === true
+      ? normalizeTkTicketId(step.tkTicketId)
+      : undefined;
   try {
     ({ args, env, tempDir } = buildPiArgs({
       parentSessionId: step.parentSessionId,
@@ -472,6 +479,7 @@ function prepareSingleStepAttempt(input: {
       runId: ctx.id,
       childAgentName: step.agent,
       projectAgentGuidance: step.projectAgentGuidance === true,
+      tkTicketId,
       childIndex: ctx.flatIndex,
       steerInboxDir: ctx.steerInboxDir,
       toolBudget: step.toolBudget,
@@ -1027,9 +1035,14 @@ function buildSingleStepResult(input: {
 }): SingleStepResultValue {
   const { step, state, setup, output, outcome, activeRuntimeMs } = input;
   const finalResult = state.finalResult;
+  const tkTicketId =
+    step.agent === "developer" && step.projectAgentGuidance === true
+      ? normalizeTkTicketId(step.tkTicketId)
+      : undefined;
   return {
     agent: step.agent,
     ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+    ...(tkTicketId ? { tkTicketId } : {}),
     output: output.outputForSummary,
     exitCode: outcome.effectiveFinalExitCode,
     exitSignal: finalResult?.exitSignal,

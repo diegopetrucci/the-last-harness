@@ -7,6 +7,7 @@ import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDi
 import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
@@ -108,7 +109,7 @@ function parseHealthActivityState(value) {
     return value === "needs_attention" ? value : undefined;
 }
 function sanitizeStatusStep(step) {
-    const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt, activityState: _activityState, idleEpisodeId: _idleEpisodeId, durableAttentionReasons: _durableAttentionReasons, compaction: _compaction, ...rest } = step;
+    const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt, activityState: _activityState, idleEpisodeId: _idleEpisodeId, durableAttentionReasons: _durableAttentionReasons, compaction: _compaction, tkTicketId: _tkTicketId, ...rest } = step;
     const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
     const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
@@ -118,6 +119,7 @@ function sanitizeStatusStep(step) {
     const idleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
     const durableAttentionReasons = parseHealthDurableAttentionReasons(step.durableAttentionReasons);
     const compaction = parseHealthCompaction(step.compaction);
+    const tkTicketId = step.agent === "developer" ? normalizeTkTicketId(step.tkTicketId) : undefined;
     return {
         ...rest,
         ...(modelIdentity ? { modelIdentity } : {}),
@@ -127,9 +129,16 @@ function sanitizeStatusStep(step) {
         ...(idleEpisodeId ? { idleEpisodeId } : {}),
         ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
         ...(compaction ? { compaction } : {}),
+        ...(tkTicketId ? { tkTicketId } : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     };
+}
+function resolvePersistedDeveloperTkTicketId(step, child) {
+    if (step.agent !== "developer")
+        return undefined;
+    return (normalizeTkTicketId(step.tkTicketId) ??
+        (child?.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined));
 }
 function readResultRepairData(resultPath) {
     try {
@@ -166,6 +175,7 @@ function readResultRepairData(resultPath) {
                 const child = entry;
                 const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
                 const projectAgent = normalizeProjectAgentRunCapture(child.projectAgent);
+                const tkTicketId = child.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined;
                 const contextPressure = parseContextPressureProjection(child.contextPressure);
                 const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
                 const terminationReason = parseSubagentTerminationReason(child.terminationReason);
@@ -180,6 +190,7 @@ function readResultRepairData(resultPath) {
                 return {
                     ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
                     ...(projectAgent ? { projectAgent } : {}),
+                    ...(tkTicketId ? { tkTicketId } : {}),
                     ...(typeof child.success === "boolean" ? { success: child.success } : {}),
                     ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
                     ...(typeof child.error === "string" ? { error: child.error } : {}),
@@ -231,6 +242,7 @@ function terminalStatusFromResult(status, resultPath, now) {
         const persistedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
         const childActiveRuntimeMs = normalizeActiveRuntimeMs(child?.activeRuntimeMs);
         const childActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(child?.activeRuntimeCheckpointAt);
+        const tkTicketId = resolvePersistedDeveloperTkTicketId(step, child);
         const durableAttentionReasons = [
             ...new Set([
                 ...(sanitizedStep.durableAttentionReasons ?? []),
@@ -241,6 +253,7 @@ function terminalStatusFromResult(status, resultPath, now) {
         if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
             return {
                 ...sanitizedStep,
+                ...(tkTicketId ? { tkTicketId } : {}),
                 ...durableHealth,
                 ...(persistedActiveRuntimeMs !== undefined || childActiveRuntimeMs !== undefined
                     ? {
@@ -258,6 +271,7 @@ function terminalStatusFromResult(status, resultPath, now) {
         const state = childState(repair.state, child);
         return {
             ...sanitizedStep,
+            ...(tkTicketId ? { tkTicketId } : {}),
             activityState: undefined,
             idleEpisodeId: undefined,
             compaction: undefined,
@@ -441,6 +455,7 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             results: repairedSteps.map((step) => ({
                 agent: step.agent,
                 ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+                ...(step.tkTicketId ? { tkTicketId: step.tkTicketId } : {}),
                 output: step.status === "complete" || step.status === "completed" ? "" : message,
                 error: step.status === "complete" || step.status === "completed"
                     ? undefined

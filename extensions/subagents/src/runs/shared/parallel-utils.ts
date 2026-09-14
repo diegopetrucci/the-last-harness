@@ -14,6 +14,8 @@ export interface RunnerSubagentStep {
   parentSessionId?: string;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentRunCapture;
+  /** Validated per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   agent: string;
   /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;

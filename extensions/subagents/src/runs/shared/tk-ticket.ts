@@ -2,7 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { TkTicketMetadata } from "../../shared/types.ts";
 
+// This detector is intentionally legacy: run-level metadata and task-context
+// resolution historically accept the valid prefix before punctuation.
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
+// Per-child assignment recognizes `tk` only at input, whitespace, or an
+// approved inline-command delimiter, avoiding matches inside larger tokens.
+const TK_SHOW_ARGUMENT_PATTERN = /(?:^|[\s`"'([{>:])tk\s+show(?=\s|$)(?:\s+([^\s`]+))?/;
+const TK_SHOW_CLOSING_DELIMITER_PATTERN = /[)\]}"']$/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 interface ResolveTkTicketMetadataOptions {
@@ -27,10 +33,37 @@ interface TkTicketMatch {
   path: string;
 }
 
+export function normalizeTkTicketId(value: unknown): string | undefined {
+  return typeof value === "string" && TK_TICKET_ID_PATTERN.test(value) ? value : undefined;
+}
+
 export function detectTkTicketId(task: string | undefined): string | undefined {
   if (!task) return undefined;
   const match = task.match(TK_SHOW_PATTERN);
   return match?.[1];
+}
+
+export type TkTicketReference =
+  | { kind: "absent" }
+  | { kind: "invalid" }
+  | { kind: "valid"; id: string };
+
+/**
+ * Inspect a child task's literal `tk show` argument without changing the
+ * legacy run-level detector above. The three states are significant for
+ * continuation fallback: only an absent command may inherit persisted state.
+ */
+export function inspectTkTicketReference(task: string | undefined): TkTicketReference {
+  if (!task) return { kind: "absent" };
+  const match = task.match(TK_SHOW_ARGUMENT_PATTERN);
+  if (!match) return { kind: "absent" };
+  const argument = match[1];
+  const id =
+    normalizeTkTicketId(argument) ??
+    (argument && TK_SHOW_CLOSING_DELIMITER_PATTERN.test(argument)
+      ? normalizeTkTicketId(argument.slice(0, -1))
+      : undefined);
+  return id ? { kind: "valid", id } : { kind: "invalid" };
 }
 
 export function parseTkTicketTitle(output: string): string | undefined {
@@ -112,11 +145,12 @@ export function sanitizeTkTicketTitle(raw: string): string | undefined {
 export function normalizeTkTicketMetadata(raw: unknown): TkTicketMetadata | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const { id, title } = raw as Partial<TkTicketMetadata>;
-  if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id)) return undefined;
+  const normalizedId = normalizeTkTicketId(id);
+  if (!normalizedId) return undefined;
   if (typeof title !== "string") return undefined;
   const sanitizedTitle = sanitizeTkTicketTitle(title);
   if (!sanitizedTitle) return undefined;
-  return { id, title: sanitizedTitle };
+  return { id: normalizedId, title: sanitizedTitle };
 }
 
 export function resolveTkTicketMetadata(

@@ -12,6 +12,7 @@ import {
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
   SUBAGENT_CHILD_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
   applyThinkingSuffix,
   buildPiArgs,
   getThinkingLevelDropNote,
@@ -25,6 +26,7 @@ const originalEnv = {
   PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
   PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
+  PI_SUBAGENT_TK_TICKET_ID: process.env.PI_SUBAGENT_TK_TICKET_ID,
 };
 
 afterEach(() => {
@@ -157,6 +159,45 @@ describe("buildPiArgs session wiring", () => {
     });
 
     assert.equal(env[SUBAGENT_PARENT_SESSION_ENV], "inherited-parent");
+  });
+
+  it("passes only validated per-child ticket ids and clears inherited values", () => {
+    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "parent-ticket";
+    const valid = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: true,
+      childAgentName: "developer",
+      tkTicketId: "child-ticket-7",
+    });
+    assert.equal(valid.env[SUBAGENT_TK_TICKET_ID_ENV], "child-ticket-7");
+
+    const invalid = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: true,
+      childAgentName: "developer",
+      tkTicketId: "bad ticket",
+    });
+    assert.equal(invalid.env[SUBAGENT_TK_TICKET_ID_ENV], undefined);
+
+    const nonDeveloper = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: true,
+      childAgentName: "code-reviewer",
+      tkTicketId: "child-ticket-7",
+    });
+    assert.equal(nonDeveloper.env[SUBAGENT_TK_TICKET_ID_ENV], undefined);
   });
 });
 
