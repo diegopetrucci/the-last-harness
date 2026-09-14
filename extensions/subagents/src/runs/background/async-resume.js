@@ -10,29 +10,7 @@ import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitize
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
-function isStringArray(x) {
-    return Array.isArray(x) && x.every((el) => typeof el === "string");
-}
-function isWellFormedResolvedAcceptance(x) {
-    if (typeof x !== "object" || x === null || Array.isArray(x))
-        return false;
-    const c = x;
-    return (typeof c.level === "string" &&
-        typeof c.explicit === "boolean" &&
-        isStringArray(c.inferredReason) &&
-        isStringArray(c.evidence) &&
-        isStringArray(c.stopRules) &&
-        Array.isArray(c.criteria) &&
-        c.criteria.every((el) => typeof el === "object" &&
-            el !== null &&
-            !Array.isArray(el) &&
-            typeof el.id === "string") &&
-        Array.isArray(c.verify) &&
-        c.verify.every((el) => typeof el === "object" &&
-            el !== null &&
-            !Array.isArray(el) &&
-            typeof el.command === "string"));
-}
+import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
 function resolvePausedContinuationAcceptance(runId, acceptance) {
     if (typeof acceptance !== "object" || acceptance === null || Array.isArray(acceptance)) {
         throw new Error(`Async run '${runId}' is paused but its persisted acceptance ledger is incomplete or malformed; refusing to resume with an unverified acceptance contract.`);

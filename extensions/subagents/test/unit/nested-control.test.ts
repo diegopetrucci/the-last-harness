@@ -10,6 +10,13 @@ import {
   createSubagentExecutor,
   registerForegroundMessageInbox,
 } from "../../src/runs/foreground/subagent-executor.ts";
+import { resolveNestedResumeTarget } from "../../src/runs/foreground/foreground-nested-control.ts";
+import { resolveSubagentRunId } from "../../src/runs/background/run-id-resolver.ts";
+import {
+  buildSkippedAcceptanceLedger,
+  evaluateAcceptance,
+  resolveEffectiveAcceptance,
+} from "../../src/runs/shared/acceptance.ts";
 import {
   createNestedRoute,
   NESTED_EVENTS_DIR,
@@ -192,6 +199,21 @@ function setNestedRouteEnv(
 
 function text(result: Awaited<ReturnType<ReturnType<typeof createExecutor>["execute"]>>): string {
   return result.content[0]?.type === "text" ? result.content[0].text : "";
+}
+
+function acceptanceReportWithoutTests(criterionId: string): string {
+  return [
+    "done",
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [{ id: criterionId, status: "satisfied", evidence: "scope checked" }],
+      changedFiles: ["src/file.ts"],
+      commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+      residualRisks: ["none"],
+      noStagedFiles: true,
+    }),
+    "```",
+  ].join("\n");
 }
 
 const DISPOSABLE_CHILD_READY_TIMEOUT_MS = 2_000;
@@ -572,6 +594,198 @@ describe("nested run control behavior", () => {
     }
   });
 
+  it("revives paused nested acceptance from persisted status without making inferred tests mandatory", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-paused-acceptance-"));
+    const runId = `nested-paused-acceptance-${Date.now()}`;
+    const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+    try {
+      const sessionFile = path.join(root, runId, "run-0", "session.jsonl");
+      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+      fs.mkdirSync(nestedAsyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+      });
+      const ledger = buildSkippedAcceptanceLedger({
+        acceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+      fs.writeFileSync(
+        path.join(nestedAsyncDir, "status.json"),
+        JSON.stringify({
+          runId,
+          mode: "single",
+          state: "paused",
+          cwd: root,
+          steps: [{ agent: "worker", status: "paused", sessionFile, acceptance: ledger }],
+        }),
+        "utf-8",
+      );
+      const route = createNestedRun(runId, "paused", { asyncDir: nestedAsyncDir, sessionFile });
+      const match = resolveSubagentRunId(runId, { nested: { routes: [route] } });
+      assert.ok(match?.kind === "nested");
+      const target = resolveNestedResumeTarget(match, [root]);
+      assert.deepEqual(
+        target.continuationAcceptance?.inferredEvidence,
+        acceptance.inferredEvidence,
+      );
+      const resumedLedger = await evaluateAcceptance({
+        acceptance: target.continuationAcceptance!,
+        output: acceptanceReportWithoutTests("criterion-1"),
+        cwd: root,
+      });
+      assert.equal(resumedLedger.status, "checked");
+      assert.equal(
+        resumedLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "not-applicable",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves explicit acceptance gates across paused nested resume", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-explicit-acceptance-"));
+    const runId = `nested-explicit-acceptance-${Date.now()}`;
+    const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+    try {
+      const sessionFile = path.join(root, runId, "run-0", "session.jsonl");
+      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+      fs.mkdirSync(nestedAsyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+        explicit: {
+          level: "checked",
+          criteria: [],
+          evidence: ["changed-files", "tests-added", "commands-run", "residual-risks"],
+        },
+      });
+      const ledger = buildSkippedAcceptanceLedger({
+        acceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+      fs.writeFileSync(
+        path.join(nestedAsyncDir, "status.json"),
+        JSON.stringify({
+          runId,
+          mode: "single",
+          state: "paused",
+          cwd: root,
+          steps: [{ agent: "worker", status: "paused", sessionFile, acceptance: ledger }],
+        }),
+        "utf-8",
+      );
+      const route = createNestedRun(runId, "paused", { asyncDir: nestedAsyncDir, sessionFile });
+      const match = resolveSubagentRunId(runId, { nested: { routes: [route] } });
+      assert.ok(match?.kind === "nested");
+      const target = resolveNestedResumeTarget(match, [root]);
+      assert.deepEqual(target.continuationAcceptance, JSON.parse(JSON.stringify(acceptance)));
+      const resumedLedger = await evaluateAcceptance({
+        acceptance: target.continuationAcceptance!,
+        output: acceptanceReportWithoutTests("criterion-1"),
+        cwd: root,
+      });
+      assert.equal(resumedLedger.status, "rejected");
+      assert.equal(
+        resumedLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "failed",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects incompatible status-level pairs for paused nested acceptance", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-acceptance-mismatch-"));
+    try {
+      const checkedAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+      });
+      const checkedLedger = buildSkippedAcceptanceLedger({
+        acceptance: checkedAcceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+      const noneAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+        explicit: false,
+      });
+      const noneLedger = buildSkippedAcceptanceLedger({
+        acceptance: noneAcceptance,
+        ledgerStatus: "not-required",
+        runtimeCheckStatus: "not-applicable",
+        id: "not-required",
+        message: "Acceptance is not required.",
+      });
+      const mismatchCases = [
+        {
+          label: "skipped-level-none",
+          ledger: { ...noneLedger, status: "skipped" },
+          message: /status 'skipped' cannot carry effective level 'none'/,
+        },
+        {
+          label: "not-required-level-checked",
+          ledger: { ...checkedLedger, status: "not-required" },
+          message: /status 'not-required' must carry effective level 'none'/,
+        },
+        {
+          label: "checked-terminal-status",
+          ledger: { ...checkedLedger, status: "checked" },
+          message: /status 'checked'.*expected 'skipped' or 'not-required'/,
+        },
+      ];
+      for (const { label, ledger, message } of mismatchCases) {
+        const runId = `nested-acceptance-mismatch-${label}-${Date.now()}`;
+        const nestedAsyncDir = path.join(
+          TEMP_ROOT_DIR,
+          "nested-subagent-runs",
+          "root-control",
+          runId,
+        );
+        const sessionFile = path.join(root, runId, "run-0", "session.jsonl");
+        fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+        fs.mkdirSync(nestedAsyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "", "utf-8");
+        fs.writeFileSync(
+          path.join(nestedAsyncDir, "status.json"),
+          JSON.stringify({
+            runId,
+            mode: "single",
+            state: "paused",
+            cwd: root,
+            steps: [{ agent: "worker", status: "paused", sessionFile, acceptance: ledger }],
+          }),
+          "utf-8",
+        );
+        const route = createNestedRun(runId, "paused", { asyncDir: nestedAsyncDir, sessionFile });
+        const match = resolveSubagentRunId(runId, { nested: { routes: [route] } });
+        assert.ok(match?.kind === "nested");
+        assert.throws(() => resolveNestedResumeTarget(match, [root]), message, label);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("validates terminal nested resume session files before revive", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-terminal-resume-"));
     try {
@@ -791,6 +1005,7 @@ describe("nested run control behavior", () => {
                 effectiveAcceptance: {
                   level: "checked",
                   explicit: true,
+                  inferredReason: [],
                   criteria: [],
                   evidence: [],
                   verify: [],
@@ -962,6 +1177,7 @@ describe("nested run control behavior", () => {
                 effectiveAcceptance: {
                   level: "checked",
                   explicit: true,
+                  inferredReason: [],
                   criteria: [],
                   evidence: [],
                   verify: [],

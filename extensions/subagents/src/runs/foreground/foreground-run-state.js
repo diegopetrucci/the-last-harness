@@ -14,6 +14,7 @@ import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { updateForegroundNestedProjection } from "../shared/nested-events.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
+import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
 export function getForegroundControl(state, runId) {
     if (runId)
         return state.foregroundControls.get(runId);
@@ -321,9 +322,27 @@ export function resolveForegroundResumeTarget(params, state) {
         return [marker];
     });
     const childModelIdentity = child.modelIdentity ?? canonicalSubagentModelIdentity(child.model, child.thinking);
-    const continuationAcceptance = childState === "paused" && child.acceptance?.status === "skipped"
-        ? child.acceptance.effectiveAcceptance
-        : undefined;
+    let continuationAcceptance;
+    if (childState === "paused") {
+        if (!child.acceptance ||
+            !isWellFormedResolvedAcceptance(child.acceptance.effectiveAcceptance)) {
+            throw new Error(`Foreground run '${run.runId}' child ${index} has a missing or malformed persisted acceptance ledger; refusing to resume with an unverified acceptance contract.`);
+        }
+        if (child.acceptance.status === "skipped") {
+            if (child.acceptance.effectiveAcceptance.level === "none") {
+                throw new Error(`Foreground run '${run.runId}' child ${index} has an incompatible persisted acceptance ledger: status 'skipped' cannot carry effective level 'none'.`);
+            }
+            continuationAcceptance = child.acceptance.effectiveAcceptance;
+        }
+        else if (child.acceptance.status === "not-required") {
+            if (child.acceptance.effectiveAcceptance.level !== "none") {
+                throw new Error(`Foreground run '${run.runId}' child ${index} has an incompatible persisted acceptance ledger: status 'not-required' must carry effective level 'none'.`);
+            }
+        }
+        else {
+            throw new Error(`Foreground run '${run.runId}' child ${index} has an incompatible persisted acceptance ledger status '${child.acceptance.status}'; expected 'skipped' or 'not-required'.`);
+        }
+    }
     return {
         runId: run.runId,
         mode: run.mode,

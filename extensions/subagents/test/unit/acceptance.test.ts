@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,7 +18,7 @@ import {
   validateAcceptanceInput,
   validateDispatchAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
-import type { AcceptanceReport } from "../../src/shared/types.ts";
+import type { AcceptanceEvidenceKind, AcceptanceReport } from "../../src/shared/types.ts";
 import { MAX_CHILD_ERROR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 
 function reportData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -41,6 +42,13 @@ function report(overrides: Record<string, unknown> = {}, fence = "acceptance-rep
 function tempRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-acceptance-"));
   fs.writeFileSync(path.join(dir, "file.txt"), "hello\n", "utf-8");
+  return dir;
+}
+
+function tempGitRepo(): string {
+  const dir = tempRepo();
+  execFileSync("git", ["init", "-q"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["add", "file.txt"], { cwd: dir, stdio: "ignore" });
   return dir;
 }
 
@@ -697,25 +705,354 @@ describe("acceptance gates", () => {
     assert.deepEqual(acceptance.evidence, []);
   });
 
-  it("checked mode rejects missing required evidence", async () => {
+  it("keeps every supplied explicit input enforcement-visible", async () => {
     const cwd = tempRepo();
     try {
-      const acceptance = resolveEffectiveAcceptance({
+      for (const explicit of ["none", "auto", {}] as const) {
+        const acceptance = resolveEffectiveAcceptance({
+          agentName: "worker",
+          task: "Implement a fix",
+          explicit,
+        });
+        assert.equal(acceptance.level, "checked");
+        assert.equal(acceptance.explicit, true);
+        const ledger = await evaluateAcceptance({ acceptance, output: "child finished", cwd });
+        assert.equal(ledger.status, "rejected");
+        assert.equal(ledger.explicit, true);
+      }
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("treats inferred missing tests as advisory but enforces explicit test evidence", async () => {
+    const cwd = tempRepo();
+    try {
+      const inferred = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+      });
+      const inferredLedger = await evaluateAcceptance({
+        acceptance: inferred,
+        output: report({ testsAddedOrUpdated: undefined }),
+        cwd,
+      });
+
+      assert.equal(inferredLedger.status, "checked");
+      assert.equal(
+        inferredLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "not-applicable",
+      );
+
+      const criteriaOnly = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: { criteria: [{ id: "scope", must: "Keep the change narrow" }] },
+      });
+      const criteriaOnlyLedger = await evaluateAcceptance({
+        acceptance: criteriaOnly,
+        output: report({
+          criteriaSatisfied: [{ id: "scope", status: "satisfied", evidence: "reviewed" }],
+          testsAddedOrUpdated: undefined,
+        }),
+        cwd,
+      });
+      assert.equal(criteriaOnlyLedger.status, "checked");
+      assert.equal(
+        criteriaOnlyLedger.runtimeChecks.find((check) => check.id === "evidence:tests-added")
+          ?.status,
+        "not-applicable",
+      );
+
+      const levelOnly = resolveEffectiveAcceptance({
         agentName: "worker",
         task: "Implement a fix",
         explicit: { level: "checked" },
       });
-      const ledger = await evaluateAcceptance({
-        acceptance,
-        output: report({ testsAddedOrUpdated: [] }),
+      const missingLevelOnlyLedger = await evaluateAcceptance({
+        acceptance: levelOnly,
+        output: report({ testsAddedOrUpdated: undefined }),
+        cwd,
+      });
+      assert.equal(missingLevelOnlyLedger.status, "rejected");
+      assert.match(
+        acceptanceFailureMessage(missingLevelOnlyLedger) ?? "",
+        /tests-added evidence missing/,
+      );
+
+      const explicit = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: {
+          level: "checked",
+          criteria: [],
+          evidence: ["tests-added"],
+        },
+      });
+      const missingExplicitLedger = await evaluateAcceptance({
+        acceptance: explicit,
+        output: report({ testsAddedOrUpdated: undefined }),
         cwd,
       });
 
-      assert.equal(ledger.status, "rejected");
-      assert.match(acceptanceFailureMessage(ledger) ?? "", /tests-added evidence missing/);
+      assert.equal(missingExplicitLedger.status, "rejected");
+      assert.match(
+        acceptanceFailureMessage(missingExplicitLedger) ?? "",
+        /tests-added evidence missing/,
+      );
+
+      const emptyExplicitLedger = await evaluateAcceptance({
+        acceptance: explicit,
+        output: report({ testsAddedOrUpdated: [] }),
+        cwd,
+      });
+      assert.equal(emptyExplicitLedger.status, "checked");
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  it("honors small explicit evidence contracts for code, docs, metadata, merge, and validation work", async () => {
+    const cwd = tempRepo();
+    const fixtures: Array<{
+      name: string;
+      task: string;
+      evidence: AcceptanceEvidenceKind[];
+      report: Record<string, unknown>;
+    }> = [
+      {
+        name: "code with tests",
+        task: "Implement the fix and add coverage",
+        evidence: ["changed-files", "tests-added", "commands-run", "residual-risks"],
+        report: { changedFiles: ["src/fix.ts"], testsAddedOrUpdated: ["test/fix.test.ts"] },
+      },
+      {
+        name: "code without tests",
+        task: "Implement the small code fix",
+        evidence: ["changed-files", "commands-run", "residual-risks"],
+        report: { changedFiles: ["src/fix.ts"], testsAddedOrUpdated: [] },
+      },
+      {
+        name: "docs-only",
+        task: "Update the usage documentation",
+        evidence: ["changed-files", "commands-run", "residual-risks"],
+        report: { changedFiles: ["docs/usage.md"], testsAddedOrUpdated: [] },
+      },
+      {
+        name: "metadata-only",
+        task: "Update the package metadata",
+        evidence: ["changed-files", "commands-run", "residual-risks"],
+        report: { changedFiles: ["package.json"], testsAddedOrUpdated: [] },
+      },
+      {
+        name: "merge-resolution",
+        task: "Resolve the merge conflict",
+        evidence: ["changed-files", "commands-run", "residual-risks"],
+        report: { changedFiles: ["src/conflicted.ts"], testsAddedOrUpdated: [] },
+      },
+      {
+        name: "validation-only",
+        task: "Run the requested validation",
+        evidence: ["commands-run", "validation-output", "residual-risks"],
+        report: {
+          changedFiles: [],
+          testsAddedOrUpdated: [],
+          validationOutput: ["validation passed"],
+        },
+      },
+    ];
+
+    try {
+      for (const fixture of fixtures) {
+        const acceptance = resolveEffectiveAcceptance({
+          agentName: "worker",
+          task: fixture.task,
+          explicit: { level: "checked", criteria: [], evidence: fixture.evidence },
+        });
+        assert.equal(acceptance.level, "checked", fixture.name);
+        assert.deepEqual(acceptance.evidence, fixture.evidence, fixture.name);
+        assert.equal(
+          acceptance.evidence.includes("no-staged-files"),
+          false,
+          `${fixture.name} should be allowed to stage intentionally`,
+        );
+        const ledger = await evaluateAcceptance({
+          acceptance,
+          output: report(fixture.report),
+          cwd,
+        });
+        assert.equal(ledger.status, "checked", fixture.name);
+      }
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("continuation preserves fresh evidence omissions unless the level rises", () => {
+    const base = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: {
+        level: "checked",
+        evidence: ["changed-files", "commands-run", "residual-risks"],
+      },
+    });
+    assert.deepEqual(base.evidence, ["changed-files", "commands-run", "residual-risks"]);
+
+    for (const override of [
+      {},
+      "auto" as const,
+      { level: "checked" as const },
+      { level: "checked" as const, evidence: ["changed-files"] as AcceptanceEvidenceKind[] },
+    ]) {
+      const merged = mergeContinuationAcceptance(base, override);
+      assert.ok(merged);
+      assert.deepEqual(merged.evidence, base.evidence);
+    }
+
+    const raised = mergeContinuationAcceptance(base, { level: "verified" });
+    assert.ok(raised);
+    assert.ok(raised.evidence.includes("tests-added"));
+    assert.ok(raised.evidence.includes("validation-output"));
+    assert.ok(raised.evidence.includes("no-staged-files"));
+  });
+
+  it("keeps default staged-file protection while explicit omission allows staging", async () => {
+    const cwd = tempGitRepo();
+    try {
+      const defaultAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+      });
+      const defaultLedger = await evaluateAcceptance({
+        acceptance: defaultAcceptance,
+        output: report(),
+        cwd,
+      });
+      assert.equal(defaultLedger.status, "rejected");
+      assert.equal(
+        defaultLedger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status,
+        "failed",
+      );
+
+      const explicitAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: {
+          level: "checked",
+          evidence: ["changed-files", "commands-run", "residual-risks"],
+        },
+      });
+      const explicitLedger = await evaluateAcceptance({
+        acceptance: explicitAcceptance,
+        output: report(),
+        cwd,
+      });
+      assert.equal(explicitLedger.status, "checked");
+      assert.equal(
+        explicitLedger.runtimeChecks.some((check) => check.id === "no-staged-files"),
+        false,
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a fresh explicit contract replace inferred policy and uses resolved criterion IDs in prompts", () => {
+    const acceptance = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: {
+        level: "attested",
+        criteria: [{ id: "scope", must: "Only the requested files change" }],
+        evidence: ["manual-notes"],
+      },
+    });
+
+    assert.equal(acceptance.level, "attested");
+    assert.deepEqual(acceptance.evidence, ["manual-notes"]);
+    assert.deepEqual(
+      acceptance.criteria.map((criterion) => criterion.id),
+      ["scope"],
+    );
+
+    const evidenceOnly = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: { evidence: ["manual-notes"] },
+    });
+    assert.equal(evidenceOnly.level, "checked");
+    assert.deepEqual(evidenceOnly.evidence, ["manual-notes"]);
+
+    const levelOnly = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: { level: "checked" },
+    });
+    assert.deepEqual(
+      levelOnly.criteria.map((criterion) => criterion.id),
+      ["criterion-1"],
+    );
+
+    const prompt = formatAcceptancePrompt(acceptance);
+    assert.match(prompt, /- scope: Only the requested files change/);
+    assert.match(prompt, /"id": "scope"/);
+    assert.doesNotMatch(prompt, /"id": "criterion-1"/);
+  });
+
+  it("preserves the persisted reviewer when a continuation override conflicts", () => {
+    const base = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: {
+        level: "verified",
+        verify: [{ id: "tests", command: "npm test" }],
+        review: { agent: "persisted-reviewer", focus: "regressions" },
+      },
+    });
+    const merged = mergeContinuationAcceptance(base, {
+      review: { agent: "override-reviewer", focus: "scope", required: true },
+    });
+
+    assert.deepEqual(merged?.review, {
+      agent: "persisted-reviewer",
+      focus: "regressions; scope",
+      required: true,
+    });
+  });
+
+  it("does not let a continuation weaken established acceptance", () => {
+    const base = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: {
+        level: "verified",
+        criteria: [{ id: "scope", must: "Only the requested files change" }],
+        evidence: ["changed-files", "no-staged-files"],
+        verify: [{ id: "tests", command: "npm test" }],
+        review: { agent: "code-reviewer", required: true },
+        stopRules: ["Do not widen the patch"],
+      },
+    });
+    const merged = mergeContinuationAcceptance(base, {
+      level: "attested",
+      criteria: [],
+      evidence: [],
+      verify: [],
+      review: false,
+      stopRules: [],
+    });
+
+    assert.ok(merged);
+    assert.equal(merged.level, "verified");
+    for (const kind of base.evidence) assert.ok(merged.evidence.includes(kind), kind);
+    assert.deepEqual(
+      merged.criteria.map((criterion) => criterion.id),
+      ["scope"],
+    );
+    assert.deepEqual(merged.verify, base.verify);
+    assert.deepEqual(merged.review, base.review);
+    assert.deepEqual(merged.stopRules, base.stopRules);
   });
 
   it("keeps acceptance rejection visible after bounding a full child error", () => {

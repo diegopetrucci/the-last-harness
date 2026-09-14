@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Canonical developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
 
+### Fixed
+
+- Fresh explicit acceptance contracts now override inferred levels and evidence, permit valid no-test declarations and intentional staging when requested, and preserve stricter acceptance across continuations.
+
 ## [0.41.0] - 2026-09-13
 
 ### What's new

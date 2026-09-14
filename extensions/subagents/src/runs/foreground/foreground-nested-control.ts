@@ -33,6 +33,7 @@ import {
   projectRunAuthorizationError,
 } from "./project-agent-control.ts";
 import type { SubagentState } from "../../shared/types.ts";
+import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
 
 export const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(
@@ -212,8 +213,30 @@ function resolveNestedContinuationAcceptance(
     new Error(
       `Nested run '${runId}' is paused but its skipped acceptance ledger could not be read. Retry the resume once pause metadata is persisted.`,
     );
-  if (!step?.acceptance) throw failClosed();
-  return step.acceptance.status === "skipped" ? step.acceptance.effectiveAcceptance : undefined;
+  if (!step?.acceptance || !isWellFormedResolvedAcceptance(step.acceptance.effectiveAcceptance)) {
+    throw failClosed();
+  }
+  if (step.acceptance.status === "skipped") {
+    if (step.acceptance.effectiveAcceptance.level === "none") {
+      throw new Error(
+        `Nested run '${runId}' is paused but its persisted acceptance ledger is incompatible with continuation resume: status 'skipped' cannot carry effective level 'none'.`,
+      );
+    }
+    return step.acceptance.effectiveAcceptance;
+  }
+  if (step.acceptance.status === "not-required") {
+    if (step.acceptance.effectiveAcceptance.level !== "none") {
+      throw new Error(
+        `Nested run '${runId}' is paused but its persisted acceptance ledger is incompatible with continuation resume: status 'not-required' must carry effective level 'none'.`,
+      );
+    }
+    return undefined;
+  }
+  const persistedStatus =
+    typeof step.acceptance.status === "string" ? step.acceptance.status : "unknown";
+  throw new Error(
+    `Nested run '${runId}' is paused but its persisted acceptance ledger status '${persistedStatus}' is incompatible with continuation resume; expected 'skipped' or 'not-required'.`,
+  );
 }
 
 function resolveTrustedNestedResumeCwd(asyncDir: string | undefined): string | undefined {

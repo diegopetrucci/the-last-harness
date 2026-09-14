@@ -25,6 +25,10 @@ import {
 } from "../support/single-execution-fixtures.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
+import {
+  buildSkippedAcceptanceLedger,
+  resolveEffectiveAcceptance,
+} from "../../src/runs/shared/acceptance.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { mockAssistantMessage, readPersistedStatus } from "../support/single-execution-fixtures.ts";
@@ -53,6 +57,20 @@ describe(
     afterEach(() => {
       removeTempDir(tempDir);
     });
+
+    function pausedAcceptanceLedger() {
+      return buildSkippedAcceptanceLedger({
+        acceptance: resolveEffectiveAcceptance({
+          agentName: "echo",
+          task: "Resume the paused child.",
+          mode: "single",
+        }),
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+    }
 
     function makeExecutor(
       agents = [makeAgent("echo")],
@@ -419,6 +437,7 @@ describe(
         fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
         const activeRuntimeMs = 700;
         const activeRuntimeCheckpointAt = 600;
+        const acceptance = pausedAcceptanceLedger();
         const persistedStatus = {
           runId,
           mode: "single",
@@ -431,6 +450,7 @@ describe(
               pause: { kind: "awaiting_supervisor" },
               activeRuntimeMs,
               activeRuntimeCheckpointAt,
+              acceptance,
             },
           ],
           activeRuntimeMs,
@@ -461,6 +481,7 @@ describe(
               pause: { kind: "awaiting_supervisor" },
               activeRuntimeMs,
               activeRuntimeCheckpointAt,
+              acceptance,
             },
           ],
         });
@@ -764,6 +785,7 @@ describe(
         const runId = `foreground-context-race-${Date.now().toString(36)}`;
         const asyncDir = path.join(ASYNC_DIR, runId);
         const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        const acceptance = pausedAcceptanceLedger();
         fs.mkdirSync(asyncDir, { recursive: true });
         fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`);
         const state = {
@@ -788,6 +810,7 @@ describe(
               sessionFile,
               pause: { kind: "awaiting_supervisor" },
               contextUsage: { contextTokens: 799, contextWindow: 1000, peakTokens: 799 },
+              acceptance,
             },
           ],
         });
@@ -804,6 +827,7 @@ describe(
                 sessionFile,
                 pause: { kind: "awaiting_supervisor" },
                 contextUsage: { contextTokens: 800, contextWindow: 1000, peakTokens: 800 },
+                acceptance,
               },
             ],
           }),

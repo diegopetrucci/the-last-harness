@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -24,6 +25,11 @@ import {
 } from "../../src/runs/foreground/foreground-run-state.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
+import {
+  evaluateAcceptance,
+  resolveEffectiveAcceptance,
+  buildSkippedAcceptanceLedger,
+} from "../../src/runs/shared/acceptance.ts";
 import {
   lifecycleGeneration,
   transitionLifecycleStatus,
@@ -208,6 +214,21 @@ function rawStatus(runId: string): RawStatus {
   return parseRawStatus(parsed);
 }
 
+function acceptanceReportWithoutTests(criterionId: string): string {
+  return [
+    "done",
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [{ id: criterionId, status: "satisfied", evidence: "scope checked" }],
+      changedFiles: ["src/file.ts"],
+      commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+      residualRisks: ["none"],
+      noStagedFiles: true,
+    }),
+    "```",
+  ].join("\n");
+}
+
 function reserveContinuation(runId: string, index = 0): void {
   const asyncDir = path.join(ASYNC_DIR, runId);
   const current = readStatus(asyncDir);
@@ -243,7 +264,238 @@ function assertResumeHealth(runId: string, index: number, reasons: DurableAttent
   assert.equal(target.compaction, undefined);
 }
 
+function foregroundResumeState(
+  runId: string,
+  cwd: string,
+  sessionFile: string,
+  persistedAcceptance?: AcceptanceLedger,
+): SubagentState {
+  return {
+    baseCwd: cwd,
+    currentSessionId: "session-foreground-acceptance",
+    asyncJobs: new Map(),
+    foregroundRuns: new Map([
+      [
+        runId,
+        {
+          runId,
+          mode: "single",
+          cwd,
+          updatedAt: 20,
+          children: [
+            {
+              agent: "worker",
+              index: 0,
+              status: "paused",
+              sessionFile,
+              ...(persistedAcceptance ? { acceptance: persistedAcceptance } : {}),
+            },
+          ],
+        },
+      ],
+    ]),
+    foregroundControls: new Map(),
+    lastForegroundControlId: null,
+    cleanupTimers: new Map(),
+    lastUiContext: null,
+    poller: null,
+    completionSeen: new Map(),
+    watcher: null,
+    watcherRestartTimer: null,
+    resultFileCoalescer: { schedule: () => false, clear: () => {} },
+  } satisfies SubagentState;
+}
+
 describe("foreground pause health persistence", () => {
+  it("reloads persisted acceptance provenance before foreground resume evaluation", async () => {
+    const runId = `foreground-acceptance-provenance-${process.pid}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const sessionFile = path.join(asyncDir, "session-0.jsonl");
+    try {
+      const inferredAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+      });
+      const persistedAcceptance = buildSkippedAcceptanceLedger({
+        acceptance: inferredAcceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+      const progress = makeProgress("worker", 0, {});
+      const pause = {
+        kind: "awaiting_supervisor" as const,
+        requestedAt: 10,
+        pausedAt: 20,
+      };
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      const result = {
+        ...makeResult("worker", 0, progress, pause, sessionFile),
+        acceptance: persistedAcceptance,
+      };
+      persistPausedForegroundSingleRun({
+        runId,
+        cwd: "/tmp/foreground-acceptance",
+        sessionId: "session-acceptance",
+        stage: "pausing",
+        ownerPid: 4321,
+        result,
+      });
+      persistPausedForegroundSingleRun({
+        runId,
+        cwd: "/tmp/foreground-acceptance",
+        sessionId: "session-acceptance",
+        stage: "paused",
+        result,
+      });
+
+      const persisted = readStatus(asyncDir);
+      const persistedStep = persisted?.steps?.[0];
+      assert.ok(persistedStep?.acceptance);
+      assert.deepEqual(
+        persistedStep.acceptance.effectiveAcceptance.inferredEvidence,
+        inferredAcceptance.inferredEvidence,
+      );
+      const state = {
+        baseCwd: "/tmp/foreground-acceptance",
+        currentSessionId: "session-acceptance",
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+      state.foregroundRuns.set(runId, {
+        runId,
+        mode: "single",
+        cwd: "/tmp/foreground-acceptance",
+        updatedAt: 20,
+        children: [
+          {
+            agent: persistedStep.agent,
+            index: 0,
+            status: "paused",
+            sessionFile,
+            pause,
+            acceptance: persistedStep.acceptance,
+          },
+        ],
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.deepEqual(
+        target?.continuationAcceptance?.inferredEvidence,
+        inferredAcceptance.inferredEvidence,
+      );
+      const ledger = await evaluateAcceptance({
+        acceptance: target!.continuationAcceptance!,
+        output: acceptanceReportWithoutTests("criterion-1"),
+        cwd: asyncDir,
+      });
+      assert.equal(ledger.status, "checked", JSON.stringify(ledger));
+      assert.equal(
+        ledger.runtimeChecks.find((check) => check.id === "evidence:tests-added")?.status,
+        "not-applicable",
+      );
+    } finally {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when paused foreground acceptance is missing or incompatible", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-foreground-acceptance-resume-"));
+    const sessionFile = path.join(root, "session.jsonl");
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    try {
+      const inferredAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+      });
+      const checkedLedger = buildSkippedAcceptanceLedger({
+        acceptance: inferredAcceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
+      const noneAcceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        mode: "single",
+        explicit: false,
+      });
+      const notRequiredLedger = buildSkippedAcceptanceLedger({
+        acceptance: noneAcceptance,
+        ledgerStatus: "not-required",
+        runtimeCheckStatus: "not-applicable",
+        id: "not-required",
+        message: "Acceptance is not required.",
+      });
+      const missingRunId = `foreground-acceptance-missing-${process.pid}`;
+      assert.throws(
+        () =>
+          resolveForegroundResumeTarget(
+            { id: missingRunId },
+            foregroundResumeState(missingRunId, root, sessionFile),
+          ),
+        /missing or malformed persisted acceptance ledger; refusing to resume with an unverified acceptance contract/,
+      );
+
+      const validRunId = `foreground-acceptance-not-required-${process.pid}`;
+      const validTarget = resolveForegroundResumeTarget(
+        { id: validRunId },
+        foregroundResumeState(validRunId, root, sessionFile, notRequiredLedger),
+      );
+      assert.equal(validTarget?.continuationAcceptance, undefined);
+
+      const mismatchCases: Array<{
+        label: string;
+        ledger: AcceptanceLedger;
+        message: RegExp;
+      }> = [
+        {
+          label: "skipped-level-none",
+          ledger: { ...notRequiredLedger, status: "skipped" },
+          message: /status 'skipped' cannot carry effective level 'none'/,
+        },
+        {
+          label: "not-required-level-checked",
+          ledger: { ...checkedLedger, status: "not-required" },
+          message: /status 'not-required' must carry effective level 'none'/,
+        },
+        {
+          label: "checked-terminal-status",
+          ledger: { ...checkedLedger, status: "checked" },
+          message: /status 'checked'.*expected 'skipped' or 'not-required'/,
+        },
+      ];
+      for (const { label, ledger, message } of mismatchCases) {
+        const runId = `foreground-acceptance-mismatch-${label}-${process.pid}`;
+        assert.throws(
+          () =>
+            resolveForegroundResumeTarget(
+              { id: runId },
+              foregroundResumeState(runId, root, sessionFile, ledger),
+            ),
+          message,
+          label,
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("retains single-run durable reasons through pausing, finalization, status, and resume", () => {
     const runId = `foreground-single-health-${process.pid}`;
     const asyncDir = path.join(ASYNC_DIR, runId);

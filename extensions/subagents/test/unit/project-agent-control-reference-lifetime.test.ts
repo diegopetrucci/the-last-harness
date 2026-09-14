@@ -19,6 +19,10 @@ import {
 } from "../../src/agents/project-agent-snapshot.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
 import { createAsyncJobTracker } from "../../src/runs/background/async-job-tracker.ts";
+import {
+  buildSkippedAcceptanceLedger,
+  resolveEffectiveAcceptance,
+} from "../../src/runs/shared/acceptance.ts";
 import { trimRememberedForegroundRuns } from "../../src/runs/foreground/subagent-executor.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
@@ -89,6 +93,17 @@ describe("project-agent control reference lifetime and continuation", () => {
             agent: "embedded.worker",
             task: "foreground pause",
             projectAgent: first.capture,
+            acceptance: buildSkippedAcceptanceLedger({
+              acceptance: resolveEffectiveAcceptance({
+                agentName: "embedded.worker",
+                task: "foreground pause",
+                mode: "single",
+              }),
+              ledgerStatus: "skipped",
+              runtimeCheckStatus: "not-applicable",
+              id: "paused",
+              message: "Acceptance will run after resume.",
+            }),
             exitCode: 0,
             interrupted: true,
             finalOutput: "Paused foreground child.",
