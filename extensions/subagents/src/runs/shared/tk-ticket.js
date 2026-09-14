@@ -1,12 +1,30 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
+const TK_SHOW_ARGUMENT_PATTERN = /(?:^|[\s`"'([{>:])tk\s+show(?=\s|$)(?:\s+([^\s`]+))?/;
+const TK_SHOW_CLOSING_DELIMITER_PATTERN = /[)\]}"']$/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
+export function normalizeTkTicketId(value) {
+    return typeof value === "string" && TK_TICKET_ID_PATTERN.test(value) ? value : undefined;
+}
 export function detectTkTicketId(task) {
     if (!task)
         return undefined;
     const match = task.match(TK_SHOW_PATTERN);
     return match?.[1];
+}
+export function inspectTkTicketReference(task) {
+    if (!task)
+        return { kind: "absent" };
+    const match = task.match(TK_SHOW_ARGUMENT_PATTERN);
+    if (!match)
+        return { kind: "absent" };
+    const argument = match[1];
+    const id = normalizeTkTicketId(argument) ??
+        (argument && TK_SHOW_CLOSING_DELIMITER_PATTERN.test(argument)
+            ? normalizeTkTicketId(argument.slice(0, -1))
+            : undefined);
+    return id ? { kind: "valid", id } : { kind: "invalid" };
 }
 export function parseTkTicketTitle(output) {
     for (const line of output.split(/\r?\n/)) {
@@ -78,14 +96,15 @@ export function normalizeTkTicketMetadata(raw) {
     if (!raw || typeof raw !== "object")
         return undefined;
     const { id, title } = raw;
-    if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id))
+    const normalizedId = normalizeTkTicketId(id);
+    if (!normalizedId)
         return undefined;
     if (typeof title !== "string")
         return undefined;
     const sanitizedTitle = sanitizeTkTicketTitle(title);
     if (!sanitizedTitle)
         return undefined;
-    return { id, title: sanitizedTitle };
+    return { id: normalizedId, title: sanitizedTitle };
 }
 export function resolveTkTicketMetadata(task, options = {}) {
     const requestedId = detectTkTicketId(task);

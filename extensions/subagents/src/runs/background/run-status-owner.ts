@@ -49,6 +49,7 @@ import {
   parseContextPressureProjection,
 } from "../../shared/context-diagnostics.ts";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import { readStatus } from "../../shared/utils.ts";
 import {
   createHealthTransitionState,
@@ -62,6 +63,14 @@ import {
 export type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
   exitCode?: number | null;
 };
+
+function validatedChildTkTicketId(
+  task: Pick<SubagentStep, "agent" | "projectAgentGuidance" | "tkTicketId">,
+): string | undefined {
+  return task.agent === "developer" && task.projectAgentGuidance === true
+    ? normalizeTkTicketId(task.tkTicketId)
+    : undefined;
+}
 
 function applyHealthStatusProjection(step: RunnerStatusStep, state: HealthTransitionState): void {
   step.activityState = state.activityState;
@@ -186,12 +195,20 @@ export interface BackgroundRunStatusOwner {
       | "modelIdentity"
       | "modelResolution"
       | "projectAgent"
+      | "projectAgentGuidance"
+      | "tkTicketId"
     >,
   ): SingleStepResultValue;
   timedOutStepResult(
     task: Pick<
       SubagentStep,
-      "agent" | "model" | "modelIdentity" | "modelResolution" | "projectAgent"
+      | "agent"
+      | "model"
+      | "modelIdentity"
+      | "modelResolution"
+      | "projectAgent"
+      | "projectAgentGuidance"
+      | "tkTicketId"
     >,
   ): SingleStepResultValue;
   pauseMetadataForIndex(index: number, pausedAt?: number): AsyncStatus["pause"] | undefined;
@@ -337,6 +354,7 @@ export function createBackgroundRunStatusOwner(
     return {
       agent: task.agent,
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+      ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
       status: "pending",
       ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
       ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
@@ -1126,11 +1144,14 @@ export function createBackgroundRunStatusOwner(
       | "modelIdentity"
       | "modelResolution"
       | "projectAgent"
+      | "projectAgentGuidance"
+      | "tkTicketId"
     >,
   ): SingleStepResultValue {
     return {
       agent: task.agent,
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+      ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
       output: "Paused after interrupt. Waiting for explicit next action.",
       exitCode: 0,
       interrupted: true,
@@ -1145,12 +1166,19 @@ export function createBackgroundRunStatusOwner(
   function timedOutStepResult(
     task: Pick<
       SubagentStep,
-      "agent" | "model" | "modelIdentity" | "modelResolution" | "projectAgent"
+      | "agent"
+      | "model"
+      | "modelIdentity"
+      | "modelResolution"
+      | "projectAgent"
+      | "projectAgentGuidance"
+      | "tkTicketId"
     >,
   ): SingleStepResultValue {
     return {
       agent: task.agent,
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+      ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
       output: timeoutMessage ?? "Subagent timed out.",
       error: timeoutMessage ?? "Subagent timed out.",
       exitCode: 1,

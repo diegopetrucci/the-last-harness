@@ -11,6 +11,7 @@ import {
   type ThinkingLevel,
 } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
+import { normalizeTkTicketId } from "./tk-ticket.ts";
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR =
@@ -41,6 +42,8 @@ export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
+/** Parent-owned validated developer ticket assignment for the child runtime. */
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 
 interface BuildPiArgsInput {
   parentSessionId?: string;
@@ -74,6 +77,8 @@ interface BuildPiArgsInput {
   childAgentName?: string;
   /** True only when the parent selected the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
+  /** Validated per-child developer ticket assignment. */
+  tkTicketId?: string;
   childIndex?: number;
   steerInboxDir?: string;
   toolBudget?: ResolvedToolBudget;
@@ -325,6 +330,12 @@ function buildPiArgsInternal(
   // Always write the provenance sentinel. An inherited "1" must never opt a
   // same-name custom agent into project guidance.
   env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
+  // Always override inherited ticket state. Invalid or missing assignments are
+  // explicitly cleared so a child cannot accidentally receive its parent's ID.
+  env[SUBAGENT_TK_TICKET_ID_ENV] =
+    input.projectAgentGuidance === true && input.childAgentName === "developer"
+      ? normalizeTkTicketId(input.tkTicketId)
+      : undefined;
   // Omitted supervisorBridge preserves native supervision; false must suppress
   // both prompt guidance and runtime tool registration in the child.
   env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";

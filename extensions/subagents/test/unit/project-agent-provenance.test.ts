@@ -22,6 +22,38 @@ afterEach(() => {
 });
 
 describe("packaged minor-agent provenance", () => {
+  it("derives independent ticket ids only for canonical developer tasks", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-ticket-plan-"));
+    fixtures.push(root);
+    const agentDir = path.join(root, "agent");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const canonical = makeAgent("developer", {
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+    });
+    const custom = makeAgent("code-reviewer", {
+      filePath: path.join(root, "custom", "code-reviewer.md"),
+    });
+    const built = buildAsyncRunnerPlan("ticket-plan", {
+      tasks: [
+        { agent: "developer", task: "Implement `tk show tlhm-o1qg` first." },
+        { agent: "developer", task: "No assignment here." },
+        { agent: "code-reviewer", task: "Implement `tk show tlhm-custom` first." },
+        { agent: "developer", task: "Reject `tk show _bad`." },
+      ],
+      agents: [canonical, custom],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx: { pi: makeExtensionAPI(), cwd: root, currentSessionId: "parent" },
+      maxSubagentDepth: 2,
+    });
+
+    assert.equal("error" in built, false);
+    if ("error" in built) return;
+    assert.deepEqual(
+      built.plan.tasks.map((task) => task.tkTicketId),
+      ["tlhm-o1qg", undefined, undefined, undefined],
+    );
+  });
+
   it("serializes a strict provenance boolean on every async runner task", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-provenance-"));
     fixtures.push(root);

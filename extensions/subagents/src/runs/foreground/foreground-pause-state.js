@@ -3,6 +3,10 @@ import { ASYNC_DIR, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { lifecycleContinuationForIndex, lifecycleGeneration, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
+function validatedForegroundTkTicketId(result) {
+    return result.agent === "developer" ? normalizeTkTicketId(result.tkTicketId) : undefined;
+}
 function cloneForegroundPauseHealth(source, clearMissing = false) {
     return {
         ...(clearMissing || source?.activityState !== undefined
@@ -83,6 +87,9 @@ export function persistPausedForegroundCohortRun(input) {
         input.results?.map((result) => ({
             agent: result.agent,
             ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+            ...(validatedForegroundTkTicketId(result)
+                ? { tkTicketId: validatedForegroundTkTicketId(result) }
+                : {}),
             status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
             sessionFile: result.sessionFile,
             transcriptPath: result.transcriptPath,
@@ -216,6 +223,9 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
     return {
         agent: result.agent,
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
+        ...(validatedForegroundTkTicketId(result)
+            ? { tkTicketId: validatedForegroundTkTicketId(result) }
+            : {}),
         status,
         sessionFile: result.sessionFile,
         transcriptPath: result.transcriptPath,
@@ -279,9 +289,11 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
 }
 export function buildCohortPauseStep(input) {
     const modelIdentity = input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
+    const tkTicketId = input.agent === "developer" ? normalizeTkTicketId(input.tkTicketId) : undefined;
     return {
         agent: input.agent,
         ...(input.projectAgent ? { projectAgent: input.projectAgent } : {}),
+        ...(tkTicketId ? { tkTicketId } : {}),
         status: input.status,
         sessionFile: input.sessionFile,
         ...(input.model ? { model: input.model } : {}),
@@ -329,6 +341,7 @@ export function persistPausedForegroundSingleRun(input) {
         : undefined;
     const activeRuntimeMs = normalizeActiveRuntimeMs(input.result.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt);
+    const tkTicketId = validatedForegroundTkTicketId(input.result);
     const current = readStatus(asyncDir);
     if (!current) {
         if (input.stage !== "pausing")
@@ -350,6 +363,7 @@ export function persistPausedForegroundSingleRun(input) {
                 {
                     agent: input.result.agent,
                     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+                    ...(tkTicketId ? { tkTicketId } : {}),
                     status: input.stage,
                     sessionFile: input.result.sessionFile,
                     transcriptPath: input.result.transcriptPath,
@@ -416,6 +430,7 @@ export function persistPausedForegroundSingleRun(input) {
                     ...step,
                     agent: input.result.agent,
                     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
+                    ...(tkTicketId ? { tkTicketId } : {}),
                     status: input.stage,
                     sessionFile: input.result.sessionFile ?? step.sessionFile,
                     transcriptPath: input.result.transcriptPath ?? step.transcriptPath,

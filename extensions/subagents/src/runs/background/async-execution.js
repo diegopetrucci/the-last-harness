@@ -18,7 +18,7 @@ import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCL
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
-import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
+import { detectTkTicketId, inspectTkTicketReference, normalizeTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { captureChildLocationSnapshot, makeParentGitFactsAccessor, } from "../../shared/child-location.js";
 const piPackageRoot = resolvePiPackageRoot();
@@ -311,9 +311,14 @@ export function buildAsyncRunnerPlan(id, params) {
         })
             .filter((candidate) => candidate !== undefined);
         const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === taskSpec.agent);
+        const taskReference = agent.name === "developer" && isCanonicalPackagedMinorAgent(agent)
+            ? inspectTkTicketReference(taskSpec.task)
+            : undefined;
+        const tkTicketId = taskReference?.kind === "valid" ? taskReference.id : undefined;
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             ...(projectAgent ? { projectAgent } : {}),
+            ...(tkTicketId ? { tkTicketId } : {}),
             agent: taskSpec.agent,
             projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
             task,
@@ -649,6 +654,15 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
     if ("error" in runtimePolicy)
         return { error: runtimePolicy.error };
     const { activeRuntimeMs: resolvedActiveRuntimeMs, activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt, effectiveTimeoutMs, timeoutOwner, effectiveDeadlineAt, } = runtimePolicy;
+    const taskReference = agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+        ? inspectTkTicketReference(task)
+        : undefined;
+    const assignedTkTicketId = taskReference?.kind === "valid"
+        ? taskReference.id
+        : taskReference?.kind === "absent"
+            ? (normalizeTkTicketId(params.inheritedTkTicketId) ??
+                normalizeTkTicketId(params.inheritedTkTicket?.id))
+            : undefined;
     return {
         buildPlan: () => ({
             kind: "single",
@@ -657,6 +671,7 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                 ...(projectAgent ? { projectAgent } : {}),
                 agent,
                 projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
+                ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
                 task: taskWithOutputInstruction,
                 cwd: runnerCwd,
                 model,
@@ -789,9 +804,16 @@ export function executeAsyncSingle(id, params) {
     });
     if ("error" in launchPlan)
         return formatAsyncStartError("single", launchPlan.error);
-    const tkTicket = detectTkTicketId(task)
-        ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
-        : normalizeTkTicketMetadata(params.inheritedTkTicket);
+    const taskReference = agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+        ? inspectTkTicketReference(task)
+        : undefined;
+    const tkTicket = taskReference
+        ? taskReference.kind === "absent"
+            ? normalizeTkTicketMetadata(params.inheritedTkTicket)
+            : resolveTkTicketMetadata(task, { cwd: runnerCwd })
+        : detectTkTicketId(task)
+            ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
+            : normalizeTkTicketMetadata(params.inheritedTkTicket);
     const { buildPlan, effectiveTimeoutMs, effectiveDeadlineAt } = launchPlan;
     let spawnResult;
     try {

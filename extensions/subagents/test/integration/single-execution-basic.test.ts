@@ -29,6 +29,7 @@ import { ASYNC_DIR } from "../../src/shared/types.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
@@ -155,14 +156,18 @@ describe(
       });
     });
 
-    it("emits verified provenance only for the canonical foreground agent config", async () => {
+    it("assigns a ticket only to the canonical foreground developer", async () => {
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
       const agentDir = path.join(tempDir, "profile");
       process.env.PI_CODING_AGENT_DIR = agentDir;
       process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+      process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
       try {
-        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_TK_TICKET_ID_ENV],
+        });
         const canonical = makeAgent("developer", {
           filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
         });
@@ -170,15 +175,66 @@ describe(
           tempDir,
           [canonical],
           "developer",
-          "Echo verified provenance.",
-          {},
+          "Before editing, run `tk show foreground-ticket`.",
+          { tkTicketId: "persisted-ticket" },
         );
         assert.equal(verified.exitCode, 0);
         assert.deepEqual(JSON.parse(getFinalOutput(verified.messages)), {
           [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          [SUBAGENT_TK_TICKET_ID_ENV]: "foreground-ticket",
         });
 
-        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_TK_TICKET_ID_ENV],
+        });
+        const inherited = await runSync(
+          tempDir,
+          [canonical],
+          "developer",
+          "Continue the developer work without a ticket reference.",
+          { tkTicketId: "persisted-ticket" },
+        );
+        assert.equal(inherited.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(inherited.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
+        });
+
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_TK_TICKET_ID_ENV],
+        });
+        const leftBoundary = await runSync(
+          tempDir,
+          [canonical],
+          "developer",
+          "Continue with embedded text path/tk show inherited-ticket.",
+          { tkTicketId: "persisted-ticket" },
+        );
+        assert.equal(leftBoundary.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(leftBoundary.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
+        });
+
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_TK_TICKET_ID_ENV],
+        });
+        const malformed = await runSync(
+          tempDir,
+          [canonical],
+          "developer",
+          "Do not use the malformed fresh reference `tk show fresh-ticket.extra`.",
+          { tkTicketId: "persisted-ticket" },
+        );
+        assert.equal(malformed.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(malformed.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          [SUBAGENT_TK_TICKET_ID_ENV]: null,
+        });
+
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_TK_TICKET_ID_ENV],
+        });
         const collision = await runSync(
           tempDir,
           [
@@ -187,12 +243,13 @@ describe(
             }),
           ],
           "developer",
-          "Echo disabled provenance.",
+          "Before editing, run `tk show custom-ticket`.",
           {},
         );
         assert.equal(collision.exitCode, 0);
         assert.deepEqual(JSON.parse(getFinalOutput(collision.messages)), {
           [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+          [SUBAGENT_TK_TICKET_ID_ENV]: null,
         });
       } finally {
         if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -200,6 +257,8 @@ describe(
         if (previousGuidanceMarker === undefined)
           delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
         else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+        if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
+        else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
       }
     });
 

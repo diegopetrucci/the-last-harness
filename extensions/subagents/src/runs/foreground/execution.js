@@ -19,6 +19,7 @@ import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, composeAcceptanceFailureError, formatAcceptancePrompt, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
+import { inspectTkTicketReference, normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
 import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-channel.js";
@@ -27,6 +28,16 @@ import { hasUsableSessionArtifact, mergeContextUsageDiagnostics, resolveEffectiv
 import { CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE, applyHealthProgressProjection, clearHealthForProgress, evaluateSingleAcceptance, finalizeForegroundArtifacts, finalizeSingleAttempt, formatTimeoutMessage, prepareForegroundRunFinalization, resolveResultSessionFile, setupForegroundArtifacts, snapshotProgress, snapshotResult, transitionHealthForProgress, } from "./execution-finalization.js";
 import { ACTIVITY_MONITOR_INTERVAL_MS, observeActivityWindow, createHealthTransitionState, resetHealthTransitionState, } from "../shared/health-transition.js";
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE = "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
+function resolveAssignedDeveloperTkTicketId(agent, task, requestedId) {
+    if (agent.name !== "developer" || !isCanonicalPackagedMinorAgent(agent))
+        return undefined;
+    const reference = inspectTkTicketReference(task);
+    if (reference.kind === "valid")
+        return reference.id;
+    if (reference.kind === "invalid")
+        return undefined;
+    return normalizeTkTicketId(requestedId);
+}
 function settleForegroundAcceptance(result, acceptance, options, interruptedAcceptance, healthState) {
     result.acceptance = acceptance;
     if (!result.protocolOutputLimit &&
@@ -230,6 +241,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             childIndex: options.index ?? 0,
             parentSessionId: options.parentSessionId,
             steerInboxDir: options.steerInboxDir,
+            tkTicketId: options.tkTicketId,
             toolBudget: options.toolBudget,
         }));
     }
@@ -258,6 +270,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             task: shared.originalTask ?? task,
             exitCode: 1,
             ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+            ...(options.tkTicketId ? { tkTicketId: options.tkTicketId } : {}),
             ...(options.childLocation ? { childLocation: options.childLocation } : {}),
             messages: [],
             usage: emptyUsage(),
@@ -280,6 +293,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         task: shared.originalTask ?? task,
         exitCode: 0,
         ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+        ...(options.tkTicketId ? { tkTicketId: options.tkTicketId } : {}),
         ...(options.childLocation ? { childLocation: options.childLocation } : {}),
         messages: [],
         usage: emptyUsage(),
@@ -1116,6 +1130,11 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         };
     }
     const runStartedAt = Date.now();
+    const assignedTkTicketId = resolveAssignedDeveloperTkTicketId(agent, task, options.tkTicketId);
+    options = {
+        ...options,
+        ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : { tkTicketId: undefined }),
+    };
     const effectiveTimeoutMs = resolveEffectiveSingleTimeout(options.timeoutMs, agent.maxExecutionTimeMs);
     const timeoutMessage = resolveTimeoutMessage({
         startedAt: runStartedAt,
@@ -1138,6 +1157,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             exitCode: 1,
             messages: [],
             usage: emptyUsage(),
+            ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
             outputMode: options.outputMode,
             error: outputModeValidationError,
         };
@@ -1166,6 +1186,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             exitCode: 1,
             messages: [],
             usage: emptyUsage(),
+            ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
             error: "Skills not found: pi-subagents",
         };
     }

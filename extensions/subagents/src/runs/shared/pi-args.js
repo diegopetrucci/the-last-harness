@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
 import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
+import { normalizeTkTicketId } from "./tk-ticket.js";
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR = "Cannot combine lazy skills with extension-path-only tools: list each extension tool name alongside its extension path (read is injected automatically).";
@@ -28,6 +29,7 @@ export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 function isExtensionToolPath(tool) {
     return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
@@ -210,6 +212,10 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
     env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
     env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
+    env[SUBAGENT_TK_TICKET_ID_ENV] =
+        input.projectAgentGuidance === true && input.childAgentName === "developer"
+            ? normalizeTkTicketId(input.tkTicketId)
+            : undefined;
     env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";
     if (input.parentSessionId) {
         env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;

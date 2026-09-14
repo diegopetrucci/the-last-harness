@@ -17,6 +17,7 @@ import {
   SUBAGENT_STEER_INBOX_ENV,
   SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
 } from "./pi-args.ts";
 import {
   TOOL_BUDGET_ENV,
@@ -35,6 +36,7 @@ import {
   inventoryProjectAgentGuidance,
   PACKAGED_MINOR_AGENT_ROLES,
 } from "../../../../shared/project-agent-guidance.ts";
+import { normalizeTkTicketId } from "./tk-ticket.ts";
 
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 
@@ -109,6 +111,7 @@ export function rewriteSubagentPrompt(
   options: { inheritProjectContext: boolean; inheritSkills: boolean },
   projectAgentGuidance = "",
   supervisorGuidance = "",
+  tkTicketGuidance = "",
 ): string {
   let rewritten = prompt;
   if (!options.inheritProjectContext) {
@@ -120,7 +123,7 @@ export function rewriteSubagentPrompt(
   rewritten = stripSubagentOrchestrationSkill(rewritten);
   return composeChildPromptRuntime(
     rewritten,
-    [projectAgentGuidance, supervisorGuidance],
+    [projectAgentGuidance, supervisorGuidance, tkTicketGuidance],
     "explicit",
   );
 }
@@ -168,6 +171,19 @@ function hasNativeSupervisorMetadata(): boolean {
   if (required.some((name) => !process.env[name]?.trim())) return false;
   const childIndex = process.env[SUBAGENT_CHILD_INDEX_ENV]?.trim();
   return childIndex !== undefined && /^\d+$/.test(childIndex);
+}
+
+function resolveChildTkTicketGuidance(): string {
+  const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
+  if (childAgentName !== "developer" || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1")
+    return "";
+  const ticketId = normalizeTkTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]);
+  if (!ticketId) return "";
+  return [
+    "Developer ticket assignment:",
+    `Ticket ID: ${ticketId}`,
+    `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+  ].join("\n");
 }
 
 function resolveChildSupervisorGuidance(): string {
@@ -280,6 +296,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
   let nativeSupervisorClientRegistered = false;
   let projectAgentGuidanceSnapshot = "";
   let supervisorGuidanceSnapshot = "";
+  let tkTicketGuidanceSnapshot = "";
   const handleSessionStart = (_event: unknown, ctx: { cwd: string }): void => {
     if (!nativeSupervisorClientRegistered) {
       nativeSupervisorClientRegistered = true;
@@ -287,6 +304,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
     }
     projectAgentGuidanceSnapshot = resolveChildProjectAgentGuidance(ctx.cwd);
     supervisorGuidanceSnapshot = resolveChildSupervisorGuidance();
+    tkTicketGuidanceSnapshot = resolveChildTkTicketGuidance();
   };
   pi.on("session_start", handleSessionStart);
   pi.on("before_agent_start", (event) => {
@@ -296,7 +314,8 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
       inheritProjectContext === undefined &&
       inheritSkills === undefined &&
       projectAgentGuidanceSnapshot.length === 0 &&
-      supervisorGuidanceSnapshot.length === 0
+      supervisorGuidanceSnapshot.length === 0 &&
+      tkTicketGuidanceSnapshot.length === 0
     )
       return undefined;
     const rewritten = rewriteSubagentPrompt(
@@ -307,6 +326,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
       },
       projectAgentGuidanceSnapshot,
       supervisorGuidanceSnapshot,
+      tkTicketGuidanceSnapshot,
     );
     if (rewritten === event.systemPrompt) return undefined;
     return { systemPrompt: rewritten };

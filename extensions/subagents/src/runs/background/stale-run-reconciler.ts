@@ -43,6 +43,7 @@ import {
   sanitizeSubagentModelIdentity,
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
@@ -158,6 +159,7 @@ function readStatusFile(asyncDir: string): AsyncStatus | null {
 
 interface ResultChildOutcome {
   agent?: string;
+  tkTicketId?: string;
   success?: boolean;
   durableAttentionReasons?: DurableAttentionReason[];
   error?: string;
@@ -229,6 +231,7 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
     idleEpisodeId: _idleEpisodeId,
     durableAttentionReasons: _durableAttentionReasons,
     compaction: _compaction,
+    tkTicketId: _tkTicketId,
     ...rest
   } = step;
   const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
@@ -242,6 +245,7 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
   const idleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
   const durableAttentionReasons = parseHealthDurableAttentionReasons(step.durableAttentionReasons);
   const compaction = parseHealthCompaction(step.compaction);
+  const tkTicketId = step.agent === "developer" ? normalizeTkTicketId(step.tkTicketId) : undefined;
   return {
     ...rest,
     ...(modelIdentity ? { modelIdentity } : {}),
@@ -251,9 +255,21 @@ function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
     ...(idleEpisodeId ? { idleEpisodeId } : {}),
     ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
     ...(compaction ? { compaction } : {}),
+    ...(tkTicketId ? { tkTicketId } : {}),
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
   };
+}
+
+function resolvePersistedDeveloperTkTicketId(
+  step: AsyncStatusStep,
+  child: ResultChildOutcome | undefined,
+): string | undefined {
+  if (step.agent !== "developer") return undefined;
+  return (
+    normalizeTkTicketId(step.tkTicketId) ??
+    (child?.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined)
+  );
 }
 
 function readResultRepairData(resultPath: string): ResultRepairData | undefined {
@@ -302,6 +318,8 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
           const child = entry as Record<string, unknown>;
           const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
           const projectAgent = normalizeProjectAgentRunCapture(child.projectAgent);
+          const tkTicketId =
+            child.agent === "developer" ? normalizeTkTicketId(child.tkTicketId) : undefined;
           const contextPressure = parseContextPressureProjection(child.contextPressure);
           const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
             child.contextPressureCrossedThresholds,
@@ -322,6 +340,7 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
           return {
             ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
             ...(projectAgent ? { projectAgent } : {}),
+            ...(tkTicketId ? { tkTicketId } : {}),
             ...(typeof child.success === "boolean" ? { success: child.success } : {}),
             ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
             ...(typeof child.error === "string" ? { error: child.error } : {}),
@@ -381,6 +400,7 @@ function terminalStatusFromResult(
     const childActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
       child?.activeRuntimeCheckpointAt,
     );
+    const tkTicketId = resolvePersistedDeveloperTkTicketId(step, child);
     const durableAttentionReasons = [
       ...new Set([
         ...(sanitizedStep.durableAttentionReasons ?? []),
@@ -391,6 +411,7 @@ function terminalStatusFromResult(
     if (step.status !== "running" && step.status !== "pending" && step.status !== "pausing") {
       return {
         ...sanitizedStep,
+        ...(tkTicketId ? { tkTicketId } : {}),
         ...durableHealth,
         ...(persistedActiveRuntimeMs !== undefined || childActiveRuntimeMs !== undefined
           ? {
@@ -411,6 +432,7 @@ function terminalStatusFromResult(
     const state = childState(repair.state, child);
     return {
       ...sanitizedStep,
+      ...(tkTicketId ? { tkTicketId } : {}),
       // A stale result closes the detached live segment. Clear only ephemeral
       // projection metadata; durable attention reasons remain useful evidence.
       activityState: undefined,
@@ -631,6 +653,7 @@ function buildFailedRepair(
       results: repairedSteps.map((step) => ({
         agent: step.agent,
         ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+        ...(step.tkTicketId ? { tkTicketId: step.tkTicketId } : {}),
         output: step.status === "complete" || step.status === "completed" ? "" : message,
         error:
           step.status === "complete" || step.status === "completed"

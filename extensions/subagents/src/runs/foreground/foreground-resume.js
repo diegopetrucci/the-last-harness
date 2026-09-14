@@ -11,6 +11,7 @@ import { resolveControlConfig } from "../shared/subagent-control.js";
 import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../shared/model-fallback.js";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
 import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../background/async-resume.js";
+import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, requestAsyncResume, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
@@ -25,6 +26,11 @@ import { resolveForegroundResumeTarget } from "./foreground-run-state.js";
 import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "./foreground-nested-control.js";
 import { indexedLifecycleContinuation, isClaimedPausedLifecycle, pausedForegroundHealthFromResult, pausedForegroundStatusPath, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
+function resolveTargetTkTicketId(target) {
+    return target.agent === "developer" && "tkTicketId" in target
+        ? normalizeTkTicketId(target.tkTicketId)
+        : undefined;
+}
 function formatRevivedAsyncResponse(target, revivedId, details, notice) {
     const privacySafeSupervisorResume = target.kind === "revive" &&
         target.state === "paused" &&
@@ -889,6 +895,9 @@ export async function resumeAsyncRun(input) {
                 : {}),
             ...(target.source === "async" && target.tkTicket
                 ? { inheritedTkTicket: target.tkTicket }
+                : {}),
+            ...(resolveTargetTkTicketId(target)
+                ? { inheritedTkTicketId: resolveTargetTkTicketId(target) }
                 : {}),
             task: buildRevivedAsyncTask(target, followUp),
             modelOverride: input.params.model,

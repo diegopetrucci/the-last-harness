@@ -22,6 +22,7 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
@@ -364,18 +365,25 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(args.includes("--no-tools"), false);
   });
 
-  it("propagates verified packaged provenance through async single and parallel launches", async () => {
+  it("assigns fresh tickets through async single and two-child parallel launches", async () => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
     const agentDir = path.join(tempDir, "profile");
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    const canonicalAgent = (name: "developer" | "code-reviewer") =>
-      makeAgent(name, {
-        filePath: path.join(agentDir, "tlh", "agents", "subagents", `${name}.md`),
-      });
+    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
+    const canonicalAgent = makeAgent("developer", {
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+    });
     try {
-      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
       const singleId = `async-packaged-identity-${Date.now().toString(36)}`;
       const commonParams = {
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
@@ -392,8 +400,8 @@ describe("async execution runner launch and configuration validation", () => {
       };
       const single = executeAsyncSingle(singleId, {
         agent: "developer",
-        task: "Echo the developer identity.",
-        agentConfig: canonicalAgent("developer"),
+        task: "Before editing, run `tk show async-single-ticket`.",
+        agentConfig: canonicalAgent,
         ...commonParams,
       });
       assert.equal(single.isError, undefined);
@@ -403,21 +411,30 @@ describe("async execution runner launch and configuration validation", () => {
       assert.deepEqual(JSON.parse(singlePayload.results[0]?.output ?? "{}"), {
         [SUBAGENT_CHILD_AGENT_ENV]: "developer",
         [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: "async-single-ticket",
       });
 
       mockPi.onCall({
-        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
       });
       mockPi.onCall({
-        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
       });
       const parallelId = `async-packaged-identities-${Date.now().toString(36)}`;
       const parallel = executeAsyncParallel(parallelId, {
         tasks: [
-          { agent: "developer", task: "Echo the developer identity." },
-          { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
+          { agent: "developer", task: "Before editing, run `tk show async-first-ticket`." },
+          { agent: "developer", task: "Before editing, run `tk show async-second-ticket`." },
         ],
-        agents: [canonicalAgent("developer"), canonicalAgent("code-reviewer")],
+        agents: [canonicalAgent],
         ...commonParams,
       });
       assert.equal(parallel.isError, undefined);
@@ -430,10 +447,12 @@ describe("async execution runner launch and configuration validation", () => {
           {
             [SUBAGENT_CHILD_AGENT_ENV]: "developer",
             [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+            [SUBAGENT_TK_TICKET_ID_ENV]: "async-first-ticket",
           },
           {
-            [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
+            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
             [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+            [SUBAGENT_TK_TICKET_ID_ENV]: "async-second-ticket",
           },
         ],
       );
@@ -443,21 +462,88 @@ describe("async execution runner launch and configuration validation", () => {
       if (previousGuidanceMarker === undefined)
         delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
       else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
+      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
     }
   });
 
-  it("clears inherited provenance for same-name custom async agents", async () => {
+  it("preserves canonical code-reviewer guidance without a ticket in async launch", async () => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
     const agentDir = path.join(tempDir, "profile");
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
+    const canonicalCodeReviewer = makeAgent("code-reviewer", {
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "code-reviewer.md"),
+    });
     try {
-      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
+      const id = `async-canonical-reviewer-${Date.now().toString(36)}`;
+      const run = executeAsyncParallel(id, {
+        tasks: [
+          { agent: "code-reviewer", task: "Review the current changes without editing files." },
+        ],
+        agents: [canonicalCodeReviewer],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+      assert.equal(run.isError, undefined);
+      const payload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        [SUBAGENT_TK_TICKET_ID_ENV]: null,
+      });
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      if (previousGuidanceMarker === undefined)
+        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
+      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
+    }
+  });
+
+  it("isolates same-name custom async agents from ticket assignment", async () => {
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
+    try {
+      mockPi.onCall({
+        echoEnv: [
+          SUBAGENT_CHILD_AGENT_ENV,
+          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+          SUBAGENT_TK_TICKET_ID_ENV,
+        ],
+      });
       const id = `async-custom-collision-${Date.now().toString(36)}`;
       const run = executeAsyncSingle(id, {
         agent: "developer",
-        task: "Echo the custom collision identity.",
+        task: "Before editing, run `tk show custom-ticket`.",
         agentConfig: makeAgent("developer", {
           filePath: path.join(tempDir, "custom", "developer.md"),
         }),
@@ -480,6 +566,7 @@ describe("async execution runner launch and configuration validation", () => {
       assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
         [SUBAGENT_CHILD_AGENT_ENV]: "developer",
         [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+        [SUBAGENT_TK_TICKET_ID_ENV]: null,
       });
     } finally {
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -487,6 +574,8 @@ describe("async execution runner launch and configuration validation", () => {
       if (previousGuidanceMarker === undefined)
         delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
       else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
+      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
     }
   });
 

@@ -268,6 +268,7 @@ function normalizeFailedSupervisorPauseResults(results, steps, requesterIndex, f
             ...(steps[requesterIndex]?.projectAgent
                 ? { projectAgent: steps[requesterIndex].projectAgent }
                 : {}),
+            tkTicketId: steps[requesterIndex]?.tkTicketId,
             output: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
             error: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
             success: false,
@@ -581,6 +582,7 @@ async function runSubagentWithInput(config, plan) {
                         ...(statusPayload.steps?.[0]?.projectAgent
                             ? { projectAgent: statusPayload.steps[0].projectAgent }
                             : {}),
+                        tkTicketId: statusPayload.steps?.[0]?.tkTicketId,
                         output: error,
                         error,
                         success: false,
@@ -653,6 +655,7 @@ async function runSubagentWithInput(config, plan) {
             results.push({
                 agent: pr.agent,
                 ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
+                tkTicketId: pr.tkTicketId,
                 output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
                 error: pr.error,
                 stderr: pr.stderr,
@@ -704,6 +707,7 @@ async function runSubagentWithInput(config, plan) {
         const projectSingleStepResult = () => ({
             agent: singleResult.agent,
             ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
+            tkTicketId: singleResult.tkTicketId,
             output: statusOwner.timedOut
                 ? (timeoutMessage ?? "Subagent timed out.")
                 : singleResult.interrupted
@@ -1507,6 +1511,7 @@ async function runSubagentWithInput(config, plan) {
                 results: results.map((r) => ({
                     agent: r.agent,
                     ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
+                    tkTicketId: r.tkTicketId,
                     output: r.output,
                     error: r.error,
                     stderr: r.stderr,

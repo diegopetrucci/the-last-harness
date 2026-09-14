@@ -98,6 +98,12 @@ The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
+### Developer ticket pinning
+
+When a fresh canonical packaged `developer` child task contains an explicit command such as `tk show tlhm-o1qg`, TLH validates the complete command argument and pins that ID to the child only. The parent sends it through the parent-owned assignment `PI_SUBAGENT_TK_TICKET_ID` environment value passed to the child and adds a small persistent system-prompt capsule that names the ID and requires `tk show` for that same ID before edits. Ticket titles, bodies, correction text, and other parent conversation content are not copied into the capsule. Each child task is inspected independently, so unticketed siblings receive no assignment.
+
+The ID is retained in foreground pause state and async status/result artifacts. A resumed or replacement developer child uses that persisted per-child ID when the revived follow-up text does not repeat the original command; the task text itself is not rewritten. Invalid, missing, or non-developer references are omitted. This channel does not change the run-level ticket metadata or its ambiguity rules.
+
 ### Final-validation test-runner
 
 The packaged `test-runner` declares `tools: bash, mcp`, `completionGuard: false`, and `supervisorBridge: false`. It can use the generic MCP gateway to discover, connect to, and invoke any configured server/tool, including tools that change server-side state, but direct `mcp:*` tools remain disabled by the `MCP_DIRECT_TOOLS=__none__` sentinel and the frontmatter allowlist. A final-validation ticket must provide an exact ordered list of shell commands and/or MCP calls. Each MCP step is exact adapter-shaped gateway input with only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and JSON-string `args` are optional overall. The runner does not infer or broaden steps from prose. It runs `tk show <id>` first, stops after the first failed shell/MCP step, and may not edit the repository, install or fix anything, mutate shell/package/ticket state, delegate, or call `contact_supervisor`.

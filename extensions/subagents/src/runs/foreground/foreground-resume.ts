@@ -26,6 +26,7 @@ import {
 } from "../shared/model-fallback.ts";
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.ts";
 import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../background/async-resume.ts";
+import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import {
   lifecycleGeneration,
   markLifecycleContinuationSpawned,
@@ -106,6 +107,12 @@ type ResumeSourceTarget =
   | AsyncResumeSourceTarget
   | ForegroundResumeSourceTarget
   | NestedResumeSourceTarget;
+
+function resolveTargetTkTicketId(target: ResumeSourceTarget): string | undefined {
+  return target.agent === "developer" && "tkTicketId" in target
+    ? normalizeTkTicketId(target.tkTicketId)
+    : undefined;
+}
 
 function formatRevivedAsyncResponse(
   target: ResumeSourceTarget,
@@ -1181,6 +1188,9 @@ export async function resumeAsyncRun(input: {
         : {}),
       ...(target.source === "async" && target.tkTicket
         ? { inheritedTkTicket: target.tkTicket }
+        : {}),
+      ...(resolveTargetTkTicketId(target)
+        ? { inheritedTkTicketId: resolveTargetTkTicketId(target) }
         : {}),
       task: buildRevivedAsyncTask(target, followUp),
       modelOverride: input.params.model,

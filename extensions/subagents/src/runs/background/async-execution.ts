@@ -95,6 +95,8 @@ import {
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import {
   detectTkTicketId,
+  inspectTkTicketReference,
+  normalizeTkTicketId,
   normalizeTkTicketMetadata,
   resolveTkTicketMetadata,
   resolveTkTicketTaskContext,
@@ -134,6 +136,8 @@ interface AsyncSingleParams {
     projectAgent?: ProjectAgentRunCapture;
   };
   inheritedTkTicket?: TkTicketMetadata;
+  /** Persisted per-child ticket assignment used when a revived task has no literal reference. */
+  inheritedTkTicketId?: string;
   /** Exact approved project-agent config/provenance for this child. */
   projectAgent?: ProjectAgentRunCapture;
   maxOutput?: MaxOutputConfig;
@@ -674,9 +678,15 @@ export function buildAsyncRunnerPlan(
     const projectAgent = params.projectAgentCaptures?.find(
       (capture) => capture.provenance.agent === taskSpec.agent,
     );
+    const taskReference =
+      agent.name === "developer" && isCanonicalPackagedMinorAgent(agent)
+        ? inspectTkTicketReference(taskSpec.task)
+        : undefined;
+    const tkTicketId = taskReference?.kind === "valid" ? taskReference.id : undefined;
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
       ...(projectAgent ? { projectAgent } : {}),
+      ...(tkTicketId ? { tkTicketId } : {}),
       agent: taskSpec.agent,
       projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
       task,
@@ -1180,6 +1190,17 @@ function buildAsyncSingleRunnerPlan(
     timeoutOwner,
     effectiveDeadlineAt,
   } = runtimePolicy;
+  const taskReference =
+    agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+      ? inspectTkTicketReference(task)
+      : undefined;
+  const assignedTkTicketId =
+    taskReference?.kind === "valid"
+      ? taskReference.id
+      : taskReference?.kind === "absent"
+        ? (normalizeTkTicketId(params.inheritedTkTicketId) ??
+          normalizeTkTicketId(params.inheritedTkTicket?.id))
+        : undefined;
   return {
     buildPlan: () => ({
       kind: "single",
@@ -1188,6 +1209,7 @@ function buildAsyncSingleRunnerPlan(
         ...(projectAgent ? { projectAgent } : {}),
         agent,
         projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
+        ...(assignedTkTicketId ? { tkTicketId: assignedTkTicketId } : {}),
         task: taskWithOutputInstruction,
         cwd: runnerCwd,
         model,
@@ -1361,9 +1383,17 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     ...(childLocation ? { childLocation } : {}),
   });
   if ("error" in launchPlan) return formatAsyncStartError("single", launchPlan.error);
-  const tkTicket = detectTkTicketId(task)
-    ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
-    : normalizeTkTicketMetadata(params.inheritedTkTicket);
+  const taskReference =
+    agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
+      ? inspectTkTicketReference(task)
+      : undefined;
+  const tkTicket = taskReference
+    ? taskReference.kind === "absent"
+      ? normalizeTkTicketMetadata(params.inheritedTkTicket)
+      : resolveTkTicketMetadata(task, { cwd: runnerCwd })
+    : detectTkTicketId(task)
+      ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
+      : normalizeTkTicketMetadata(params.inheritedTkTicket);
   const { buildPlan, effectiveTimeoutMs, effectiveDeadlineAt } = launchPlan;
   let spawnResult: { pid?: number; error?: string };
   try {

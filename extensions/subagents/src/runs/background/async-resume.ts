@@ -18,7 +18,7 @@ import {
   type ProjectAgentRunCapture,
 } from "../../agents/project-agent-snapshot.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { normalizeTkTicketId, normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
   canonicalSubagentModelIdentity,
   sanitizeSubagentModelIdentity,
@@ -160,6 +160,8 @@ type AsyncResumeTarget = {
   cwd?: string;
   sessionFile?: string;
   tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
+  /** Persisted per-child developer ticket assignment, when applicable. */
+  tkTicketId?: string;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
   /** Source child health projection; never used to restore an in-flight operation. */
@@ -439,6 +441,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         `results[${index}].sessionFile`,
       );
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
+      const tkTicketId = normalizeTkTicketId(child.tkTicketId);
       const thinking = parseThinkingLevel(child.thinking);
       const modelIdentity = parseResultModelIdentity(
         child.modelIdentity,
@@ -505,6 +508,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(model ? { model } : {}),
+        ...(tkTicketId ? { tkTicketId } : {}),
         ...(thinking ? { thinking } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(modelResolution ? { modelResolution } : {}),
@@ -962,6 +966,21 @@ function resolveResumeDiagnosticMetadata(
 
 type AsyncResumeProjectAgentMetadata = Pick<AsyncResumeTarget, "projectAgent" | "projectAgents">;
 
+function resolvePersistedTkTicketId(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+  agent: string,
+): string | undefined {
+  if (agent !== "developer") return undefined;
+  const resultStep = context.resultSteps[index];
+  return (
+    normalizeTkTicketId(statusStep?.tkTicketId) ??
+    normalizeTkTicketId(resultStep?.tkTicketId) ??
+    (context.stepCount === 1 ? normalizeTkTicketId(context.tkTicket?.id) : undefined)
+  );
+}
+
 function resolveProjectAgentMetadata(
   context: AsyncResumeResolutionContext,
   index: number,
@@ -1018,8 +1037,10 @@ function buildLiveAsyncResumeTarget(
   );
   const healthMetadata = resolveResumeHealthMetadata(statusStep, context.resultSteps[index]);
   const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
+  const tkTicketId = resolvePersistedTkTicketId(context, index, statusStep, target.agent);
   return {
     ...target,
+    ...(tkTicketId ? { tkTicketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
@@ -1152,8 +1173,10 @@ function buildTerminalAsyncResumeTarget(
     context.resultSteps[index],
   );
   const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+  const tkTicketId = resolvePersistedTkTicketId(context, index, selectedStatusStep, target.agent);
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
+    ...(tkTicketId ? { tkTicketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
