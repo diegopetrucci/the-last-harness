@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- Canonical developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
+- Developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
 
 ### Fixed
 
