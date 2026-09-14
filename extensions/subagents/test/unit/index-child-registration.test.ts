@@ -65,6 +65,60 @@ describe("subagent extension child mode", () => {
     );
   });
 
+  it("unregisters the control-target lookup when the session shuts down", () => {
+    const script = String.raw`
+      import assert from "node:assert/strict";
+      import registerSubagentExtension from "./src/extension/index.ts";
+      import { getTlhSubagentControlTargetAccess } from "../the-last-harness/subagent-control-access.mjs";
+
+      const events = { on() { return () => {}; }, emit() {} };
+      const extensionHandlers = new Map();
+      const fakePi = new Proxy({
+        events,
+        on(type, handler) {
+          const handlers = extensionHandlers.get(type) ?? [];
+          handlers.push(handler);
+          extensionHandlers.set(type, handlers);
+        },
+        registerTool() {},
+        registerCommand() {},
+        registerShortcut() {},
+        registerMessageRenderer() {},
+        sendMessage() {},
+        getSessionName() { return undefined; },
+      }, {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          return () => undefined;
+        },
+      });
+
+      registerSubagentExtension(fakePi);
+      const request = { action: "resume", id: "missing-after-registration" };
+      assert.deepEqual(getTlhSubagentControlTargetAccess(request), { status: "missing" });
+
+      const shutdownHandlers = extensionHandlers.get("session_shutdown") ?? [];
+      assert.ok(shutdownHandlers.length > 0, "session_shutdown handler was not registered");
+      for (const handler of shutdownHandlers) {
+        await handler({ type: "session_shutdown", reason: "quit" });
+      }
+      assert.equal(getTlhSubagentControlTargetAccess(request), undefined);
+    `;
+
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+    );
+  });
+
   it("consumes enhanced Ctrl+Shift+D before Pi debug and keeps the registered shortcut discoverable", () => {
     const script = String.raw`
 			import assert from "node:assert/strict";

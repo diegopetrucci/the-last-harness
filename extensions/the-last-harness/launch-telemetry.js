@@ -59,6 +59,7 @@ const BUNDLED_SUBAGENT_NAMES = Object.freeze([
     "code-reviewer",
     "contrarian",
     "developer",
+    "staff-developer",
     "diff-summarizer",
     "librarian",
     "oracle",

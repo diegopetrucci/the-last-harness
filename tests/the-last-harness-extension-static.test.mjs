@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
+import { STAFF_DEVELOPER_ROUTING_FEATURE } from "../extensions/the-last-harness-subagent-safety.mjs";
+
 const jiti = createJiti(import.meta.url);
 const { buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
@@ -210,6 +212,42 @@ test("primary prompt exposes stable minor-agent delegation markers", () => {
   assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
   assert.match(primaryPrompt, USER_SCOPE_MARKER);
   assert.match(primaryPrompt, /- contrarian:/i);
+});
+
+test("staff-developer prompt guidance follows role-specific experimental allowlists", () => {
+  const primaryAgents = loadPrimaryAgents();
+  const architect = primaryAgents.get("architect");
+  const rush = primaryAgents.get("rush");
+  const product = primaryAgents.get("product");
+  const bugHunter = primaryAgents.get("bug-hunter");
+  const subagents = loadSubagentMetadata();
+  const enabledConfig = { enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE] };
+  assert.ok(architect, "Architect primary prompt should load");
+  assert.ok(rush, "Rush primary prompt should load");
+  assert.ok(product, "Product primary prompt should load");
+  assert.ok(bugHunter, "Bug-Hunter primary prompt should load");
+
+  assert.match(
+    buildTlhSystemPrompt(architect, subagents, true, undefined, enabledConfig),
+    /^- staff-developer:/m,
+  );
+  for (const primary of [rush, product, bugHunter]) {
+    assert.doesNotMatch(
+      buildTlhSystemPrompt(primary, subagents, true, undefined, enabledConfig),
+      /^- staff-developer:/m,
+      `${primary.name} must not receive staff-developer in its enabled allowlist`,
+    );
+  }
+
+  assert.match(
+    buildTlhSystemPrompt(undefined, subagents, false, undefined, enabledConfig),
+    /^- staff-developer:/m,
+    "disabled mode must retain explicit staff-developer dispatch guidance",
+  );
+  assert.doesNotMatch(
+    buildTlhSystemPrompt(architect, subagents, true, undefined, { enabledFeatures: [] }),
+    /^- staff-developer:/m,
+  );
 });
 
 test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {

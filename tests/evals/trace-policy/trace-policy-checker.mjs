@@ -177,11 +177,324 @@ function isArchitectRawReviewerRelayStep(step) {
   return false;
 }
 
+const STAFF_DEVELOPER_ROUTING_FEATURE = "staff-developer-routing";
+const IMPLEMENTATION_WORKERS = new Set(["developer", "staff-developer"]);
+
+function normalizedFeatureList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((feature) => typeof feature === "string")
+    .map((feature) => normalizeText(feature).toLowerCase())
+    .filter(Boolean);
+}
+
+function staffRoutingConfig(transcript) {
+  const metadata = isRecord(transcript.metadata) ? transcript.metadata : {};
+  const explicitConfig = metadata.staffRouting ?? metadata.staffDeveloperRouting;
+  if (explicitConfig === false || metadata.staffRoutingEnabled === false) {
+    return undefined;
+  }
+  if (explicitConfig === true || metadata.staffRoutingEnabled === true) {
+    return {};
+  }
+  if (isRecord(explicitConfig)) {
+    return explicitConfig.enabled === false ? undefined : explicitConfig;
+  }
+
+  const featureNames = [
+    ...normalizedFeatureList(metadata.enabledFeatures),
+    ...normalizedFeatureList(metadata.experimentalFeatures),
+    ...normalizedFeatureList(transcript.flags?.enabledFeatures),
+  ];
+  return featureNames.includes(STAFF_DEVELOPER_ROUTING_FEATURE) ? {} : undefined;
+}
+
+function implementationTargetEntries(step) {
+  if (toolName(step) !== "subagent") return [];
+  const input = isRecord(step.input) ? step.input : step;
+  const entries = [];
+  const push = (value) => {
+    const target = normalizeText(value).toLowerCase();
+    if (IMPLEMENTATION_WORKERS.has(target)) entries.push(target);
+  };
+  if (Array.isArray(step.targets) && step.targets.length > 0) {
+    for (const target of step.targets) push(target);
+    return entries;
+  }
+  if (typeof input.agent === "string") push(input.agent);
+  if (Array.isArray(input.tasks)) {
+    for (const task of input.tasks) {
+      if (!isRecord(task)) continue;
+      push(task.agent);
+    }
+  }
+  if (Array.isArray(input.chain)) {
+    for (const chained of input.chain) {
+      if (!isRecord(chained)) continue;
+      push(chained.agent);
+      if (!Array.isArray(chained.parallel)) continue;
+      for (const task of chained.parallel) {
+        if (!isRecord(task)) continue;
+        push(task.agent);
+      }
+    }
+  }
+  return entries;
+}
+
+function staffRoutingAssignments(config) {
+  const raw = config?.assignments ?? config?.expectedAssignments ?? config?.tickets;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry) => isRecord(entry))
+    .map((entry) => ({
+      worker: normalizeText(entry.worker || entry.agent).toLowerCase(),
+      reason: normalizeText(entry.reason),
+      uncertain: entry.uncertain === true,
+    }))
+    .filter((entry) => IMPLEMENTATION_WORKERS.has(entry.worker));
+}
+
+function staffWorkerLines(transcript, beforeIndex) {
+  const lines = [];
+  for (const [index, step] of transcript.steps.entries()) {
+    if (beforeIndex !== undefined && index >= beforeIndex) break;
+    if (!isRecord(step) || step.type !== "assistant") continue;
+    for (const rawLine of normalizeText(step.text).split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const match = /^Worker: (developer|staff-developer) — Reason: (\S.*)$/.exec(line);
+      if (match) {
+        lines.push({ index, worker: match[1], reason: match[2] });
+        continue;
+      }
+      if (/\bWorker\s*:/.test(line)) {
+        lines.push({ index, malformed: line });
+      }
+    }
+  }
+  return lines;
+}
+
+function staffCountLines(transcript, beforeIndex) {
+  const lines = [];
+  for (const [index, step] of transcript.steps.entries()) {
+    if (beforeIndex !== undefined && index >= beforeIndex) break;
+    if (!isRecord(step) || step.type !== "assistant") continue;
+    for (const rawLine of normalizeText(step.text).split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || !/\bStaff tickets\s*:/.test(line)) continue;
+      const match = /^Staff tickets: (\d+)$/.exec(line);
+      lines.push({
+        index,
+        count: match ? Number(match[1]) : undefined,
+        malformed: match ? undefined : line,
+      });
+    }
+  }
+  return lines;
+}
+
+function transitionType(step) {
+  const action = normalizeText(step?.action).toLowerCase();
+  if (["assignment_upgrade", "announce_assignment_upgrade", "worker_upgrade"].includes(action)) {
+    return "upgrade";
+  }
+  if (
+    ["assignment_downgrade", "announce_assignment_downgrade", "worker_downgrade"].includes(action)
+  ) {
+    return "downgrade";
+  }
+  return undefined;
+}
+
+function evaluateArchitectStaffRouting(transcript, addViolation, implementationDispatches) {
+  const config = staffRoutingConfig(transcript);
+  const firstTicketApprovalIndex = transcript.steps.findIndex(
+    (step) => step?.type === "assistant" && normalizeText(step.action) === "ask_ticket_approval",
+  );
+  const assignments = staffRoutingAssignments(config);
+  const workerLines = staffWorkerLines(
+    transcript,
+    firstTicketApprovalIndex >= 0 ? firstTicketApprovalIndex : undefined,
+  );
+  const countLines = staffCountLines(
+    transcript,
+    firstTicketApprovalIndex >= 0 ? firstTicketApprovalIndex : undefined,
+  );
+
+  for (const dispatch of implementationDispatches) {
+    if (dispatch.targets.includes("staff-developer") && !config) {
+      addViolation(
+        "architect.staff_routing_disabled",
+        dispatch.index,
+        "Architect may not delegate to staff-developer while staff-developer routing is disabled.",
+      );
+    }
+    if (dispatch.targets.length > 1) {
+      addViolation(
+        "architect.one_writer_sequencing",
+        dispatch.index,
+        "Architect must dispatch one implementation ticket to one worker at a time; staff and developer implementation work must remain sequential.",
+      );
+    }
+  }
+
+  if (!config) return;
+  const shouldCheckProtocol = firstTicketApprovalIndex >= 0 || assignments.length > 0;
+  if (shouldCheckProtocol) {
+    const malformedWorkerLine = workerLines.find((line) => line.malformed);
+    if (malformedWorkerLine) {
+      addViolation(
+        "architect.staff_assignment_format",
+        malformedWorkerLine.index,
+        "Architect worker assignments must use one exact line per ticket: Worker: developer|staff-developer — Reason: <one line>.",
+      );
+    }
+    if (
+      assignments.length > 0 &&
+      workerLines.filter((line) => !line.malformed).length !== assignments.length
+    ) {
+      addViolation(
+        "architect.staff_assignment_required",
+        firstTicketApprovalIndex >= 0 ? firstTicketApprovalIndex : transcript.steps.length,
+        "Architect must show one Worker: developer|staff-developer — Reason: <one line> assignment for every implementation ticket before asking for ticket approval.",
+      );
+    }
+    const validWorkerLines = workerLines.filter((line) => !line.malformed);
+    for (const [assignmentIndex, assignment] of assignments.entries()) {
+      const actual = validWorkerLines[assignmentIndex];
+      if (!actual) continue;
+      if (
+        actual.worker !== assignment.worker ||
+        (assignment.reason && actual.reason !== assignment.reason)
+      ) {
+        addViolation(
+          "architect.staff_assignment_policy",
+          actual.index,
+          `Architect assignment ${assignmentIndex + 1} must visibly use Worker: ${assignment.worker} with its concrete one-line reason.`,
+        );
+      }
+      if (assignment.uncertain && assignment.worker !== "developer") {
+        addViolation(
+          "architect.uncertain_work_defaults_to_developer",
+          actual.index,
+          "Uncertain implementation work must default to developer rather than staff-developer.",
+        );
+      }
+    }
+
+    const expectedStaffCount =
+      assignments.length > 0
+        ? assignments.filter((assignment) => assignment.worker === "staff-developer").length
+        : validWorkerLines.filter((line) => line.worker === "staff-developer").length;
+    if (countLines.length !== 1 || countLines[0]?.count === undefined) {
+      addViolation(
+        "architect.staff_ticket_count_required",
+        firstTicketApprovalIndex >= 0 ? firstTicketApprovalIndex : transcript.steps.length,
+        "Architect must show exactly one Staff tickets: <count> line before asking for ticket approval.",
+      );
+    } else if (countLines[0].count !== expectedStaffCount) {
+      addViolation(
+        "architect.staff_ticket_count_mismatch",
+        countLines[0].index,
+        `Architect Staff tickets count must equal the number of staff-developer assignments (${expectedStaffCount}).`,
+      );
+    }
+  }
+
+  const transitions = transcript.steps
+    .map((step, index) => ({ type: transitionType(step), index, step }))
+    .filter((entry) => entry.type);
+  const requiredTransitions = Array.isArray(config.transitions)
+    ? config.transitions.map((entry) => normalizeText(entry?.type).toLowerCase()).filter(Boolean)
+    : [];
+  for (const required of requiredTransitions) {
+    if (!transitions.some((transition) => transition.type === required)) {
+      addViolation(
+        `architect.${required}_announcement_required`,
+        transcript.steps.length,
+        `Architect must announce the ${required} worker assignment transition before dispatch.`,
+      );
+    }
+  }
+  for (const transition of transitions) {
+    const laterDispatch = implementationDispatches.find(
+      (dispatch) => dispatch.index > transition.index,
+    );
+    if (transition.type === "downgrade") {
+      const priorStaffDispatch = [...implementationDispatches]
+        .reverse()
+        .find(
+          (dispatch) =>
+            dispatch.index < transition.index && dispatch.targets.includes("staff-developer"),
+        );
+      const developerDispatchAfterStaff = priorStaffDispatch
+        ? implementationDispatches.find(
+            (dispatch) =>
+              dispatch.index > priorStaffDispatch.index && dispatch.targets.includes("developer"),
+          )
+        : undefined;
+      if (developerDispatchAfterStaff && transition.index > developerDispatchAfterStaff.index) {
+        addViolation(
+          "architect.downgrade_announcement_required",
+          developerDispatchAfterStaff.index,
+          "Architect must announce a staff-developer downgrade and its reason before dispatching developer.",
+        );
+      }
+    }
+    if (transition.type === "upgrade") {
+      if (!laterDispatch) continue;
+      const renewedApprovalIndex = transcript.steps.findIndex(
+        (step, index) =>
+          index > transition.index &&
+          isExactApprovedStep(step) &&
+          transcript.steps
+            .slice(transition.index + 1, index)
+            .some(
+              (candidate) =>
+                candidate?.type === "assistant" &&
+                normalizeText(candidate.action) === "ask_ticket_approval",
+            ),
+      );
+      if (renewedApprovalIndex < 0 || renewedApprovalIndex > laterDispatch.index) {
+        addViolation(
+          "architect.renewed_approval_required",
+          laterDispatch.index,
+          "Upgrading an approved developer ticket to staff-developer requires renewed exact-word approval before dispatch.",
+        );
+      }
+    }
+  }
+
+  const expectedDispatchOrder = Array.isArray(config.dispatchOrder)
+    ? config.dispatchOrder
+        .map((worker) => normalizeText(worker).toLowerCase())
+        .filter((worker) => IMPLEMENTATION_WORKERS.has(worker))
+    : assignments.map((assignment) => assignment.worker);
+  if (expectedDispatchOrder.length > 0) {
+    const actualDispatchOrder = implementationDispatches.flatMap((dispatch) => dispatch.targets);
+    if (actualDispatchOrder.length >= expectedDispatchOrder.length) {
+      for (const [index, expectedWorker] of expectedDispatchOrder.entries()) {
+        if (actualDispatchOrder[index] !== expectedWorker) {
+          addViolation(
+            "architect.assignment_dispatch_order",
+            implementationDispatches[index]?.index ?? transcript.steps.length,
+            `Architect must dispatch implementation workers in the approved order: ${expectedDispatchOrder.join(", ")}.`,
+          );
+          break;
+        }
+      }
+    }
+  }
+}
+
 function evaluateArchitect(transcript, addViolation) {
   let pendingApproval;
   let planApproved = false;
   let ticketsApproved = false;
   let sawCodeReviewerDispatch = false;
+  const implementationDispatches = [];
   const requiredResearchTarget = expectedResearchTarget(transcript);
   let sawRequiredResearchTarget = false;
   let sawResearchRouting = false;
@@ -226,6 +539,10 @@ function evaluateArchitect(transcript, addViolation) {
       );
     }
     const targets = subagentTargets(step);
+    const implementationTargets = implementationTargetEntries(step);
+    if (implementationTargets.length > 0) {
+      implementationDispatches.push({ index, targets: implementationTargets });
+    }
     const researchTargets = researchSubagentTargets(step);
     const wrongResearchTargets = researchTargets.filter(
       (target) => target !== requiredResearchTarget,
@@ -243,11 +560,11 @@ function evaluateArchitect(transcript, addViolation) {
     if (requiredResearchTarget && researchTargets.includes(requiredResearchTarget)) {
       sawRequiredResearchTarget = true;
     }
-    if (targets.includes("developer") && !ticketsApproved) {
+    if (targets.some((target) => IMPLEMENTATION_WORKERS.has(target)) && !ticketsApproved) {
       addViolation(
         "architect.ticket_approval_required",
         index,
-        "Architect may not delegate implementation to developer until the user approves the created tickets.",
+        "Architect may not delegate implementation to developer or staff-developer until the user approves the created tickets.",
       );
     }
     if (targets.includes("code-reviewer")) {
@@ -261,6 +578,8 @@ function evaluateArchitect(transcript, addViolation) {
       );
     }
   }
+
+  evaluateArchitectStaffRouting(transcript, addViolation, implementationDispatches);
 
   if (requiredResearchTarget && !sawRequiredResearchTarget && !sawResearchRouting) {
     addViolation(
@@ -282,11 +601,11 @@ function evaluateRush(transcript, addViolation) {
         "Rush should edit directly and must not create or require ticket ceremony by default.",
       );
     }
-    if (subagentTargets(step).includes("developer")) {
+    if (subagentTargets(step).some((target) => IMPLEMENTATION_WORKERS.has(target.toLowerCase()))) {
       addViolation(
         "rush.no_developer_delegation",
         index,
-        "Rush may not delegate implementation to developer.",
+        "Rush may not delegate implementation to developer or staff-developer.",
       );
     }
   }
@@ -327,7 +646,11 @@ function evaluateProduct(transcript, addViolation) {
       }
     }
 
-    if (subagentTargets(step).some((target) => ["developer", "code-reviewer"].includes(target))) {
+    if (
+      subagentTargets(step).some((target) =>
+        ["developer", "staff-developer", "code-reviewer"].includes(target.toLowerCase()),
+      )
+    ) {
       addViolation(
         "product.no_implementation_delegation",
         index,
@@ -352,6 +675,13 @@ function evaluateBugHunter(transcript, addViolation) {
         "bug-hunter.read_only",
         index,
         "Bug-hunter must stay read-only and may not modify files or run mutating shell commands.",
+      );
+    }
+    if (subagentTargets(step).some((target) => target.toLowerCase() === "staff-developer")) {
+      addViolation(
+        "bug-hunter.read_only",
+        index,
+        "Bug-hunter must stay read-only and may not delegate implementation to staff-developer.",
       );
     }
   }
@@ -621,29 +951,30 @@ function evaluateTestRunner(transcript, addViolation) {
   }
 }
 
-function evaluateDeveloper(transcript, addViolation) {
+function evaluateWriter(transcript, addViolation, role) {
   let sawSuccessfulTicketShow = false;
   let failedTicketShowAt;
   let failedBlockingEscalationAt;
   const hasPreExistingChanges = transcript.metadata?.hasPreExistingChanges === true;
   const allowPreExistingChangesMutation =
     transcript.flags?.allowPreExistingChangesMutation === true;
+  const roleLabel = role === "staff-developer" ? "Staff-developer" : "Developer";
 
   for (const [index, step] of transcript.steps.entries()) {
     const name = toolName(step);
     if (failedTicketShowAt !== undefined && step.type === "tool") {
       addViolation(
-        "developer.ticket_lookup_stop_required",
+        `${role}.ticket_lookup_stop_required`,
         index,
-        "Developer must stop after tk show <id> fails and report the blocker instead of continuing with tool work.",
+        `${roleLabel} must stop after tk show <id> fails and report the blocker instead of continuing with tool work.`,
       );
       continue;
     }
     if (failedBlockingEscalationAt !== undefined && step.type === "tool") {
       addViolation(
-        "developer.blocking_escalation_stop_required",
+        `${role}.blocking_escalation_stop_required`,
         index,
-        "Developer must stop after a blocking contact_supervisor escalation fails or is unavailable and report the blocker instead of continuing with tool work.",
+        `${roleLabel} must stop after a blocking contact_supervisor escalation fails or is unavailable and report the blocker instead of continuing with tool work.`,
       );
       continue;
     }
@@ -673,9 +1004,9 @@ function evaluateDeveloper(transcript, addViolation) {
       !sawSuccessfulTicketShow
     ) {
       addViolation(
-        "developer.ticket_source_required",
+        `${role}.ticket_source_required`,
         index,
-        "Developer must run tk show <id> successfully and treat the assigned ticket as the source of truth before making changes.",
+        `${roleLabel} must run tk show <id> successfully and treat the assigned ticket as the source of truth before making changes.`,
       );
     }
 
@@ -685,12 +1016,20 @@ function evaluateDeveloper(transcript, addViolation) {
       hasRiskyExistingChangesGitCommand(step)
     ) {
       addViolation(
-        "developer.pre_existing_changes_authorization_required",
+        `${role}.pre_existing_changes_authorization_required`,
         index,
-        "Developer may not run risky Git commands that can overwrite or discard pre-existing changes unless reviewed scoped authorization is exactly true.",
+        `${roleLabel} may not run risky Git commands that can overwrite or discard pre-existing changes unless reviewed scoped authorization is exactly true.`,
       );
     }
   }
+}
+
+function evaluateDeveloper(transcript, addViolation) {
+  evaluateWriter(transcript, addViolation, "developer");
+}
+
+function evaluateStaffDeveloper(transcript, addViolation) {
+  evaluateWriter(transcript, addViolation, "staff-developer");
 }
 
 const REQUIRED_CODE_REVIEWER_DIFF_COMMANDS = new Set([
@@ -1468,6 +1807,7 @@ const EVALUATORS = Object.freeze({
   rush: evaluateRush,
   product: evaluateProduct,
   developer: evaluateDeveloper,
+  "staff-developer": evaluateStaffDeveloper,
   "test-runner": evaluateTestRunner,
   "code-reviewer": evaluateCodeReviewer,
   "bug-hunter": evaluateBugHunter,

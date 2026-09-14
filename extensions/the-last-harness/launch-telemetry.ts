@@ -96,6 +96,7 @@ const BUNDLED_SUBAGENT_NAMES = Object.freeze([
   "code-reviewer",
   "contrarian",
   "developer",
+  "staff-developer",
   "diff-summarizer",
   "librarian",
   "oracle",
@@ -143,7 +144,8 @@ type TlhLaunchSettings = {
   experimental?: TlhExperimentalConfig;
   /**
    * Per-agent overrides extracted from settings.subagents.agentOverrides, restricted to the
-   * nine bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
+   * ten bundled subagent names, including the opt-in staff-developer role. Any name outside
+   * BUNDLED_SUBAGENT_NAMES is dropped here
    * so it can never appear as a telemetry key.
    *
    * This is the USER-scope layer only. Project-scope overrides outrank it; see
@@ -154,7 +156,7 @@ type TlhLaunchSettings = {
 
 /**
  * Extract `subagents.agentOverrides` from an already-parsed settings object, keeping only the
- * nine bundled subagent names so a user-authored agent name can never become a telemetry key.
+ * ten bundled subagent names so a user-authored agent name can never become a telemetry key.
  */
 function extractBundledSubagentOverrides(
   settings: Record<string, unknown>,
@@ -260,7 +262,7 @@ function readTlhProjectSubagentOverrides(
 /**
  * Resolve the effective per-agent override the subagents runtime would actually apply.
  *
- * TLH's nine canonical minor agents are installed under the fixed
+ * TLH's ten canonical minor agents (nine stable roles plus opt-in staff-developer) are installed under the fixed
  * `<agent-dir>/tlh/agents/subagents/<name>.md` paths. They are loaded as canonical TLH roles by
  * the runtime's fixed-path discovery; `subagents.agentDirs` is not required and does not select
  * these files. Their settings precedence is still the two-rule override order:
@@ -682,8 +684,8 @@ function joinModelEffort(model: string, effort: string): string {
 }
 
 /**
- * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all nine
- * bundled minor agents.
+ * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all ten
+ * bundled minor agents (nine stable roles plus opt-in staff-developer).
  *
  * Precedence (highest first):
  *   1. The effective settings override for canonical role <name>, already resolved across project

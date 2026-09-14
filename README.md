@@ -68,13 +68,14 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 ### Subagents
 
-Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. TLH ships thirteen packaged roles: four primaries and nine bundled minors. Every bundled subagent starts a fresh child session, isolated from both the primary agent and one another, and receives only its task plus explicitly configured instructions. The reduced model-facing contract supports direct single or parallel execution in the foreground or through TLH-tracked `async: true` background work. `toolBudget`, native `contact_supervisor`, status/lifecycle controls, acceptance evidence, persisted `contextUsage`/`contextPressure` diagnostics, artifacts, model fallback, and timeout migration/undo details are covered in [docs/subagents.md](docs/subagents.md). Caller-supplied model-facing execution deadlines (root `timeoutMs` or public `tasks[].timeoutMs`) are not supported: humans own run and role policy in the isolated profile. An executable async-runner envelope/config's own root `timeoutMs` or a persisted plan's root `timeoutMs` fails closed before launch, while TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` remain valid trusted role-ceiling metadata. Historical records remain readable and are not rewritten. Caller-supplied `context`, agent `defaultContext`, turn budgets, saved chains, and external pi-intercom detach request/result/control integration are not supported; TLH-tracked async work still uses a detached OS child process managed by TLH, and existing legacy artifacts are left untouched.
+Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. TLH ships fourteen canonical packaged roles: four primaries and ten canonical minors. Nine stable minor roles are available by default; the opt-in experimental `staff-developer` role is available only when `staff-developer-routing` is enabled. Every canonical subagent starts a fresh child session, isolated from both the primary agent and one another, and receives only its task plus explicitly configured instructions. The reduced model-facing contract supports direct single or parallel execution in the foreground or through TLH-tracked `async: true` background work. `toolBudget`, native `contact_supervisor`, status/lifecycle controls, acceptance evidence, persisted `contextUsage`/`contextPressure` diagnostics, artifacts, model fallback, and timeout migration/undo details are covered in [docs/subagents.md](docs/subagents.md). Caller-supplied model-facing execution deadlines (root `timeoutMs` or public `tasks[].timeoutMs`) are not supported: humans own run and role policy in the isolated profile. An executable async-runner envelope/config's own root `timeoutMs` or a persisted plan's root `timeoutMs` fails closed before launch, while TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` remain valid trusted role-ceiling metadata. Historical records remain readable and are not rewritten. Caller-supplied `context`, agent `defaultContext`, turn budgets, saved chains, and external pi-intercom detach request/result/control integration are not supported; TLH-tracked async work still uses a detached OS child process managed by TLH, and existing legacy artifacts are left untouched.
 
-The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`): omission means **14400000 ms (4h)**, and the value must be a positive safe integer or `false`. Canonical minor role ceilings are code-owned defaults, applied before human overrides:
+The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`): omission means **14400000 ms (4h)**, and the value must be a positive safe integer or `false`. Canonical minor role ceilings (including opt-in `staff-developer`) are code-owned defaults, applied before human overrides:
 
 | Role | `maxExecutionTimeMs` |
 | --- | ---: |
 | `developer` | 7200000 ms (2h) |
+| `staff-developer` | 10800000 ms (3h) |
 | `code-reviewer` | 1800000 ms (30m) |
 | `test-runner` | 3600000 ms (1h) |
 | `librarian` | 14400000 ms (4h) |
@@ -90,7 +91,7 @@ Stable, always-available trusted project custom subagents are available to the a
 
 Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. The execution-only `test-runner` uses cheap low-effort defaults and can be customized like the other bundled minors through `/subagent-settings` or project defaults. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
 
-All bundled subagents:
+The nine stable bundled subagents available by default are:
 
 - `repo-scout` for discovery
 - `diff-summarizer` for change overviews
@@ -101,6 +102,8 @@ All bundled subagents:
 - `web-scout` for web research
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
+
+The opt-in `staff-developer` minor role handles implementation that still requires substantial design judgment. Enable it with `/experimental enable staff-developer-routing`; until then it is excluded from the default subagent allowlist. When enabled, the `architect` primary and `disabled` primary mode may dispatch `staff-developer`; `rush`, `product`, and `bug-hunter` cannot. The `architect` owns automatic semantic assignment; `disabled` mode has no semantic auto-routing persona, so only explicit user-directed dispatch applies there. Ordinary `developer` requests remain available without the experiment. The developer and staff xAI defaults both use Grok 4.6, with low versus medium effort respectively. See [docs/models.md](docs/models.md#staff-developer-routing-and-tier-policy) for the routing rubric, model tiers, and availability/fallback behavior.
 
 ### Direct model providers
 
@@ -138,6 +141,7 @@ To give project-specific instructions to one packaged TLH role, add a plain Mark
 | `product`         | `.tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md`         |
 | `bug-hunter`      | `.tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md`      |
 | `developer`       | `.tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md`       |
+| `staff-developer` | `.tlh/agents/builtin/STAFF-DEVELOPER_PROMPT_APPEND.md` |
 | `test-runner`     | `.tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md`     |
 | `code-reviewer`   | `.tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md`   |
 | `repo-scout`      | `.tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md`      |

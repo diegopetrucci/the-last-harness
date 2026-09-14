@@ -20,6 +20,7 @@ const VALID_SUBAGENT_ROLES = new Set([
     "code-reviewer",
     "contrarian",
     "developer",
+    "staff-developer",
     "test-runner",
     "diff-summarizer",
     "librarian",

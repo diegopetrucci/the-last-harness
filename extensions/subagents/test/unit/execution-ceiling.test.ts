@@ -70,6 +70,7 @@ describe("human-owned execution policy", () => {
       [...PACKAGED_MINOR_AGENT_ROLES].sort(),
       Object.keys(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS).sort(),
     );
+    assert.equal(canonicalAgentMaxExecutionTimeMs("staff-developer"), 10_800_000);
     assert.equal(canonicalAgentMaxExecutionTimeMs("toString"), undefined);
     assert.equal(canonicalAgentMaxExecutionTimeMs("constructor"), undefined);
   });

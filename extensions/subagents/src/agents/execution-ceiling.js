@@ -3,6 +3,7 @@ export const DEFAULT_SUBAGENT_MAX_RUN_TIME_MS = 14_400_000;
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = DEFAULT_SUBAGENT_MAX_RUN_TIME_MS;
 export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS = Object.freeze({
     developer: 7_200_000,
+    "staff-developer": 10_800_000,
     "code-reviewer": 1_800_000,
     "test-runner": 3_600_000,
     librarian: 14_400_000,

@@ -24,8 +24,14 @@ export function rushResumeDelegationReason() {
 export function rushSteerDelegationReason() {
     return "TLH Rush may not use subagent action=steer because an opaque steer carries no agent field, so TLH cannot prove the steered child is not a developer subagent. Rush must edit directly.";
 }
-export function rushDeveloperDelegationReason() {
-    return "TLH Rush may not delegate implementation to developer. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
+export function rushDeveloperDelegationReason(agent = "developer") {
+    return `TLH Rush may not delegate implementation to ${agent}. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.`;
+}
+export function productImplementationDelegationReason(agent) {
+    return `TLH Product may not delegate implementation or code review to ${agent}. Product must remain in its strategy, documentation, and ticket-shaping boundary; hand implementation work to architect later instead.`;
+}
+export function bugHunterImplementationDelegationReason(agent) {
+    return `TLH Bug-Hunter may not delegate implementation to ${agent}. Bug-Hunter is read-only and must report evidence and suggested fixes instead.`;
 }
 export function collectSubagentCallTargetsMatching(input, predicate) {
     return collectSubagentTargets(input).filter((agent) => predicate(agent));

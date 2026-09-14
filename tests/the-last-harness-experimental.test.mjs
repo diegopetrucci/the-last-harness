@@ -14,6 +14,7 @@ const jiti = createJiti(import.meta.url);
 const {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  STAFF_DEVELOPER_ROUTING_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -74,7 +75,7 @@ function registeredExperimentalCommand() {
 }
 
 test(
-  "experimental command registers only the active delta follow-up review and ci failure investigation flags",
+  "experimental command registers the active delta, ci failure, and staff routing flags",
   SERIAL_TEST,
   async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
@@ -83,7 +84,11 @@ test(
       const command = registeredExperimentalCommand();
       assert.deepEqual(
         (await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-        [`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+        [
+          `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+          `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+          `enable ${STAFF_DEVELOPER_ROUTING_FEATURE}`,
+        ],
       );
       assert.deepEqual(
         (await command.getArgumentCompletions("status ")).map((completion) => completion.value),
@@ -91,6 +96,7 @@ test(
           "status",
           `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+          `status ${STAFF_DEVELOPER_ROUTING_FEATURE}`,
         ],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -236,6 +242,16 @@ test("ci failure investigation prompt injection stays default-off and only enabl
   assert.equal(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig), undefined);
   assert.equal(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig), undefined);
   assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
+});
+
+test("staff routing prompt narrows the base architect implementation handoff while enabled", () => {
+  const prompt = buildPrimaryExperimentalPrompt(
+    { name: "architect" },
+    { enabledFeatures: [STAFF_DEVELOPER_ROUTING_FEATURE] },
+  );
+  const statement =
+    "While this experiment is enabled, its two-tier assignment rule supersedes and narrows the base architect wording that implementation goes to `developer`: a ticket explicitly assigned to `staff-developer` is dispatched there without contradiction.";
+  assert.ok(prompt?.includes(statement));
 });
 
 test(

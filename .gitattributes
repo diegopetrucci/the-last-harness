@@ -86,6 +86,7 @@ extensions/the-last-harness/primary-agent-runtime-auth.js linguist-generated=tru
 extensions/the-last-harness/primary-agent-runtime-boundaries.js linguist-generated=true
 extensions/the-last-harness/primary-agent-runtime-delegation.js linguist-generated=true
 extensions/the-last-harness/primary-agent-runtime-settings.js linguist-generated=true
+extensions/the-last-harness/primary-agent-runtime-staff-routing.js linguist-generated=true
 extensions/the-last-harness/profile-state.js linguist-generated=true
 extensions/the-last-harness/prompts.js linguist-generated=true
 extensions/the-last-harness/provider-auth-health.js linguist-generated=true
@@ -146,6 +147,7 @@ extensions/subagents/src/runs/background/async-status-corruption.js linguist-gen
 extensions/subagents/src/runs/background/async-status-quarantine.js linguist-generated=true
 extensions/subagents/src/runs/background/async-status.js linguist-generated=true
 extensions/subagents/src/runs/background/completion-batcher.js linguist-generated=true
+extensions/subagents/src/runs/background/control-target-lookup.js linguist-generated=true
 extensions/subagents/src/runs/background/completion-dedupe.js linguist-generated=true
 extensions/subagents/src/runs/background/control-channel.js linguist-generated=true
 extensions/subagents/src/runs/background/fleet-view.js linguist-generated=true

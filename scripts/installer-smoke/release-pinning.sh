@@ -35,6 +35,7 @@ run_release_pinning_smoke() {
   assert_contains "${dist_dir}/install.sh" "TLH_RELEASE_INTEGRITY_REPO=\"diegopetrucci/the-last-harness\""
   assert_contains "${dist_dir}/install.sh" "TLH_RELEASE_INTEGRITY_REF=\"${tag}\""
   assert_contains "${dist_dir}/install.sh" "agents/subagents/developer.md|"
+  assert_contains "${dist_dir}/install.sh" "agents/subagents/staff-developer.md|"
   # single-quoted strings below are literal content assertions on install.sh text, not bash expansions
   # shellcheck disable=SC2016
   assert_contains "${dist_dir}/install.sh" 'UPDATE_TRACK_INPUT="${TLH_UPDATE_TRACK:-latest-release}"'
@@ -158,6 +159,7 @@ run_release_integrity_smoke() {
   bash -n "${asset_path}"
   assert_contains "${asset_path}" "TLH_RELEASE_INTEGRITY_REF=\"${tag}\""
   assert_contains "${asset_path}" "agents/subagents/developer.md|"
+  assert_contains "${asset_path}" "agents/subagents/staff-developer.md|"
 
   cp -R "${release_source_root}" "${target_manifest_root}"
   TARGET_SUPPORT_MANIFEST="${target_manifest_root}/scripts/lib/tlh-install-support-manifest.mjs" node <<'NODE_RELEASE_TARGET_BOUNDARY'

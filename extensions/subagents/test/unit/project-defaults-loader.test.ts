@@ -1163,6 +1163,7 @@ describe("loadProjectDefaults — valid schema", () => {
       },
       subagents: {
         developer: { model: "openai-codex/gpt-5.6-sol" },
+        "staff-developer": { model: "openai-codex/gpt-6-astra", effort: "low" },
         "test-runner": { model: "openai-codex/gpt-5.6-luna", effort: "low" },
         "code-reviewer": { effort: "medium" },
       },
@@ -1178,6 +1179,10 @@ describe("loadProjectDefaults — valid schema", () => {
     assert.deepEqual(result.defaults.primaryAgents.rush, { effort: "low" });
     assert.deepEqual(result.defaults.subagents.developer, {
       model: "openai-codex/gpt-5.6-sol",
+    });
+    assert.deepEqual(result.defaults.subagents["staff-developer"], {
+      model: "openai-codex/gpt-6-astra",
+      effort: "low",
     });
     assert.deepEqual(result.defaults.subagents["test-runner"], {
       model: "openai-codex/gpt-5.6-luna",

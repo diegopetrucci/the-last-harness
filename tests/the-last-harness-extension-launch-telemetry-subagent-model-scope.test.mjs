@@ -15,7 +15,7 @@ const { scheduleTlhLaunchTelemetry, sendTlhLaunchTelemetry } = await jiti.import
 
 // ── Tlh.Subagent.NAME.modelEffort tests ──────────────────────────────────────
 
-test("launch telemetry emits all nine bundled subagent keys with unknown:unknown when no config present", async (t) => {
+test("launch telemetry emits all ten bundled subagent keys with unknown:unknown when no config present", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
   writeTelemetryState(fixture);
 
@@ -53,6 +53,7 @@ test("launch telemetry emits all nine bundled subagent keys with unknown:unknown
     "code-reviewer",
     "contrarian",
     "developer",
+    "staff-developer",
     "diff-summarizer",
     "librarian",
     "oracle",
@@ -290,7 +291,7 @@ test("launch telemetry: disabled agentOverride is reported as 'disabled' (single
   );
 });
 
-test("launch telemetry never emits keys for agent names outside the bundled nine", async (t) => {
+test("launch telemetry never emits keys for agent names outside the bundled ten", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
   writeTelemetryState(fixture);
   writeFileSync(
@@ -1191,7 +1192,7 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 
 // ── project-vs-user agentOverrides precedence tests ───────────────────────────
 //
-// TLH's nine subagents are installed under the fixed `tlh/agents/subagents` path and reach the
+// TLH's ten subagents (nine stable roles plus opt-in staff-developer) are installed under the fixed `tlh/agents/subagents` path and reach the
 // runtime as canonical USER-scope roles via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts).
 // That gives a two-rule precedence: project `agentOverrides[name]`, else user
 // `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
@@ -1211,7 +1212,13 @@ const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi
  */
 async function captureSubagentPayload(
   t,
-  { userSettings, projectSettings, snapshot = {}, frontmatter } = {},
+  {
+    userSettings,
+    projectSettings,
+    snapshot = {},
+    frontmatter,
+    frontmatterFile = "developer.md",
+  } = {},
 ) {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-precedence-", {
     test: t,
@@ -1222,7 +1229,7 @@ async function captureSubagentPayload(
   if (frontmatter !== undefined) {
     const subagentsDir = join(fixture.agent, "tlh", "agents", "subagents");
     mkdirSync(subagentsDir, { recursive: true });
-    writeFileSync(join(subagentsDir, "developer.md"), frontmatter);
+    writeFileSync(join(subagentsDir, frontmatterFile), frontmatter);
   }
 
   if (userSettings !== undefined) {
@@ -1281,6 +1288,67 @@ async function captureSubagentPayload(
   assert.ok(event, "expected a telemetry event");
   return event.payload;
 }
+
+test("launch telemetry reports the bundled developer xAI default at low effort", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    snapshot: {
+      providerId: "xai",
+      availableModels: [{ provider: "xai", id: "grok-4.6" }],
+    },
+    frontmatter: [
+      "---",
+      "name: developer",
+      "description: Developer",
+      "tlhModelDefaults:",
+      "  - provider: openai-codex",
+      "    models: [gpt-5.6-luna]",
+      "    effort: max",
+      "  - provider: anthropic",
+      "    models: [claude-sonnet-4-6]",
+      "    effort: medium",
+      "  - provider: xai",
+      "    models: [grok-4.6]",
+      "    effort: low",
+      "  - provider: openrouter",
+      "    effort: medium",
+      "---",
+      "Prompt",
+      "",
+    ].join("\n"),
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "grok-4.6:low");
+});
+
+test("launch telemetry reports the bundled staff-developer xAI default at medium effort", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    frontmatterFile: "staff-developer.md",
+    snapshot: {
+      providerId: "xai",
+      availableModels: [{ provider: "xai", id: "grok-4.6" }],
+    },
+    frontmatter: [
+      "---",
+      "name: staff-developer",
+      "description: Staff developer",
+      "tlhModelDefaults:",
+      "  - provider: openai-codex",
+      "    models: [gpt-6-astra]",
+      "    effort: low",
+      "  - provider: anthropic",
+      "    models: [claude-opus-5]",
+      "    effort: medium",
+      "  - provider: xai",
+      "    models: [grok-4.6]",
+      "    effort: medium",
+      "  - provider: openrouter",
+      "    effort: medium",
+      "---",
+      "Prompt",
+      "",
+    ].join("\n"),
+  });
+  assert.equal(payload["Tlh.Subagent.staff-developer.modelEffort"], "grok-4.6:medium");
+});
 
 test("launch telemetry follows a registry-missing OpenRouter session model and normalized effort", async (t) => {
   const payload = await captureSubagentPayload(t, {

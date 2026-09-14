@@ -18,6 +18,7 @@ import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.js
 import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.js";
 import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
+import { registerSubagentControlTargetLookup } from "../runs/background/control-target-lookup.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
@@ -254,6 +255,10 @@ export default function registerSubagentExtension(pi) {
             clear: () => { },
         },
     };
+    const unregisterControlTargetLookup = registerSubagentControlTargetLookup(state, {
+        asyncDirRoot: ASYNC_DIR,
+        resultsDir: RESULTS_DIR,
+    });
     const toolResultBridge = createSubagentToolResultBridge();
     const toggleLiveDetail = (ctx) => {
         handleSubagentLiveDetailShortcut(liveDetailController, ctx, () => renderWidget(ctx, Array.from(state.asyncJobs.values()), liveDetailController));
@@ -287,6 +292,7 @@ export default function registerSubagentExtension(pi) {
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
+        unregisterControlTargetLookup();
         hbWiring.disarm();
         hbWiring.destroy();
         removeLiveDetailTerminalInput();
@@ -614,6 +620,7 @@ export default function registerSubagentExtension(pi) {
         liveDetailController.clearToolRows();
     });
     pi.on("session_shutdown", () => {
+        unregisterControlTargetLookup();
         hbWiring.destroy();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();

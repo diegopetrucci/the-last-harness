@@ -3,6 +3,7 @@ import {
   normalizeEnabledExperimentalFeatures,
   normalizeExperimentalFeatureId,
   readEnabledExperimentalFeatures,
+  STAFF_DEVELOPER_ROUTING_FEATURE,
 } from "../the-last-harness-subagent-safety.mjs";
 import type {
   AgentPrompt,
@@ -14,6 +15,7 @@ import type {
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
   "ci-failure-investigation";
+export { STAFF_DEVELOPER_ROUTING_FEATURE };
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -61,6 +63,33 @@ After TLH opens a PR and CI/status checks fail:
 5. Before any edits, commits, pushes, reruns, PR changes, or other follow-up changes, ask for explicit user approval.
 `;
 
+const STAFF_DEVELOPER_ROUTING_ARCHITECT_PROMPT = `
+## TLH Experimental Feature: staff-developer-routing
+
+This TLH experiment is enabled for the architect primary agent. It is disabled by default and does not change the primary-agent mode.
+
+### Semantic worker assignment
+
+For each implementation ticket, choose exactly one execution tier from the work itself—never from line counts, file counts, a hidden classifier, or a worker's request to self-escalate:
+
+- **staff-developer** is for design judgment that remains during implementation: foundational or new-subsystem scaffolding; cross-cutting API or data-shape changes; concurrency, lifecycle, security, or trust boundaries; migration or compatibility sequencing; broad refactors whose target shape is unresolved; or material implementation uncertainty.
+- **developer** is for localized and well-specified work, broad-but-mechanical changes, tests, documentation, and repetitive follow-ups. When uncertain, choose developer.
+
+Product mode does not assign execution tiers. Staff routing is only for architect implementation delegation. An explicit human request for either tier is honored only while this experiment is enabled; it does not override the role boundaries or the approved-ticket contract. While this experiment is enabled, its two-tier assignment rule supersedes and narrows the base architect wording that implementation goes to \`developer\`: a ticket explicitly assigned to \`staff-developer\` is dispatched there without contradiction.
+
+### Approval and handoff protocol
+
+Before asking for ticket approval, make the assignment auditable in the plan:
+
+- Show one line for every implementation ticket in the exact form \`Worker: developer|staff-developer — Reason: <one line>\`. Keep the reason concrete and limited to one line.
+- Show the aggregate line \`Staff tickets: <count>\` before approval, counting only tickets assigned to staff-developer.
+- The assignment, reason, and count must appear before the user is asked to approve ticket creation or implementation handoff. Treat only the exact word \`approved\` as approval.
+
+After a ticket has been approved, do not silently change its worker. Upgrading an approved developer ticket to staff-developer requires explaining the changed design risk, showing the new one-line reason, and asking for renewed approval. If a staff assignment is downgraded to developer, announce the downgrade and its reason before dispatch. Preserve one-writer sequencing: dispatch one approved ticket to one worker, and have that worker run \`tk show <id>\` before editing.
+
+A staff-developer run remains a developer implementation run in the same ticket and cannot delegate further, commit, or bypass the architect's approval boundary. If the staff model is unavailable, runtime routing may report a downgrade to the actual developer role; do not describe that run as staff-developer.
+`;
+
 type TlhExperimentalFeature = {
   id: TlhExperimentalFeatureId;
   description: string;
@@ -91,6 +120,14 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
       "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
     primaryAgentPrompts: {
       architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
+    },
+  },
+  {
+    id: STAFF_DEVELOPER_ROUTING_FEATURE,
+    description:
+      "Architect guidance for disabled-by-default semantic developer and staff-developer ticket routing, visible reasons, counts, and approval sequencing.",
+    primaryAgentPrompts: {
+      architect: STAFF_DEVELOPER_ROUTING_ARCHITECT_PROMPT.trim(),
     },
   },
 ];

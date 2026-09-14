@@ -10,6 +10,7 @@ const PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY = "builtin";
 export const PACKAGED_PRIMARY_AGENT_ROLES = ["architect", "rush", "product", "bug-hunter"];
 export const PACKAGED_MINOR_AGENT_ROLES = [
     "developer",
+    "staff-developer",
     "test-runner",
     "code-reviewer",
     "repo-scout",
@@ -29,6 +30,7 @@ const ROLE_FILENAMES = {
     product: "PRODUCT_PROMPT_APPEND.md",
     "bug-hunter": "BUG-HUNTER_PROMPT_APPEND.md",
     developer: "DEVELOPER_PROMPT_APPEND.md",
+    "staff-developer": "STAFF-DEVELOPER_PROMPT_APPEND.md",
     "test-runner": "TEST-RUNNER_PROMPT_APPEND.md",
     "code-reviewer": "CODE-REVIEWER_PROMPT_APPEND.md",
     "repo-scout": "REPO-SCOUT_PROMPT_APPEND.md",

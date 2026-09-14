@@ -8,6 +8,7 @@ import { backupPathWithTimestamp, readConfiguredNpmCommand, readJsonFile, } from
 import { writeProfileFileWithBackup, writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
     "developer.md",
+    "staff-developer.md",
     "test-runner.md",
     "code-reviewer.md",
     "repo-scout.md",

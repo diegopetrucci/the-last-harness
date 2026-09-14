@@ -19,9 +19,11 @@ Custom dimensions sent on this event:
 - `Tlh.Device.osArch`
 - `Tlh.Experimental.delta-follow-up-reviews`
 - `Tlh.Experimental.ci-failure-investigation`
+- `Tlh.Experimental.staff-developer-routing`
 - `Tlh.Subagent.code-reviewer.modelEffort`
 - `Tlh.Subagent.contrarian.modelEffort`
 - `Tlh.Subagent.developer.modelEffort`
+- `Tlh.Subagent.staff-developer.modelEffort`
 - `Tlh.Subagent.diff-summarizer.modelEffort`
 - `Tlh.Subagent.librarian.modelEffort`
 - `Tlh.Subagent.oracle.modelEffort`
@@ -29,7 +31,7 @@ Custom dimensions sent on this event:
 - `Tlh.Subagent.test-runner.modelEffort`
 - `Tlh.Subagent.web-scout.modelEffort`
 
-Experimental feature dimensions are always reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
+Experimental feature dimensions are always reported for registered TLH features as `on` or `off`. `Tlh.Experimental.staff-developer-routing` therefore reports whether the routing experiment is enabled; it does not mean that a staff-developer run occurred. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
 
 ## Provider and value semantics
 
@@ -43,7 +45,7 @@ Privacy filtering is conservative:
   - The effort side sends one of the seven canonical thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Any other non-empty string becomes `custom`; missing or empty values become `unknown`. The match is **case-sensitive** — a value like `High` does not match `high` and is reported as `custom`, reflecting that the upstream runtime would not honour it either.
   - Both sides default independently: `unknown:unknown`, `custom:high`, `claude-opus-4-5:unknown`.
 - `Tlh.PrimaryAgent.name` sends `architect`, `bug-hunter`, `product`, or `rush`; other values become `custom`, and missing values become `unknown`.
-- Each `Tlh.Subagent.<name>.modelEffort` key follows the same colon-joined `<model>:<effort>` format as `Tlh.Runtime.modelEffort`. The effort side follows the same seven-level vocabulary and the same case-sensitive rule when the value comes from a `subagents.agentOverrides` settings string. However, when the value comes from subagent frontmatter, the frontmatter reader applies an `isThinkingLevel` guard that drops any unrecognised value to `undefined` before the privacy filter is reached — so an invalid frontmatter effort value surfaces as `unknown`, not `custom`. This also means the case-sensitivity note above applies: a frontmatter value like `High` is unrecognised and becomes `unknown`, not `custom`.
+- Each `Tlh.Subagent.<name>.modelEffort` key follows the same colon-joined `<model>:<effort>` format as `Tlh.Runtime.modelEffort`. This includes `Tlh.Subagent.staff-developer.modelEffort` even though staff-developer is opt-in and disabled from the default dispatch allowlist. The effort side follows the same seven-level vocabulary and the same case-sensitive rule when the value comes from a `subagents.agentOverrides` settings string. However, when the value comes from subagent frontmatter, the frontmatter reader applies an `isThinkingLevel` guard that drops any unrecognised value to `undefined` before the privacy filter is reached — so an invalid frontmatter effort value surfaces as `unknown`, not `custom`. This also means the case-sensitivity note above applies: a frontmatter value like `High` is unrecognised and becomes `unknown`, not `custom`.
   - Subagent model resolution uses the real available-models registry captured at launch time — the same registry the runtime uses — rather than a synthetic list built from frontmatter. Two behaviours follow from this:
     - A provider-qualified frontmatter model (e.g. `anthropic/claude-opus-5`) is reported only if that exact entry is present in the available-models list. If it is not, both the `selectProviderAwareAgentDefaults` lookup and the fallback guard in `readSubagentFrontmatterConfig` return `undefined`, and the model side is reported as `unknown`. This is deliberate: a plausible-but-wrong model name is worse than `unknown` as a telemetry signal.
     - A bare, unqualified model name (e.g. `claude-opus-4-5`, no slash) cannot be looked up against the registry and is only used as a fallback when no registry-backed candidate was selected. In that case it is reported as-is after the standard privacy filter; the value reflects what is written in configuration rather than a confirmed effective selection.

@@ -180,7 +180,8 @@ const EXPECTED_XAI_DEFAULTS = new Map([
   ["rush", { model: "grok-4.6", effort: "low" }],
   ["product", { model: "grok-4.6", effort: "high" }],
   ["bug-hunter", { model: "grok-4.6", effort: "high" }],
-  ["developer", { model: "grok-4.6", effort: "medium" }],
+  ["developer", { model: "grok-4.6", effort: "low" }],
+  ["staff-developer", { model: "grok-4.6", effort: "medium" }],
   ["code-reviewer", { model: "grok-4.6", effort: "high" }],
   ["oracle", { model: "grok-4.6", effort: "xhigh" }],
   ["contrarian", { model: "grok-4.6", effort: "xhigh" }],
@@ -234,6 +235,29 @@ test("production bundled agents declare the approved xAI Grok defaults", () => {
     );
     assert.equal(entries[0].effort, expected.effort, `${name} xAI effort`);
   }
+});
+
+test("staff-developer declares the exact direct-provider model and effort matrix", () => {
+  const staffDeveloper = loadSubagentMetadata().find((agent) => agent.name === "staff-developer");
+  assert.ok(staffDeveloper, "staff-developer must be loaded from production frontmatter");
+  assert.deepEqual(staffDeveloper.tlhModelDefaults, [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-6-astra" }],
+      effort: "low",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "medium",
+    },
+    {
+      provider: "xai",
+      models: [{ provider: "xai", id: "grok-4.6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ]);
 });
 
 test("loaded primaries preserve preferred selection relationships", () => {

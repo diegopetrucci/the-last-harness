@@ -13,6 +13,7 @@ const {
   codeReviewer,
   codexAvailable,
   developer,
+  developerXaiAvailable,
   getProviderAwareFallbackModels,
   openaiAvailable,
   openaiParentPrefersAnthropicReviewer,
@@ -151,22 +152,22 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
 });
 
 test("provider-aware model resolver follows an active direct xAI provider", () => {
-  const available = [...anthropicAvailable, ...codexAvailable, ...xaiAvailable];
-  assert.equal(selectedProviderModelId(developer, available, "xai"), "xai/grok-4");
+  const available = [...anthropicAvailable, ...codexAvailable, ...developerXaiAvailable];
+  assert.equal(selectedProviderModelId(developer, available, "xai"), "xai/grok-4.6");
 
   const input = { agent: "developer", task: "Implement the ticket" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, available, "xai"), 1);
-  assert.equal(input.model, "xai/grok-4:high");
+  assert.equal(input.model, "xai/grok-4.6:low");
   assert.equal(Object.hasOwn(input, "thinking"), false);
 });
 
 test("provider-aware standard defaults reach xAI after unavailable OpenAI and Anthropic candidates", () => {
-  const available = [...xaiAvailable];
+  const available = [...developerXaiAvailable];
 
-  assert.equal(selectedProviderModelId(developer, available, "google"), "xai/grok-4");
+  assert.equal(selectedProviderModelId(developer, available, "google"), "xai/grok-4.6");
   const input = { agent: "developer", task: "Implement the ticket" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, available, "google"), 1);
-  assert.equal(input.model, "xai/grok-4:high");
+  assert.equal(input.model, "xai/grok-4.6:low");
   assert.equal(Object.hasOwn(input, "thinking"), false);
 });
 
