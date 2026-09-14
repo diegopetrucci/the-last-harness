@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.42.0] - 2026-09-14
+
 ### What's new
 
 - Developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
