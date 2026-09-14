@@ -43,7 +43,11 @@ import {
   isProtectedPausedLifecycle,
   protectedLifecycleText,
 } from "../shared/lifecycle-privacy.ts";
-import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
+import {
+  safeTerminalDocument,
+  safeTerminalDocumentLeaf,
+  safeTerminalText,
+} from "../../shared/display-text.ts";
 import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 import { formatRejectionReason } from "../../shared/string-utils.ts";
 
@@ -307,7 +311,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
     `Updated: ${new Date(run.updatedAt).toISOString()}`,
   ];
   for (const child of run.children) {
-    const output = safeTerminalText(rememberedForegroundChildOutput(child))
+    const output = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
       .trim()
       .split(/\r?\n/)
       .find((line) => line.trim());
@@ -394,7 +398,7 @@ function formatRememberedForegroundTranscript(
     );
   const child = run.children[index]!;
   const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
-  const outputLines = safeTerminalText(rememberedForegroundChildOutput(child))
+  const outputLines = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
     .split(/\r?\n/)
     .filter((line) => line.trim())
     .slice(-lineLimit);
@@ -655,7 +659,7 @@ function inspectAsyncResultFile(
     if (data.summary)
       lines.push(
         "",
-        privacySafeResult ? "Paused awaiting supervisor." : safeTerminalText(data.summary),
+        privacySafeResult ? "Paused awaiting supervisor." : safeTerminalDocumentLeaf(data.summary),
       );
     return {
       content: [{ type: "text", text: safeTerminalDocument(lines.join("\n")) }],

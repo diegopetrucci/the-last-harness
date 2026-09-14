@@ -1,3 +1,23 @@
+export const ACTIVITY_MONITOR_INTERVAL_MS = 1_000;
+export const ACTIVITY_MONITOR_GAP_THRESHOLD_MS = ACTIVITY_MONITOR_INTERVAL_MS * 2;
+export function getActivityMonitorGap(previousMonitorTickAt, now) {
+    const gapMs = previousMonitorTickAt === undefined ? 0 : Math.max(0, now - previousMonitorTickAt);
+    return { gapMs, detected: gapMs > ACTIVITY_MONITOR_GAP_THRESHOLD_MS };
+}
+export function observeActivityWindow(input) {
+    const { detected } = getActivityMonitorGap(input.previousMonitorTickAt, input.now);
+    let observedIdleSince = input.observedIdleSince;
+    if (detected)
+        observedIdleSince = input.now;
+    else if (observedIdleSince === undefined)
+        observedIdleSince = input.startedAt;
+    else if (input.observedActivityAt !== input.activityAt)
+        observedIdleSince = input.now;
+    return {
+        observedIdleSince,
+        observedActivityAt: input.activityAt,
+    };
+}
 export const MAX_IDLE_EPISODE_ID_LENGTH = 128;
 export const MAX_HEALTH_ATTEMPT_ID_LENGTH = 96;
 const PRINTABLE_ASCII_START = 0x21;
@@ -31,14 +51,12 @@ export function createHealthTransitionState(attemptId) {
         attemptId: normalizeAttemptId(attemptId),
         idleEpisodeCount: 0,
         durableAttentionReasons: [],
-        activeLongRunningNoticeSent: false,
     };
 }
 function projectActivityState(state) {
-    if (state.durableAttentionReasons.length > 0 || state.idleEpisodeId !== undefined) {
-        return "needs_attention";
-    }
-    return state.activeLongRunningNoticeSent ? "active_long_running" : undefined;
+    return state.durableAttentionReasons.length > 0 || state.idleEpisodeId !== undefined
+        ? "needs_attention"
+        : undefined;
 }
 function cloneState(state) {
     return {
@@ -64,7 +82,6 @@ export function transitionHealth(current, action) {
     let next = cloneState(current);
     let idleEpisodeStarted = false;
     let idleEpisodeEnded = false;
-    let activeLongRunningNotice = false;
     let idleAttentionEligible = false;
     let clearProjection = false;
     switch (action.type) {
@@ -90,15 +107,6 @@ export function transitionHealth(current, action) {
             }
             break;
         }
-        case "active_long_running": {
-            if (!next.activeLongRunningNoticeSent &&
-                next.idleEpisodeId === undefined &&
-                next.durableAttentionReasons.length === 0) {
-                next.activeLongRunningNoticeSent = true;
-                activeLongRunningNotice = true;
-            }
-            break;
-        }
         case "compaction_start": {
             next.compaction = { reason: action.reason };
             break;
@@ -120,7 +128,6 @@ export function transitionHealth(current, action) {
             next = {
                 ...createHealthTransitionState(attemptId),
                 durableAttentionReasons: [...current.durableAttentionReasons],
-                activeLongRunningNoticeSent: current.activeLongRunningNoticeSent,
             };
             idleEpisodeEnded = previousIdleEpisodeId !== undefined;
             break;
@@ -133,7 +140,6 @@ export function transitionHealth(current, action) {
         previousIdleEpisodeId !== next.idleEpisodeId ||
         current.attemptId !== next.attemptId ||
         current.idleEpisodeCount !== next.idleEpisodeCount ||
-        current.activeLongRunningNoticeSent !== next.activeLongRunningNoticeSent ||
         current.durableAttentionReasons.length !== next.durableAttentionReasons.length ||
         current.durableAttentionReasons.some((reason, index) => reason !== next.durableAttentionReasons[index]) ||
         !sameCompaction(previousCompaction, next.compaction);
@@ -144,7 +150,6 @@ export function transitionHealth(current, action) {
         projection: next.activityState,
         idleEpisodeStarted,
         idleEpisodeEnded,
-        activeLongRunningNotice,
         idleAttentionEligible,
     };
 }

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
-import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -521,6 +521,19 @@ function summarizeCommandOutput(result) {
 function repairAction(level, label, detail) {
     return { level, label, detail };
 }
+function repairSubagentAttentionConfig(agentDir) {
+    const result = migrateSubagentExtensionConfig({ agentDir });
+    if (result.warning) {
+        return repairAction("WARN", "subagent attention config", result.warning);
+    }
+    if (!result.changed) {
+        return repairAction("OK", "subagent attention config", "managed attention policy already matches the isolated profile");
+    }
+    const backupDetail = result.backupPath
+        ? `; backed up previous config to ${result.backupPath}`
+        : "";
+    return repairAction("OK", "subagent attention config", `enforced ${result.changes.join("; ")}${backupDetail}`);
+}
 function repairSettings(packageRoot, agentDir, settingsPath, env) {
     const retiredSubagentPackages = captureManagedRetiredSubagentPackages(settingsPath);
     let npmCommand;
@@ -648,6 +661,7 @@ function runRepairMode(agentDir, packageRoot, settingsPath, env) {
         return 1;
     }
     const actions = [
+        repairSubagentAttentionConfig(agentDir),
         repairSettings(packageRoot, agentDir, settingsPath, env),
         repairBundledSubagentPrompts(packageRoot, agentDir),
         repairManagedHelper("managed gn install", gnosisScript(packageRoot), ["configure-install", "--agent-dir", agentDir], env),

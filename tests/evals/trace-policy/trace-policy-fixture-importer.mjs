@@ -3,6 +3,8 @@ import process from "node:process";
 import { basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { hasToolFailureSignal } from "./trace-policy-failure-signals.mjs";
+
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -208,13 +210,59 @@ function toolStepFromToolCallBlock(block) {
   const argumentsValue = isRecord(block.arguments) ? block.arguments : {};
   const step = {
     type: "tool",
-    tool: block.name,
     ...argumentsValue,
+    tool: block.name,
   };
   if (Object.keys(argumentsValue).some((key) => !TOOL_STEP_PROMOTED_ARGUMENT_KEYS.has(key))) {
     step.input = argumentsValue;
   }
   return normalizeToolStep(step);
+}
+
+const TOOL_FAILURE_DETAIL_KEYS = ["ok", "status", "exitCode", "error"];
+
+function normalizeToolFailureError(value) {
+  if (!value) {
+    return undefined;
+  }
+  return normalizeValue(value, "error");
+}
+
+function normalizeToolFailureDetails(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const normalized = {};
+  for (const key of TOOL_FAILURE_DETAIL_KEYS) {
+    if (!Object.hasOwn(value, key)) {
+      continue;
+    }
+    if (key === "ok") {
+      if (typeof value.ok === "boolean") {
+        normalized.ok = value.ok;
+      }
+      continue;
+    }
+    if (key === "status") {
+      if (typeof value.status === "string") {
+        normalized.status = normalizeString(value.status);
+      }
+      continue;
+    }
+    if (key === "exitCode") {
+      if (Number.isInteger(value.exitCode)) {
+        normalized.exitCode = value.exitCode;
+      }
+      continue;
+    }
+    const error = normalizeToolFailureError(value.error);
+    if (error !== undefined) {
+      normalized.error = error;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function normalizeToolStep(step) {
@@ -239,8 +287,19 @@ function normalizeToolStep(step) {
   if (typeof step.mutates === "boolean") {
     normalized.mutates = step.mutates;
   }
+  if (step.isError === true) {
+    normalized.isError = true;
+  }
+  const error = normalizeToolFailureError(step.error);
+  if (error !== undefined) {
+    normalized.error = error;
+  }
   if (step.input !== undefined) {
     normalized.input = normalizeValue(step.input, "input");
+  }
+  const details = normalizeToolFailureDetails(step.details);
+  if (details !== undefined) {
+    normalized.details = details;
   }
   return normalized;
 }
@@ -258,35 +317,33 @@ function normalizeToolResultFailure(step) {
     : Number.isInteger(details.exitCode)
       ? details.exitCode
       : undefined;
-  const ok =
-    typeof step.ok === "boolean"
-      ? step.ok
-      : typeof details.ok === "boolean"
-        ? details.ok
-        : undefined;
   const rawStatus =
-    typeof step.status === "string"
+    typeof step.status === "string" && normalizeText(step.status)
       ? step.status
-      : typeof details.status === "string"
+      : typeof details.status === "string" && normalizeText(details.status)
         ? details.status
         : undefined;
   const status = rawStatus ? normalizeString(rawStatus) : undefined;
-  const failed =
-    step.isError === true ||
-    ok === false ||
-    status === "failed" ||
-    (Number.isInteger(exitCode) && exitCode !== 0);
-  if (!failed) {
-    return undefined;
+  const topLevelError = normalizeToolFailureError(step.error);
+  const nestedError = normalizeToolFailureError(details.error);
+  const failed = hasToolFailureSignal(step);
+  const normalized = {};
+
+  if (topLevelError !== undefined) {
+    normalized.error = topLevelError;
   }
-  const normalized = {
-    ok: false,
-    status: status || "failed",
-  };
-  if (Number.isInteger(exitCode)) {
-    normalized.exitCode = exitCode;
+  if (nestedError !== undefined) {
+    normalized.details = { error: nestedError };
   }
-  return normalized;
+  if (failed) {
+    normalized.ok = false;
+    normalized.status = status || "failed";
+    if (Number.isInteger(exitCode)) {
+      normalized.exitCode = exitCode;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function toolStepFromToolResultRecord(record) {

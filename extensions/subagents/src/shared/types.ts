@@ -81,19 +81,11 @@ export interface TokenUsage {
   total: number;
 }
 
-export type ActivityState = "active_long_running" | "needs_attention";
-export type ControlEventType = "active_long_running" | "needs_attention";
+export type ActivityState = "needs_attention";
+export type ControlEventType = "needs_attention";
 export type ControlNotificationChannel = "event" | "async";
 
-export type ControlEventReason =
-  | "idle"
-  | "completion_guard"
-  | "active_long_running"
-  | "tool_failures"
-  | "time_threshold"
-  | "turn_threshold"
-  | "token_threshold"
-  | "context_pressure";
+export type ControlEventReason = "idle" | "completion_guard" | "tool_failures" | "context_pressure";
 
 /** Attention causes that activity recovery cannot clear within the run lifecycle. */
 export type DurableAttentionReason = "context_pressure" | "tool_failures" | "completion_guard";
@@ -118,9 +110,6 @@ export interface ContextPressureProjection {
 export interface ControlConfig {
   enabled?: boolean;
   needsAttentionAfterMs?: number;
-  activeNoticeAfterMs?: number;
-  activeNoticeAfterTurns?: number;
-  activeNoticeAfterTokens?: number;
   failedToolAttemptsBeforeAttention?: number;
   notifyOn?: ControlEventType[];
   notifyChannels?: ControlNotificationChannel[];
@@ -129,9 +118,6 @@ export interface ControlConfig {
 export interface ResolvedControlConfig {
   enabled: boolean;
   needsAttentionAfterMs: number;
-  activeNoticeAfterMs: number;
-  activeNoticeAfterTurns?: number;
-  activeNoticeAfterTokens?: number;
   failedToolAttemptsBeforeAttention: number;
   notifyOn: ControlEventType[];
   notifyChannels: ControlNotificationChannel[];

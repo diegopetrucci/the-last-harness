@@ -76,15 +76,11 @@ function formatForegroundActivity(
   if (!control.lastActivityAt) {
     if (control.currentActivityState === "needs_attention")
       return ["needs attention", ...facts].join(" | ");
-    if (control.currentActivityState === "active_long_running")
-      return ["active but long-running", ...facts].join(" | ");
     return facts.length ? facts.join(" | ") : undefined;
   }
   const seconds = Math.floor(Math.max(0, Date.now() - control.lastActivityAt) / 1000);
   if (control.currentActivityState === "needs_attention")
     return [`no activity for ${seconds}s`, ...facts].join(" | ");
-  if (control.currentActivityState === "active_long_running")
-    return [`active but long-running; last activity ${seconds}s ago`, ...facts].join(" | ");
   return [`active ${seconds}s ago`, ...facts].join(" | ");
 }
 

@@ -67,7 +67,7 @@ const COMPACTION_REASONS = new Set([
     "overflow",
 ]);
 function normalizeHealthActivityState(value) {
-    return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+    return value === "needs_attention" ? value : undefined;
 }
 function normalizeHealthDurableAttentionReasons(value) {
     if (!Array.isArray(value))

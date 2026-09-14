@@ -82,7 +82,6 @@ import {
   createMutatingFailureState,
   didMutatingToolFail,
   isMutatingTool,
-  nextLongRunningTrigger,
   recordMutatingFailure,
   resetMutatingFailureState,
   resolveCurrentPath,
@@ -140,6 +139,8 @@ import {
   type HealthTransitionBox,
 } from "./execution-finalization.ts";
 import {
+  ACTIVITY_MONITOR_INTERVAL_MS,
+  observeActivityWindow,
   createHealthTransitionState,
   resetHealthTransitionState,
   type HealthTransitionAction,
@@ -588,6 +589,9 @@ async function runSingleAttempt(
     let removeAbortListener: (() => void) | undefined;
     let removeInterruptListener: (() => void) | undefined;
     let activityTimer: NodeJS.Timeout | undefined;
+    let lastMonitorTickAt: number | undefined;
+    let observedIdleSince: number | undefined;
+    let observedActivityAt: number | undefined;
     let timeoutTimer: DeadlineTimer | undefined;
     let timeoutTerminationTimer: NodeJS.Timeout | undefined;
     let timeoutHardKillTimer: NodeJS.Timeout | undefined;
@@ -802,6 +806,7 @@ async function runSingleAttempt(
         contextPressureThreshold: input.contextPressureThreshold,
         reason,
         idleEpisodeId: reason === "idle" ? transition.state.idleEpisodeId : undefined,
+        elapsedMs: reason === "idle" ? Math.max(0, now - (observedIdleSince ?? now)) : undefined,
         turns: result.usage.turns,
         tokens: progress.tokens,
         toolCount: progress.toolCount,
@@ -813,52 +818,30 @@ async function runSingleAttempt(
       emitControlEvent(event);
       return transition.changed;
     };
-    const emitActiveLongRunning = (now: number, reason: ControlEvent["reason"]): boolean => {
+    const updateActivityState = (now: number, monitorTick = false): boolean => {
       if (!controlConfig.enabled) return false;
-      const previous = progress.activityState;
-      const transition = applyHealthTransition({ type: "active_long_running" });
-      if (!transition.activeLongRunningNotice) return false;
-      emitControlEvent(
-        buildControlEvent({
-          type: "active_long_running",
-          from: previous,
-          to: "active_long_running",
-          runId: options.runId,
-          agent: agent.name,
-          index: options.index,
-          ts: now,
-          message: `${agent.name} is still active but long-running`,
-          reason,
-          turns: result.usage.turns,
-          tokens: progress.tokens,
-          toolCount: progress.toolCount,
-          currentTool: progress.currentTool,
-          currentToolDurationMs: currentToolDurationMs(now),
-          currentPath: progress.currentPath,
-          elapsedMs: now - startTime,
-        }),
-      );
-      return true;
-    };
-    const updateActivityState = (now: number): boolean => {
-      if (!controlConfig.enabled) return false;
+      const observation = observeActivityWindow({
+        previousMonitorTickAt: monitorTick ? lastMonitorTickAt : undefined,
+        now,
+        startedAt: startTime,
+        activityAt: progress.lastActivityAt ?? startTime,
+        observedIdleSince,
+        observedActivityAt,
+      });
+      if (monitorTick) lastMonitorTickAt = now;
+      observedIdleSince = observation.observedIdleSince;
+      observedActivityAt = observation.observedActivityAt;
       const idleState = shared.healthState.value.compaction
         ? undefined
         : deriveActivityState({
             config: controlConfig,
             startedAt: startTime,
-            lastActivityAt: progress.lastActivityAt,
+            lastActivityAt: observation.observedIdleSince,
             toolCallInFlight: Boolean(progress.currentTool),
             now,
           });
       if (idleState === "needs_attention") return emitNeedsAttention(now);
-      const activeReason = nextLongRunningTrigger(controlConfig, {
-        startedAt: startTime,
-        now,
-        turns: result.usage.turns,
-        tokens: progress.tokens,
-      });
-      return activeReason ? emitActiveLongRunning(now, activeReason) : false;
+      return false;
     };
 
     const emitUpdateSnapshot = (text: string) => {
@@ -914,6 +897,10 @@ async function runSingleAttempt(
         applyHealthTransition({ type: "compaction_end" });
       }
       progress.lastActivityAt = now;
+      // Validated child activity starts a new observed-idle window without
+      // changing the truthful activity timestamp retained in progress.
+      observedIdleSince = now;
+      observedActivityAt = now;
 
       if (evt.type === "tool_execution_start") {
         const toolArgs = evt.args ?? {};
@@ -1107,14 +1094,15 @@ async function runSingleAttempt(
     };
 
     if (controlConfig.enabled) {
+      lastMonitorTickAt = Date.now();
       activityTimer = setInterval(() => {
         if (processClosed || settled) return;
         const now = Date.now();
-        if (updateActivityState(now)) {
+        if (updateActivityState(now, true)) {
           progress.durationMs = now - startTime;
           fireUpdate();
         }
-      }, 1000);
+      }, ACTIVITY_MONITOR_INTERVAL_MS);
       activityTimer.unref?.();
     }
 

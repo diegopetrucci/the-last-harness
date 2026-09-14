@@ -45,6 +45,7 @@ run_static_checks() {
   node --check scripts/lib/tlh-install-support-files.mjs
   node --check scripts/lib/tlh-install-support-manifest.mjs
   node --check scripts/release-notes.mjs
+  node --check scripts/generate-release-installer.mjs
   node -e 'JSON.parse(require("node:fs").readFileSync("config/librarian.defaults.json", "utf8"))'
   check_extension_load_syntax
 }

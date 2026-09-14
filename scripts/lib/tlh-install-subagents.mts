@@ -15,9 +15,14 @@ import {
   copySafeProfileFile,
   ensureSafeProfileDir,
   isSymlink,
+  pathIsProtectedPiConfig,
 } from "./tlh-install-paths.mjs";
-import { readConfiguredNpmCommand, readJsonFile } from "./tlh-install-utils.mjs";
-import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
+import {
+  backupPathWithTimestamp,
+  readConfiguredNpmCommand,
+  readJsonFile,
+} from "./tlh-install-utils.mjs";
+import { writeProfileFileWithBackup, writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 
 interface PlainObject {
   [key: string]: unknown;
@@ -563,80 +568,276 @@ export function copyTlhSubagentPrompts(
 }
 
 /**
- * Provision the subagent extension config at extensions/subagent/config.json
- * with the TLH-preferred first active long-running notice after 270000ms
- * (4m30).
- *
- * The default is added only when its setting is missing. Existing user values
- * (including the human-owned artifacts.mode profile) and unrelated keys are
- * left untouched. Re-running the installer is therefore safe and will not
- * clobber user edits.
- *
- * Revert path: open <agentDir>/extensions/subagent/config.json and set
- * "control.activeNoticeAfterMs" to the value you want. Existing values are
- * preserved on subsequent installer runs. To return the setting to the managed
- * default, remove that key and rerun install or update; the missing default is
- * re-provisioned. Valid non-object or unreadable config files are preserved
- * untouched.
+ * The isolated profile owns these attention controls. The runtime may still
+ * accept per-dispatch overrides, but persistent profile configuration must
+ * converge to this policy on every installer lifecycle that can write it.
  */
-const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;
+const TLH_NEEDS_ATTENTION_AFTER_MS = 180000;
+const RETIRED_SUBAGENT_CONTROL_KEYS = [
+  "activeNoticeAfterMs",
+  "activeNoticeAfterTurns",
+  "activeNoticeAfterTokens",
+] as const;
+const RETIRED_SUBAGENT_NOTIFY_EVENT = "active_long_running";
+const SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH = "extensions/subagent/config.json";
 
-function activeNoticeCanBeProvisioned(existing: PlainObject): boolean {
-  return !("control" in existing) || isPlainObject(existing.control);
+export interface SubagentExtensionConfigMigrationResult {
+  changed: boolean;
+  changes: string[];
+  backupPath?: string;
+  warning?: string;
 }
 
-function activeNoticeIsMissing(existing: PlainObject): boolean {
-  return (
-    activeNoticeCanBeProvisioned(existing) &&
-    (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control))
-  );
+export function formatSubagentExtensionConfigMigration(
+  result: SubagentExtensionConfigMigrationResult,
+  { dryRun }: { dryRun: boolean },
+): string | undefined {
+  if (!result.changed)
+    return dryRun
+      ? "Would leave existing subagent extension config (extensions/subagent/config.json) untouched."
+      : undefined;
+  const action = dryRun ? "Would enforce" : "Enforced";
+  const backup = result.backupPath
+    ? `; ${dryRun ? "would back up existing config to" : "backed up previous config to"}: ${result.backupPath}`
+    : "";
+  return `${action} TLH subagent attention config (extensions/subagent/config.json): ${result.changes.join("; ")}${backup}.`;
 }
 
-function readExistingSubagentExtensionConfig(config: { agentDir: string }): PlainObject | null {
-  const configPath = join(config.agentDir, "extensions/subagent/config.json");
-  if (!existsSync(configPath)) return {};
+type SubagentExtensionConfigReadResult =
+  | { kind: "missing"; path: string }
+  | { kind: "valid"; path: string; value: PlainObject }
+  | { kind: "unsafe"; path: string; warning: string };
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function configWarning(path: string, detail: string): string {
+  return `could not safely enforce TLH subagent attention config at ${path}: ${detail}; existing configuration was preserved; inspect the file and repair it manually before rerunning`;
+}
+
+function migrationBoundaryWarning(agentDir: string, path: string): string | undefined {
   try {
-    const parsed = readJsonFile<unknown>(configPath, { missingValue: {} as unknown });
-    return isPlainObject(parsed) ? parsed : null;
-  } catch {
-    return null;
+    if (pathIsProtectedPiConfig(agentDir) || pathIsProtectedPiConfig(path)) {
+      return `refusing to migrate TLH subagent attention config under normal Pi config root: ${agentDir}; normal Pi configuration was preserved`;
+    }
+  } catch (error) {
+    return configWarning(
+      path,
+      `could not verify that the target is outside normal Pi configuration (${errorMessage(error)})`,
+    );
   }
+  return undefined;
 }
 
-function missingSubagentExtensionDefaultLabels(existing: PlainObject): string[] {
-  const missingDefaults: string[] = [];
-  if (activeNoticeIsMissing(existing)) {
-    missingDefaults.push(`control.activeNoticeAfterMs: ${TLH_ACTIVE_NOTICE_AFTER_MS} (4m30)`);
+function readExistingSubagentExtensionConfig(config: {
+  agentDir: string;
+}): SubagentExtensionConfigReadResult {
+  const path = join(config.agentDir, SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH);
+  let stats;
+  try {
+    stats = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { kind: "missing", path };
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, `could not inspect the file (${errorMessage(error)})`),
+    };
   }
-  return missingDefaults;
+
+  if (stats.isSymbolicLink()) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "the config path is a symbolic link"),
+    };
+  }
+  if (!stats.isFile()) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "the config path is not a regular file"),
+    };
+  }
+  if (stats.nlink !== 1) {
+    return { kind: "unsafe", path, warning: configWarning(path, "the config file is hard-linked") };
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, `the config file is unreadable (${errorMessage(error)})`),
+    };
+  }
+  const normalized = raw.replace(/^\uFEFF/, "");
+  if (!normalized.trim()) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "the config file is empty; expected a JSON object"),
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(normalized) as unknown;
+  } catch (error) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(
+        path,
+        `the config file contains invalid JSON (${errorMessage(error)})`,
+      ),
+    };
+  }
+  if (!isPlainObject(parsed)) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "the top-level JSON value must be an object"),
+    };
+  }
+  if ("control" in parsed && !isPlainObject(parsed.control)) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "control must be an object when present"),
+    };
+  }
+  if (
+    isPlainObject(parsed.control) &&
+    "notifyOn" in parsed.control &&
+    !Array.isArray(parsed.control.notifyOn)
+  ) {
+    return {
+      kind: "unsafe",
+      path,
+      warning: configWarning(path, "control.notifyOn must be an array when present"),
+    };
+  }
+  return { kind: "valid", path, value: parsed };
+}
+
+function migrationPlan(config: { agentDir: string }): {
+  path: string;
+  existing: PlainObject;
+  updated: PlainObject;
+  changes: string[];
+  existed: boolean;
+  warning?: string;
+} {
+  const path = join(config.agentDir, SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH);
+  const boundaryWarning = migrationBoundaryWarning(config.agentDir, path);
+  if (boundaryWarning) {
+    return {
+      path,
+      existing: {},
+      updated: {},
+      changes: [],
+      existed: false,
+      warning: boundaryWarning,
+    };
+  }
+  const readResult = readExistingSubagentExtensionConfig(config);
+  if (readResult.kind === "unsafe") {
+    return {
+      path: readResult.path,
+      existing: {},
+      updated: {},
+      changes: [],
+      existed: true,
+      warning: readResult.warning,
+    };
+  }
+  if (readResult.kind === "missing") {
+    return {
+      path: readResult.path,
+      existing: {},
+      updated: { control: { needsAttentionAfterMs: TLH_NEEDS_ATTENTION_AFTER_MS } },
+      changes: [`set control.needsAttentionAfterMs: ${TLH_NEEDS_ATTENTION_AFTER_MS}`],
+      existed: false,
+    };
+  }
+
+  const existing = readResult.value;
+  const existingControl = isPlainObject(existing.control) ? existing.control : {};
+  const updatedControl: PlainObject = { ...existingControl };
+  const changes: string[] = [];
+  for (const key of RETIRED_SUBAGENT_CONTROL_KEYS) {
+    if (!Object.hasOwn(updatedControl, key)) continue;
+    delete updatedControl[key];
+    changes.push(`remove control.${key}`);
+  }
+  if (Array.isArray(updatedControl.notifyOn)) {
+    const scrubbedNotifyOn = updatedControl.notifyOn.filter(
+      (entry) => entry !== RETIRED_SUBAGENT_NOTIFY_EVENT,
+    );
+    if (scrubbedNotifyOn.length !== updatedControl.notifyOn.length) {
+      updatedControl.notifyOn = scrubbedNotifyOn;
+      changes.push(`remove ${RETIRED_SUBAGENT_NOTIFY_EVENT} from control.notifyOn`);
+    }
+  }
+  if (updatedControl.needsAttentionAfterMs !== TLH_NEEDS_ATTENTION_AFTER_MS) {
+    updatedControl.needsAttentionAfterMs = TLH_NEEDS_ATTENTION_AFTER_MS;
+    changes.push(`set control.needsAttentionAfterMs: ${TLH_NEEDS_ATTENTION_AFTER_MS}`);
+  }
+
+  return {
+    path: readResult.path,
+    existing,
+    updated: { ...existing, control: updatedControl },
+    changes,
+    existed: true,
+  };
 }
 
 /**
- * Returns the display labels for defaults that provisionSubagentExtensionConfig
- * can write. An empty result means the existing config is complete, a valid
- * non-object JSON value, or unreadable.
+ * Enforce the persistent isolated-profile subagent attention policy. Existing
+ * valid objects are migrated conservatively, while malformed or unsafe input
+ * is left untouched and returned as an actionable warning. A dry run computes
+ * and reports the same plan without creating directories, backups, or files.
  */
-export function subagentExtensionConfigMissingDefaults(config: { agentDir: string }): string[] {
-  const existing = readExistingSubagentExtensionConfig(config);
-  return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
-}
+export function migrateSubagentExtensionConfig(config: {
+  agentDir: string;
+  dryRun?: boolean;
+}): SubagentExtensionConfigMigrationResult {
+  const plan = migrationPlan(config);
+  if (plan.warning) return { changed: false, changes: [], warning: plan.warning };
+  if (plan.changes.length === 0) return { changed: false, changes: [] };
 
-export function provisionSubagentExtensionConfig(config: { agentDir: string }): void {
-  const relativePath = "extensions/subagent/config.json";
-  const existing = readExistingSubagentExtensionConfig(config);
-  if (!existing) return;
+  const backupPath = plan.existed ? backupPathWithTimestamp(plan.path) : undefined;
+  if (config.dryRun) return { changed: true, changes: plan.changes, backupPath };
 
-  const missingActiveNotice = activeNoticeIsMissing(existing);
-  if (!missingActiveNotice) return;
-
-  ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
-  const updated: PlainObject = { ...existing };
-  const existingControl = isPlainObject(existing.control) ? existing.control : {};
-  updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
-  writeSafeProfileFile(
-    config,
-    relativePath,
-    JSON.stringify(updated, null, 2) + "\n",
-    "TLH subagent extension config",
-  );
+  try {
+    ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
+    const formatted = `${JSON.stringify(plan.updated, null, 2)}\n`;
+    if (backupPath) {
+      writeProfileFileWithBackup(plan.path, formatted, {
+        targetLabel: "TLH subagent extension config",
+        sourceLabel: "TLH subagent extension config",
+        backupLabel: "TLH subagent extension config backup",
+        backupPath,
+      });
+    } else {
+      writeSafeProfileFile(
+        config,
+        SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH,
+        formatted,
+        "TLH subagent extension config",
+      );
+    }
+  } catch (error) {
+    return {
+      changed: false,
+      changes: plan.changes,
+      warning: configWarning(plan.path, `the managed write failed (${errorMessage(error)})`),
+    };
+  }
+  return { changed: true, changes: plan.changes, backupPath };
 }

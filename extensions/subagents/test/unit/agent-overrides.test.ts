@@ -453,7 +453,7 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.override?.scope, "project");
   });
 
-  it("keeps explicit canonical frontmatter fields over matching agentOverrides", () => {
+  it("keeps explicit canonical frontmatter fields except acceptanceRole over matching agentOverrides", () => {
     fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
     writeJson(path.join(tempProject, ".pi", "settings.json"), {
       subagents: {
@@ -482,10 +482,11 @@ describe("canonical packaged agent overrides", () => {
     assert.deepEqual(developer.tools, ["read"]);
     assert.deepEqual(developer.skills, ["agent-skill"]);
     assert.equal(developer.inheritProjectContext, false);
-    assert.equal(developer.acceptanceRole, "read-only");
+    assert.equal(developer.acceptanceRole, "writer");
     assert.equal(developer.completionGuard, false);
     assert.equal(developer.supervisorBridge, false);
-    assert.equal(developer.override, undefined);
+    assert.equal(developer.override?.scope, "project");
+    assert.equal(developer.override?.base.acceptanceRole, "read-only");
   });
 
   it("leaves a canonical role untouched when no agentOverrides entry matches its name", () => {

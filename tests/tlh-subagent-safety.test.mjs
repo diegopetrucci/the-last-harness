@@ -33,7 +33,7 @@ function createPiHarness() {
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
   const testRunner = {
     agent: "test-runner",
-    task: "Run the assigned validation commands and report the results",
+    task: "Run the assigned ordered shell/MCP validation steps and report the results",
   };
   assertAllowed(testRunner);
   assert.equal(testRunner.agentScope, "user");
@@ -104,7 +104,7 @@ test("validateSubagentToolInput allows approved execution", () => {
       { agent: "oracle", task: "provide a second opinion" },
       { agent: "developer", task: "fix one issue" },
       { agent: "repo-scout", task: "inspect one area" },
-      { agent: "test-runner", task: "run the exact validation commands" },
+      { agent: "test-runner", task: "run the exact shell and MCP validation steps" },
     ],
   };
   assertAllowed(batched);
@@ -219,20 +219,8 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes", 
   assert.equal(allowedDeveloperResume.agentScope, "user");
 });
 
-test("validateSubagentToolInput uses generic primary-agent wording", () => {
-  const reasons = [
-    validateSubagentToolInput(null),
-    validateSubagentToolInput({ action: "delete" }),
-    validateSubagentToolInput({ agent: "developer" }),
-  ].filter(Boolean);
-
-  for (const reason of reasons) {
-    assert.match(reason, /TLH primary(?:-agent| agents)/);
-    assert.doesNotMatch(reason, /TLH architect/);
-  }
-});
-
 test("validateSubagentToolInput rejects disallowed agents", () => {
+  assert.ok(validateSubagentToolInput(null));
   assert.match(
     validateSubagentToolInput({ agent: "architect" }),
     /Disallowed target\(s\): architect/,

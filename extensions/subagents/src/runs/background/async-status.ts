@@ -230,7 +230,7 @@ const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
 ]);
 
 function normalizePersistedActivityState(value: unknown): ActivityState | undefined {
-  return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+  return value === "needs_attention" ? value : undefined;
 }
 
 function normalizePersistedDurableAttentionReasons(

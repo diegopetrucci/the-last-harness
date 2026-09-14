@@ -105,7 +105,7 @@ function parseHealthCompaction(value) {
         : undefined;
 }
 function parseHealthActivityState(value) {
-    return value === "active_long_running" || value === "needs_attention" ? value : undefined;
+    return value === "needs_attention" ? value : undefined;
 }
 function sanitizeStatusStep(step) {
     const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _activeRuntimeCheckpointAt, activityState: _activityState, idleEpisodeId: _idleEpisodeId, durableAttentionReasons: _durableAttentionReasons, compaction: _compaction, ...rest } = step;

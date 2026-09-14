@@ -7,13 +7,15 @@ import { projectNestedEvents, resolveNestedAsyncDir } from "../shared/nested-eve
 import { deliverInterruptRequest, deliverTimeoutRequest } from "./control-channel.js";
 import { childUsageNumber } from "../shared/child-protocol.js";
 import { appendRecentProgressItem } from "../../shared/recent-progress.js";
-import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
+import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { extractTextFromContent, extractToolArgsPreview } from "../../shared/utils.js";
 import { canonicalSubagentModelIdentity, resolveRuntimeModelContext, } from "../shared/model-fallback.js";
 import { detectContextPressureCrossing, formatContextPressureGuidance, updateContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { parseAndStripAcceptanceReport } from "../shared/acceptance.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
 import { toolBudgetState } from "../shared/tool-budget.js";
+import { ACTIVITY_MONITOR_INTERVAL_MS, getActivityMonitorGap, observeActivityWindow, } from "../shared/health-transition.js";
+const MONITOR_GAP_DIAGNOSTIC_TYPE = "subagent.run.monitor_gap";
 function resolveSupervisorPauseMetadata(input) {
     if (input.toolName === "contact_supervisor" &&
         (input.toolArgs?.reason === "need_decision" || input.toolArgs?.reason === "interview_request")) {
@@ -32,19 +34,22 @@ function resolveSupervisorPauseMetadata(input) {
     return undefined;
 }
 export function createBackgroundRunControlOwner(input) {
-    const { status, id, asyncDir, overallStartTime, controlConfig, nestedRoute, appendEvent } = input;
+    const { status, id, asyncDir, overallStartTime, controlConfig, nestedRoute, appendEvent, appendDiagnosticEvent, } = input;
     const statusPayload = status.statusPayload;
     const flatSteps = status.flatSteps;
     const activeChildInterrupts = new Map();
     const activeChildTimeouts = new Map();
     const pendingStepSteers = [];
     const emittedControlEventKeys = new Set();
+    const observedIdleSince = status.initialStatusSteps.map(() => undefined);
+    const observedActivityAt = status.initialStatusSteps.map(() => undefined);
     const mutatingFailureStates = status.initialStatusSteps.map(() => createMutatingFailureState());
     const runtimeModelContexts = status.initialStatusSteps.map(() => undefined);
     const activeConfiguredModels = status.initialStatusSteps.map(() => undefined);
     const pendingToolResults = status.initialStatusSteps.map(() => undefined);
     const mutatingFailureWindowMs = 5 * 60_000;
     let activityTimer;
+    let lastMonitorTickAt;
     function registerStepInterrupt(flatIndex, interrupt) {
         if (!interrupt) {
             activeChildInterrupts.delete(flatIndex);
@@ -192,46 +197,6 @@ export function createBackgroundRunControlOwner(input) {
         statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
         statusPayload.currentPath = activeStep?.currentPath;
     }
-    function maybeEmitActiveLongRunning(flatIndex, now) {
-        if (!controlConfig.enabled)
-            return false;
-        const step = statusPayload.steps[flatIndex];
-        if (!step || step.status !== "running")
-            return false;
-        const reason = nextLongRunningTrigger(controlConfig, {
-            startedAt: step.startedAt ?? overallStartTime,
-            now,
-            turns: step.turnCount ?? 0,
-            tokens: step.tokens?.total ?? 0,
-        });
-        if (!reason)
-            return false;
-        const previous = step.activityState;
-        const transition = status.transitionStepHealth(flatIndex, { type: "active_long_running" });
-        if (!transition.activeLongRunningNotice)
-            return false;
-        appendControlEvent(buildControlEvent({
-            type: "active_long_running",
-            from: previous,
-            to: "active_long_running",
-            runId: id,
-            agent: step.agent,
-            index: flatIndex,
-            ts: now,
-            message: `${step.agent} is still active but long-running`,
-            reason,
-            turns: step.turnCount,
-            tokens: step.tokens?.total,
-            toolCount: step.toolCount,
-            currentTool: step.currentTool,
-            currentToolDurationMs: step.currentToolStartedAt
-                ? Math.max(0, now - step.currentToolStartedAt)
-                : undefined,
-            currentPath: step.currentPath,
-            elapsedMs: now - (step.startedAt ?? overallStartTime),
-        }));
-        return true;
-    }
     function deliverChildMessageRequest(request) {
         const now = Date.now();
         if (statusPayload.state !== "running") {
@@ -302,6 +267,8 @@ export function createBackgroundRunControlOwner(input) {
         if (!step)
             return;
         status.resetStepHealth(flatIndex);
+        observedIdleSince[flatIndex] = now;
+        observedActivityAt[flatIndex] = step.lastActivityAt;
         runtimeModelContexts[flatIndex] = undefined;
         activeConfiguredModels[flatIndex] = attempt.model;
         step.model = attempt.model;
@@ -322,6 +289,7 @@ export function createBackgroundRunControlOwner(input) {
         if (!step)
             return;
         const now = Date.now();
+        observedIdleSince[flatIndex] = now;
         status.transitionStepHealth(flatIndex, { type: "validated_activity" });
         if (event.type === "compaction_start") {
             status.transitionStepHealth(flatIndex, { type: "compaction_start", reason: event.reason });
@@ -520,9 +488,9 @@ export function createBackgroundRunControlOwner(input) {
         }
         syncTopLevelCurrentTool();
         step.lastActivityAt = now;
+        observedActivityAt[flatIndex] = now;
         statusPayload.lastActivityAt = now;
         statusPayload.lastUpdate = now;
-        maybeEmitActiveLongRunning(flatIndex, now);
         status.syncTopLevelHealthProjection();
         status.writeStatusPayload();
     }
@@ -548,11 +516,28 @@ export function createBackgroundRunControlOwner(input) {
         }
         return lastActivityAt;
     }
+    function appendMonitorGapDiagnostic(now, gapMs) {
+        const line = JSON.stringify({
+            type: MONITOR_GAP_DIAGNOSTIC_TYPE,
+            ts: now,
+            runId: id,
+            gapMs,
+        });
+        if (appendDiagnosticEvent)
+            appendDiagnosticEvent(line, MONITOR_GAP_DIAGNOSTIC_TYPE);
+        else
+            appendEvent(line);
+    }
     function updateRunnerActivityState(now) {
         if (!controlConfig.enabled)
             return false;
+        const previousMonitorTickAt = lastMonitorTickAt;
+        const { gapMs: monitorGapMs, detected: monitorGapDetected } = getActivityMonitorGap(previousMonitorTickAt, now);
+        lastMonitorTickAt = now;
         let changed = false;
         let runLastActivityAt = statusPayload.lastActivityAt ?? overallStartTime;
+        if (monitorGapDetected && statusPayload.steps.some((step) => step.status === "running"))
+            appendMonitorGapDiagnostic(now, monitorGapMs);
         for (let index = 0; index < statusPayload.steps.length; index++) {
             const step = statusPayload.steps[index];
             if (step.status !== "running")
@@ -563,13 +548,24 @@ export function createBackgroundRunControlOwner(input) {
                 step.lastActivityAt = lastActivityAt;
                 changed = true;
             }
+            const observation = observeActivityWindow({
+                previousMonitorTickAt,
+                now,
+                startedAt: step.startedAt ?? overallStartTime,
+                activityAt: lastActivityAt,
+                observedIdleSince: observedIdleSince[index],
+                observedActivityAt: observedActivityAt[index],
+            });
+            observedIdleSince[index] = observation.observedIdleSince;
+            observedActivityAt[index] = observation.observedActivityAt;
+            const observedActivitySince = observation.observedIdleSince;
             const healthState = status.healthStateForStep(index);
             const idleState = healthState.compaction
                 ? undefined
                 : deriveActivityState({
                     config: controlConfig,
                     startedAt: step.startedAt ?? overallStartTime,
-                    lastActivityAt,
+                    lastActivityAt: observedActivitySince,
                     toolCallInFlight: Boolean(step.currentTool),
                     now,
                 });
@@ -586,14 +582,13 @@ export function createBackgroundRunControlOwner(input) {
                             index,
                             ts: now,
                             lastActivityAt,
+                            elapsedMs: Math.max(0, now - observedActivitySince),
                             idleEpisodeId: transition.state.idleEpisodeId,
                         }));
                     }
                     changed = true;
                 }
             }
-            else if (maybeEmitActiveLongRunning(index, now))
-                changed = true;
         }
         if (statusPayload.lastActivityAt !== runLastActivityAt) {
             statusPayload.lastActivityAt = runLastActivityAt;
@@ -612,11 +607,12 @@ export function createBackgroundRunControlOwner(input) {
     function startActivityTimer() {
         if (!controlConfig.enabled)
             return;
+        lastMonitorTickAt = Date.now();
         activityTimer = setInterval(() => {
             if (statusPayload.state !== "running")
                 return;
             updateRunnerActivityState(Date.now());
-        }, 1000);
+        }, ACTIVITY_MONITOR_INTERVAL_MS);
         activityTimer.unref?.();
     }
     function disposeActivityTimer() {

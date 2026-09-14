@@ -44,6 +44,16 @@ TMP_DIR=""
 ORIGINAL_ARGS=("$@")
 TLH_SUBAGENT_PROMPTS=(developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md)
 
+# Release assets replace these empty values and heredoc with a manifest generated
+# from the tagged checkout. Source installers intentionally leave them empty.
+TLH_RELEASE_INTEGRITY_REPO=""
+TLH_RELEASE_INTEGRITY_REF=""
+
+bootstrap_release_integrity_manifest() {
+  cat <<'EOF_RELEASE_INTEGRITY_MANIFEST'
+EOF_RELEASE_INTEGRITY_MANIFEST
+}
+
 usage() {
   cat <<USAGE
 Usage: install.sh [options]
@@ -412,6 +422,146 @@ fi
 
 RAW_BASE="${RAW_BASE_INPUT:-https://raw.githubusercontent.com/${REPO}/${REF}}"
 
+release_integrity_enabled_stage0() {
+  [[ -n "${TLH_RELEASE_INTEGRITY_REPO}" ]] || return 1
+  [[ -n "${TLH_RELEASE_INTEGRITY_REF}" ]] || return 1
+  [[ "${REPO}" == "${TLH_RELEASE_INTEGRITY_REPO}" ]] || return 1
+  [[ "${REF}" == "${TLH_RELEASE_INTEGRITY_REF}" ]] || return 1
+  # A caller-supplied base is custom input, even when it happens to contain the
+  # same URL as the release default. Do not make a false official guarantee.
+  [[ -z "${RAW_BASE_INPUT}" ]] || return 1
+  [[ "${RAW_BASE}" == "https://raw.githubusercontent.com/${TLH_RELEASE_INTEGRITY_REPO}/${TLH_RELEASE_INTEGRITY_REF}" ]]
+}
+
+warn_integrity_not_enforced_stage0() {
+  warn "installer support-file integrity not enforced for ref ${REF}; only an official release asset with its matching immutable ref is SHA-256 verified"
+}
+
+verify_release_support_files_stage0() {
+  local fetched_support_file="$1"
+  local integrity_manifest_file="${TMP_DIR}/.release-integrity-manifest"
+  bootstrap_release_integrity_manifest >"${integrity_manifest_file}"
+
+  node --input-type=commonjs - "${TMP_DIR}" "${integrity_manifest_file}" "${fetched_support_file}" <<'NODE_RELEASE_INTEGRITY'
+const { createHash } = require('node:crypto');
+const { existsSync, lstatSync, readFileSync, rmSync } = require('node:fs');
+const { resolve, sep } = require('node:path');
+
+const [root, manifestPath, fetchedPath] = process.argv.slice(2);
+const allowedRequirements = new Set(['required', 'optional', 'subagent']);
+
+function isSafeRelativePath(relativePath) {
+  if (
+    typeof relativePath !== 'string' ||
+    relativePath.length === 0 ||
+    relativePath.startsWith('/') ||
+    relativePath.includes('\\') ||
+    !/^[A-Za-z0-9._/-]+$/.test(relativePath)
+  ) {
+    return false;
+  }
+  return relativePath.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..');
+}
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function parseManifest() {
+  const manifest = new Map();
+  const lines = readFileSync(manifestPath, 'utf8').split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) fail('release installer integrity manifest is empty');
+
+  for (const [index, line] of lines.entries()) {
+    const parts = line.split('|');
+    if (parts.length !== 2) fail(`invalid release integrity manifest entry ${index + 1}`);
+    const [relativePath, digest] = parts;
+    if (!isSafeRelativePath(relativePath)) {
+      fail(`unsafe release integrity manifest path: ${relativePath}`);
+    }
+    if (!/^[a-f0-9]{64}$/.test(digest)) {
+      fail(`invalid SHA-256 digest for release integrity path: ${relativePath}`);
+    }
+    if (manifest.has(relativePath)) {
+      fail(`duplicate release integrity manifest path: ${relativePath}`);
+    }
+    manifest.set(relativePath, digest);
+  }
+  return manifest;
+}
+
+function targetFor(relativePath) {
+  if (!isSafeRelativePath(relativePath)) fail(`unsafe fetched support path: ${relativePath}`);
+  const target = resolve(root, relativePath);
+  if (target !== root && !target.startsWith(`${root}${sep}`)) {
+    fail(`fetched support path escapes temporary root: ${relativePath}`);
+  }
+  return target;
+}
+
+function main() {
+  const manifest = parseManifest();
+  const mismatches = [];
+  const seen = new Set();
+  const fetchedLines = readFileSync(fetchedPath, 'utf8').split(/\r?\n/).filter(Boolean);
+
+  for (const [index, line] of fetchedLines.entries()) {
+    const parts = line.split('|');
+    if (parts.length !== 2 || !allowedRequirements.has(parts[0])) {
+      fail(`invalid fetched support inventory entry ${index + 1}`);
+    }
+    const [requirement, relativePath] = parts;
+    const target = targetFor(relativePath);
+    if (seen.has(relativePath)) fail(`duplicate fetched support path: ${relativePath}`);
+    seen.add(relativePath);
+
+    const expected = manifest.get(relativePath);
+    if (expected === undefined) {
+      mismatches.push({ requirement, relativePath, target, expected: 'missing', actual: 'unlisted' });
+      continue;
+    }
+
+    let actual = 'missing';
+    if (existsSync(target) && lstatSync(target).isFile()) {
+      actual = createHash('sha256').update(readFileSync(target)).digest('hex');
+    }
+    if (actual !== expected) {
+      mismatches.push({ requirement, relativePath, target, expected, actual });
+    }
+  }
+
+  for (const mismatch of mismatches) {
+    try {
+      rmSync(mismatch.target, { force: true });
+    } catch (error) {
+      fail(`unable to remove failed integrity file ${mismatch.relativePath}: ${error.message}`);
+    }
+  }
+
+  const requiredMismatch = mismatches.find((mismatch) => mismatch.requirement === 'required');
+  for (const mismatch of mismatches) {
+    if (mismatch.requirement !== 'required') {
+      process.stderr.write(
+        `warning: installer support file failed SHA-256 integrity check and was removed: ${mismatch.relativePath}\n`,
+      );
+    }
+  }
+  if (requiredMismatch !== undefined) {
+    fail(
+      `required installer support file failed SHA-256 integrity check and was removed: ${requiredMismatch.relativePath}`,
+    );
+  }
+}
+
+try {
+  main();
+} catch (error) {
+  process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+}
+NODE_RELEASE_INTEGRITY
+}
+
 bootstrap_support_manifest() {
   cat <<'EOF_SUPPORT_FILES'
 required|scripts/tlh-install.mjs
@@ -576,7 +726,7 @@ fetch_remote_support_root() {
   # Bash 3.2 has no wait -n, so fetch in bounded batches and wait for every
   # worker before inspecting results. Status files keep background failures
   # from triggering the parent shell's set -e trap prematurely.
-  local status_dir requirement relative_path prompt pid
+  local status_dir fetched_support_file requirement relative_path prompt pid
   local i batch_start batch_end total req rel_path target_path status_file exit_status
   local -a all_requirements all_paths batch_pids
   all_requirements=()
@@ -590,7 +740,9 @@ fetch_remote_support_root() {
   # Keep status files inside the existing temporary root so cleanup removes
   # them on success and on any required-file failure.
   status_dir="${TMP_DIR}/.fetch-status"
+  fetched_support_file="${TMP_DIR}/.fetched-support-files"
   mkdir -p "${status_dir}"
+  : >"${fetched_support_file}"
 
   # Build one ordered work list from the manifest, then add the non-fatal
   # subagent prompt downloads. Results are processed in this same order below.
@@ -663,8 +815,14 @@ fetch_remote_support_root() {
       elif [[ "${req}" != "subagent" ]]; then
         warn_missing_optional_support_file "${rel_path}"
       fi
+    else
+      printf '%s|%s\n' "${req}" "${rel_path}" >>"${fetched_support_file}"
     fi
   done
+
+  if release_integrity_enabled_stage0; then
+    verify_release_support_files_stage0 "${fetched_support_file}"
+  fi
 }
 
 # Remote/stale stage-0 installers cannot reliably tell whether their embedded
@@ -761,9 +919,14 @@ if [[ "${DRY_RUN}" == "true" ]]; then
 fi
 
 if [[ "${_TLH_STAGE0_CANONICALIZED:-}" != "1" ]]; then
-  require_command node
-  canonicalize_stage0_installer
-  exit $?
+  if release_integrity_enabled_stage0; then
+    verbose_log "Using release-bound SHA-256 support-file manifest for ${TLH_RELEASE_INTEGRITY_REF}."
+  else
+    warn_integrity_not_enforced_stage0
+    require_command node
+    canonicalize_stage0_installer
+    exit $?
+  fi
 fi
 
 require_supported_node_stage0

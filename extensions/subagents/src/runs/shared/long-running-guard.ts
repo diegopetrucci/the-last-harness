@@ -1,14 +1,3 @@
-import type { ResolvedControlConfig } from "../../shared/types.ts";
-
-interface LongRunningNoticeMetrics {
-  startedAt: number;
-  now: number;
-  turns: number;
-  tokens: number;
-}
-
-type LongRunningTriggerReason = "time_threshold" | "turn_threshold" | "token_threshold";
-
 interface FailedMutatingAttempt {
   tool: string;
   path?: string;
@@ -647,21 +636,6 @@ export function isMutatingTool(
 export function didMutatingToolFail(text: string): boolean {
   const lowered = text.toLowerCase();
   return MUTATING_FAILURE_HINTS.some((hint) => lowered.includes(hint));
-}
-
-export function nextLongRunningTrigger(
-  config: ResolvedControlConfig,
-  metrics: LongRunningNoticeMetrics,
-): LongRunningTriggerReason | undefined {
-  if (metrics.now - metrics.startedAt >= config.activeNoticeAfterMs) return "time_threshold";
-  if (config.activeNoticeAfterTurns !== undefined && metrics.turns >= config.activeNoticeAfterTurns)
-    return "turn_threshold";
-  if (
-    config.activeNoticeAfterTokens !== undefined &&
-    metrics.tokens >= config.activeNoticeAfterTokens
-  )
-    return "token_threshold";
-  return undefined;
 }
 
 export function resetMutatingFailureState(state: MutatingFailureState): void {

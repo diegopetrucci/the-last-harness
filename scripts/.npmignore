@@ -22,6 +22,7 @@ lib/check-installer-performance-workspace.mts
 lib/tlh-startup-readiness.mjs
 lib/tlh-startup-readiness.mts
 release-notes.mjs
+generate-release-installer.mjs
 run-subagents-tests.mjs
 run-lane.mjs
 run-ci-test-shard.mjs

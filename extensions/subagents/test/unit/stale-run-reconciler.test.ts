@@ -257,7 +257,7 @@ describe("async stale-run reconciliation", () => {
       assert.equal(repaired.repaired, true);
       assert.equal(repaired.status?.state, "failed");
       assert.equal(repaired.status?.steps?.[0]?.status, "complete");
-      assert.equal(repaired.status?.steps?.[0]?.activityState, "active_long_running");
+      assert.equal(repaired.status?.steps?.[0]?.activityState, undefined);
       assert.deepEqual(repaired.status?.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
       assert.equal(repaired.status?.steps?.[1]?.status, "failed");
       assert.equal(repaired.status?.steps?.[1]?.activityState, undefined);

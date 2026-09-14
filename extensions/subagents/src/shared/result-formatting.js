@@ -1,6 +1,6 @@
 import { normalizeSubagentRunMode, } from "./types.js";
 import { truncateWithMarker } from "./string-utils.js";
-import { safeTerminalText } from "./display-text.js";
+import { safeTerminalDocumentLeaf, safeTerminalText } from "./display-text.js";
 export function resolveSubagentResultStatus(input) {
     if (input.interrupted || input.state === "paused")
         return "paused";
@@ -160,7 +160,7 @@ function boundedNativeForegroundError(value) {
     return truncateWithMarker(safeTerminalText(value), MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
 }
 function boundedNativeForegroundSummary(child, maxChars) {
-    const raw = safeTerminalText(child.summary).trim() || "(no output)";
+    const raw = safeTerminalDocumentLeaf(child.summary).trim() || "(no output)";
     if (raw.length <= maxChars)
         return raw;
     const marker = child.artifactPath || child.sessionPath

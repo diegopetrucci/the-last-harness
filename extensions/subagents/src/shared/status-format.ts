@@ -12,7 +12,6 @@ function formatActivityAge(ms: number): string {
 function agelessActivityLabel(activityState: ActivityState | undefined): string | undefined {
   if (activityState === undefined) return undefined;
   if (activityState === "needs_attention") return "needs attention";
-  if (activityState === "active_long_running") return "active but long-running";
   // Exhaustiveness guard: a future ActivityState member is a compile error here
   // rather than silently falling through to 'active now'.
   void (activityState satisfies never);
@@ -31,8 +30,6 @@ export function formatActivityLabel(
   // next render shows a real age (e.g. "last activity 2s ago").
   if (age === "now") return agelessActivityLabel(activityState) ?? "active now";
   if (activityState === "needs_attention") return `no activity for ${age}`;
-  if (activityState === "active_long_running")
-    return `active but long-running · last activity ${age} ago`;
   // Non-health activityState is undefined here (checked above). A future member would
   // be a compile error rather than a silent fallback.
   if (activityState !== undefined) void (activityState satisfies never);

@@ -44,7 +44,7 @@ Use the `subagent` tool for minor agents:
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands.
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved implementation task at a time and run its ticket-local validation.
-- `test-runner`: execute the exact commands listed on an approved final-validation ticket and report pass/fail without editing.
+- `test-runner`: execute the exact ordered shell/MCP steps listed on an approved final-validation ticket and report pass/fail without editing.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
@@ -108,9 +108,9 @@ When implementation work needs broader verification:
 1. Split implementation work into normal implementation tickets.
 2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
 3. Keep implementation-ticket validation narrow and ticket-scoped; the developer must run those checks as part of implementation. Defer only the final cross-ticket validation work.
-4. Every final-validation ticket must list the exact commands, including arguments, that `test-runner` must execute. Derive them from `VALIDATING.md` or repository discovery; do not leave command selection or validation planning to `test-runner`.
+4. Every final-validation ticket must list the exact ordered validation steps that `test-runner` must execute. Each step must be either a complete shell command (including arguments) or exact adapter-shaped input for the generic `mcp` gateway.
 5. Make any validation deferral explicit in the ticket text so `developer` can follow it without guessing.
-6. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
+6. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation checks.
 7. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
 
 ## Implementation loop
@@ -120,7 +120,7 @@ For each ready task:
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Inspect the ticket type and route it to the matching worker:
    - implementation tickets go to `developer`, who must run `tk show <id>` before making changes and perform the ticket-local validation;
-   - final-validation tickets go to `test-runner`, who must run `tk show <id>` first and execute only the exact commands listed in the ticket.
+   - final-validation tickets go to `test-runner`, who must run `tk show <id>` first and execute only the exact ordered shell/MCP steps listed in the ticket.
 3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
 4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
 5. Evaluate the worker report against the ticket and overall plan.
@@ -130,11 +130,9 @@ For each ready task:
 
 ## Async child steering
 
-- Treat roughly 4m30 and later long-running notices as non-disruptive status checkpoints, not automatic pause signals.
-- Prefer status/steer over timer-driven pause: let healthy async child runs continue unless there is a real decision, blocker, or safety issue.
+- Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Pause or interrupt a live child only for real decisions, confirmed blockers, or safety concerns — not just because another elapsed-time checkpoint arrived.
-- Repeated checkpoints never reset the cumulative runtime budget for that child; treat the elapsed runtime as continuous across status notices.
+- Treat cumulative runtime budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
 
 ## Final review
 

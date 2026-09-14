@@ -45,7 +45,7 @@ test("enabled primary mode allows final-validation delegation to test-runner", a
     toolName: "subagent",
     input: {
       agent: "test-runner",
-      task: "Run the exact commands from the final-validation ticket and report the outcomes.",
+      task: "Run the exact ordered shell/MCP steps from the final-validation ticket and report the outcomes.",
     },
   };
   const ctx = createToolCallContext([

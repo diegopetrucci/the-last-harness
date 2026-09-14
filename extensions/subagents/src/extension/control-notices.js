@@ -55,7 +55,7 @@ function isForegroundNoticeStillActionable(state, details) {
     return control.idleEpisodeId === undefined && !control.durableAttentionReasons?.length;
 }
 export function handleSubagentControlNotice(input) {
-    if (!input.details?.event || input.details.event.type === "active_long_running")
+    if (!input.details?.event)
         return;
     if (input.details.source !== "foreground") {
         deliverControlNotice(input);

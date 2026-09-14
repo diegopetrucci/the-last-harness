@@ -16,7 +16,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropN
 import { captureSingleOutputSnapshot, injectOutputPathSystemPrompt, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
-import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
+import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, composeAcceptanceFailureError, formatAcceptancePrompt, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -25,7 +25,7 @@ import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-
 import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { hasUsableSessionArtifact, mergeContextUsageDiagnostics, resolveEffectiveContextWindow, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { CONFIGURED_RUN_DEADLINE_TIMEOUT_MESSAGE, applyHealthProgressProjection, clearHealthForProgress, evaluateSingleAcceptance, finalizeForegroundArtifacts, finalizeSingleAttempt, formatTimeoutMessage, prepareForegroundRunFinalization, resolveResultSessionFile, setupForegroundArtifacts, snapshotProgress, snapshotResult, transitionHealthForProgress, } from "./execution-finalization.js";
-import { createHealthTransitionState, resetHealthTransitionState, } from "../shared/health-transition.js";
+import { ACTIVITY_MONITOR_INTERVAL_MS, observeActivityWindow, createHealthTransitionState, resetHealthTransitionState, } from "../shared/health-transition.js";
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE = "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
 function settleForegroundAcceptance(result, acceptance, options, interruptedAcceptance, healthState) {
     result.acceptance = acceptance;
@@ -363,6 +363,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         let removeAbortListener;
         let removeInterruptListener;
         let activityTimer;
+        let lastMonitorTickAt;
+        let observedIdleSince;
+        let observedActivityAt;
         let timeoutTimer;
         let timeoutTerminationTimer;
         let timeoutHardKillTimer;
@@ -559,6 +562,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 contextPressureThreshold: input.contextPressureThreshold,
                 reason,
                 idleEpisodeId: reason === "idle" ? transition.state.idleEpisodeId : undefined,
+                elapsedMs: reason === "idle" ? Math.max(0, now - (observedIdleSince ?? now)) : undefined,
                 turns: result.usage.turns,
                 tokens: progress.tokens,
                 toolCount: progress.toolCount,
@@ -570,54 +574,33 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             emitControlEvent(event);
             return transition.changed;
         };
-        const emitActiveLongRunning = (now, reason) => {
+        const updateActivityState = (now, monitorTick = false) => {
             if (!controlConfig.enabled)
                 return false;
-            const previous = progress.activityState;
-            const transition = applyHealthTransition({ type: "active_long_running" });
-            if (!transition.activeLongRunningNotice)
-                return false;
-            emitControlEvent(buildControlEvent({
-                type: "active_long_running",
-                from: previous,
-                to: "active_long_running",
-                runId: options.runId,
-                agent: agent.name,
-                index: options.index,
-                ts: now,
-                message: `${agent.name} is still active but long-running`,
-                reason,
-                turns: result.usage.turns,
-                tokens: progress.tokens,
-                toolCount: progress.toolCount,
-                currentTool: progress.currentTool,
-                currentToolDurationMs: currentToolDurationMs(now),
-                currentPath: progress.currentPath,
-                elapsedMs: now - startTime,
-            }));
-            return true;
-        };
-        const updateActivityState = (now) => {
-            if (!controlConfig.enabled)
-                return false;
+            const observation = observeActivityWindow({
+                previousMonitorTickAt: monitorTick ? lastMonitorTickAt : undefined,
+                now,
+                startedAt: startTime,
+                activityAt: progress.lastActivityAt ?? startTime,
+                observedIdleSince,
+                observedActivityAt,
+            });
+            if (monitorTick)
+                lastMonitorTickAt = now;
+            observedIdleSince = observation.observedIdleSince;
+            observedActivityAt = observation.observedActivityAt;
             const idleState = shared.healthState.value.compaction
                 ? undefined
                 : deriveActivityState({
                     config: controlConfig,
                     startedAt: startTime,
-                    lastActivityAt: progress.lastActivityAt,
+                    lastActivityAt: observation.observedIdleSince,
                     toolCallInFlight: Boolean(progress.currentTool),
                     now,
                 });
             if (idleState === "needs_attention")
                 return emitNeedsAttention(now);
-            const activeReason = nextLongRunningTrigger(controlConfig, {
-                startedAt: startTime,
-                now,
-                turns: result.usage.turns,
-                tokens: progress.tokens,
-            });
-            return activeReason ? emitActiveLongRunning(now, activeReason) : false;
+            return false;
         };
         const emitUpdateSnapshot = (text) => {
             if (!options.onUpdate || processClosed)
@@ -669,6 +652,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 applyHealthTransition({ type: "compaction_end" });
             }
             progress.lastActivityAt = now;
+            observedIdleSince = now;
+            observedActivityAt = now;
             if (evt.type === "tool_execution_start") {
                 const toolArgs = evt.args ?? {};
                 let supervisorPause;
@@ -823,15 +808,16 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }
         };
         if (controlConfig.enabled) {
+            lastMonitorTickAt = Date.now();
             activityTimer = setInterval(() => {
                 if (processClosed || settled)
                     return;
                 const now = Date.now();
-                if (updateActivityState(now)) {
+                if (updateActivityState(now, true)) {
                     progress.durationMs = now - startTime;
                     fireUpdate();
                 }
-            }, 1000);
+            }, ACTIVITY_MONITOR_INTERVAL_MS);
             activityTimer.unref?.();
         }
         if (attemptTimeout) {

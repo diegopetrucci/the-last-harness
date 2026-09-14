@@ -1066,7 +1066,7 @@ describe("renderSubagentResult", () => {
     const makeResult = (
       turnCount: number,
       currentTool?: string,
-      activityState?: "needs_attention" | "active_long_running",
+      activityState?: "needs_attention",
     ) => ({
       content: [{ type: "text" as const, text: "(running...)" }],
       details: {
@@ -1124,22 +1124,16 @@ describe("renderSubagentResult", () => {
     assert.match(expanded, /3 tools, 1\.2k tok, 4\.0s/);
     assert.match(expanded, /2 turns/);
 
-    for (const activityState of ["needs_attention", "active_long_running"] as const) {
-      const warning = renderSubagentResult!(
-        makeResult(0, undefined, activityState),
-        { expanded: false },
-        theme,
-      )
-        .render(120)
-        .join("\n");
-      assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
-      // The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
-      // These strings stand in for "a health warning replaced the thinking phrase" on the activity line.
-      assert.match(
-        warning,
-        activityState === "needs_attention" ? /⎿  needs attention/ : /⎿  active but long-running/,
-      );
-    }
+    const warning = renderSubagentResult!(
+      makeResult(0, undefined, "needs_attention"),
+      { expanded: false },
+      theme,
+    )
+      .render(120)
+      .join("\n");
+    assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+    // The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
+    assert.match(warning, /⎿  needs attention/);
   });
 
   it("keeps running compact result output stable when progress is unchanged", async () => {

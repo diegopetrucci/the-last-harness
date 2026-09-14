@@ -104,6 +104,46 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("drops retired active-long-running state from persisted resume metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-retired-health-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-retired-health", "status.json"), {
+        runId: "run-retired-health",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            activityState: "active_long_running" as never,
+            idleEpisodeId: "retired-health~idle~1",
+            durableAttentionReasons: ["context_pressure"],
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-retired-health" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+
+      assert.equal(target.activityState, undefined);
+      assert.equal(target.idleEpisodeId, "retired-health~idle~1");
+      assert.deepEqual(target.durableAttentionReasons, ["context_pressure"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("carries safe project provenance/config into resume targets and rejects corruption", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-project-agent-"));
     try {

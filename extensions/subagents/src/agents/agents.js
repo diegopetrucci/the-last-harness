@@ -403,8 +403,10 @@ function applyCustomAgentOverride(agent, override, meta) {
     if (override.inheritSkills !== undefined) {
         fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
     }
-    if (override.acceptanceRole !== undefined) {
-        fill("acceptanceRole", ["acceptanceRole"], override.acceptanceRole === false ? undefined : override.acceptanceRole);
+    if (override.acceptanceRole !== undefined && isCanonicalPackagedMinorAgent(agent)) {
+        mutable().acceptanceRole =
+            override.acceptanceRole === false ? undefined : override.acceptanceRole;
+        anyFilled = true;
     }
     if (override.disabled !== undefined && agent.disabled === undefined) {
         mutable().disabled = override.disabled;

@@ -365,7 +365,7 @@ test("bug-hunter bash tk show and npm test remain read-only", () => {
   }
 });
 
-test("test-runner final-validation allows tk show, exact validation commands, and concise reporting", () => {
+test("test-runner final-validation allows tk show, exact shell validation commands, and concise reporting", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
     metadata: {
@@ -390,6 +390,336 @@ test("test-runner final-validation allows tk show, exact validation commands, an
   assert.deepEqual(result.violations, []);
 });
 
+test("test-runner allows ordered shell and generic MCP validation steps", () => {
+  const result = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: {
+      assignedValidationSteps: [
+        { kind: "shell", command: "npm run validate" },
+        {
+          kind: "mcp",
+          input: {
+            server: "repo-checks",
+            tool: "check_status",
+            args: '{"scope":"working-tree"}',
+          },
+        },
+      ],
+    },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "bash", command: "npm run validate" },
+      {
+        type: "tool",
+        tool: "mcp",
+        input: {
+          server: "repo-checks",
+          tool: "check_status",
+          args: '{"scope":"working-tree"}',
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("test-runner rejects unassigned generic MCP validation after ticket inspection", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        {
+          type: "tool",
+          tool: "mcp",
+          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+        },
+      ],
+    }),
+    ["test-runner.read_only"],
+  );
+});
+
+test("test-runner rejects generic MCP validation with empty assignment metadata", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      metadata: { assignedValidationSteps: [] },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        { type: "tool", tool: "mcp", input: {} },
+      ],
+    }),
+    ["test-runner.read_only"],
+  );
+});
+
+test("test-runner rejects generic MCP validation with malformed assignment metadata", () => {
+  for (const metadata of [
+    { assignedValidationSteps: "npm run validate" },
+    { assignedValidationSteps: [{ kind: "mcp", input: {} }, null] },
+  ]) {
+    assert.deepEqual(
+      violationCodes({
+        agent: "test-runner",
+        metadata,
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+          {
+            type: "tool",
+            tool: "mcp",
+            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          },
+        ],
+      }),
+      ["test-runner.read_only"],
+    );
+  }
+});
+
+test("test-runner keeps legacy validation commands shell-only", () => {
+  const shellResult = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: { assignedValidationCommands: ["npm run validate"] },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "bash", command: "npm run validate" },
+    ],
+  });
+  assert.equal(shellResult.ok, true);
+  assert.deepEqual(shellResult.violations, []);
+
+  const mcpResult = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: { assignedValidationCommands: ["npm run validate"] },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "mcp", input: { server: "repo-checks" } },
+    ],
+  });
+  assert.deepEqual(
+    mcpResult.violations.map((violation) => violation.code),
+    ["test-runner.read_only"],
+  );
+});
+
+test("test-runner accepts adapter status, discovery, search, and connect MCP shapes", () => {
+  const assignedValidationSteps = [
+    { kind: "mcp", input: {} },
+    { kind: "mcp", input: { server: "repo-checks" } },
+    { kind: "mcp", input: { search: "check status" } },
+    { kind: "mcp", input: { connect: "repo-checks" } },
+    {
+      kind: "mcp",
+      input: { server: "repo-checks", tool: "check_status", args: '{"scope":"working-tree"}' },
+    },
+  ];
+  const result = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: { assignedValidationSteps },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      ...assignedValidationSteps.map((step) => ({ type: "tool", tool: "mcp", input: step.input })),
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("test-runner stops after a failed generic MCP validation step", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      metadata: {
+        assignedValidationSteps: [
+          {
+            kind: "mcp",
+            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          },
+          { kind: "shell", command: "npm test" },
+        ],
+      },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        {
+          type: "tool",
+          tool: "mcp",
+          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          status: "error",
+        },
+        { type: "tool", tool: "bash", command: "npm test" },
+      ],
+    }),
+    ["test-runner.validation_stop_required"],
+  );
+});
+
+test("test-runner stops after an imported generic MCP details.error failure", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      metadata: {
+        assignedValidationSteps: [
+          {
+            kind: "mcp",
+            input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          },
+          { kind: "shell", command: "npm test" },
+        ],
+      },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        {
+          type: "tool",
+          tool: "mcp",
+          input: { server: "repo-checks", tool: "check_status", args: "{}" },
+          details: { error: "tool_error" },
+        },
+        { type: "tool", tool: "bash", command: "npm test" },
+      ],
+    }),
+    ["test-runner.validation_stop_required"],
+  );
+});
+
+test("test-runner stops after any meaningful MCP details.error", () => {
+  for (const error of [
+    "auth_required",
+    "not_connected",
+    "not_found",
+    "empty_query",
+    "tool_not_found",
+    "connect_failed",
+    "gateway_failure",
+  ]) {
+    const result = evaluateTracePolicy({
+      agent: "test-runner",
+      metadata: {
+        assignedValidationSteps: [
+          { kind: "mcp", input: { server: "repo-checks" } },
+          { kind: "shell", command: "npm test" },
+        ],
+      },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        { type: "tool", tool: "mcp", input: { server: "repo-checks" }, details: { error } },
+        { type: "tool", tool: "bash", command: "npm test" },
+      ],
+    });
+
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      ["test-runner.validation_stop_required"],
+      error,
+    );
+  }
+});
+
+test("test-runner does not let a falsy top-level error mask an MCP failure detail", () => {
+  for (const error of [false, 0, "", null]) {
+    assert.deepEqual(
+      violationCodes({
+        agent: "test-runner",
+        metadata: {
+          assignedValidationSteps: [
+            { kind: "mcp", input: { server: "repo-checks" } },
+            { kind: "shell", command: "npm test" },
+          ],
+        },
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+          {
+            type: "tool",
+            tool: "mcp",
+            input: { server: "repo-checks" },
+            error,
+            details: { error: "tool_error" },
+          },
+          { type: "tool", tool: "bash", command: "npm test" },
+        ],
+      }),
+      ["test-runner.validation_stop_required"],
+      String(error),
+    );
+  }
+});
+
+test("test-runner does not stop after falsy nested MCP details.error", () => {
+  for (const error of [false, 0, "", null]) {
+    assert.deepEqual(
+      violationCodes({
+        agent: "test-runner",
+        metadata: {
+          assignedValidationSteps: [
+            { kind: "mcp", input: { server: "repo-checks" } },
+            { kind: "shell", command: "npm test" },
+          ],
+        },
+        steps: [
+          { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+          {
+            type: "tool",
+            tool: "mcp",
+            input: { server: "repo-checks" },
+            details: { error },
+          },
+          { type: "tool", tool: "bash", command: "npm test" },
+        ],
+      }),
+      [],
+      String(error),
+    );
+  }
+});
+
+test("test-runner allows assigned generic MCP tools that change server state but rejects direct tools", () => {
+  const mutatingResult = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: {
+      assignedValidationSteps: [
+        {
+          kind: "mcp",
+          input: {
+            server: "repo-checks",
+            tool: "write_report",
+            args: '{"report":"validation"}',
+          },
+        },
+      ],
+    },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      {
+        type: "tool",
+        tool: "mcp",
+        input: {
+          server: "repo-checks",
+          tool: "write_report",
+          args: '{"report":"validation"}',
+        },
+        mutates: true,
+      },
+    ],
+  });
+  assert.equal(mutatingResult.ok, true);
+  assert.deepEqual(mutatingResult.violations, []);
+
+  const directResult = evaluateTracePolicy({
+    agent: "test-runner",
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "mcp:repo-checks", input: {} },
+    ],
+  });
+  assert.deepEqual(
+    directResult.violations.map((violation) => violation.code),
+    ["test-runner.read_only"],
+  );
+});
+
 test("test-runner rejects contact_supervisor despite generic escalation guidance", () => {
   assert.deepEqual(
     violationCodes({
@@ -407,7 +737,7 @@ test("test-runner rejects contact_supervisor despite generic escalation guidance
   );
 });
 
-test("test-runner normalizes surrounding assigned command metadata whitespace", () => {
+test("test-runner normalizes surrounding assigned shell-step metadata whitespace", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
     metadata: {
@@ -460,7 +790,7 @@ test("test-runner stops after failed validation", () => {
   );
 });
 
-test("test-runner enforces assigned validation command order", () => {
+test("test-runner enforces assigned validation step order", () => {
   assert.deepEqual(
     violationCodes({
       agent: "test-runner",
@@ -477,7 +807,7 @@ test("test-runner enforces assigned validation command order", () => {
   );
 });
 
-test("test-runner keeps command checking permissive without assigned metadata", () => {
+test("test-runner keeps validation-step checking permissive without assigned metadata", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
     steps: [
@@ -491,7 +821,7 @@ test("test-runner keeps command checking permissive without assigned metadata", 
   assert.deepEqual(result.violations, []);
 });
 
-test("test-runner ignores malformed assigned command metadata without parsing ticket output", () => {
+test("test-runner ignores malformed assigned validation metadata without parsing ticket output", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
     metadata: { assignedValidationCommands: "npm run validate" },

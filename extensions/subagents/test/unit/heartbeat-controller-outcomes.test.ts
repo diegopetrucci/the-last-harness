@@ -331,6 +331,147 @@ describe("createHeartbeatController — early-generation cutoff", () => {
     ctrl.destroy();
   });
 
+  it("classifies populated block starts from cache usage without inspecting mutable partial content", async () => {
+    const startCases: Array<{ label: string; event: AssistantMessageEvent }> = [
+      {
+        label: "text_start",
+        event: makeTextStartEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0 }),
+      },
+      {
+        label: "thinking_start-redacted",
+        event: makeThinkingStartEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0 }),
+      },
+      {
+        label: "toolcall_start-populated",
+        event: makeToolCallStartEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0 }),
+      },
+    ];
+
+    for (const { label, event } of startCases) {
+      // The stream protocol exposes a shared partial message. Pin content on
+      // that object, including redacted thinking and populated tool arguments,
+      // to ensure classification depends on cache evidence rather than its
+      // mutable contents.
+      switch (event.type) {
+        case "text_start":
+          event.partial.content[event.contentIndex] = {
+            type: "text",
+            text: "shared partial text",
+          };
+          break;
+        case "thinking_start":
+          event.partial.content[event.contentIndex] = {
+            type: "thinking",
+            thinking: "[Reasoning redacted]",
+            redacted: true,
+          };
+          break;
+        case "toolcall_start":
+          event.partial.content[event.contentIndex] = {
+            type: "toolCall",
+            id: "call-1",
+            name: "lookup",
+            arguments: { query: "value" },
+          };
+          break;
+      }
+
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const accounting: import("../../src/runs/shared/heartbeat-controller.ts").BeatAccounting[] =
+        [];
+      const consumed: string[] = [];
+
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        onBeatAccounting: (value) => accounting.push(value),
+        streamProvider() {
+          return (async function* () {
+            consumed.push("start");
+            yield makeStartEvent();
+            consumed.push(label);
+            yield event;
+            consumed.push("done");
+            yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 0, totalTokens: 6000 });
+          })();
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "sess-populated-start");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assert.deepEqual(consumed, ["start", label], `${label} must stop at the block start`);
+      assert.equal(sink.records[0]?.["outcome"], "cache_read");
+      assert.equal(accounting.length, 1, `${label} usage must be published once`);
+      assert.equal(accounting[0]!.outcome, "cache_read");
+      assert.equal(accounting[0]!.usage.cacheRead, 5000);
+      ctrl.destroy();
+    }
+  });
+
+  it("preserves cache-write mismatch precedence at a cache-bearing block start and closes the gap", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const consumed: string[] = [];
+    let streamCalls = 0;
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      streamProvider() {
+        streamCalls++;
+        return (async function* () {
+          consumed.push("start");
+          yield makeStartEvent();
+          consumed.push("text_start");
+          // cacheWrite exceeds the mismatch threshold even though cacheRead is
+          // positive, so the mismatch outcome must retain precedence.
+          yield makeTextStartEvent({
+            input: 1000,
+            cacheRead: 5000,
+            cacheWrite: 1024,
+            output: 0,
+            totalTokens: 7024,
+          });
+          consumed.push("done");
+          yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 0, totalTokens: 6000 });
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-start-mismatch", "sess-start-mismatch");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.deepEqual(
+      consumed,
+      ["start", "text_start"],
+      "mismatch must terminate at the block start",
+    );
+    assert.equal(sink.records.length, 1);
+    assert.equal(sink.records[0]?.["outcome"], "cache_write_mismatch");
+
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(streamCalls, 1, "cache-write mismatch must close the gap");
+    ctrl.destroy();
+  });
+
   it("rejects generated deltas even when cache-read and output usage arrive together", async () => {
     const deltaCases: Array<{ label: string; event: AssistantMessageEvent }> = [
       {

@@ -396,6 +396,7 @@ describe("project agent snapshot provider", () => {
             thinking: "high",
             systemPrompt: "user prompt",
             tools: ["write"],
+            acceptanceRole: "writer",
             disabled: false,
           },
           "embedded.explicit-tools": { tools: ["write"], model: "user-tools-model" },
@@ -408,7 +409,11 @@ describe("project agent snapshot provider", () => {
       subagents: {
         defaultModel: "project-default",
         agentOverrides: {
-          "embedded.override-model": { model: "project-override", disabled: true },
+          "embedded.override-model": {
+            model: "project-override",
+            acceptanceRole: false,
+            disabled: true,
+          },
           "embedded.non-disabled": { model: "project-model", disabled: true },
         },
       },
@@ -418,6 +423,7 @@ describe("project agent snapshot provider", () => {
     overrideModel.thinking = "low";
     overrideModel.systemPrompt = "root prompt";
     overrideModel.tools = ["read"];
+    overrideModel.acceptanceRole = "read-only";
     const explicitTools = makeAgent("embedded.explicit-tools");
     explicitTools.tools = ["read"];
     const capability = register({
@@ -425,7 +431,12 @@ describe("project agent snapshot provider", () => {
       generationId: "generation-overrides",
       entries: [
         makeEntry("embedded.default-model", "digest-default-model"),
-        makeEntry(overrideModel, "digest-override-model", ["model", "thinking", "tools"]),
+        makeEntry(overrideModel, "digest-override-model", [
+          "model",
+          "thinking",
+          "tools",
+          "acceptanceRole",
+        ]),
         makeEntry(explicitTools, "digest-explicit-tools", ["tools"]),
         makeEntry("embedded.disabled-snapshot", "digest-disabled-snapshot"),
         makeEntry("embedded.non-disabled", "digest-non-disabled"),
@@ -441,6 +452,7 @@ describe("project agent snapshot provider", () => {
     assert.equal(unchanged?.thinking, "low");
     assert.equal(unchanged?.systemPrompt, "root prompt");
     assert.deepEqual(unchanged?.tools, ["read"]);
+    assert.equal(unchanged?.acceptanceRole, "read-only");
     assert.equal(unchanged?.override, undefined);
     assert.deepEqual(
       discovered.agents.find((agent) => agent.name === "embedded.explicit-tools")?.tools,

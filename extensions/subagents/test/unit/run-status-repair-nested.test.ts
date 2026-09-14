@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { TEMP_ROOT_DIR, type ForegroundResumeRun } from "../../src/shared/types.ts";
 import { makeSubagentState } from "../support/helpers.ts";
 import { errno, textContent } from "../support/run-status-fixtures.ts";
 
@@ -215,6 +215,46 @@ describe("async run status inspection", () => {
         text,
         new RegExp(`Output: ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the bounded line tail for remembered foreground transcripts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-foreground-transcript-"));
+    try {
+      const runId = "foreground-transcript-tail";
+      const run: ForegroundResumeRun = {
+        runId,
+        mode: "single",
+        cwd: root,
+        updatedAt: 250,
+        children: [
+          {
+            agent: "worker",
+            index: 0,
+            status: "completed",
+            finalOutput: ["first line", "second line", "third line", "fourth line"].join("\n"),
+          },
+        ],
+      };
+      const result = inspectSubagentStatus(
+        { id: runId, view: "transcript", lines: 2 },
+        {
+          asyncDirRoot: path.join(root, "runs"),
+          resultsDir: path.join(root, "results"),
+          state: makeSubagentState({ foregroundRuns: new Map([[runId, run]]) }),
+        },
+      );
+
+      const text = textContent(result);
+      assert.equal(result.isError, undefined);
+      assert.match(
+        text,
+        /Status transcript tail \(retained output\/session; not _transcript\.jsonl\):/,
+      );
+      assert.doesNotMatch(text, /first line|second line/);
+      assert.match(text, /  third line\n  fourth line/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1240,7 +1280,7 @@ describe("async run status inspection", () => {
             success: false,
             state: "failed",
             sessionFile,
-            summary: "result survived missing status",
+            summary: "worker-a:\nfirst line\nsecond line\n\nworker-b:\nthird line",
           },
           null,
           2,
@@ -1264,7 +1304,10 @@ describe("async run status inspection", () => {
         text,
         /Revive: subagent\(\{ action: "resume", id: "run-result-only", message: "\.\.\." \}\)/,
       );
-      assert.match(text, /result survived missing status/);
+      assert.ok(
+        text.includes("worker-a:\nfirst line\nsecond line\n\nworker-b:\nthird line"),
+        "multi-paragraph async result summary should preserve its document structure",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

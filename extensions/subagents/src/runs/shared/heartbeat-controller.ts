@@ -253,13 +253,12 @@ function isUsageBearing(usage: HeartbeatUsage): boolean {
   return usage.input > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0 || usage.output > 0;
 }
 
-/** True when a content block contains generated text, reasoning, or arguments. */
-function hasGeneratedContentBlock(block: AssistantMessage["content"][number] | undefined): boolean {
-  if (!block) return false;
+/** True when a stable done-message content block contains generated text, reasoning, or arguments. */
+function hasGeneratedContentBlock(block: AssistantMessage["content"][number]): boolean {
   if (block.type === "text") return block.text.length > 0;
   if (block.type === "thinking") {
-    // The provider's [Reasoning redacted] marker represents a completed block,
-    // not an empty thinking start, so keep it on the non-success path.
+    // In a stable done message, [Reasoning redacted] is completed content,
+    // not an empty thinking-start signal.
     return block.thinking.length > 0;
   }
   return Object.keys(block.arguments).length > 0;
@@ -273,21 +272,20 @@ function hasGeneratedContent(content: AssistantMessage["content"]): boolean {
 /**
  * True when an event crosses the generation boundary for a heartbeat.
  *
- * A block start can still be the safe usage observation used by Anthropic: its
- * partial message may carry cacheRead before any block content is present, and
- * output usage may already be non-zero even when the block is empty.  A block
- * start without that cache evidence is nevertheless the first boundary, so it
- * must not wait for a later delta.  Deltas/ends are generation-bearing by
- * event shape; done is generation-bearing when output or content exists.
+ * `partial` is a shared live response-so-far object, not an event-time
+ * snapshot. Block starts therefore use cacheRead evidence alone: a positive
+ * cacheRead is usable cache evidence at the earliest block boundary, even when
+ * the partial block is already populated. A block start without that cache
+ * evidence is the first boundary and must not wait for a later delta.
+ * Deltas/ends are generation-bearing by event shape; done is generation-bearing
+ * when output or stable content exists.
  */
 function isGenerationBearingEvent(event: AssistantMessageEvent, usage: HeartbeatUsage): boolean {
   switch (event.type) {
     case "text_start":
     case "thinking_start":
     case "toolcall_start":
-      return (
-        usage.cacheRead <= 0 || hasGeneratedContentBlock(event.partial.content[event.contentIndex])
-      );
+      return usage.cacheRead <= 0;
     case "text_delta":
     case "text_end":
     case "thinking_delta":
@@ -602,10 +600,13 @@ export function createHeartbeatController(
 
         const eventUsage = extractEventUsage(event);
 
-        // A block start without cache-read evidence is already the generation
-        // boundary. Deltas/ends and generated done messages are likewise too
-        // late to qualify as a cheap cache-read beat. Preserve the existing
-        // mismatch classifier for cache-write evidence on any event.
+        // Block starts with cache-read evidence are classified from that
+        // evidence regardless of mutable partial-block content. A block start
+        // without cache-read evidence is already the generation boundary.
+        // Deltas/ends and generated done messages are likewise too late to
+        // qualify as a cheap cache-read beat.
+        // Preserve the existing mismatch classifier for cache-write evidence on
+        // any event.
         if (isGenerationBearingEvent(event, eventUsage)) {
           if (isUsageBearing(eventUsage)) {
             usage = eventUsage;

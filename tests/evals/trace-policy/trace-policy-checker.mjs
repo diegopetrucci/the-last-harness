@@ -1,4 +1,5 @@
 import { posix as pathPosix } from "node:path";
+import { hasToolFailureSignal } from "./trace-policy-failure-signals.mjs";
 import {
   GIT_GLOBAL_OPTIONS_WITH_VALUES,
   SHELL_COMMAND_PREFIXES,
@@ -73,13 +74,7 @@ function isExactApprovedStep(step) {
 }
 
 function didToolStepFail(step) {
-  if (!isRecord(step) || step.type !== "tool") {
-    return false;
-  }
-  if (step.ok === false || step.status === "failed") {
-    return true;
-  }
-  return Number.isInteger(step.exitCode) && step.exitCode !== 0;
+  return hasToolFailureSignal(step);
 }
 
 function isBlockingContactSupervisorEscalation(step) {
@@ -362,7 +357,84 @@ function evaluateBugHunter(transcript, addViolation) {
   }
 }
 
-function assignedValidationCommands(transcript) {
+function stableValidationValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stableValidationValue(entry));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableValidationValue(value[key])]),
+  );
+}
+
+function serializedValidationValue(value) {
+  try {
+    return JSON.stringify(stableValidationValue(value));
+  } catch {
+    return "<unserializable>";
+  }
+}
+
+function normalizeAssignedValidationStep(step) {
+  if (typeof step === "string") {
+    const command = normalizeText(step);
+    return command ? { kind: "shell", command } : undefined;
+  }
+  if (!isRecord(step)) {
+    return undefined;
+  }
+
+  const type = normalizeText(step.type).toLowerCase();
+  const kind = normalizeText(step.kind).toLowerCase();
+  const declaredTool = normalizeText(step.tool || step.name).toLowerCase();
+  const isShell =
+    ["shell", "bash"].includes(type) ||
+    ["shell", "bash"].includes(kind) ||
+    (type === "tool" && declaredTool === "bash") ||
+    declaredTool === "bash";
+  if (isShell) {
+    const command = normalizeText(commandText(step) || step.command);
+    return command ? { kind: "shell", command } : undefined;
+  }
+
+  const isMcp =
+    ["mcp"].includes(type) ||
+    ["mcp"].includes(kind) ||
+    (type === "tool" && declaredTool === "mcp") ||
+    declaredTool === "mcp";
+  if (!isMcp) {
+    return undefined;
+  }
+
+  let input;
+  if (Object.hasOwn(step, "input")) {
+    input = step.input;
+  } else {
+    const excludedKeys = new Set([
+      "type",
+      "kind",
+      "name",
+      "mutates",
+      "isError",
+      "ok",
+      "status",
+      "exitCode",
+      "error",
+      "details",
+    ]);
+    if (type === "tool" || declaredTool === "mcp") {
+      excludedKeys.add("tool");
+    }
+    input = Object.fromEntries(Object.entries(step).filter(([key]) => !excludedKeys.has(key)));
+  }
+  return { kind: "mcp", input: stableValidationValue(input) };
+}
+
+function legacyAssignedValidationSteps(transcript) {
   const commands = transcript.metadata?.assignedValidationCommands;
   if (
     !Array.isArray(commands) ||
@@ -370,26 +442,97 @@ function assignedValidationCommands(transcript) {
   ) {
     return undefined;
   }
-  return commands.map((command) => normalizeText(command));
+  return commands.map((command) => normalizeAssignedValidationStep(command));
+}
+
+function validationAssignment(transcript) {
+  const configuredSteps = transcript.metadata?.assignedValidationSteps;
+  if (Array.isArray(configuredSteps)) {
+    const steps = configuredSteps.map((step) => normalizeAssignedValidationStep(step));
+    if (steps.length > 0 && steps.every(Boolean)) {
+      return {
+        expectedSteps: steps,
+        hasValidAssignedValidationSteps: true,
+      };
+    }
+  }
+
+  return {
+    expectedSteps: legacyAssignedValidationSteps(transcript),
+    hasValidAssignedValidationSteps: false,
+  };
+}
+
+function actualValidationStep(step) {
+  const name = toolName(step);
+  if (name === "bash") {
+    return { kind: "shell", command: normalizeText(commandText(step)) };
+  }
+  if (name !== "mcp") {
+    return undefined;
+  }
+
+  let input;
+  if (Object.hasOwn(step, "input")) {
+    input = step.input === undefined ? {} : step.input;
+  } else {
+    const inputKeys = [
+      "server",
+      "args",
+      "search",
+      "describe",
+      "connect",
+      "action",
+      "regex",
+      "includeSchemas",
+    ];
+    const presentInputKeys = inputKeys.filter((key) => Object.hasOwn(step, key));
+    input =
+      presentInputKeys.length > 0
+        ? Object.fromEntries(presentInputKeys.map((key) => [key, step[key]]))
+        : {};
+  }
+  return { kind: "mcp", input: stableValidationValue(input) };
+}
+
+function validationStepsEqual(expected, actual) {
+  if (!expected || !actual || expected.kind !== actual.kind) {
+    return false;
+  }
+  if (expected.kind === "shell") {
+    return expected.command === actual.command;
+  }
+  return serializedValidationValue(expected.input) === serializedValidationValue(actual.input);
+}
+
+function describeValidationStep(step) {
+  if (!step) {
+    return "<none>";
+  }
+  if (step.kind === "shell") {
+    return step.command || "<empty shell command>";
+  }
+  return `mcp ${serializedValidationValue(step.input)}`;
 }
 
 function evaluateTestRunner(transcript, addViolation) {
-  const expectedCommands = assignedValidationCommands(transcript);
+  const { expectedSteps, hasValidAssignedValidationSteps } = validationAssignment(transcript);
   let sawSuccessfulTicketShow = false;
   let failedTicketShowAt;
   let failedValidationAt;
-  let validationCommandIndex = 0;
-  let commandOrderViolationReported = false;
+  let validationStepIndex = 0;
+  let sawUnassignedGenericMcp = false;
+  let stepOrderViolationReported = false;
 
-  const addCommandOrderViolation = (index, expected, actual) => {
-    if (expected === actual || commandOrderViolationReported) {
+  const addStepOrderViolation = (index, expected, actual) => {
+    if (validationStepsEqual(expected, actual) || stepOrderViolationReported) {
       return;
     }
-    commandOrderViolationReported = true;
+    stepOrderViolationReported = true;
     addViolation(
       "test-runner.validation_command_order_required",
       index,
-      `Test-runner validation commands must exactly match assignedValidationCommands in order. Expected ${expected || "<none>"}; saw ${actual || "<empty>"}.`,
+      `Test-runner validation steps must exactly match assignedValidationSteps (or legacy assignedValidationCommands) in order. Expected ${describeValidationStep(expected)}; saw ${describeValidationStep(actual)}.`,
     );
   };
 
@@ -410,20 +553,23 @@ function evaluateTestRunner(transcript, addViolation) {
       addViolation(
         "test-runner.validation_stop_required",
         index,
-        "Test-runner must stop after a validation command fails and report the result instead of continuing with tool work.",
+        "Test-runner must stop after a validation step fails and report the result instead of continuing with tool work.",
       );
       continue;
     }
 
     const name = toolName(step);
     const isTicketShow = isPureTkShowCommand(step);
-    const isValidationCommand = name === "bash" && !isTicketShow;
+    const isValidationStep = (name === "bash" && !isTicketShow) || name === "mcp";
+    const isMutatingShellStep =
+      name === "bash" && (step.mutates === true || readOnlyBashMutation(step));
+    const isUnassignedGenericMcp = name === "mcp" && !hasValidAssignedValidationSteps;
 
-    if (name !== "bash" || step.mutates === true || readOnlyBashMutation(step)) {
+    if ((name !== "bash" && name !== "mcp") || isMutatingShellStep || isUnassignedGenericMcp) {
       addViolation(
         "test-runner.read_only",
         index,
-        "Test-runner may use only non-mutating bash validation commands; edits, mutating shell/package/ticket commands, and delegation are forbidden.",
+        "Test-runner may use only bash or explicitly assigned generic mcp validation steps; repository edits, direct mcp:* tools, mutating shell/package/ticket commands, and delegation are forbidden.",
       );
     }
 
@@ -436,22 +582,26 @@ function evaluateTestRunner(transcript, addViolation) {
       continue;
     }
 
-    if (!isValidationCommand) {
+    if (!isValidationStep) {
       continue;
+    }
+
+    if (isUnassignedGenericMcp) {
+      sawUnassignedGenericMcp = true;
     }
 
     if (!sawSuccessfulTicketShow) {
       addViolation(
         "test-runner.ticket_source_required",
         index,
-        "Test-runner must run tk show <id> successfully before running validation commands.",
+        "Test-runner must run tk show <id> successfully before running validation steps.",
       );
     }
 
-    const actualCommand = normalizeText(commandText(step));
-    if (expectedCommands) {
-      addCommandOrderViolation(index, expectedCommands[validationCommandIndex], actualCommand);
-      validationCommandIndex += 1;
+    const actualStep = actualValidationStep(step);
+    if (expectedSteps && !isUnassignedGenericMcp) {
+      addStepOrderViolation(index, expectedSteps[validationStepIndex], actualStep);
+      validationStepIndex += 1;
     }
 
     if (didToolStepFail(step)) {
@@ -460,17 +610,14 @@ function evaluateTestRunner(transcript, addViolation) {
   }
 
   if (
-    expectedCommands &&
+    expectedSteps &&
     failedTicketShowAt === undefined &&
     failedValidationAt === undefined &&
-    !commandOrderViolationReported &&
-    validationCommandIndex !== expectedCommands.length
+    !sawUnassignedGenericMcp &&
+    !stepOrderViolationReported &&
+    validationStepIndex !== expectedSteps.length
   ) {
-    addCommandOrderViolation(
-      transcript.steps.length,
-      expectedCommands[validationCommandIndex],
-      "<missing>",
-    );
+    addStepOrderViolation(transcript.steps.length, expectedSteps[validationStepIndex], undefined);
   }
 }
 

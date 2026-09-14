@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
   BINARY_CONTENT_PLACEHOLDER,
   safeTerminalDocument,
+  safeTerminalDocumentLeaf,
   safeTerminalText,
 } from "../../src/shared/display-text.ts";
 import {
@@ -53,8 +54,10 @@ describe("safeTerminalText", () => {
   it("strips terminal sequences and unsafe controls while preserving readable Unicode", () => {
     assert.equal(safeTerminalText(unsafe), "visible red tail");
     assert.equal(safeTerminalText("echo\x01rm"), "echo rm");
-    assert.equal(safeTerminalText("你好 ✅ café\tline\nnext"), "你好 ✅ café\tline\nnext");
-    assert.equal(safeTerminalText("line\r\nnext\rfinal"), "line\nnext\nfinal");
+    assert.equal(safeTerminalText("你好 ✅ café\tline\nnext"), "你好 ✅ café\tline next");
+    assert.equal(safeTerminalText("line\r\nnext\rfinal"), "line next final");
+    assert.equal(safeTerminalDocumentLeaf("line\r\nnext\rfinal"), "line\nnext\nfinal");
+    assert.equal(safeTerminalDocument("line\r\nnext\rfinal"), "line\nnext\nfinal");
   });
 
   it("consumes OSC sequences terminated by BEL and ST without adding spaces", () => {
@@ -76,6 +79,11 @@ describe("safeTerminalText", () => {
   it("uses a binary placeholder for NUL and control-dense leaf content", () => {
     assert.equal(safeTerminalText("prefix\x00suffix"), BINARY_CONTENT_PLACEHOLDER);
     assert.equal(safeTerminalText("\x01\x02\x03\x04\x05\x06abcd"), BINARY_CONTENT_PLACEHOLDER);
+    assert.equal(safeTerminalDocumentLeaf("prefix\x00suffix"), BINARY_CONTENT_PLACEHOLDER);
+    assert.equal(
+      safeTerminalDocumentLeaf("\x01\x02\x03\x04\x05\x06abcd"),
+      BINARY_CONTENT_PLACEHOLDER,
+    );
     assert.equal(safeTerminalDocument("prefix\x00suffix"), "prefix suffix");
     assert.equal(safeTerminalDocument("\x01\x02\x03\x04\x05\x06abcd"), "abcd");
   });
@@ -236,6 +244,25 @@ describe("background display boundaries", () => {
 });
 
 describe("immediate foreground diagnostics", () => {
+  it("preserves binary placeholders in multiline native summaries", () => {
+    const binary = "\x01\x02A".repeat(30) + "\x00";
+    const result = formatForegroundNativeSubagentResult({
+      runId: "foreground-binary-display",
+      mode: "single",
+      children: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: binary,
+          index: 0,
+        },
+      ],
+    });
+
+    assert.ok(result.text.includes(BINARY_CONTENT_PLACEHOLDER));
+    assert.doesNotMatch(result.text, /A A A/);
+  });
+
   it("sanitizes the returned diagnostic text while retaining child payload objects", () => {
     const child = {
       agent: unsafe,

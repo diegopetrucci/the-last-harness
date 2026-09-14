@@ -93,6 +93,7 @@ export interface RunSyncResult {
     contextPressureThreshold?: string;
     turns?: number;
     tokens?: number;
+    elapsedMs?: number;
     currentPath?: string;
     recentFailureSummary?: string;
   }>;
