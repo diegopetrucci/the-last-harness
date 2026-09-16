@@ -3,7 +3,7 @@
   "profile": {
     "family": "device-mirror",
     "major": 0,
-    "minor": 0
+    "minor": 1
   },
   "transport": {
     "framework": "Network.framework",
@@ -21,6 +21,10 @@
     "maxInterfaceAddresses": 64,
     "maxHandleCharacters": 128,
     "maxRequestIdCharacters": 64,
+    "maxReplyTextBytes": 2048,
+    "maxReplyRequestDigests": 8,
+    "minReplyTtlSeconds": 1,
+    "maxReplyTtlSeconds": 60,
     "maxCapabilities": 16,
     "maxRevision": 9007199254740990,
     "maxNormalizationDepth": 528,
@@ -30,6 +34,39 @@
     "maxStateNormalizationBytes": 8651591
   },
   "requiredCapabilities": ["list", "subscribe", "snapshot-replace"],
+  "optionalCapabilities": ["reply-text"],
+  "replyReceiptCodes": [
+    "accepted",
+    "unconfirmed",
+    "invalid",
+    "unauthorized",
+    "stale",
+    "busy",
+    "duplicate",
+    "expired",
+    "disconnected"
+  ],
+  "replyCloseReasons": [
+    "producer-disconnect",
+    "takeover",
+    "listener-stop",
+    "device-disconnect",
+    "backgrounding",
+    "authorization-withdrawn",
+    "transport-failure"
+  ],
+  "replyOutcomeCodes": [
+    "reply-pending",
+    "reply-duplicate",
+    "reply-busy",
+    "reply-accepted",
+    "reply-unconfirmed",
+    "reply-invalid",
+    "reply-unauthorized",
+    "reply-stale",
+    "reply-expired",
+    "reply-disconnected"
+  ],
   "listingStatuses": ["idle", "active", "waiting", "error", "unknown"],
   "listingFreshness": ["fresh", "stale", "unknown"],
   "dropReasons": [
@@ -43,8 +80,17 @@
   ],
   "closeReasons": ["listener-stop", "device-disconnect", "backgrounding", "transport-failure"],
   "directions": {
-    "clientToListener": ["hello", "list", "subscribe"],
-    "listenerToClient": ["ready", "list", "snapshot", "dropped", "close", "error"]
+    "clientToListener": ["hello", "list", "subscribe", "reply"],
+    "listenerToClient": [
+      "ready",
+      "list",
+      "snapshot",
+      "dropped",
+      "close",
+      "error",
+      "receipt",
+      "reply-close"
+    ]
   },
   "wireErrorCodes": [
     "incompatible-protocol",
@@ -60,7 +106,9 @@
     "unknown-handle",
     "listener-stopped",
     "connection-busy",
-    "device-disconnected"
+    "device-disconnected",
+    "reply-not-negotiated",
+    "reply-not-pending"
   ],
   "frozenDependencies": [
     {
@@ -141,7 +189,12 @@
       "path": "fixtures/invalid-version.json",
       "valid": false,
       "expectedCode": "incompatible-protocol",
-      "covers": ["family-rejection", "major-rejection", "future-minor-rejection"]
+      "covers": [
+        "family-rejection",
+        "major-rejection",
+        "future-minor-rejection",
+        "negative-zero-minor-rejection"
+      ]
     },
     {
       "id": "invalid-frames",
@@ -169,6 +222,35 @@
       "valid": false,
       "expectedCode": "malformed-frame",
       "covers": ["cycle", "accessor", "prototype", "array-hole", "no-throw"]
+    },
+    {
+      "id": "valid-reply-channel",
+      "path": "fixtures/valid-reply-channel.json",
+      "valid": true,
+      "covers": [
+        "minor-negotiation",
+        "reply-capability",
+        "opaque-handle-and-revision-target",
+        "safe-receipt",
+        "relative-ttl",
+        "bounded-recent-idempotency"
+      ]
+    },
+    {
+      "id": "invalid-reply-boundaries",
+      "path": "fixtures/invalid-reply-boundaries.json",
+      "valid": false,
+      "expectedCodes": ["incompatible-capability", "malformed-frame", "wrong-direction"],
+      "covers": [
+        "minor-zero-reply-capability-rejection",
+        "text-byte-bound",
+        "leading-slash-rejection",
+        "control-character-rejection",
+        "format-and-bidi-rejection",
+        "unicode-whitespace-leading-slash",
+        "integer-bound",
+        "no-text-or-id-receipt"
+      ]
     }
   ]
 }

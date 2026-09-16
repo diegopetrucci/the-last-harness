@@ -158,7 +158,9 @@ export default function theLastHarness(pi: ExtensionAPI) {
   // observer command and lifecycle hooks. The facade still leaves its
   // observer/probe/adapter implementation behind an attestation-gated
   // retryable dynamic import.
-  registerSessionMirrorObserverFacade(pi);
+  registerSessionMirrorObserverFacade(pi, {
+    sendUserMessage: (text) => pi.sendUserMessage(text),
+  });
 
   installTlhPackageUpdateNotificationOverride();
   installTlhNewVersionNotificationOverride();

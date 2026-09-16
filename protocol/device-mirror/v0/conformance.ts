@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   SESSION_MIRROR_BOUNDS,
   validateSessionMirrorEnvelope,
@@ -6,8 +7,31 @@ import {
 
 const DEVICE_MIRROR_FAMILY = "device-mirror";
 const DEVICE_MIRROR_MAJOR = 0;
-const DEVICE_MIRROR_MINOR = 0;
+const DEVICE_MIRROR_MINOR = 1;
+const DEVICE_MIRROR_READ_ONLY_MINOR = 0;
 const REQUIRED_CAPABILITIES = ["list", "subscribe", "snapshot-replace"] as const;
+const REPLY_TEXT_CAPABILITY = "reply-text" as const;
+const REPLY_RECEIPT_CODE_VALUES = [
+  "accepted",
+  "unconfirmed",
+  "invalid",
+  "unauthorized",
+  "stale",
+  "busy",
+  "duplicate",
+  "expired",
+  "disconnected",
+] as const;
+const REPLY_CLOSE_REASON_VALUES = [
+  "producer-disconnect",
+  "takeover",
+  "listener-stop",
+  "device-disconnect",
+  "backgrounding",
+  "authorization-withdrawn",
+  "transport-failure",
+] as const;
+const REPLY_DIRECTION_VALUES = ["client-to-listener", "listener-to-client"] as const;
 const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CGNAT_NETWORK = 0x64400000;
 const CGNAT_NETWORK_END = 0x647fffff;
@@ -19,7 +43,13 @@ const MAX_INTERFACE_ADDRESSES = 64;
 const MAX_REQUEST_ID_CHARACTERS = 64;
 const MAX_HANDLE_CHARACTERS = 128;
 const MAX_CAPABILITIES = 16;
+const MIN_REPLY_TTL_SECONDS = 1;
+const MAX_REPLY_TTL_SECONDS = 60;
+const MAX_REPLY_TEXT_BYTES = 2 * 1024;
+const MAX_REPLY_REQUEST_DIGESTS = 8;
 const MAX_REVISION = Number.MAX_SAFE_INTEGER - 1;
+const REPLY_REQUEST_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const REPLY_TEXT_FORMAT_OR_SEPARATOR = /[\p{Cf}\p{Zl}\p{Zp}]/u;
 const MAX_JSON_STRING_DELIMITER_BYTES = 2;
 // A JSON string character can use six bytes when encoded as a \uXXXX escape.
 const MAX_JSON_STRING_ESCAPED_BYTES_PER_CHARACTER = 6;
@@ -75,6 +105,18 @@ const CLOSE_REASONS = [
   "backgrounding",
   "transport-failure",
 ] as const;
+const REPLY_OUTCOME_CODES = [
+  "reply-pending",
+  "reply-duplicate",
+  "reply-busy",
+  "reply-accepted",
+  "reply-unconfirmed",
+  "reply-invalid",
+  "reply-unauthorized",
+  "reply-stale",
+  "reply-expired",
+  "reply-disconnected",
+] as const;
 const WIRE_ERROR_CODES = [
   "incompatible-protocol",
   "incompatible-capability",
@@ -90,6 +132,8 @@ const WIRE_ERROR_CODES = [
   "listener-stopped",
   "connection-busy",
   "device-disconnected",
+  "reply-not-negotiated",
+  "reply-not-pending",
 ] as const;
 
 export const DEVICE_MIRROR_PROTOCOL = Object.freeze({
@@ -98,7 +142,17 @@ export const DEVICE_MIRROR_PROTOCOL = Object.freeze({
   minor: DEVICE_MIRROR_MINOR,
 });
 
+export const DEVICE_MIRROR_READ_ONLY_PROTOCOL = Object.freeze({
+  family: DEVICE_MIRROR_FAMILY,
+  major: DEVICE_MIRROR_MAJOR,
+  minor: DEVICE_MIRROR_READ_ONLY_MINOR,
+});
+
 export const DEVICE_MIRROR_CAPABILITIES = Object.freeze([...REQUIRED_CAPABILITIES]);
+export const DEVICE_MIRROR_REPLY_CAPABILITY = REPLY_TEXT_CAPABILITY;
+export const DEVICE_MIRROR_REPLY_RECEIPT_CODES = Object.freeze([...REPLY_RECEIPT_CODE_VALUES]);
+export const DEVICE_MIRROR_REPLY_CLOSE_REASONS = Object.freeze([...REPLY_CLOSE_REASON_VALUES]);
+export const DEVICE_MIRROR_REPLY_OUTCOME_CODES = Object.freeze([...REPLY_OUTCOME_CODES]);
 
 export const DEVICE_MIRROR_BOUNDS = Object.freeze({
   maxSessionMirrorEnvelopeBytes: SESSION_MIRROR_BOUNDS.maxEnvelopeBytes,
@@ -110,6 +164,10 @@ export const DEVICE_MIRROR_BOUNDS = Object.freeze({
   maxInterfaceAddresses: MAX_INTERFACE_ADDRESSES,
   maxHandleCharacters: MAX_HANDLE_CHARACTERS,
   maxRequestIdCharacters: MAX_REQUEST_ID_CHARACTERS,
+  maxReplyTextBytes: MAX_REPLY_TEXT_BYTES,
+  maxReplyRequestDigests: MAX_REPLY_REQUEST_DIGESTS,
+  minReplyTtlSeconds: MIN_REPLY_TTL_SECONDS,
+  maxReplyTtlSeconds: MAX_REPLY_TTL_SECONDS,
   maxCapabilities: MAX_CAPABILITIES,
   maxRevision: MAX_REVISION,
   maxNormalizationDepth: MAX_NORMALIZATION_DEPTH,
@@ -156,6 +214,8 @@ export const DEVICE_MIRROR_ERROR_CODES = Object.freeze([
   "listener-stopped",
   "connection-busy",
   "device-disconnected",
+  "reply-not-negotiated",
+  "reply-not-pending",
   "state-invalid",
   "closed",
 ] as const);
@@ -166,7 +226,10 @@ export type DeviceMirrorListingStatus = (typeof LISTING_STATUSES)[number];
 export type DeviceMirrorListingFreshness = (typeof LISTING_FRESHNESS)[number];
 export type DeviceMirrorDropReason = (typeof DROP_REASONS)[number];
 export type DeviceMirrorCloseReason = (typeof CLOSE_REASONS)[number];
-export type DeviceMirrorFrameDirection = "client-to-listener" | "listener-to-client";
+export type DeviceMirrorReplyReceiptCode = (typeof REPLY_RECEIPT_CODE_VALUES)[number];
+export type DeviceMirrorReplyCloseReason = (typeof REPLY_CLOSE_REASON_VALUES)[number];
+export type DeviceMirrorReplyOutcomeCode = (typeof REPLY_OUTCOME_CODES)[number];
+export type DeviceMirrorFrameDirection = (typeof REPLY_DIRECTION_VALUES)[number];
 
 export type DeviceMirrorJsonPrimitive = string | number | boolean | null;
 export type DeviceMirrorJsonValue =
@@ -181,7 +244,7 @@ export interface DeviceMirrorJsonObject {
 export interface DeviceMirrorProtocolVersion extends DeviceMirrorJsonObject {
   readonly family: typeof DEVICE_MIRROR_FAMILY;
   readonly major: typeof DEVICE_MIRROR_MAJOR;
-  readonly minor: typeof DEVICE_MIRROR_MINOR;
+  readonly minor: number;
 }
 
 export interface DeviceMirrorHelloFrame extends DeviceMirrorJsonObject {
@@ -242,10 +305,30 @@ export interface DeviceMirrorErrorFrame extends DeviceMirrorJsonObject {
   readonly code: DeviceMirrorWireErrorCode;
 }
 
+export interface DeviceMirrorReplyRequestFrame extends DeviceMirrorJsonObject {
+  readonly kind: "reply";
+  readonly handle: string;
+  readonly revision: number;
+  readonly requestId: string;
+  readonly ttlSeconds: number;
+  readonly text: string;
+}
+
+export interface DeviceMirrorReceiptFrame extends DeviceMirrorJsonObject {
+  readonly kind: "receipt";
+  readonly code: DeviceMirrorReplyReceiptCode;
+}
+
+export interface DeviceMirrorReplyCloseFrame extends DeviceMirrorJsonObject {
+  readonly kind: "reply-close";
+  readonly reason: DeviceMirrorReplyCloseReason;
+}
+
 export type DeviceMirrorClientFrame =
   | DeviceMirrorHelloFrame
   | DeviceMirrorListRequestFrame
-  | DeviceMirrorSubscribeRequestFrame;
+  | DeviceMirrorSubscribeRequestFrame
+  | DeviceMirrorReplyRequestFrame;
 
 export type DeviceMirrorListenerFrame =
   | DeviceMirrorReadyFrame
@@ -253,7 +336,9 @@ export type DeviceMirrorListenerFrame =
   | DeviceMirrorSnapshotFrame
   | DeviceMirrorDroppedFrame
   | DeviceMirrorCloseFrame
-  | DeviceMirrorErrorFrame;
+  | DeviceMirrorErrorFrame
+  | DeviceMirrorReceiptFrame
+  | DeviceMirrorReplyCloseFrame;
 
 export type DeviceMirrorFrame = DeviceMirrorClientFrame | DeviceMirrorListenerFrame;
 
@@ -302,6 +387,11 @@ export interface DeviceMirrorState {
   readonly status: "open" | "stopped";
   readonly deviceConnected: boolean;
   readonly subscribedHandle: string | null;
+  readonly negotiatedMinor: number | null;
+  readonly replyTextNegotiated: boolean;
+  readonly replyInFlight: boolean;
+  readonly replyInFlightDigest: string | null;
+  readonly replyRequestDigests: readonly string[];
   readonly handles: readonly DeviceMirrorStateHandle[];
 }
 
@@ -314,6 +404,7 @@ export type DeviceMirrorOutcomeCode =
   | "dropped"
   | "disconnected"
   | "backgrounded"
+  | DeviceMirrorReplyOutcomeCode
   | "closed";
 
 export interface DeviceMirrorTransitionResult {
@@ -353,6 +444,22 @@ interface DropCandidate {
   readonly reason: DeviceMirrorDropReason;
 }
 
+interface DeviceMirrorReplyState {
+  readonly negotiatedMinor: number | null;
+  readonly replyTextNegotiated: boolean;
+  readonly replyInFlight: boolean;
+  readonly replyInFlightDigest: string | null;
+  readonly replyRequestDigests: readonly string[];
+}
+
+const EMPTY_REPLY_STATE: DeviceMirrorReplyState = Object.freeze({
+  negotiatedMinor: null,
+  replyTextNegotiated: false,
+  replyInFlight: false,
+  replyInFlightDigest: null,
+  replyRequestDigests: Object.freeze([]),
+});
+
 function failure(code: DeviceMirrorErrorCode): DeviceMirrorFailure {
   return Object.freeze({ ok: false, error: Object.freeze({ code }) });
 }
@@ -379,6 +486,18 @@ function hasOnlyKeys(value: DeviceMirrorJsonObject, keys: readonly string[]): bo
   const allowed = new Set(keys);
   return (
     Object.keys(value).every((key) => allowed.has(key)) && keys.every((key) => hasField(value, key))
+  );
+}
+
+function hasOptionalOnlyKeys(
+  value: DeviceMirrorJsonObject,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return (
+    Object.keys(value).every((key) => allowed.has(key)) &&
+    required.every((key) => hasField(value, key))
   );
 }
 
@@ -581,6 +700,7 @@ function validateProtocol(
   if (
     family !== DEVICE_MIRROR_FAMILY ||
     major !== DEVICE_MIRROR_MAJOR ||
+    Object.is(minor, -0) ||
     minor > DEVICE_MIRROR_MINOR
   ) {
     return failure("incompatible-protocol");
@@ -590,13 +710,14 @@ function validateProtocol(
     protocol: Object.freeze({
       family: DEVICE_MIRROR_FAMILY,
       major: DEVICE_MIRROR_MAJOR,
-      minor: DEVICE_MIRROR_MINOR,
+      minor,
     }),
   };
 }
 
 function validateCapabilities(
   input: DeviceMirrorJsonValue | undefined,
+  negotiatedMinor: number,
 ): { readonly ok: true; readonly capabilities: readonly string[] } | DeviceMirrorFailure {
   if (!Array.isArray(input)) return failure("malformed-frame");
   if (input.length > MAX_CAPABILITIES) return failure("frame-too-large");
@@ -612,6 +733,9 @@ function validateCapabilities(
   if (!REQUIRED_CAPABILITIES.every((name, index) => capabilities[index] === name)) {
     return failure("incompatible-capability");
   }
+  if (capabilities.includes(REPLY_TEXT_CAPABILITY) && negotiatedMinor < DEVICE_MIRROR_MINOR) {
+    return failure("incompatible-capability");
+  }
   return { ok: true, capabilities: Object.freeze(capabilities) };
 }
 
@@ -621,6 +745,77 @@ function validateHandle(value: DeviceMirrorJsonValue | undefined): string | unde
 
 function validateRequestId(value: DeviceMirrorJsonValue | undefined): string | undefined {
   return normalizedString(value, MAX_REQUEST_ID_CHARACTERS);
+}
+
+function isSafeReplyText(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      ((codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) &&
+        codePoint !== 0x09 &&
+        codePoint !== 0x0a) ||
+      REPLY_TEXT_FORMAT_OR_SEPARATOR.test(character)
+    ) {
+      return false;
+    }
+  }
+  return !value.trimStart().startsWith("/");
+}
+
+function validateReplyText(value: DeviceMirrorJsonValue | undefined): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    !isWellFormedUnicode(value) ||
+    !isSafeReplyText(value)
+  ) {
+    return undefined;
+  }
+  return Buffer.byteLength(value, "utf8") <= MAX_REPLY_TEXT_BYTES ? value : undefined;
+}
+
+function validateReplyTtl(value: DeviceMirrorJsonValue | undefined): number | undefined {
+  if (
+    typeof value !== "number" ||
+    Object.is(value, -0) ||
+    !Number.isSafeInteger(value) ||
+    value < MIN_REPLY_TTL_SECONDS ||
+    value > MAX_REPLY_TTL_SECONDS
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+export function isDeviceMirrorReplyExpired(ttlSeconds: unknown, elapsedSeconds: unknown): boolean {
+  const ttl =
+    typeof ttlSeconds === "number" &&
+    !Object.is(ttlSeconds, -0) &&
+    Number.isSafeInteger(ttlSeconds) &&
+    ttlSeconds >= MIN_REPLY_TTL_SECONDS &&
+    ttlSeconds <= MAX_REPLY_TTL_SECONDS
+      ? ttlSeconds
+      : undefined;
+  return (
+    ttl !== undefined &&
+    typeof elapsedSeconds === "number" &&
+    Number.isFinite(elapsedSeconds) &&
+    elapsedSeconds >= 0 &&
+    elapsedSeconds >= ttl
+  );
+}
+
+function validateReplyReceiptCode(
+  value: DeviceMirrorJsonValue | undefined,
+): DeviceMirrorReplyReceiptCode | undefined {
+  return typeof value === "string" && isOneOf(REPLY_RECEIPT_CODE_VALUES, value) ? value : undefined;
+}
+
+function validateReplyCloseReason(
+  value: DeviceMirrorJsonValue | undefined,
+): DeviceMirrorReplyCloseReason | undefined {
+  return typeof value === "string" && isOneOf(REPLY_CLOSE_REASON_VALUES, value) ? value : undefined;
 }
 
 function validateStatus(
@@ -704,7 +899,9 @@ function validateClientFrame(object: DeviceMirrorJsonObject): DeviceMirrorFrameV
     kind === "snapshot" ||
     kind === "dropped" ||
     kind === "close" ||
-    kind === "error"
+    kind === "error" ||
+    kind === "receipt" ||
+    kind === "reply-close"
   ) {
     return failure("wrong-direction");
   }
@@ -713,7 +910,10 @@ function validateClientFrame(object: DeviceMirrorJsonObject): DeviceMirrorFrameV
       return failure("malformed-frame");
     const protocol = validateProtocol(field(object, "protocol"));
     if (!protocol.ok) return protocol;
-    const capabilities = validateCapabilities(field(object, "capabilities"));
+    const capabilities = validateCapabilities(
+      field(object, "capabilities"),
+      protocol.protocol.minor,
+    );
     if (!capabilities.ok) return capabilities;
     return {
       ok: true,
@@ -722,6 +922,23 @@ function validateClientFrame(object: DeviceMirrorJsonObject): DeviceMirrorFrameV
         protocol: protocol.protocol,
         capabilities: capabilities.capabilities,
       }),
+    };
+  }
+  if (kind === "reply") {
+    if (!hasOnlyKeys(object, ["kind", "handle", "revision", "requestId", "ttlSeconds", "text"])) {
+      return failure("malformed-frame");
+    }
+    const handle = validateHandle(field(object, "handle"));
+    const revision = normalizedRevision(field(object, "revision"));
+    const requestId = validateRequestId(field(object, "requestId"));
+    const ttlSeconds = validateReplyTtl(field(object, "ttlSeconds"));
+    const text = validateReplyText(field(object, "text"));
+    if (!handle || revision === undefined || !requestId || ttlSeconds === undefined || !text) {
+      return failure("malformed-frame");
+    }
+    return {
+      ok: true,
+      frame: Object.freeze({ kind: "reply", handle, revision, requestId, ttlSeconds, text }),
     };
   }
   if (kind === "list") {
@@ -746,13 +963,18 @@ function validateClientFrame(object: DeviceMirrorJsonObject): DeviceMirrorFrameV
 function validateListenerFrame(object: DeviceMirrorJsonObject): DeviceMirrorFrameValidation {
   const kind = field(object, "kind");
   if (typeof kind !== "string") return failure("malformed-frame");
-  if (kind === "hello" || kind === "subscribe") return failure("wrong-direction");
+  if (kind === "hello" || kind === "subscribe" || kind === "reply") {
+    return failure("wrong-direction");
+  }
   if (kind === "ready") {
     if (!hasOnlyKeys(object, ["kind", "protocol", "capabilities"]))
       return failure("malformed-frame");
     const protocol = validateProtocol(field(object, "protocol"));
     if (!protocol.ok) return protocol;
-    const capabilities = validateCapabilities(field(object, "capabilities"));
+    const capabilities = validateCapabilities(
+      field(object, "capabilities"),
+      protocol.protocol.minor,
+    );
     if (!capabilities.ok) return capabilities;
     return {
       ok: true,
@@ -762,6 +984,20 @@ function validateListenerFrame(object: DeviceMirrorJsonObject): DeviceMirrorFram
         capabilities: capabilities.capabilities,
       }),
     };
+  }
+  if (kind === "receipt") {
+    if (!hasOnlyKeys(object, ["kind", "code"])) return failure("malformed-frame");
+    const code = validateReplyReceiptCode(field(object, "code"));
+    return code
+      ? { ok: true, frame: Object.freeze({ kind: "receipt", code }) }
+      : failure("malformed-frame");
+  }
+  if (kind === "reply-close") {
+    if (!hasOnlyKeys(object, ["kind", "reason"])) return failure("malformed-frame");
+    const reason = validateReplyCloseReason(field(object, "reason"));
+    return reason
+      ? { ok: true, frame: Object.freeze({ kind: "reply-close", reason }) }
+      : failure("malformed-frame");
   }
   if (kind === "list") {
     if (!hasField(object, "conversations") && hasField(object, "requestId")) {
@@ -831,9 +1067,12 @@ function validateListenerFrame(object: DeviceMirrorJsonObject): DeviceMirrorFram
 
 export function validateDeviceMirrorFrame(
   input: unknown,
-  direction: DeviceMirrorFrameDirection,
+  direction: unknown,
 ): DeviceMirrorFrameValidation {
   try {
+    if (!REPLY_DIRECTION_VALUES.includes(direction as DeviceMirrorFrameDirection)) {
+      return failure("wrong-direction");
+    }
     const object = normalizeObject(input);
     if (!object) return failure("malformed-frame");
     const serialized = JSON.stringify(object);
@@ -921,7 +1160,7 @@ function serializedBytes(value: DeviceMirrorJsonValue): Uint8Array | undefined {
 
 export function encodeDeviceMirrorFrame(
   input: unknown,
-  direction: DeviceMirrorFrameDirection,
+  direction: unknown,
 ): DeviceMirrorEncodedFrameResult {
   try {
     const validated = validateDeviceMirrorFrame(input, direction);
@@ -942,7 +1181,7 @@ export function encodeDeviceMirrorFrame(
 
 export function parseDeviceMirrorJson(
   input: unknown,
-  direction: DeviceMirrorFrameDirection,
+  direction: unknown,
 ): DeviceMirrorFrameValidation {
   if (typeof input !== "string") return failure("invalid-input");
   if (Buffer.byteLength(input, "utf8") > MAX_FRAME_BODY_BYTES) return failure("frame-too-large");
@@ -963,7 +1202,7 @@ export function parseDeviceMirrorJson(
 
 export function parseDeviceMirrorFrame(
   input: unknown,
-  direction: DeviceMirrorFrameDirection,
+  direction: unknown,
 ): DeviceMirrorFrameValidation {
   try {
     const decoded = decodeDeviceMirrorLengthPrefixedFrame(input);
@@ -1135,13 +1374,29 @@ function freezeState(
   deviceConnected: boolean,
   subscribedHandle: string | null,
   handles: readonly DeviceMirrorStateHandle[],
+  replyState: DeviceMirrorReplyState = EMPTY_REPLY_STATE,
 ): DeviceMirrorState {
   return Object.freeze({
     status,
     deviceConnected,
     subscribedHandle,
+    negotiatedMinor: replyState.negotiatedMinor,
+    replyTextNegotiated: replyState.replyTextNegotiated,
+    replyInFlight: replyState.replyInFlight,
+    replyInFlightDigest: replyState.replyInFlightDigest,
+    replyRequestDigests: Object.freeze(replyState.replyRequestDigests.slice()),
     handles: Object.freeze(handles.slice()),
   });
+}
+
+function replyStateFor(state: DeviceMirrorState): DeviceMirrorReplyState {
+  return {
+    negotiatedMinor: state.negotiatedMinor,
+    replyTextNegotiated: state.replyTextNegotiated,
+    replyInFlight: state.replyInFlight,
+    replyInFlightDigest: state.replyInFlightDigest,
+    replyRequestDigests: state.replyRequestDigests,
+  };
 }
 
 export function createDeviceMirrorState(): DeviceMirrorState {
@@ -1183,18 +1438,61 @@ function normalizeState(input: unknown): DeviceMirrorState | undefined {
   );
   if (
     !object ||
-    !hasOnlyKeys(object, ["status", "deviceConnected", "subscribedHandle", "handles"])
+    !hasOptionalOnlyKeys(
+      object,
+      ["status", "deviceConnected", "subscribedHandle", "handles"],
+      [
+        "negotiatedMinor",
+        "replyTextNegotiated",
+        "replyInFlight",
+        "replyInFlightDigest",
+        "replyRequestDigests",
+      ],
+    )
   ) {
     return undefined;
   }
   const status = field(object, "status");
   const deviceConnected = field(object, "deviceConnected");
   const subscribedValue = field(object, "subscribedHandle");
+  const negotiatedMinorValue = field(object, "negotiatedMinor");
+  const negotiatedMinor =
+    negotiatedMinorValue === undefined || negotiatedMinorValue === null
+      ? null
+      : normalizedRevision(negotiatedMinorValue);
+  const replyTextNegotiatedValue = field(object, "replyTextNegotiated");
+  const replyTextNegotiated =
+    replyTextNegotiatedValue === undefined ? false : replyTextNegotiatedValue;
+  const replyInFlightValue = field(object, "replyInFlight");
+  const replyInFlight = replyInFlightValue === undefined ? false : replyInFlightValue;
+  const replyInFlightDigestValue = field(object, "replyInFlightDigest");
+  const replyInFlightDigest =
+    replyInFlightDigestValue === undefined || replyInFlightDigestValue === null
+      ? null
+      : typeof replyInFlightDigestValue === "string" &&
+          REPLY_REQUEST_DIGEST_PATTERN.test(replyInFlightDigestValue)
+        ? replyInFlightDigestValue
+        : undefined;
+  const replyRequestDigestsValue = field(object, "replyRequestDigests");
+  const replyRequestDigests =
+    replyRequestDigestsValue === undefined ? [] : replyRequestDigestsValue;
   const handlesValue = field(object, "handles");
+  const normalizedNegotiatedMinor: number | null =
+    negotiatedMinor === undefined ? null : negotiatedMinor;
   if (
     (status !== "open" && status !== "stopped") ||
     typeof deviceConnected !== "boolean" ||
     !(subscribedValue === null || typeof subscribedValue === "string") ||
+    (negotiatedMinorValue !== undefined &&
+      negotiatedMinorValue !== null &&
+      (normalizedNegotiatedMinor === null || normalizedNegotiatedMinor > DEVICE_MIRROR_MINOR)) ||
+    typeof replyTextNegotiated !== "boolean" ||
+    typeof replyInFlight !== "boolean" ||
+    (replyInFlightDigestValue !== undefined &&
+      replyInFlightDigestValue !== null &&
+      replyInFlightDigest === undefined) ||
+    !Array.isArray(replyRequestDigests) ||
+    replyRequestDigests.length > MAX_REPLY_REQUEST_DIGESTS ||
     !Array.isArray(handlesValue) ||
     handlesValue.length > MAX_HANDLES
   ) {
@@ -1211,12 +1509,47 @@ function normalizeState(input: unknown): DeviceMirrorState | undefined {
   if (subscribedValue !== null && !seen.has(subscribedValue)) return undefined;
   if (!deviceConnected && subscribedValue !== null) return undefined;
   if (
-    status === "stopped" &&
-    (deviceConnected || subscribedValue !== null || handles.length !== 0)
+    !deviceConnected &&
+    (normalizedNegotiatedMinor !== null || replyTextNegotiated || replyInFlight)
   ) {
     return undefined;
   }
-  return freezeState(status, deviceConnected, subscribedValue, handles);
+  if (replyTextNegotiated && normalizedNegotiatedMinor !== DEVICE_MIRROR_MINOR) return undefined;
+  if (replyInFlight !== (replyInFlightDigest !== null)) return undefined;
+  const recentReplyDigests: string[] = [];
+  for (const digest of replyRequestDigests) {
+    if (
+      typeof digest !== "string" ||
+      !REPLY_REQUEST_DIGEST_PATTERN.test(digest) ||
+      recentReplyDigests.includes(digest)
+    ) {
+      return undefined;
+    }
+    recentReplyDigests.push(digest);
+  }
+  if (
+    replyInFlightDigest !== undefined &&
+    replyInFlightDigest !== null &&
+    !recentReplyDigests.includes(replyInFlightDigest)
+  ) {
+    return undefined;
+  }
+  if (
+    status === "stopped" &&
+    (deviceConnected ||
+      subscribedValue !== null ||
+      handles.length !== 0 ||
+      normalizedNegotiatedMinor !== null)
+  ) {
+    return undefined;
+  }
+  return freezeState(status, deviceConnected, subscribedValue, handles, {
+    negotiatedMinor: normalizedNegotiatedMinor,
+    replyTextNegotiated,
+    replyInFlight,
+    replyInFlightDigest: replyInFlightDigest ?? null,
+    replyRequestDigests: Object.freeze(recentReplyDigests),
+  });
 }
 
 function normalizedStateOrFailure(input: unknown): DeviceMirrorState | DeviceMirrorFailure {
@@ -1273,13 +1606,127 @@ export function acceptDeviceMirrorHello(
   if (!hello.ok) return hello;
   if (hello.frame.kind !== "hello") return failure("malformed-frame");
   if (state.deviceConnected) return failure("connection-busy");
-  const nextState = freezeState("open", true, null, state.handles);
+  const replyTextNegotiated = hello.frame.capabilities.includes(REPLY_TEXT_CAPABILITY);
+  const nextState = freezeState("open", true, null, state.handles, {
+    negotiatedMinor: hello.frame.protocol.minor,
+    replyTextNegotiated,
+    replyInFlight: false,
+    replyInFlightDigest: null,
+    replyRequestDigests: Object.freeze([]),
+  });
+  const readyCapabilities = replyTextNegotiated
+    ? [...REQUIRED_CAPABILITIES, REPLY_TEXT_CAPABILITY]
+    : [...REQUIRED_CAPABILITIES];
   const ready: DeviceMirrorReadyFrame = Object.freeze({
     kind: "ready",
-    protocol: DEVICE_MIRROR_PROTOCOL,
-    capabilities: DEVICE_MIRROR_CAPABILITIES,
+    protocol: hello.frame.protocol,
+    capabilities: Object.freeze(readyCapabilities),
   });
   return transition(nextState, "ready", [ready]);
+}
+
+function deviceReplyRequestDigest(requestId: string): string {
+  return createHash("sha256").update(Buffer.from(requestId, "utf8")).digest("hex");
+}
+
+function rememberReplyDigest(recentDigests: readonly string[], digest: string): readonly string[] {
+  const next = [...recentDigests, digest];
+  if (next.length > MAX_REPLY_REQUEST_DIGESTS) next.shift();
+  return Object.freeze(next);
+}
+
+function parseDeviceMirrorListenerReply(input: unknown): DeviceMirrorFrameValidation {
+  return input instanceof Uint8Array
+    ? parseDeviceMirrorFrame(input, "listener-to-client")
+    : validateDeviceMirrorFrame(input, "listener-to-client");
+}
+
+export function requestDeviceMirrorReply(
+  stateInput: unknown,
+  requestInput: unknown,
+): DeviceMirrorTransition {
+  const state = normalizedStateOrFailure(stateInput);
+  if ("ok" in state) return state;
+  const connected = connectedStateOrFailure(state);
+  if ("ok" in connected) return connected;
+  const request = validateDeviceMirrorFrame(requestInput, "client-to-listener");
+  if (!request.ok) return request;
+  if (request.frame.kind !== "reply") return failure("malformed-frame");
+  if (!state.replyTextNegotiated || state.negotiatedMinor !== DEVICE_MIRROR_MINOR) {
+    return failure("reply-not-negotiated");
+  }
+  const subscribed = state.handles.find((item) => item.handle === request.frame.handle);
+  if (!subscribed || state.subscribedHandle !== request.frame.handle) {
+    return failure("unknown-handle");
+  }
+  if (subscribed.revision !== request.frame.revision) return failure("stale-snapshot");
+  const requestDigest = deviceReplyRequestDigest(request.frame.requestId);
+  if (state.replyRequestDigests.includes(requestDigest)) {
+    const duplicate: DeviceMirrorReceiptFrame = Object.freeze({
+      kind: "receipt",
+      code: "duplicate",
+    });
+    return transition(state, "reply-duplicate", [duplicate]);
+  }
+  if (state.replyInFlight) {
+    const busy: DeviceMirrorReceiptFrame = Object.freeze({ kind: "receipt", code: "busy" });
+    return transition(state, "reply-busy", [busy]);
+  }
+  const nextState = freezeState("open", true, state.subscribedHandle, state.handles, {
+    negotiatedMinor: state.negotiatedMinor,
+    replyTextNegotiated: state.replyTextNegotiated,
+    replyInFlight: true,
+    replyInFlightDigest: requestDigest,
+    replyRequestDigests: rememberReplyDigest(state.replyRequestDigests, requestDigest),
+  });
+  return transition(nextState, "reply-pending");
+}
+
+export function settleDeviceMirrorReply(
+  stateInput: unknown,
+  receiptInput: unknown,
+): DeviceMirrorTransition {
+  const state = normalizedStateOrFailure(stateInput);
+  if ("ok" in state) return state;
+  const connected = connectedStateOrFailure(state);
+  if ("ok" in connected) return connected;
+  if (!state.replyInFlight) return failure("reply-not-pending");
+  const receipt = parseDeviceMirrorListenerReply(receiptInput);
+  if (!receipt.ok) return receipt;
+  if (receipt.frame.kind !== "receipt") return failure("malformed-frame");
+  const nextState = freezeState("open", true, state.subscribedHandle, state.handles, {
+    negotiatedMinor: state.negotiatedMinor,
+    replyTextNegotiated: state.replyTextNegotiated,
+    replyInFlight: false,
+    replyInFlightDigest: null,
+    replyRequestDigests: state.replyRequestDigests,
+  });
+  const outcome = `reply-${receipt.frame.code}` as DeviceMirrorReplyOutcomeCode;
+  return transition(nextState, outcome, [receipt.frame]);
+}
+
+export function closeDeviceMirrorReplyChannel(
+  stateInput: unknown,
+  reasonInput: unknown,
+): DeviceMirrorTransition {
+  const state = normalizedStateOrFailure(stateInput);
+  if ("ok" in state) return state;
+  if (state.status === "stopped") return transition(state, "closed");
+  const reason =
+    typeof reasonInput === "string" && isOneOf(REPLY_CLOSE_REASON_VALUES, reasonInput)
+      ? reasonInput
+      : undefined;
+  if (!reason) return failure("malformed-frame");
+  const nextState = freezeState(
+    "open",
+    state.deviceConnected,
+    state.subscribedHandle,
+    state.handles,
+  );
+  const frames = state.deviceConnected
+    ? [Object.freeze({ kind: "reply-close" as const, reason })]
+    : [];
+  return transition(nextState, "disconnected", frames);
 }
 
 export function requestDeviceMirrorList(
@@ -1314,7 +1761,15 @@ export function subscribeDeviceMirrorHandle(
   if (request.frame.kind !== "subscribe") return failure("malformed-frame");
   const item = state.handles.find((candidate) => candidate.handle === request.frame.handle);
   if (!item) return failure("unknown-handle");
-  const nextState = freezeState("open", true, item.handle, state.handles);
+  const nextState = freezeState(
+    "open",
+    true,
+    item.handle,
+    state.handles,
+    state.subscribedHandle !== null && state.subscribedHandle !== item.handle
+      ? { ...replyStateFor(state), replyInFlight: false, replyInFlightDigest: null }
+      : replyStateFor(state),
+  );
   return transition(nextState, "subscribed", [snapshotFrameForState(item)]);
 }
 
@@ -1335,7 +1790,19 @@ export function replaceDeviceMirrorSnapshot(
   const handles = previous
     ? state.handles.map((item) => (item.handle === candidate.handle ? nextItem : item))
     : [...state.handles, nextItem];
-  const nextState = freezeState("open", state.deviceConnected, state.subscribedHandle, handles);
+  const replyState =
+    previous &&
+    state.subscribedHandle === candidate.handle &&
+    candidate.revision !== previous.revision
+      ? { ...replyStateFor(state), replyInFlight: false, replyInFlightDigest: null }
+      : replyStateFor(state);
+  const nextState = freezeState(
+    "open",
+    state.deviceConnected,
+    state.subscribedHandle,
+    handles,
+    replyState,
+  );
   const frames =
     state.deviceConnected && state.subscribedHandle === candidate.handle
       ? [snapshotFrameForState(nextItem)]
@@ -1351,11 +1818,16 @@ function dropWithReason(stateInput: unknown, dropInput: unknown): DeviceMirrorTr
   if ("ok" in candidate) return candidate;
   const item = state.handles.find((handle) => handle.handle === candidate.handle);
   if (!item) return transition(state, "dropped");
+  const droppedSubscribedHandle = state.subscribedHandle === candidate.handle;
+  const replyState = droppedSubscribedHandle
+    ? { ...replyStateFor(state), replyInFlight: false, replyInFlightDigest: null }
+    : replyStateFor(state);
   const nextState = freezeState(
     "open",
     state.deviceConnected,
-    state.subscribedHandle === candidate.handle ? null : state.subscribedHandle,
+    droppedSubscribedHandle ? null : state.subscribedHandle,
     state.handles.filter((handle) => handle.handle !== candidate.handle),
+    replyState,
   );
   const frames =
     state.deviceConnected && state.subscribedHandle === candidate.handle

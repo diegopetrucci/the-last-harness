@@ -2,7 +2,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { dirname, join } from "node:path";
 import { getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, } from "./experimental.js";
+import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, SESSION_MIRROR_REPLIES_FEATURE, } from "./experimental.js";
 import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
 export const SESSION_MIRROR_OBSERVER_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
 export const SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
@@ -11,6 +11,7 @@ const DEFAULT_QUEUE_CAPACITY = 8;
 const MAX_FACADE_GENERATION = 2_000_000_000;
 const ZERO_TIMING = "unknown";
 const SESSION_MIRROR_OBSERVER_ACTIVATION_SNAPSHOT_KEY = Symbol.for("the-last-harness.session-mirror-observer-activation-snapshot");
+const SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY = Symbol.for("the-last-harness.session-mirror-replies-activation-snapshot");
 const SESSION_MIRROR_OBSERVER_GLOBAL = globalThis;
 function closedActivationSnapshotValue(value) {
     try {
@@ -100,6 +101,62 @@ function writeActivationSnapshot(sessionConfigured, isCurrent) {
         return false;
     }
 }
+function readReplyActivationSnapshot() {
+    try {
+        const descriptor = Object.getOwnPropertyDescriptor(SESSION_MIRROR_OBSERVER_GLOBAL, SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY);
+        if (!allowedActivationSnapshotDescriptor(descriptor))
+            return undefined;
+        const value = descriptor.value;
+        if (value === null ||
+            typeof value !== "object" ||
+            Array.isArray(value) ||
+            Object.getPrototypeOf(value) !== Object.prototype) {
+            return undefined;
+        }
+        const keys = Reflect.ownKeys(value);
+        if (keys.length !== 1 || keys[0] !== "repliesConfigured")
+            return undefined;
+        const property = Object.getOwnPropertyDescriptor(value, "repliesConfigured");
+        return property && Object.hasOwn(property, "value") && typeof property.value === "boolean"
+            ? property.value
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function writeReplyActivationSnapshot(repliesConfigured, isCurrent) {
+    try {
+        if (!isCurrent())
+            return false;
+        const existing = Object.getOwnPropertyDescriptor(SESSION_MIRROR_OBSERVER_GLOBAL, SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY);
+        if (existing &&
+            (!allowedActivationSnapshotDescriptor(existing) ||
+                readReplyActivationSnapshot() === undefined)) {
+            return false;
+        }
+        if (!isCurrent())
+            return false;
+        const snapshot = Object.freeze({ repliesConfigured });
+        if (!isCurrent())
+            return false;
+        const defined = Reflect.defineProperty(SESSION_MIRROR_OBSERVER_GLOBAL, SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY, {
+            value: snapshot,
+            writable: true,
+            enumerable: existing?.enumerable ?? false,
+            configurable: true,
+        });
+        if (!defined || !isCurrent())
+            return false;
+        const verification = Object.getOwnPropertyDescriptor(SESSION_MIRROR_OBSERVER_GLOBAL, SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY);
+        return (allowedActivationSnapshotDescriptor(verification) &&
+            verification.value === snapshot &&
+            readReplyActivationSnapshot() === repliesConfigured);
+    }
+    catch {
+        return false;
+    }
+}
 function nextGeneration(value) {
     return value >= MAX_FACADE_GENERATION ? 1 : value + 1;
 }
@@ -133,6 +190,7 @@ function initialState() {
     return {
         generation: 0,
         sessionConfigured: undefined,
+        repliesConfigured: undefined,
         load: "not-loaded",
         attestation: "not-run",
         attestationReason: undefined,
@@ -149,9 +207,25 @@ function configuredForCwd(cwd) {
         return false;
     }
 }
+function repliesConfiguredForCwd(cwd) {
+    try {
+        return isTlhExperimentalFeatureEnabled(getTlhExperimentalConfig(cwd), SESSION_MIRROR_REPLIES_FEATURE);
+    }
+    catch {
+        return false;
+    }
+}
 function configuredForContext(ctx) {
     try {
         return configuredForCwd(ctx.cwd);
+    }
+    catch {
+        return false;
+    }
+}
+function repliesConfiguredForContext(ctx) {
+    try {
+        return repliesConfiguredForCwd(ctx.cwd);
     }
     catch {
         return false;
@@ -320,6 +394,46 @@ function normalizeProbeState(value) {
                 sink: enumValue(timingRecord.sink, TIMING_BUCKET_VALUES, "unknown"),
             }),
             runtimeFailures: boundedCounter(source.runtimeFailures),
+            reply: normalizeReplyProducerState(source.reply),
+        });
+    }
+    catch {
+        return undefined;
+    }
+}
+const REPLY_PRODUCER_OUTCOMES = [
+    "accepted",
+    "unconfirmed",
+    "invalid",
+    "unauthorized",
+    "stale",
+    "busy",
+    "duplicate",
+    "expired",
+    "disconnected",
+];
+function normalizeReplyProducerState(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    try {
+        const source = value;
+        const channel = source.channel;
+        const normalizedChannel = channel === "none" || channel === "connecting" || channel === "open" ? channel : "none";
+        const outcome = source.lastOutcome;
+        return Object.freeze({
+            enabled: source.enabled === true,
+            sessionActive: source.sessionActive === true,
+            channel: normalizedChannel,
+            inFlight: source.inFlight === true,
+            busyLatch: source.busyLatch === true,
+            compactionLatched: source.compactionLatched === true,
+            generation: boundedCounter(source.generation),
+            rememberedRequests: boundedCounter(source.rememberedRequests, 64),
+            accepted: boundedCounter(source.accepted),
+            unconfirmed: boundedCounter(source.unconfirmed),
+            lastOutcome: typeof outcome === "string" && REPLY_PRODUCER_OUTCOMES.includes(outcome)
+                ? outcome
+                : undefined,
         });
     }
     catch {
@@ -404,6 +518,8 @@ export function formatSessionMirrorObserverStatus(status) {
         `session-configured=${status.sessionConfigured === undefined ? "none" : formatValue(status.sessionConfigured)}`,
         `active=${status.active}`,
         `next-session=${formatValue(status.nextSessionConfigured)}`,
+        `replies=${status.repliesConfigured === undefined ? "none" : formatValue(status.repliesConfigured)}`,
+        `next-session-replies=${formatValue(status.nextSessionRepliesConfigured)}`,
         "changes=next-session-only",
         `load=${status.load}`,
         `attestation=${status.attestation}${formatReason(status.attestationReason)}`,
@@ -416,6 +532,8 @@ export function formatSessionMirrorObserverStatus(status) {
         `depth=${status.maxDepth}/128(${depthPressure})`,
         `envelope-bytes=${status.envelopeBytes}/262144(${bytePressure})`,
         `timing=load:${status.timing.load},attestation:${status.timing.attestation},projection:${status.timing.projection},sink:${status.timing.sink}`,
+        `reply-channel=${status.reply?.channel ?? "none"}`,
+        `reply-outcome=${status.reply?.lastOutcome ?? "none"}`,
         `diagnostics=${formatDiagnostics(status.diagnostics)}`,
     ].join(" ");
 }
@@ -435,8 +553,46 @@ function safeShutdownProbe(probe) {
     catch {
     }
 }
+function weakReplyIsIdle(ctx) {
+    let reference;
+    try {
+        reference = new WeakRef(ctx);
+    }
+    catch {
+        return () => false;
+    }
+    return () => {
+        const current = reference.deref();
+        if (!current)
+            return false;
+        try {
+            return current.isIdle() === true;
+        }
+        catch {
+            return false;
+        }
+    };
+}
+function weakReplyNotifier(ctx) {
+    let reference;
+    try {
+        reference = new WeakRef(ctx);
+    }
+    catch {
+        return () => undefined;
+    }
+    return (outcome) => {
+        const current = reference.deref();
+        if (!current)
+            return;
+        try {
+            current.ui.notify(`session-mirror reply: ${outcome}`, "info");
+        }
+        catch { }
+    };
+}
 function continueSessionMirrorObserverActivation(input) {
-    const { state, isCurrent, sessionManager, loadProbe, attest, now, bridgeDirectory, sink } = input;
+    const { state, isCurrent, sessionManager, loadProbe, attest, now, isIdle, bridgeDirectory, sink, repliesConfigured, sendUserMessage, replyChannelFactory, replyNotify, replyNow, replyScheduleConfirmation, replySetTimeout, replyClearTimeout, } = input;
     const current = () => isCurrent(state);
     if (!current())
         return Promise.resolve();
@@ -482,6 +638,15 @@ function continueSessionMirrorObserverActivation(input) {
                 sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION,
                 ...(bridgeDirectory === undefined ? {} : { bridgeDirectory }),
                 ...(sink === undefined ? {} : { sink }),
+                sessionMirrorReplies: repliesConfigured,
+                ...(sendUserMessage === undefined ? {} : { sendUserMessage }),
+                ...(isIdle === undefined ? {} : { isIdle }),
+                ...(replyChannelFactory === undefined ? {} : { replyChannelFactory }),
+                ...(replyNotify === undefined ? {} : { replyNotify }),
+                ...(replyNow === undefined ? {} : { replyNow }),
+                ...(replyScheduleConfirmation === undefined ? {} : { replyScheduleConfirmation }),
+                ...(replySetTimeout === undefined ? {} : { replySetTimeout }),
+                ...(replyClearTimeout === undefined ? {} : { replyClearTimeout }),
             });
         }
         catch {
@@ -604,13 +769,17 @@ export function createSessionMirrorObserverFacade(options = {}) {
         if (!isCurrent(nextState))
             return Promise.resolve();
         const previousActivation = reason === "reload" ? readActivationSnapshot() : undefined;
+        const previousRepliesActivation = reason === "reload" ? readReplyActivationSnapshot() : undefined;
         if (!isCurrent(nextState))
             return Promise.resolve();
         if (reason === "reload" && previousActivation === undefined) {
             nextState.sessionConfigured = false;
+            nextState.repliesConfigured = false;
             return Promise.resolve();
         }
         const configured = previousActivation ?? configuredForCwd(cwd);
+        const repliesConfigured = configured &&
+            (reason === "reload" ? previousRepliesActivation === true : repliesConfiguredForCwd(cwd));
         if (!isCurrent(nextState))
             return Promise.resolve();
         if (reason !== "reload" || previousActivation === undefined) {
@@ -619,12 +788,21 @@ export function createSessionMirrorObserverFacade(options = {}) {
                 return Promise.resolve();
             if (!stored) {
                 nextState.sessionConfigured = false;
+                nextState.repliesConfigured = false;
                 return Promise.resolve();
+            }
+            const repliesStored = writeReplyActivationSnapshot(repliesConfigured, () => isCurrent(nextState));
+            if (!isCurrent(nextState))
+                return Promise.resolve();
+            if (!repliesStored) {
+                nextState.repliesConfigured = false;
             }
         }
         if (!isCurrent(nextState))
             return Promise.resolve();
         nextState.sessionConfigured = configured;
+        nextState.repliesConfigured =
+            reason === "reload" ? repliesConfigured : (nextState.repliesConfigured ?? repliesConfigured);
         if (!configured)
             return Promise.resolve();
         if (!sessionManager) {
@@ -680,6 +858,8 @@ export function createSessionMirrorObserverFacade(options = {}) {
             !companionDirectoryExists(bridgeDirectory)
             ? undefined
             : bridgeDirectory;
+        const isIdle = weakReplyIsIdle(ctx);
+        const replyNotify = options.replyNotify ?? weakReplyNotifier(ctx);
         return continueSessionMirrorObserverActivation({
             state: nextState,
             isCurrent,
@@ -687,8 +867,17 @@ export function createSessionMirrorObserverFacade(options = {}) {
             loadProbe,
             attest,
             now,
+            isIdle,
             bridgeDirectory: usableBridgeDirectory,
             sink: injectedSink,
+            repliesConfigured: nextState.repliesConfigured === true,
+            sendUserMessage: typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
+            replyChannelFactory: options.replyChannelFactory,
+            replyNotify,
+            replyNow: options.replyNow,
+            replyScheduleConfirmation: options.replyScheduleConfirmation,
+            replySetTimeout: options.replySetTimeout,
+            replyClearTimeout: options.replyClearTimeout,
         });
     };
     const sessionShutdown = () => {
@@ -704,12 +893,13 @@ export function createSessionMirrorObserverFacade(options = {}) {
         previousState.probe = undefined;
         safeShutdownProbe(previousProbe);
     };
-    const forward = (method) => {
+    const forward = (method, ...args) => {
         const probe = state.probe;
         if (!probe)
             return;
         try {
-            probe[method]();
+            const action = probe[method];
+            action(...args);
         }
         catch {
         }
@@ -731,6 +921,7 @@ export function createSessionMirrorObserverFacade(options = {}) {
         const metrics = probeState ?? noProbeMetrics();
         const observerState = probeState;
         const configured = configuredForContext(ctx);
+        const nextSessionRepliesConfigured = configured && repliesConfiguredForContext(ctx);
         const attestation = observerState ? observerState.attestation : state.attestation;
         const attestationState = attestation === "pending" ||
             attestation === "attested" ||
@@ -748,6 +939,8 @@ export function createSessionMirrorObserverFacade(options = {}) {
             configured,
             sessionConfigured: state.sessionConfigured,
             nextSessionConfigured: configured,
+            repliesConfigured: state.repliesConfigured,
+            nextSessionRepliesConfigured,
             active: observerActiveState(state.load, observerState),
             load: state.load,
             attestation: attestationState,
@@ -773,6 +966,7 @@ export function createSessionMirrorObserverFacade(options = {}) {
             lastDiagnostic: observerState?.lastDiagnostic,
             lastProjectionFailure: observerState?.lastProjectionFailure,
             runtimeFailures: metrics.runtimeFailures,
+            reply: observerState?.reply,
         });
     };
     const handleStatus = async (args, ctx) => {
@@ -794,11 +988,16 @@ export function createSessionMirrorObserverFacade(options = {}) {
         sessionStart,
         sessionShutdown,
         agentStart: () => forward("agentStart"),
-        messageEnd: () => forward("messageEnd"),
+        input: (event) => forward("input", event),
+        messageStart: (event) => forward("messageStart", event),
+        messageEnd: (event) => forward("messageEnd", event),
         turnEnd: () => forward("turnEnd"),
         agentSettled: () => forward("agentSettled"),
+        sessionBeforeTree: () => forward("sessionBeforeTree"),
         sessionTree: () => forward("sessionTree"),
+        sessionBeforeCompact: () => forward("sessionBeforeCompact"),
         sessionCompact: () => forward("sessionCompact"),
+        publicationReady: (info) => forward("publicationReady", info),
         requestSnapshot,
         getStatus,
         handleStatus,
@@ -817,10 +1016,30 @@ export function registerSessionMirrorObserverFacade(pi, options = {}) {
         },
         handler: (args, ctx) => facade.handleStatus(args, ctx),
     });
-    pi.on("session_start", (event, ctx) => facade.sessionStart(ctx, event.reason));
+    let replyLifecycleRegistered = false;
+    const registerReplyLifecycle = (ctx) => {
+        if (replyLifecycleRegistered || typeof options.sendUserMessage !== "function")
+            return;
+        try {
+            if (facade.getStatus(ctx).repliesConfigured !== true)
+                return;
+        }
+        catch {
+            return;
+        }
+        replyLifecycleRegistered = true;
+        pi.on("input", (event) => facade.input(event));
+        pi.on("message_start", (event) => facade.messageStart(event));
+        pi.on("session_before_tree", () => facade.sessionBeforeTree());
+        pi.on("session_before_compact", () => facade.sessionBeforeCompact());
+    };
+    pi.on("session_start", async (event, ctx) => {
+        await facade.sessionStart(ctx, event.reason);
+        registerReplyLifecycle(ctx);
+    });
     pi.on("session_shutdown", () => facade.sessionShutdown());
     pi.on("agent_start", () => facade.agentStart());
-    pi.on("message_end", () => facade.messageEnd());
+    pi.on("message_end", (event) => facade.messageEnd(event));
     pi.on("turn_end", () => facade.turnEnd());
     pi.on("agent_settled", () => facade.agentSettled());
     pi.on("session_tree", () => facade.sessionTree());

@@ -1,5 +1,5 @@
 import { createConnection } from "node:net";
-import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, MAX_PATH_BYTES, option, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
+import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, MAX_PATH_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
 export const SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES = MAX_FRAME_BYTES;
 export const SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES = MAX_CONTROL_BYTES;
@@ -7,6 +7,47 @@ export const SESSION_MIRROR_OBSERVER_SINK_MAX_PATH_BYTES = MAX_PATH_BYTES;
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"];
 const FAILURE_EVENTS = ["error", "end", "close"];
 const FAILURE = "local bridge publication failed";
+function publishedSnapshotTarget(envelope) {
+    try {
+        const revision = envelope.message.revision;
+        const leafId = validIdentity(envelope.message.snapshot.tree.activeLeafId);
+        if (leafId === undefined ||
+            !Number.isSafeInteger(revision) ||
+            Object.is(revision, -0) ||
+            revision <= 0 ||
+            revision > Number.MAX_SAFE_INTEGER - 1) {
+            return undefined;
+        }
+        const parents = new Map();
+        for (const entry of envelope.message.snapshot.tree.entries) {
+            const id = validIdentity(entry.id);
+            const parent = entry.parentId;
+            if (id === undefined || !(parent === null || validIdentity(parent) !== undefined)) {
+                return undefined;
+            }
+            if (parents.has(id))
+                return undefined;
+            parents.set(id, parent);
+        }
+        let branchId = leafId;
+        const seen = new Set();
+        while (true) {
+            if (seen.has(branchId) || seen.size > parents.size)
+                return undefined;
+            seen.add(branchId);
+            const parent = parents.get(branchId);
+            if (parent === undefined)
+                return undefined;
+            if (parent === null) {
+                return Object.freeze({ branchId, leafId, sourceRevision: revision });
+            }
+            branchId = parent;
+        }
+    }
+    catch {
+        return undefined;
+    }
+}
 function controls(value) {
     const result = option(value, "controls");
     return result !== null && typeof result === "object" ? result : {};
@@ -200,6 +241,10 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
     const clear = clearTimer(injected);
     const connect = connectionFactory(injected);
     const configuredSourceId = sourceInstanceId(option(options, "sourceInstanceId"));
+    const readyCallback = option(options, "onReady");
+    const onReady = typeof readyCallback === "function"
+        ? readyCallback
+        : undefined;
     let retained;
     let activePublication;
     let publicationRunning = false;
@@ -276,6 +321,7 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
                     onError,
                     onEnd,
                     onClose,
+                    sourceEpoch: 0,
                     ready: false,
                     healthy: true,
                     closed: false,
@@ -340,9 +386,10 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
                 await writeFrame(current.socket, helloFrame, register);
                 if (settled || closed || !current.healthy || current.closed)
                     throw new Error(FAILURE);
-                const ready = parseResult(await readFrame(current.socket, MAX_CONTROL_BYTES, register));
-                if (settled || closed || !current.healthy || current.closed || ready !== "ready")
+                const ready = parseReadyResult(await readFrame(current.socket, MAX_CONTROL_BYTES, register));
+                if (settled || closed || !current.healthy || current.closed || ready === undefined)
                     throw new Error(FAILURE);
+                current.sourceEpoch = ready.sourceEpoch;
                 current.ready = true;
                 return current;
             };
@@ -386,9 +433,21 @@ export function createSessionMirrorObserverSocketSink(options = {}) {
                     await writeFrame(record.socket, dataFrame, register);
                     if (settled || closed || !healthyRecord(record))
                         return finish(false);
-                    const result = parseResult(await readFrame(record.socket, MAX_CONTROL_BYTES, register));
+                    const readyRecord = record;
+                    if (readyRecord === undefined || !healthyRecord(readyRecord))
+                        throw new Error(FAILURE);
+                    const result = parseResult(await readFrame(readyRecord.socket, MAX_CONTROL_BYTES, register));
                     if (result !== "accepted" && result !== "duplicate" && result !== "deduplicated")
                         throw new Error(FAILURE);
+                    const target = publishedSnapshotTarget(envelope);
+                    if (target !== undefined && onReady !== undefined && configuredSourceId !== undefined) {
+                        bestEffort(() => onReady({
+                            sessionId,
+                            sourceInstanceId: configuredSourceId,
+                            sourceEpoch: readyRecord.sourceEpoch,
+                            ...target,
+                        }));
+                    }
                     finish(true);
                 }
                 catch {

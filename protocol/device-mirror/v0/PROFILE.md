@@ -7,8 +7,9 @@ session, persist a snapshot, or provide an iOS UI.
 
 ## Scope and trust boundary
 
-The device mirror is a read-only, foreground live view. The Mac-side producer
-remains the sole durable authority for a conversation. A producer hands a
+The device mirror is a foreground live view with an optional, explicitly
+negotiated reply-text request path. The Mac-side producer remains the sole
+durable authority for a conversation and for every reply decision. A producer hands a
 validated whole `session-mirror/v1` snapshot to an in-memory egress owner under
 an opaque handle minted for that egress launch. The handle is not a session ID,
 source ID, path, host name, account name, or timestamp. Handles are never
@@ -23,8 +24,9 @@ boundary and treats it as payload bytes after that point.
 
 There is no transcript persistence, cache, replay journal, resume claim, or
 background synchronization. Device disconnect and iOS backgrounding clear the
-live view immediately. Listener stop clears all handles and closes the current
-channel. A refused, unavailable, or stopped listener does not trigger LAN,
+live view immediately, including any pending reply and idempotency marker.
+Listener stop clears all handles and closes the current channel. A refused,
+unavailable, or stopped listener does not trigger LAN,
 DNS, loopback, relay, wildcard, or plaintext fallback.
 
 The TLS-PSK key authenticates the intended paired channel and TLS supplies
@@ -81,8 +83,8 @@ bound: 262,144 bytes for the v1 envelope plus an 839-byte wrapper allowance.
 The allowance is the explicit sum of the canonical JSON bytes for
 `{"kind":"snapshot","handle":`, a worst-case `2 + (128 * 6)`-byte JSON
 handle, `,"revision":`, the decimal maximum revision, `,"snapshot":`, and `}`.
-Hello, list, ready, dropped, close, and error frames retain the independent
-16 KiB control bound. A short prefix, truncated body,
+Hello, list, ready, dropped, close, error, reply, receipt, and reply-close
+frames retain the independent 16 KiB control bound. A short prefix, truncated body,
 trailing bytes, invalid UTF-8, invalid JSON, oversized body, cycle, accessor,
 prototype, symbol, hole, or non-JSON primitive is rejected without
 resynchronizing or throwing.
@@ -92,8 +94,8 @@ Direction is part of the boundary. The client may send only:
 ```json
 {
   "kind": "hello",
-  "protocol": { "family": "device-mirror", "major": 0, "minor": 0 },
-  "capabilities": ["list", "subscribe", "snapshot-replace"]
+  "protocol": { "family": "device-mirror", "major": 0, "minor": 1 },
+  "capabilities": ["list", "subscribe", "snapshot-replace", "reply-text"]
 }
 ```
 
@@ -102,6 +104,14 @@ and the request shapes:
 ```json
 { "kind": "list", "requestId": "opaque-request" }
 { "kind": "subscribe", "requestId": "opaque-request", "handle": "opaque-handle" }
+{
+  "kind": "reply",
+  "handle": "opaque-handle",
+  "revision": 7,
+  "requestId": "opaque-request",
+  "ttlSeconds": 30,
+  "text": "bounded plain text"
+}
 ```
 
 The listener may send only these closed shapes:
@@ -109,8 +119,8 @@ The listener may send only these closed shapes:
 ```json
 {
   "kind": "ready",
-  "protocol": { "family": "device-mirror", "major": 0, "minor": 0 },
-  "capabilities": ["list", "subscribe", "snapshot-replace"]
+  "protocol": { "family": "device-mirror", "major": 0, "minor": 1 },
+  "capabilities": ["list", "subscribe", "snapshot-replace", "reply-text"]
 }
 
 {
@@ -131,6 +141,8 @@ The listener may send only these closed shapes:
 { "kind": "dropped", "handle": "opaque-handle", "reason": "eviction" }
 { "kind": "close", "reason": "listener-stop" }
 { "kind": "error", "code": "unknown-handle" }
+{ "kind": "receipt", "code": "accepted" }
+{ "kind": "reply-close", "reason": "authorization-withdrawn" }
 ```
 
 The quoted snapshot value above is explanatory notation; on the wire it is the
@@ -141,11 +153,46 @@ v1 envelope is the intentionally opaque payload exception and is never
 interpreted, displayed, logged, or persisted by this boundary. Errors use only
 the fixed vocabulary exported by `conformance.ts`.
 
-The profile accepts v0 and minor `0` only. A different family, major, or future
-minor is `incompatible-protocol`. Required capabilities are an ordered prefix;
-missing, reordered, or duplicate required names are
-`incompatible-capability`. Unknown valid capability names may be retained for
-forwarding but authorize no behavior.
+The profile supports v0 minor `1` and accepts minor `0` read-only peers. A
+minor-0 hello must not advertise `reply-text`; a minor-1 hello may advertise
+that optional capability. A different family, major, or future minor is
+`incompatible-protocol`. Numeric negative zero (`-0`) is also rejected as an
+unsupported minor rather than being allowed to wedge state normalization.
+Required capabilities are an ordered prefix; missing, reordered, or duplicate
+required names are `incompatible-capability`. Unknown valid capability names
+may be retained for forwarding but authorize no behavior. A reply request is
+rejected unless the current hello negotiated minor 1 and explicitly included
+`reply-text`.
+
+### Optional reply path
+
+The device request carries only the currently subscribed opaque `handle` and
+its exact monotonic `revision`; it never carries installation, source, session,
+branch, leaf, path, address, or host identifiers. Its `requestId` is opaque and
+bounded to 64 Unicode code points. `text` is non-empty, well-formed plain text
+of at most 2 KiB UTF-8 bytes. Horizontal tab and line feed are the only
+permitted C0 controls; all other C0 and C1 controls, Unicode format characters
+(including bidi controls and zero-width characters), and Unicode line/paragraph
+separators are rejected. After those checks, a leading Unicode-whitespace
+sequence must not be followed by `/`; accepted text is preserved byte-for-byte,
+without trimming or mutation, and is never interpreted as a command.
+`ttlSeconds` is a relative integer from 1 through 60, not an absolute timestamp.
+The listener performs only bounded shape, capability, subscription, handle, and
+revision prefilters. The producer authoritatively checks exact target identity,
+source revision, idle/active state, authorization, expiry, and injection.
+
+Only one reply may be in flight. A different request while one is pending gets
+`busy`; a repeated request ID still present in the bounded recent marker set is
+`duplicate` and cannot be sent a second time. The idempotency state retains at
+most `maxReplyRequestDigests` opaque bounded markers, written before producer
+injection; older markers may be forgotten after bounded eviction. There are no
+retries, background sends, or queued text. Producer outcomes are sent as
+exactly `{ "kind": "receipt", "code": "accepted" }`, with the fixed code
+vocabulary `accepted`, `unconfirmed`, `invalid`, `unauthorized`, `stale`,
+`busy`, `duplicate`, `expired`, or `disconnected`. Receipts have no request ID,
+handle, revision, text, or arbitrary detail. Reply-channel closure uses
+`{ "kind": "reply-close", "reason": "..." }` and only the fixed safe close
+reasons.
 
 ## Listings and snapshots
 
@@ -164,18 +211,22 @@ accepted as the inclusive zero value and canonicalized to ordinary `0`; this
 rule applies only to the outer device revision. Nested revisions retain the
 frozen `session-mirror/v1` semantics and are not changed by this profile. A
 revision equal to or below the retained revision is stale and cannot mutate
-state. A newer revision replaces the whole retained value and may coalesce an
-older unsent replacement; no merge or replay is implied.
+state. A newer revision replaces the whole retained value, invalidates any
+pending reply bound to the older revision, and may coalesce an older unsent
+replacement; no merge or replay is implied.
 
 ## Drop and lifecycle semantics
 
 The in-memory egress applies these transitions synchronously and idempotently:
 
-- producer disconnect removes that handle immediately;
-- producer takeover/new source epoch removes the old handle immediately;
+- producer disconnect removes that handle immediately and clears any pending
+  reply for it while preserving the negotiated device channel for other
+  handles;
+- producer takeover/new source epoch removes the old handle immediately and
+  clears any pending reply while preserving the negotiated device channel;
 - an accepted producer event removes and delists that handle immediately because
   the whole snapshot is no longer known to be current;
-- eviction removes the handle immediately;
+- eviction removes the handle immediately and clears any pending reply;
 - listener stop sends the fixed `close` evidence when possible, then clears
   every handle and refuses later operations;
 - device disconnect clears the live device subscription and every retained
@@ -204,7 +255,13 @@ The prototype limits are intentionally conservative guardrails:
 - outer normalized strings must be well-formed Unicode scalar sequences;
   128 Unicode scalar values per handle and 64 per request ID (valid astral
   scalars count as one; unpaired UTF-16 surrogates are rejected);
-- 16 capabilities per hello;
+- 16 capabilities per hello, with `reply-text` as the only optional behavior
+  capability;
+- reply text is non-empty, well-formed Unicode and at most 2 KiB UTF-8 bytes;
+  only tab and LF controls are allowed; format, bidi, separator, and
+  whitespace-leading-slash text is rejected without mutation;
+- reply TTL is a relative integer from 1 through 60 seconds;
+- at most eight opaque recent reply-request markers are retained;
 - revisions from zero through `Number.MAX_SAFE_INTEGER - 1`;
 - defensive frame normalization depth 528, 12,048 containers, and 1.25 MiB of
   normalization budget; these are the frozen v1 limits plus bounded device-frame
@@ -212,9 +269,10 @@ The prototype limits are intentionally conservative guardrails:
   eight legal v1 snapshots plus bounded state metadata.
 
 The only externally observable evidence is a closed result or one of the fixed
-`ready`, `list`, `snapshot`, `dropped`, `close`, and `error` shapes. Diagnostics
-never echo input keys, values, handles, request IDs, snapshot contents,
-addresses, interface names, or exception text. The state helper is a
+`ready`, `list`, `snapshot`, `dropped`, `close`, `error`, `receipt`, and
+`reply-close` shapes. Diagnostics never echo input keys, values, handles,
+request IDs, reply text, snapshot contents, addresses, interface names, or
+exception text. The state helper is a
 repository-only deterministic oracle; its snapshot field represents transient
 in-memory test state, not persistence or a logging recommendation.
 

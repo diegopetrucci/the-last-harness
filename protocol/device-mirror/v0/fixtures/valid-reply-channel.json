@@ -1,0 +1,39 @@
+{
+  "scenario": "reply-channel",
+  "minorZeroReadOnly": {
+    "kind": "hello",
+    "protocol": { "family": "device-mirror", "major": 0, "minor": 0 },
+    "capabilities": ["list", "subscribe", "snapshot-replace"]
+  },
+  "minorOne": {
+    "kind": "hello",
+    "protocol": { "family": "device-mirror", "major": 0, "minor": 1 },
+    "capabilities": ["list", "subscribe", "snapshot-replace", "reply-text"]
+  },
+  "reply": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 7,
+    "requestId": "fixture-request-1",
+    "ttlSeconds": 30,
+    "text": "A bounded plain-text reply."
+  },
+  "replyB": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 7,
+    "requestId": "fixture-request-2",
+    "ttlSeconds": 30,
+    "text": "A second bounded plain-text reply."
+  },
+  "multilineReply": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 7,
+    "requestId": "fixture-multiline-request",
+    "ttlSeconds": 30,
+    "text": "line one\n\tline two"
+  },
+  "receipt": { "kind": "receipt", "code": "accepted" },
+  "close": { "kind": "reply-close", "reason": "producer-disconnect" }
+}

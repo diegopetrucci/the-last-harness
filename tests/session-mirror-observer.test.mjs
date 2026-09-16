@@ -439,3 +439,30 @@ test("tree/compaction and explicit requests force replacement snapshots without 
   assert.equal(state.calls.sink, 1);
   assert.equal(state.runtime.getState().successfulPublications, 1);
 });
+
+test("an explicit active snapshot request publishes persisted state before settlement", () => {
+  const state = harness();
+  state.runtime.sessionStart();
+  runScheduled(state);
+  state.runtime.agentStart();
+  runScheduled(state);
+  state.runtime.requestSnapshot(true);
+  runScheduled(state);
+
+  assert.equal(state.published.at(-1)?.message.snapshot.status, "active");
+});
+
+test("an active snapshot bypass is consumed by one publication attempt", () => {
+  const state = harness();
+  state.runtime.sessionStart();
+  runScheduled(state);
+  state.runtime.agentStart();
+  runScheduled(state);
+  state.runtime.requestSnapshot(true);
+  runScheduled(state);
+  assert.equal(state.calls.sink, 1);
+
+  state.runtime.sessionTree();
+  runScheduled(state);
+  assert.equal(state.calls.sink, 1);
+});

@@ -5,6 +5,11 @@
     "major": 0,
     "minor": 0
   },
+  "replyProfile": {
+    "family": "local-bridge",
+    "major": 0,
+    "minor": 1
+  },
   "bounds": {
     "maxFrameBodyBytes": 262144,
     "maxControlFrameBytes": 4096,
@@ -14,6 +19,11 @@
     "maxSocketPathBytes": 103,
     "maxSocketNameCharacters": 64,
     "maxCapabilities": 16,
+    "maxReplyRequestIdCharacters": 64,
+    "maxReplyRequestDigests": 8,
+    "maxReplyTextBytes": 2048,
+    "minReplyTtlSeconds": 1,
+    "maxReplyTtlSeconds": 60,
     "maxActiveConversations": 8,
     "maxKnownConversations": 64,
     "maxSupersededSourceIds": 64,
@@ -41,6 +51,30 @@
     "budgetBytes": 153092096
   },
   "requiredCapabilities": ["snapshot-replace", "cursor-recovery"],
+  "optionalCapabilities": ["reply-text"],
+  "replyReceiptCodes": [
+    "accepted",
+    "unconfirmed",
+    "invalid",
+    "unauthorized",
+    "stale",
+    "busy",
+    "duplicate",
+    "expired",
+    "disconnected"
+  ],
+  "replyCloseReasons": [
+    "producer-disconnect",
+    "owner-replaced",
+    "authorization-withdrawn",
+    "listener-stop",
+    "transport-failure"
+  ],
+  "replyDirections": {
+    "bridgeToProducer": ["reply"],
+    "producerToBridge": ["receipt", "reply-close"]
+  },
+  "replyOutcomeCodes": ["forwarded", "duplicate"],
   "resultCodes": [
     "ready",
     "disconnected",
@@ -50,7 +84,7 @@
     "evicted",
     "closed"
   ],
-  "runtimeOnlyErrorCodes": ["handshake-required", "wrong-direction"],
+  "runtimeOnlyErrorCodes": ["handshake-required"],
   "failureCodes": [
     "invalid-input",
     "malformed-rendezvous",
@@ -80,6 +114,9 @@
     "session-mirror-revision-gap",
     "revision-exhausted",
     "source-history-full",
+    "reply-not-negotiated",
+    "reply-channel-disconnected",
+    "reply-not-pending",
     "closed"
   ],
   "frozenDependencies": [
@@ -284,6 +321,43 @@
         "lexical-companion-bound",
         "path-traversal-rejection",
         "socket-name-restriction"
+      ]
+    },
+    {
+      "id": "invalid-version",
+      "path": "fixtures/invalid-version.json",
+      "valid": false,
+      "expectedCode": "incompatible-protocol",
+      "covers": ["version-negotiation", "future-minor", "negative-zero-minor"]
+    },
+    {
+      "id": "valid-reply-channel",
+      "path": "fixtures/valid-reply-channel.json",
+      "valid": true,
+      "covers": [
+        "minor-zero-data-hello",
+        "minor-one-reply-handshake",
+        "reply-capability",
+        "owner-bound-reply-channel",
+        "safe-receipt",
+        "relative-ttl",
+        "bounded-recent-idempotency"
+      ]
+    },
+    {
+      "id": "invalid-reply-boundaries",
+      "path": "fixtures/invalid-reply-boundaries.json",
+      "valid": false,
+      "expectedCodes": ["incompatible-capability", "malformed-frame", "wrong-direction"],
+      "covers": [
+        "minor-zero-reply-capability-rejection",
+        "text-byte-bound",
+        "leading-slash-rejection",
+        "control-character-rejection",
+        "format-and-bidi-rejection",
+        "unicode-whitespace-leading-slash",
+        "integer-bound",
+        "no-text-or-id-receipt"
       ]
     }
   ]

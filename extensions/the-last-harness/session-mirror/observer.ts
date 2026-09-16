@@ -159,7 +159,7 @@ export interface SessionMirrorObserverRuntime {
   /** Invalidate the generation and drop queued work without flushing. */
   sessionShutdown(): void;
   /** Request a replacement snapshot from an idle/settled generation. */
-  requestSnapshot(): void;
+  requestSnapshot(allowActive?: boolean): void;
   /** Return a fresh, immutable aggregate-only state view. */
   getState(): SessionMirrorObserverState;
 }
@@ -205,6 +205,7 @@ interface InternalState {
   dirty: boolean;
   snapshotRequired: boolean;
   publicationPending: boolean;
+  activeSnapshotRequested: boolean;
   queue: Marker[];
   queueCapacity: number;
   revision: number;
@@ -268,6 +269,7 @@ function initialState(queueCapacity: number): InternalState {
     dirty: false,
     snapshotRequired: false,
     publicationPending: false,
+    activeSnapshotRequested: false,
     queue: [],
     queueCapacity,
     revision: 0,
@@ -499,7 +501,8 @@ export function createSessionMirrorObserverRuntime(
     enqueue("dirty");
   };
 
-  const markForceSnapshot = (): void => {
+  const markForceSnapshot = (allowActive = false): void => {
+    if (allowActive) state.activeSnapshotRequested = true;
     state.snapshotRequired = true;
     state.dirty = true;
     state.publicationPending = true;
@@ -632,6 +635,7 @@ export function createSessionMirrorObserverRuntime(
 
     state.successfulPublications = incrementCounter(state.successfulPublications);
     if (state.mutationSerial === operation.mutationSerial) {
+      state.activeSnapshotRequested = false;
       state.snapshotRequired = false;
       state.dirty = false;
       state.publicationPending = false;
@@ -702,9 +706,15 @@ export function createSessionMirrorObserverRuntime(
       recordDiagnostic("stale-generation");
       return;
     }
-    if (!state.enabled || !state.settled || !state.publicationPending || activeSink !== undefined) {
+    if (
+      !state.enabled ||
+      (!state.settled && !state.activeSnapshotRequested) ||
+      !state.publicationPending ||
+      activeSink !== undefined
+    ) {
       return;
     }
+    state.activeSnapshotRequested = false;
 
     const view = readSessionView();
     if (!isCurrent(token)) {
@@ -875,6 +885,7 @@ export function createSessionMirrorObserverRuntime(
       state.dirty = true;
       state.snapshotRequired = true;
       state.publicationPending = false;
+      state.activeSnapshotRequested = false;
       state.queue = [];
       state.revision = 0;
       state.publicationSerial = 0;
@@ -949,10 +960,10 @@ export function createSessionMirrorObserverRuntime(
     }
   };
 
-  const requestSnapshot = (): void => {
+  const requestSnapshot = (allowActive = false): void => {
     lifecycleDepth += 1;
     try {
-      markForceSnapshot();
+      markForceSnapshot(allowActive);
     } finally {
       lifecycleDepth -= 1;
     }
@@ -970,6 +981,7 @@ export function createSessionMirrorObserverRuntime(
       state.dirty = false;
       state.snapshotRequired = false;
       state.publicationPending = false;
+      state.activeSnapshotRequested = false;
       state.queue = [];
       state.revision = 0;
       state.publicationSerial = 0;

@@ -18,12 +18,17 @@ const { SESSION_MIRROR_BOUNDS, validateSessionMirrorEnvelope } = sessionMirror;
 const {
   DEVICE_MIRROR_BOUNDS,
   DEVICE_MIRROR_CAPABILITIES,
+  DEVICE_MIRROR_REPLY_CAPABILITY,
+  DEVICE_MIRROR_REPLY_RECEIPT_CODES,
+  DEVICE_MIRROR_REPLY_CLOSE_REASONS,
+  DEVICE_MIRROR_REPLY_OUTCOME_CODES,
   DEVICE_MIRROR_CLOSE_REASONS,
   DEVICE_MIRROR_DROP_REASONS,
   DEVICE_MIRROR_ERROR_CODES,
   DEVICE_MIRROR_LISTING_FRESHNESS,
   DEVICE_MIRROR_LISTING_STATUSES,
   DEVICE_MIRROR_PROTOCOL,
+  DEVICE_MIRROR_READ_ONLY_PROTOCOL,
   DEVICE_MIRROR_TRANSPORT,
   DEVICE_MIRROR_WIRE_ERROR_CODES,
   acceptDeviceMirrorHello,
@@ -38,11 +43,15 @@ const {
   parseDeviceMirrorFrame,
   replaceDeviceMirrorSnapshot,
   requestDeviceMirrorList,
+  requestDeviceMirrorReply,
+  settleDeviceMirrorReply,
+  closeDeviceMirrorReplyChannel,
   stopDeviceMirrorListener,
   subscribeDeviceMirrorHandle,
   takeoverDeviceMirrorProducer,
   validateDeviceMirrorAddress,
   validateDeviceMirrorFrame,
+  isDeviceMirrorReplyExpired,
   validateDeviceMirrorListenerAddress,
   createDeviceMirrorState,
 } = mirror;
@@ -229,11 +238,15 @@ function stateWithSnapshot(handle = "launch-handle-a", revision = 1, marker = "s
 }
 
 test("manifest inventories the separately versioned profile and synthetic corpus", () => {
-  assert.deepStrictEqual(manifest.profile, { family: "device-mirror", major: 0, minor: 0 });
+  assert.deepStrictEqual(manifest.profile, { family: "device-mirror", major: 0, minor: 1 });
   assert.equal(manifest.manifestVersion, 1);
   assert.deepStrictEqual(manifest.transport, DEVICE_MIRROR_TRANSPORT);
   assert.deepStrictEqual(manifest.bounds, DEVICE_MIRROR_BOUNDS);
   assert.deepStrictEqual(manifest.requiredCapabilities, [...DEVICE_MIRROR_CAPABILITIES]);
+  assert.deepStrictEqual(manifest.optionalCapabilities, [DEVICE_MIRROR_REPLY_CAPABILITY]);
+  assert.deepStrictEqual(manifest.replyReceiptCodes, [...DEVICE_MIRROR_REPLY_RECEIPT_CODES]);
+  assert.deepStrictEqual(manifest.replyCloseReasons, [...DEVICE_MIRROR_REPLY_CLOSE_REASONS]);
+  assert.deepStrictEqual(manifest.replyOutcomeCodes, [...DEVICE_MIRROR_REPLY_OUTCOME_CODES]);
   assert.deepStrictEqual(manifest.listingStatuses, [...DEVICE_MIRROR_LISTING_STATUSES]);
   assert.deepStrictEqual(manifest.listingFreshness, [...DEVICE_MIRROR_LISTING_FRESHNESS]);
   assert.deepStrictEqual(manifest.dropReasons, [...DEVICE_MIRROR_DROP_REASONS]);
@@ -540,12 +553,308 @@ test("family, major, and future minor versions are rejected before channel use",
     fixture.expectedCode,
   );
   assertFailure(
+    validateDeviceMirrorFrame(hello({ protocol: fixture.negativeZero }), "client-to-listener"),
+    fixture.expectedCode,
+  );
+  assertFailure(
     validateDeviceMirrorFrame(
       hello({ protocol: { family: DEVICE_MIRROR_PROTOCOL.family, major: "0", minor: 0 } }),
       "client-to-listener",
     ),
     "malformed-frame",
   );
+});
+
+test("minor-1 reply requests are bounded, negotiated, targeted, and idempotent", () => {
+  const fixture = readFixture("valid-reply-channel");
+  const invalid = readFixture("invalid-reply-boundaries");
+  assertFailure(
+    validateDeviceMirrorFrame(invalid.minorZeroWithReply, "client-to-listener"),
+    "incompatible-capability",
+  );
+  assert.equal(validateDeviceMirrorFrame(fixture.minorZeroReadOnly, "client-to-listener").ok, true);
+  assert.deepEqual(
+    acceptDeviceMirrorHello(createDeviceMirrorState(), fixture.minorZeroReadOnly).frames[0]
+      .protocol,
+    DEVICE_MIRROR_READ_ONLY_PROTOCOL,
+  );
+  const reply = validateDeviceMirrorFrame(fixture.reply, "client-to-listener");
+  assert.equal(reply.ok, true);
+  const multilineReply = validateDeviceMirrorFrame(fixture.multilineReply, "client-to-listener");
+  assert.equal(multilineReply.ok, true);
+  assert.equal(multilineReply.frame.text, fixture.multilineReply.text);
+  const encoded = frameBytes(fixture.reply, "client-to-listener");
+  assert.deepEqual(parseDeviceMirrorFrame(encoded, "client-to-listener"), reply);
+  const receipt = validateDeviceMirrorFrame(fixture.receipt, "listener-to-client");
+  assert.equal(receipt.ok, true);
+  assert.deepEqual(Object.keys(receipt.frame), ["kind", "code"]);
+  assert.equal(DEVICE_MIRROR_REPLY_RECEIPT_CODES.includes(fixture.receipt.code), true);
+  for (const code of DEVICE_MIRROR_REPLY_RECEIPT_CODES) {
+    const candidate = validateDeviceMirrorFrame({ kind: "receipt", code }, "listener-to-client");
+    assert.equal(candidate.ok, true);
+    assert.deepEqual(Object.keys(candidate.frame), ["kind", "code"]);
+  }
+  assert.equal(DEVICE_MIRROR_REPLY_CLOSE_REASONS.includes(fixture.close.reason), true);
+  assert.equal(validateDeviceMirrorFrame(fixture.close, "listener-to-client").ok, true);
+  assertFailure(validateDeviceMirrorFrame(fixture.close, "client-to-listener"), "wrong-direction");
+  assertFailure(
+    validateDeviceMirrorFrame(
+      { ...fixture.close, reason: "unknown-close-reason" },
+      "listener-to-client",
+    ),
+    "malformed-frame",
+  );
+  assert.equal(isDeviceMirrorReplyExpired(fixture.reply.ttlSeconds, 29.9), false);
+  assert.equal(isDeviceMirrorReplyExpired(fixture.reply.ttlSeconds, 30), true);
+  assert.equal(isDeviceMirrorReplyExpired(0, 0), false);
+  const readOnlyState = acceptDeviceMirrorHello(
+    createDeviceMirrorState(),
+    fixture.minorZeroReadOnly,
+  ).nextState;
+  assertFailure(requestDeviceMirrorReply(readOnlyState, fixture.reply), "reply-not-negotiated");
+  assertFailure(validateDeviceMirrorFrame(fixture.reply, "listener-to-client"), "wrong-direction");
+  assertFailure(
+    validateDeviceMirrorFrame(fixture.receipt, "client-to-listener"),
+    "wrong-direction",
+  );
+
+  let state = acceptDeviceMirrorHello(createDeviceMirrorState(), fixture.minorOne).nextState;
+  const replaced = replaceDeviceMirrorSnapshot(
+    state,
+    snapshotInput(fixture.reply.handle, fixture.reply.revision, "reply-target"),
+  );
+  assert.equal(replaced.ok, true);
+  state = replaced.nextState;
+  const subscribed = subscribeDeviceMirrorHandle(state, subscribeRequest(fixture.reply.handle));
+  assert.equal(subscribed.ok, true);
+  state = subscribed.nextState;
+  assert.equal(state.replyTextNegotiated, true);
+  assertFailure(
+    requestDeviceMirrorReply(state, { ...fixture.reply, revision: fixture.reply.revision - 1 }),
+    "stale-snapshot",
+  );
+
+  const pending = requestDeviceMirrorReply(state, fixture.reply);
+  assert.equal(pending.ok, true);
+  assert.equal(pending.result.code, "reply-pending");
+  assert.equal(pending.frames.length, 0);
+  state = pending.nextState;
+  assert.equal(state.replyInFlight, true);
+  assert.equal(JSON.stringify(state).includes(fixture.reply.text), false);
+  assert.equal(JSON.stringify(state).includes(fixture.reply.requestId), false);
+
+  const busyRequest = { ...fixture.reply, requestId: "fixture-request-2" };
+  const busy = requestDeviceMirrorReply(state, busyRequest);
+  assert.equal(busy.ok, true);
+  assert.equal(busy.result.code, "reply-busy");
+  assert.deepEqual(busy.frames, [{ kind: "receipt", code: "busy" }]);
+  const duplicate = requestDeviceMirrorReply(state, fixture.reply);
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.result.code, "reply-duplicate");
+  assert.deepEqual(duplicate.frames, [{ kind: "receipt", code: "duplicate" }]);
+
+  const settled = settleDeviceMirrorReply(state, fixture.receipt);
+  assert.equal(settled.ok, true);
+  assert.equal(settled.result.code, "reply-accepted");
+  assert.deepEqual(settled.frames, [fixture.receipt]);
+  state = settled.nextState;
+  assert.equal(state.replyInFlight, false);
+  const duplicateAfterSettlement = requestDeviceMirrorReply(state, fixture.reply);
+  assert.equal(duplicateAfterSettlement.ok, true);
+  assert.equal(duplicateAfterSettlement.result.code, "reply-duplicate");
+
+  const secondPending = requestDeviceMirrorReply(state, fixture.replyB);
+  assert.equal(secondPending.ok, true);
+  assert.equal(secondPending.result.code, "reply-pending");
+  state = secondPending.nextState;
+  const secondSettled = settleDeviceMirrorReply(state, { kind: "receipt", code: "unconfirmed" });
+  assert.equal(secondSettled.ok, true);
+  assert.equal(secondSettled.result.code, "reply-unconfirmed");
+  state = secondSettled.nextState;
+  const replayA = requestDeviceMirrorReply(state, fixture.reply);
+  assert.equal(replayA.ok, true);
+  assert.equal(replayA.result.code, "reply-duplicate");
+  assert.equal(state.replyRequestDigests.length, 2);
+  assert.equal(
+    state.replyRequestDigests.length <= DEVICE_MIRROR_BOUNDS.maxReplyRequestDigests,
+    true,
+  );
+
+  for (const code of DEVICE_MIRROR_REPLY_RECEIPT_CODES) {
+    const request = { ...fixture.reply, requestId: `fixture-${code}` };
+    const codePending = requestDeviceMirrorReply(state, request);
+    assert.equal(codePending.ok, true);
+    state = codePending.nextState;
+    const codeSettled = settleDeviceMirrorReply(state, { kind: "receipt", code });
+    assert.equal(codeSettled.ok, true);
+    assert.equal(codeSettled.result.code, `reply-${code}`);
+    assert.deepEqual(codeSettled.frames, [{ kind: "receipt", code }]);
+    state = codeSettled.nextState;
+    assert.equal(state.replyInFlight, false);
+  }
+  assert.equal(state.replyRequestDigests.length, DEVICE_MIRROR_BOUNDS.maxReplyRequestDigests);
+
+  const revisionPending = requestDeviceMirrorReply(state, {
+    ...fixture.reply,
+    requestId: "revision-bound-request",
+  });
+  assert.equal(revisionPending.ok, true);
+  state = revisionPending.nextState;
+  const revisionUpdate = replaceDeviceMirrorSnapshot(
+    state,
+    snapshotInput(fixture.reply.handle, fixture.reply.revision + 1, "reply-target-updated"),
+  );
+  assert.equal(revisionUpdate.ok, true);
+  state = revisionUpdate.nextState;
+  assert.equal(state.replyInFlight, false);
+  assert.equal(state.replyInFlightDigest, null);
+  assertFailure(settleDeviceMirrorReply(state, fixture.receipt), "reply-not-pending");
+
+  const closed = closeDeviceMirrorReplyChannel(state, fixture.close.reason);
+  assert.equal(closed.ok, true);
+  assert.deepEqual(closed.frames, [fixture.close]);
+  assert.equal(closed.nextState.replyTextNegotiated, false);
+  assertFailure(requestDeviceMirrorReply(closed.nextState, fixture.reply), "reply-not-negotiated");
+
+  assertFailure(
+    validateDeviceMirrorFrame(invalid.invalidText, "client-to-listener"),
+    "malformed-frame",
+  );
+  for (const text of invalid.leadingWhitespaceSlashTexts) {
+    assertFailure(
+      validateDeviceMirrorFrame({ ...fixture.reply, text }, "client-to-listener"),
+      "malformed-frame",
+    );
+  }
+  for (const text of [
+    invalid.controlText,
+    invalid.formatText,
+    invalid.bidiText,
+    invalid.lineSeparatorText,
+  ]) {
+    assertFailure(
+      validateDeviceMirrorFrame({ ...fixture.reply, text }, "client-to-listener"),
+      "malformed-frame",
+    );
+  }
+  assert.equal(
+    validateDeviceMirrorFrame(
+      {
+        ...fixture.reply,
+        text: invalid.unicodeTextCharacter.repeat(invalid.unicodeTextExactCharacters),
+      },
+      "client-to-listener",
+    ).ok,
+    true,
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(
+      {
+        ...fixture.reply,
+        text: invalid.unicodeTextCharacter.repeat(invalid.unicodeTextOverCharacters),
+      },
+      "client-to-listener",
+    ),
+    "malformed-frame",
+  );
+  assert.equal(
+    validateDeviceMirrorFrame(
+      { ...fixture.reply, text: "x".repeat(DEVICE_MIRROR_BOUNDS.maxReplyTextBytes) },
+      "client-to-listener",
+    ).ok,
+    true,
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(
+      { ...fixture.reply, text: "x".repeat(DEVICE_MIRROR_BOUNDS.maxReplyTextBytes + 1) },
+      "client-to-listener",
+    ),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(
+      { ...fixture.reply, requestId: "x".repeat(DEVICE_MIRROR_BOUNDS.maxRequestIdCharacters + 1) },
+      "client-to-listener",
+    ),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(invalid.invalidTtl, "client-to-listener"),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(invalid.invalidReceipt, "listener-to-client"),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateDeviceMirrorFrame(invalid.wrongDirection, "listener-to-client"),
+    "wrong-direction",
+  );
+});
+
+test("device handle drops clear only pending replies and preserve negotiated capability", () => {
+  const fixture = readFixture("valid-reply-channel");
+  let state = acceptDeviceMirrorHello(createDeviceMirrorState(), fixture.minorOne).nextState;
+  state = replaceDeviceMirrorSnapshot(
+    state,
+    snapshotInput(fixture.reply.handle, fixture.reply.revision, "reply-target"),
+  ).nextState;
+  state = replaceDeviceMirrorSnapshot(
+    state,
+    snapshotInput("launch-handle-b", fixture.reply.revision, "other-target"),
+  ).nextState;
+  state = subscribeDeviceMirrorHandle(state, subscribeRequest(fixture.reply.handle)).nextState;
+  assertFailure(
+    requestDeviceMirrorReply(state, { ...fixture.reply, handle: "missing-handle" }),
+    "unknown-handle",
+  );
+  assertFailure(
+    requestDeviceMirrorReply(state, { ...fixture.reply, handle: "launch-handle-b" }),
+    "unknown-handle",
+  );
+  state = requestDeviceMirrorReply(state, fixture.reply).nextState;
+  assert.equal(state.replyInFlight, true);
+
+  const otherDrop = disconnectDeviceMirrorProducer(state, "launch-handle-b");
+  assert.equal(otherDrop.ok, true);
+  state = otherDrop.nextState;
+  assert.equal(state.replyInFlight, true);
+  assert.equal(state.replyTextNegotiated, true);
+
+  const targetDrop = disconnectDeviceMirrorProducer(state, fixture.reply.handle);
+  assert.equal(targetDrop.ok, true);
+  state = targetDrop.nextState;
+  assert.equal(state.subscribedHandle, null);
+  assert.equal(state.replyTextNegotiated, true);
+  assert.equal(state.negotiatedMinor, DEVICE_MIRROR_PROTOCOL.minor);
+  assert.equal(state.replyInFlight, false);
+  assert.equal(state.replyInFlightDigest, null);
+  assert.equal(state.replyRequestDigests.length, 1);
+
+  state = replaceDeviceMirrorSnapshot(
+    state,
+    snapshotInput(fixture.reply.handle, fixture.reply.revision + 1, "reply-target-recreated"),
+  ).nextState;
+  state = subscribeDeviceMirrorHandle(state, subscribeRequest(fixture.reply.handle)).nextState;
+  const nextReply = requestDeviceMirrorReply(state, {
+    ...fixture.reply,
+    revision: fixture.reply.revision + 1,
+    requestId: "fixture-request-after-drop",
+  });
+  assert.equal(nextReply.ok, true);
+  assert.equal(nextReply.result.code, "reply-pending");
+
+  const disconnected = disconnectDeviceMirrorClient(nextReply.nextState);
+  assert.equal(disconnected.ok, true);
+  assert.equal(disconnected.nextState.replyTextNegotiated, false);
+  assert.equal(disconnected.nextState.replyRequestDigests.length, 0);
+  assert.equal(disconnected.nextState.handles.length, 0);
+  const backgrounded = backgroundDeviceMirrorClient(nextReply.nextState);
+  assert.equal(backgrounded.ok, true);
+  assert.equal(backgrounded.nextState.replyTextNegotiated, false);
+  const stopped = stopDeviceMirrorListener(nextReply.nextState);
+  assert.equal(stopped.ok, true);
+  assert.equal(stopped.nextState.status, "stopped");
 });
 
 test("u32-BE framing is exact and bounded for control and snapshot frames", () => {

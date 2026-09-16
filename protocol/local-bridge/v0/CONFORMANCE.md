@@ -30,14 +30,22 @@ code without throwing.
 
 The exported bounds and closed sets are:
 
-- `LOCAL_BRIDGE_PROTOCOL` and `LOCAL_BRIDGE_CAPABILITIES` — v0 version and
-  required capability prefix;
-- `LOCAL_BRIDGE_BOUNDS` — frame, control, rendezvous, socket-path,
+- `LOCAL_BRIDGE_PROTOCOL` and `LOCAL_BRIDGE_READ_ONLY_PROTOCOL` — v0 minor-0
+  data version (the explicit read-only form);
+- `LOCAL_BRIDGE_REPLY_PROTOCOL` — the separate v0 minor-1 reply-channel
+  version negotiated only after the data handshake;
+- `LOCAL_BRIDGE_CAPABILITIES` and `LOCAL_BRIDGE_REPLY_CAPABILITY` — required
+  capability prefix and the optional negotiated `reply-text` capability;
+- `LOCAL_BRIDGE_REPLY_RECEIPT_CODES`, `LOCAL_BRIDGE_REPLY_CLOSE_REASONS`,
+  `LOCAL_BRIDGE_REPLY_DIRECTIONS`, and `LOCAL_BRIDGE_REPLY_OUTCOME_CODES` —
+  closed reply evidence vocabularies;
+- `LOCAL_BRIDGE_BOUNDS` — frame, control, rendezvous, socket-path, reply,
   normalization, concurrency, epoch, revision, and activity-generation limits;
 - `LOCAL_BRIDGE_ERROR_CODES` — every failure code that may cross this boundary;
-- `LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES` — `handshake-required` and
-  `wrong-direction`, which are connection-phase outputs supplied by runtime
-  state and are not fabricated by this parser;
+- `LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES` — `handshake-required`, the
+  connection-phase output supplied by runtime state and not fabricated by this
+  parser. `wrong-direction` remains a closed parser/runtime error in
+  `LOCAL_BRIDGE_ERROR_CODES`;
 - `LOCAL_BRIDGE_RESULT_CODES` — every successful lifecycle/publication outcome
   that may cross this boundary;
 - `LOCAL_BRIDGE_NORMALIZATION_FORMULA` — the bounded-state formula and slack
@@ -60,6 +68,15 @@ The boundary validators are:
 - `validateLocalBridgeHandshake` and `parseLocalBridgeHandshakeFrame` — check
   the installation/session scope, source instance, token, capabilities, and
   negotiated version;
+- `validateLocalBridgeReplyHandshake`, `parseLocalBridgeReplyHandshakeFrame`,
+  and `encodeLocalBridgeReplyHandshakeFrame` — check the separate minor-1
+  reply-channel handshake and its active-owner binding fields;
+- `validateLocalBridgeReplyFrame`, `parseLocalBridgeReplyFrame`,
+  `encodeLocalBridgeReplyFrame`, and `isLocalBridgeReplyExpired` — enforce
+  direction, bounded generation/branch/leaf/source-revision target fields,
+  fixed receipt/close vocabularies, 2 KiB UTF-8 text, safe multiline/control/format
+  validation, leading-Unicode-whitespace slash rejection, relative TTL bounds,
+  and exact framing;
 - `encodeLengthPrefixedFrame` and `decodeLengthPrefixedFrame` — implement one
   exact u32-big-endian frame with a 256 KiB body cap;
 - `parseLocalBridgeDataFrame` — decode a raw producer body as one frozen
@@ -82,6 +99,12 @@ The state transition helpers are:
   source epoch, reset state on takeover, retain bridge revisions across epochs,
   and require an authoritative first snapshot while reporting exact-byte
   snapshot dedup separately from normative duplicates;
+- `acceptLocalBridgeReplyHandshake`, `routeLocalBridgeReply`,
+  `settleLocalBridgeReply`, and `closeLocalBridgeReplyChannel` — negotiate and
+  bind the separate reply channel, retain only a bounded in-flight marker and
+  recent opaque request-ID markers, enforce one-in-flight/idempotency behavior,
+  emit no text or identifiers in receipts, and clear channel state on lifecycle
+  close;
 - `evictIdleLocalBridge` — validate an exact owner/epoch/activity-generation
   token and at least 60 monotonic idle minutes before evicting, retaining
   bounded ownership metadata while dropping apply/dedup state and freeing an
@@ -89,7 +112,10 @@ The state transition helpers are:
 - `teardownLocalBridge` — close channels/state idempotently and make every
   later operation return the exact `{kind: "result", code: "closed"}` result.
 
-Results have only bounded numbers and codes from the closed result/error sets;
+Reply requests use relative TTL values from 1 through 60 seconds; equality
+with the elapsed receive duration is expired according to
+`isLocalBridgeReplyExpired`. Results have only bounded numbers and codes from the
+closed result/error sets;
 non-`closed` lifecycle/publication results carry a positive `sourceEpoch` and
 zero-inclusive `bridgeRevision` within their documented bounds, and `ready`
 carries `snapshotRequired`; failures and `closed` carry no metadata. No result
@@ -97,7 +123,7 @@ or diagnostic carries source content, identifiers, paths,
 socket names, or arbitrary exception text. The returned state is an internal
 test transition value and is not a wire result or log record. State retains no
 separate raw snapshot or base64 snapshot copy: its dedup marker is only a plain
-bounded SHA-256 digest, byte length, and revision; normative apply-state
+bounded opaque digest marker, byte length, and revision; normative apply-state
 retention remains governed by session-mirror/v1.
 
 The deterministic fixture and contract checks run from the repository root:
@@ -119,7 +145,9 @@ dedup, malformed and hostile inputs, direct normalization depth/container/
 collection limits, positive epoch
 and numeric-boundary result frames, v1-derived retained closure for astral
 snapshot/event identities and cursors with preserved `-0` revision,
-bridge-owned negative-zero rejection, large retained-state normalization,
+bridge-owned negative-zero rejection, minor-1 reply negotiation and
+owner binding, reply frame bounds/expiry/direction/idempotency, safe receipts,
+large retained-state normalization,
 closed teardown and result round trips, strict manifest projections and
 complete manifest bounds, package exclusion, and frozen session-mirror/v1
 hashes. `npm pack

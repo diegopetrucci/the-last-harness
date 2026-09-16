@@ -309,7 +309,23 @@ export function frame(body: unknown): Uint8Array | undefined {
     return undefined;
   }
 }
-export function parseResult(body: unknown): string | undefined {
+export interface LocalBridgePublicationIdentity {
+  readonly sessionId: string;
+  readonly sourceInstanceId: string;
+  readonly sourceEpoch: number;
+}
+
+export interface LocalBridgePublicationReady {
+  readonly bridgeRevision: number;
+  readonly sourceEpoch: number;
+  readonly snapshotRequired: boolean;
+}
+
+export interface LocalBridgeReadyResult extends LocalBridgePublicationReady {
+  readonly code: "ready";
+}
+
+function parseResultValue(body: unknown): string | LocalBridgeReadyResult | undefined {
   const bytes = boundedBytes(body, MAX_CONTROL_BYTES);
   if (bytes === undefined) return undefined;
   const text = decode(bytes);
@@ -339,11 +355,210 @@ export function parseResult(body: unknown): string | undefined {
     if (typeof revision !== "number" || typeof epoch !== "number") return undefined;
     if (code === "ready" ? typeof snapshotRequired !== "boolean" : snapshotRequired !== MISSING)
       return undefined;
+    if (code === "ready") {
+      return Object.freeze({
+        code: "ready" as const,
+        bridgeRevision: revision,
+        sourceEpoch: epoch,
+        snapshotRequired: snapshotRequired as boolean,
+      });
+    }
   } else if (revision !== MISSING || epoch !== MISSING || snapshotRequired !== MISSING) {
     return undefined;
   }
   return code;
 }
+
+export function parseResult(body: unknown): string | undefined {
+  const result = parseResultValue(body);
+  return typeof result === "string" ? result : result?.code;
+}
+
+export function parseReadyResult(body: unknown): LocalBridgeReadyResult | undefined {
+  const result = parseResultValue(body);
+  return result !== undefined && typeof result !== "string" && result.code === "ready"
+    ? result
+    : undefined;
+}
+
+export const MAX_REPLY_TEXT_BYTES = 2 * 1024;
+export const MAX_REPLY_REQUEST_ID_CHARACTERS = 64;
+export const MIN_REPLY_TTL_SECONDS = 1;
+export const MAX_REPLY_TTL_SECONDS = 60;
+export const REPLY_TEXT_CAPABILITY = "reply-text" as const;
+
+export type LocalBridgeReplyReceiptCode =
+  | "accepted"
+  | "unconfirmed"
+  | "invalid"
+  | "unauthorized"
+  | "stale"
+  | "busy"
+  | "duplicate"
+  | "expired"
+  | "disconnected";
+
+export type LocalBridgeReplyCloseReason =
+  | "producer-disconnect"
+  | "owner-replaced"
+  | "authorization-withdrawn"
+  | "listener-stop"
+  | "transport-failure";
+
+export interface LocalBridgeReplyRequest {
+  readonly kind: "reply";
+  readonly requestId: string;
+  readonly generation: number;
+  readonly branchId: string;
+  readonly leafId: string;
+  readonly sourceRevision: number;
+  readonly ttlSeconds: number;
+  readonly text: string;
+}
+
+const REPLY_RECEIPT_CODES = new Set<LocalBridgeReplyReceiptCode>([
+  "accepted",
+  "unconfirmed",
+  "invalid",
+  "unauthorized",
+  "stale",
+  "busy",
+  "duplicate",
+  "expired",
+  "disconnected",
+]);
+const REPLY_CLOSE_REASONS = new Set<LocalBridgeReplyCloseReason>([
+  "producer-disconnect",
+  "owner-replaced",
+  "authorization-withdrawn",
+  "listener-stop",
+  "transport-failure",
+]);
+const REPLY_TEXT_FORMAT_OR_SEPARATOR = /[\p{Cf}\p{Zl}\p{Zp}]/u;
+
+function replyRequestId(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_REPLY_REQUEST_ID_CHARACTERS * 2 ||
+    scalarCount(value) === undefined ||
+    (scalarCount(value) ?? 0) > MAX_REPLY_REQUEST_ID_CHARACTERS ||
+    Buffer.byteLength(value, "utf8") > MAX_REPLY_REQUEST_ID_CHARACTERS * 4
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function safeReplyText(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || scalarCount(value) === undefined) {
+    return undefined;
+  }
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      ((codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) &&
+        codePoint !== 0x09 &&
+        codePoint !== 0x0a) ||
+      REPLY_TEXT_FORMAT_OR_SEPARATOR.test(character)
+    ) {
+      return undefined;
+    }
+  }
+  return value.trimStart().startsWith("/") ||
+    Buffer.byteLength(value, "utf8") > MAX_REPLY_TEXT_BYTES
+    ? undefined
+    : value;
+}
+
+function replyInteger(value: unknown, maximum: number): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    !Object.is(value, -0) &&
+    value <= maximum
+    ? value
+    : undefined;
+}
+
+export function parseReplyRequest(value: unknown): LocalBridgeReplyRequest | undefined {
+  try {
+    const bytes = boundedBytes(value, MAX_CONTROL_BYTES);
+    let parsed: unknown = value;
+    if (bytes !== undefined) {
+      const text = decode(bytes);
+      if (text === undefined || hasDuplicateJsonKeys(text)) return undefined;
+      parsed = JSON.parse(text) as unknown;
+    }
+    if (
+      !object(parsed) ||
+      !exact(parsed, [
+        "kind",
+        "requestId",
+        "generation",
+        "branchId",
+        "leafId",
+        "sourceRevision",
+        "ttlSeconds",
+        "text",
+      ])
+    ) {
+      return undefined;
+    }
+    const kind = option(parsed, "kind");
+    const requestId = replyRequestId(option(parsed, "requestId"));
+    const generation = replyInteger(option(parsed, "generation"), Number.MAX_SAFE_INTEGER - 1);
+    const branchId = validIdentity(option(parsed, "branchId"));
+    const leafId = validIdentity(option(parsed, "leafId"));
+    const sourceRevision = replyInteger(
+      option(parsed, "sourceRevision"),
+      Number.MAX_SAFE_INTEGER - 1,
+    );
+    const ttlSeconds = replyInteger(option(parsed, "ttlSeconds"), MAX_REPLY_TTL_SECONDS);
+    const text = safeReplyText(option(parsed, "text"));
+    return kind === "reply" &&
+      requestId !== undefined &&
+      generation !== undefined &&
+      branchId !== undefined &&
+      leafId !== undefined &&
+      sourceRevision !== undefined &&
+      ttlSeconds !== undefined &&
+      ttlSeconds >= MIN_REPLY_TTL_SECONDS &&
+      text !== undefined
+      ? Object.freeze({
+          kind: "reply" as const,
+          requestId,
+          generation,
+          branchId,
+          leafId,
+          sourceRevision,
+          ttlSeconds,
+          text,
+        })
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function replyReceiptFrame(code: unknown): Uint8Array | undefined {
+  if (typeof code !== "string" || !REPLY_RECEIPT_CODES.has(code as LocalBridgeReplyReceiptCode)) {
+    return undefined;
+  }
+  return frame(json({ kind: "receipt", code }));
+}
+
+export function replyCloseFrame(reason: unknown): Uint8Array | undefined {
+  if (
+    typeof reason !== "string" ||
+    !REPLY_CLOSE_REASONS.has(reason as LocalBridgeReplyCloseReason)
+  ) {
+    return undefined;
+  }
+  return frame(json({ kind: "reply-close", reason }));
+}
+
 export function json(value: unknown): Uint8Array | undefined {
   try {
     const serialized: unknown = JSON.stringify(value);

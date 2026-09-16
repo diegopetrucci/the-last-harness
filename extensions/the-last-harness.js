@@ -110,7 +110,9 @@ export default function theLastHarness(pi) {
     if (!primaryAgentRuntime) {
         return;
     }
-    registerSessionMirrorObserverFacade(pi);
+    registerSessionMirrorObserverFacade(pi, {
+        sendUserMessage: (text) => pi.sendUserMessage(text),
+    });
     installTlhPackageUpdateNotificationOverride();
     installTlhNewVersionNotificationOverride();
     registerToggleTlhGitAttributionCommand(pi);

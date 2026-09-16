@@ -3,6 +3,7 @@ import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, r
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
 export const SESSION_MIRROR_OBSERVER_FEATURE = "session-mirror-observer";
+export const SESSION_MIRROR_REPLIES_FEATURE = "session-mirror-replies";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 export const EXPERIMENTAL_COMMAND_HELP = [
     "Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -64,6 +65,12 @@ export const TLH_EXPERIMENTAL_FEATURES = [
     {
         id: SESSION_MIRROR_OBSERVER_FEATURE,
         description: "Opt-in aggregate-only in-process session source observation with deferred snapshots; changes apply on the next session.",
+        telemetry: false,
+        nextSessionOnly: true,
+    },
+    {
+        id: SESSION_MIRROR_REPLIES_FEATURE,
+        description: "Opt-in bounded local session-mirror text replies; requires session-mirror-observer and applies on the next session.",
         telemetry: false,
         nextSessionOnly: true,
     },

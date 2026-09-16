@@ -23,7 +23,7 @@ const { attestSessionMirrorSession } = await jiti.import(
 );
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
 
-function makeFixture(t, enabled = false) {
+function makeFixture(t, enabled = false, replies = false) {
   const root = mkdtempSync(join(tmpdir(), "tlh-session-mirror-facade-"));
   const agent = join(root, "agent");
   const cwd = join(root, "workspace");
@@ -32,10 +32,14 @@ function makeFixture(t, enabled = false) {
   mkdirSync(sessions, { recursive: true });
   mkdirSync(cwd, { recursive: true });
   writeFileSync(sessionFile, "synthetic session marker\n", "utf8");
+  const enabledFeatures = [
+    ...(enabled ? ["session-mirror-observer"] : []),
+    ...(replies ? ["session-mirror-replies"] : []),
+  ];
   writeFileSync(
     join(agent, "settings.json"),
     `${JSON.stringify(
-      enabled ? { tlh: { experimental: { enabledFeatures: ["session-mirror-observer"] } } } : {},
+      enabledFeatures.length > 0 ? { tlh: { experimental: { enabledFeatures } } } : {},
       null,
       2,
     )}\n`,
@@ -142,6 +146,12 @@ function createProbeFactory({ states = [], calls = [] } = {}) {
         agentStart() {
           calls.push({ type: "agentStart" });
         },
+        input(event) {
+          calls.push({ type: "input", event });
+        },
+        messageStart(event) {
+          calls.push({ type: "messageStart", event });
+        },
         messageEnd() {
           calls.push({ type: "messageEnd" });
         },
@@ -151,14 +161,23 @@ function createProbeFactory({ states = [], calls = [] } = {}) {
         agentSettled() {
           calls.push({ type: "agentSettled" });
         },
+        sessionBeforeTree() {
+          calls.push({ type: "sessionBeforeTree" });
+        },
         sessionTree() {
           calls.push({ type: "sessionTree" });
+        },
+        sessionBeforeCompact() {
+          calls.push({ type: "sessionBeforeCompact" });
         },
         sessionCompact() {
           calls.push({ type: "sessionCompact" });
         },
         sessionShutdown() {
           calls.push({ type: "sessionShutdown" });
+        },
+        publicationReady(info) {
+          calls.push({ type: "publicationReady", info });
         },
         requestSnapshot() {
           calls.push({ type: "requestSnapshot" });
@@ -180,11 +199,15 @@ function drain(scheduled) {
   while (scheduled.length > 0) scheduled.shift()();
 }
 
-function writeFeatureSetting(fixture, enabled) {
+function writeFeatureSetting(fixture, enabled, replies = false) {
+  const enabledFeatures = [
+    ...(enabled ? ["session-mirror-observer"] : []),
+    ...(replies ? ["session-mirror-replies"] : []),
+  ];
   writeFileSync(
     join(fixture.agent, "settings.json"),
     `${JSON.stringify(
-      enabled ? { tlh: { experimental: { enabledFeatures: ["session-mirror-observer"] } } } : {},
+      enabledFeatures.length > 0 ? { tlh: { experimental: { enabledFeatures } } } : {},
       null,
       2,
     )}\n`,
@@ -760,6 +783,97 @@ test("directory-only persisted sessions activate provisionally and publish after
     assert.doesNotMatch(notifications.at(-1).message, /SENTINEL_PRIVATE/);
     assert.doesNotMatch(notifications.at(-1).message, /synthetic-session/);
   });
+});
+
+test("reply activation requires both feature flags and a callable runtime seam", async (t) => {
+  const fixture = makeFixture(t, true, true);
+  const calls = [];
+  const probeModule = createProbeFactory({ calls });
+  const notifications = [];
+  const context = createContext(fixture, notifications);
+  const pi = createPi();
+  const facade = registerSessionMirrorObserverFacade(pi, {
+    loadProbe: async () => probeModule,
+    attest: () => ({ ok: true, phase: "session-file" }),
+    sendUserMessage: () => {},
+    replyChannelFactory: () => ({
+      open: async () => true,
+      close: () => {},
+      getState: () => "open",
+    }),
+  });
+
+  await withFixtureEnv(fixture, async () => {
+    await start(pi, context);
+    const created = calls.find((call) => call.type === "create");
+    assert.equal(created?.options.sessionMirrorReplies, true);
+    assert.equal(typeof created?.options.sendUserMessage, "function");
+    assert.equal(typeof created?.options.isIdle, "function");
+    assert.equal(typeof created?.options.replyNotify, "function");
+    created.options.replyNotify("accepted");
+    assert.deepEqual(notifications.at(-1), {
+      message: "session-mirror reply: accepted",
+      type: "info",
+    });
+    assert.equal((pi.handlers.get("input") ?? []).length, 1);
+    assert.equal((pi.handlers.get("message_start") ?? []).length, 1);
+    assert.equal((pi.handlers.get("session_before_tree") ?? []).length, 1);
+    assert.equal((pi.handlers.get("session_before_compact") ?? []).length, 1);
+
+    await fire(pi, "input", { source: "interactive" }, context);
+    await fire(pi, "message_start", { message: { role: "user", content: "bounded" } }, context);
+    await fire(pi, "session_before_tree", {}, context);
+    await fire(pi, "session_before_compact", {}, context);
+    assert.deepEqual(
+      calls
+        .filter((call) =>
+          ["input", "messageStart", "sessionBeforeTree", "sessionBeforeCompact"].includes(
+            call.type,
+          ),
+        )
+        .map((call) => call.type),
+      ["input", "messageStart", "sessionBeforeTree", "sessionBeforeCompact"],
+    );
+  });
+
+  const noReplySeam = makeFixture(t, true, true);
+  const noReplySeamPi = createPi();
+  registerSessionMirrorObserverFacade(noReplySeamPi, {
+    loadProbe: async () => createProbeFactory(),
+    attest: () => ({ ok: true, phase: "session-file" }),
+  });
+  await withFixtureEnv(noReplySeam, async () => {
+    await start(noReplySeamPi, createContext(noReplySeam));
+    assert.equal((noReplySeamPi.handlers.get("input") ?? []).length, 0);
+  });
+
+  const observerOnly = makeFixture(t, true, false);
+  const observerOnlyCalls = [];
+  const observerOnlyPi = createPi();
+  registerSessionMirrorObserverFacade(observerOnlyPi, {
+    loadProbe: async () => createProbeFactory({ calls: observerOnlyCalls }),
+    attest: () => ({ ok: true, phase: "session-file" }),
+    sendUserMessage: () => {},
+  });
+  await withFixtureEnv(observerOnly, async () => {
+    await start(observerOnlyPi, createContext(observerOnly));
+    assert.equal((observerOnlyPi.handlers.get("input") ?? []).length, 0);
+  });
+
+  const replyOnly = makeFixture(t, false, false);
+  writeFeatureSetting(replyOnly, false, true);
+  const replyOnlyPi = createPi();
+  registerSessionMirrorObserverFacade(replyOnlyPi, {
+    loadProbe: async () => createProbeFactory(),
+    attest: () => ({ ok: true, phase: "session-file" }),
+    sendUserMessage: () => {},
+  });
+  await withFixtureEnv(replyOnly, async () => {
+    await start(replyOnlyPi, createContext(replyOnly));
+    assert.equal((replyOnlyPi.handlers.get("input") ?? []).length, 0);
+  });
+
+  assert.equal(facade.getStatus(context).repliesConfigured, true);
 });
 
 test("enabled isolated sessions snapshot the flag and apply changes only on the next session", async (t) => {

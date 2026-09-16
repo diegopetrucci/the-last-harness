@@ -126,8 +126,9 @@ inside a malformed stream; the connection is closed with a closed aggregate
 code. Partial reads are accumulated only up to the bound and are not exposed
 as application state.
 
-Handshake and result bodies have the stricter independent bound
-`maxControlFrameBytes` of 4,096 bytes. The rendezvous JSON has its own
+Handshake, reply-handshake, result, reply, receipt, and reply-close bodies
+have the stricter independent bound `maxControlFrameBytes` of 4,096 bytes. The
+rendezvous JSON has its own
 4,096-byte bound. Direct rendezvous, handshake, and result values are
 normalized with separate 4 KiB-class byte, depth, container, and collection
 limits; array lengths and own-key counts are checked before child traversal
@@ -145,15 +146,18 @@ values. A v1-emitted revision `-0` is preserved. Separately, bridge-owned
 unsigned counters reject numeric negative zero (`-0`); that numeric rule is
 independent of outer identity validation.
 
-The first producer-to-bridge frame is a bounded JSON `hello` control frame.
-After a successful handshake, a producer-to-bridge data frame is **the raw
+The first producer-to-bridge frame is a bounded JSON `hello` control frame
+using data minor 0 and the required read-only capabilities. After a successful
+handshake, a producer-to-bridge data frame is **the raw
 UTF-8 bytes of one `session-mirror/v1` JSON envelope**. It is not wrapped in
 `{"kind":"data", "payload": ...}` or any other local-bridge object. The
 producer-to-bridge direction and ready connection phase provide the data
 message kind, so the envelope bytes can use the complete 256 KiB body budget.
-A bridge-to-producer control frame is a bounded JSON `result` object. No
-source-content value, path, socket name, identifier, or arbitrary error text
-is included in a result or diagnostic.
+A bridge-to-producer control frame is a bounded JSON `result` object. The
+separate minor-1 reply channel uses bounded `reply`, `receipt`, and
+`reply-close` control frames. No source-content value, path, socket name,
+identifier, or arbitrary error text is included in a result, receipt, close
+frame, or diagnostic.
 
 The result frame shape is:
 
@@ -177,7 +181,7 @@ integers.
 
 ## Version and handshake
 
-A hello has exactly these members:
+A data hello has exactly these members:
 
 ```json
 {
@@ -195,14 +199,95 @@ A hello has exactly these members:
 }
 ```
 
-The bridge accepts only family `local-bridge`, major `0`, and a minor version
-no greater than its supported minor. A different family, unsupported major,
-or unsupported future minor is `incompatible-protocol`; the connection is
-closed and no data is accepted. Required capabilities are an ordered prefix:
-`snapshot-replace`, then `cursor-recovery`. A syntactically valid list that is
-missing, reordered, or duplicates a required capability produces
-`incompatible-capability`; a malformed list value produces `malformed-frame`.
-Unknown optional capabilities do not authorize behavior.
+The ordinary data profile is major `0`, minor `0`, and remains readable by
+legacy v0 peers. Its capabilities are read-only and must not include
+`reply-text`. A different family, unsupported major, or nonzero data minor is
+`incompatible-protocol`; the data connection is closed and no data is accepted.
+Required capabilities are an ordered prefix: `snapshot-replace`, then
+`cursor-recovery`. A syntactically valid list that is missing, reordered, or
+duplicates a required capability produces `incompatible-capability`; a
+malformed list value produces `malformed-frame`. Unknown optional capabilities
+do not authorize behavior.
+
+### Optional reply channel
+
+`reply-text` is available only after the ordinary minor-0 data hello has
+succeeded and a separate minor-1 reply handshake has succeeded. It does not
+change the session-mirror data stream. The bridge attempts that reply channel
+independently and fail-open: an unavailable or rejected reply handshake leaves
+ordinary read-only publication usable. The channel's first control frame is an
+exact `reply-hello` handshake:
+
+```json
+{
+  "kind": "reply-hello",
+  "protocol": { "family": "local-bridge", "major": 0, "minor": 1 },
+  "installationId": "opaque-installation-id",
+  "sessionId": "opaque-session-id",
+  "sourceInstanceId": "0123456789abcdef0123456789abcdef",
+  "sourceEpoch": 1,
+  "generation": 3,
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "capabilities": ["reply-text"]
+}
+```
+
+The bridge accepts this handshake only after the ordinary data hello and only
+for the currently connected owner whose installation, session, source instance,
+source epoch, launch token, and data minor all match. It also carries the producer's
+bounded generation so a reply request can be derived from the negotiated channel.
+The reply handshake must
+use reply minor 1 and exactly advertise `reply-text`. A stale owner, a second
+reply channel, a missing capability, or a minor-0/future negotiation is rejected
+with a closed aggregate code without closing the ordinary data channel.
+Disconnect, takeover, idle eviction, and teardown close the reply channel and
+clear its in-flight state; a data reconnect must negotiate the reply channel
+again.
+
+Reply frame direction is explicit: `bridge-to-producer` carries only `reply`;
+`producer-to-bridge` carries only `receipt` and `reply-close`. A bridge-to-
+producer reply request has exactly this shape:
+
+```json
+{
+  "kind": "reply",
+  "requestId": "opaque-request-id",
+  "generation": 3,
+  "branchId": "opaque-branch-id",
+  "leafId": "opaque-leaf-id",
+  "sourceRevision": 7,
+  "ttlSeconds": 30,
+  "text": "bounded plain text"
+}
+```
+
+`requestId` is an opaque, well-formed Unicode string of at most 64 code points.
+`generation`, `sourceRevision`, and the opaque `branchId`/`leafId` values bind
+this request to the exact producer target; none is copied into a receipt or
+log. Each identifier and counter is bounded by `LOCAL_BRIDGE_BOUNDS`.
+`text` is non-empty, well-formed plain text of at most 2 KiB UTF-8 bytes.
+Horizontal tab and line feed are the only permitted C0 controls; all other C0
+and C1 controls, Unicode format characters (including bidi controls and
+zero-width characters), and Unicode line/paragraph separators are rejected.
+After checking those rules, a leading Unicode-whitespace sequence must not be
+followed by `/`; the original accepted text is forwarded byte-for-byte and is
+never trimmed or otherwise mutated. `ttlSeconds` is
+a relative, positive integer from 1 through 60, never an absolute timestamp.
+The producer is authoritative for owner, exact source revision, idle state,
+expiry, authorization, and injection. It records a bounded idempotency marker
+before injection, permits one request in flight, returns `busy` for a different
+in-flight request, and does not retry or background-sync a request. A repeated request ID still present in the bounded recent marker set is
+`duplicate` and cannot inject a second time; the set retains at most
+`maxReplyRequestDigests` recent markers. Older markers may be forgotten after
+bounded eviction.
+
+The producer-to-bridge receipt is exactly `{ "kind": "receipt", "code":
+"accepted" }` with `code` from the fixed receipt vocabulary: `accepted`,
+`unconfirmed`, `invalid`, `unauthorized`, `stale`, `busy`, `duplicate`,
+`expired`, or `disconnected`. Receipts and close frames carry no request ID,
+text, session/source identifier, or diagnostic detail. Reply channel closure is
+`{ "kind": "reply-close", "reason": "..." }` with only the fixed safe
+reasons exported by `conformance.ts`.
 
 The outer identity rule is applied at rendezvous/configuration, hello,
 ownership-state, and command boundaries; an over-bound or ill-formed value
@@ -230,7 +315,10 @@ exact-byte-deduplicated data activity increment it. At most eight known keys
 may retain active apply state at once; at most 64 ownership records are
 retained overall. The bridge retains one bounded apply state and one bounded
 digest-plus-length snapshot dedup marker for each active key, and at most 64
-superseded source IDs per key.
+superseded source IDs per key. A negotiated reply channel retains only a
+boolean in-flight marker, its opaque bounded marker, and at most
+`maxReplyRequestDigests` recent opaque bounded markers; it never retains reply
+text or raw reply identifiers in aggregate state.
 
 The transitions are deliberately asymmetric:
 
@@ -354,10 +442,11 @@ bridge returns the closed aggregate code and cannot recreate state. A later
 bridge launch has a new token and empty memory.
 
 All boundary and lifecycle failures map to a closed set of codes exported by
-`conformance.ts`. `handshake-required` and `wrong-direction` are closed,
-runtime-only connection-phase codes: the pure oracle does not invent a fake
-parser path solely to return them. A caller must treat unknown codes as
-failure and must not serialize an exception or a peer payload into a log. The
+`conformance.ts`. `handshake-required` is a runtime-only connection-phase code;
+the pure oracle does not invent a fake parser path solely to return it.
+`wrong-direction` is a closed parser/runtime error returned when a frame is
+used in the wrong direction. A caller must treat unknown codes as failure and
+must not serialize an exception or a peer payload into a log. The
 contract is fail-closed at the bridge boundary and fail-open for the TLH
 producer: a missing or rejecting bridge must not interrupt the terminal
 session.

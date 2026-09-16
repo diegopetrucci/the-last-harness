@@ -11,18 +11,52 @@ import {
 
 const LOCAL_BRIDGE_FAMILY = "local-bridge";
 const LOCAL_BRIDGE_MAJOR = 0;
-const LOCAL_BRIDGE_MINOR = 0;
+const LOCAL_BRIDGE_DATA_MINOR = 0;
+const LOCAL_BRIDGE_REPLY_MINOR = 1;
+const LOCAL_BRIDGE_READ_ONLY_MINOR = LOCAL_BRIDGE_DATA_MINOR;
 const HANDSHAKE_KIND = "hello";
+const REPLY_HANDSHAKE_KIND = "reply-hello";
 const RESULT_KIND = "result";
+const REPLY_KIND = "reply";
+const RECEIPT_KIND = "receipt";
+const REPLY_CLOSE_KIND = "reply-close";
 const REQUIRED_CAPABILITIES = ["snapshot-replace", "cursor-recovery"] as const;
+const REPLY_TEXT_CAPABILITY = "reply-text" as const;
+const REPLY_RECEIPT_CODE_VALUES = [
+  "accepted",
+  "unconfirmed",
+  "invalid",
+  "unauthorized",
+  "stale",
+  "busy",
+  "duplicate",
+  "expired",
+  "disconnected",
+] as const;
+const REPLY_CLOSE_REASON_VALUES = [
+  "producer-disconnect",
+  "owner-replaced",
+  "authorization-withdrawn",
+  "listener-stop",
+  "transport-failure",
+] as const;
+const REPLY_DIRECTION_VALUES = ["bridge-to-producer", "producer-to-bridge"] as const;
+const REPLY_OUTCOME_VALUES = ["forwarded", "duplicate"] as const;
 const TOKEN_PATTERN = /^[a-f0-9]{32}$/;
 const SOURCE_INSTANCE_PATTERN = /^[a-f0-9]{32}$/;
 const SOCKET_NAME_PATTERN = /^mirror-[a-f0-9]{24}\.sock$/;
 const SNAPSHOT_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const REPLY_REQUEST_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const REPLY_TEXT_FORMAT_OR_SEPARATOR = /[\p{Cf}\p{Zl}\p{Zp}]/u;
 const MAX_ACTIVE_CONVERSATIONS = 8;
 const MAX_KNOWN_CONVERSATIONS = 64;
 const MAX_SUPERSEDED_SOURCE_IDS = 64;
 const MAX_ACTIVITY_GENERATION = Number.MAX_SAFE_INTEGER - 1;
+const MIN_REPLY_TTL_SECONDS = 1;
+const MAX_REPLY_TTL_SECONDS = 60;
+const MAX_REPLY_TEXT_BYTES = 2 * 1024;
+const MAX_REPLY_REQUEST_ID_CHARACTERS = 64;
+const MAX_REPLY_REQUEST_DIGESTS = 8;
 const IDLE_EVICTION_MINUTES = 60;
 const NORMALIZATION_PER_CONVERSATION_METADATA_SLACK_BYTES = 512 * 1024;
 const NORMALIZATION_STATE_METADATA_SLACK_BYTES = 4 * 1024 * 1024;
@@ -77,14 +111,35 @@ const LOCAL_BRIDGE_ERROR_CODE_VALUES = [
   "session-mirror-revision-gap",
   "revision-exhausted",
   "source-history-full",
+  "reply-not-negotiated",
+  "reply-channel-disconnected",
+  "reply-not-pending",
   "closed",
 ] as const;
 
 export const LOCAL_BRIDGE_PROTOCOL = Object.freeze({
   family: LOCAL_BRIDGE_FAMILY,
   major: LOCAL_BRIDGE_MAJOR,
-  minor: LOCAL_BRIDGE_MINOR,
+  minor: LOCAL_BRIDGE_DATA_MINOR,
 });
+
+export const LOCAL_BRIDGE_READ_ONLY_PROTOCOL = Object.freeze({
+  family: LOCAL_BRIDGE_FAMILY,
+  major: LOCAL_BRIDGE_MAJOR,
+  minor: LOCAL_BRIDGE_READ_ONLY_MINOR,
+});
+
+export const LOCAL_BRIDGE_REPLY_PROTOCOL = Object.freeze({
+  family: LOCAL_BRIDGE_FAMILY,
+  major: LOCAL_BRIDGE_MAJOR,
+  minor: LOCAL_BRIDGE_REPLY_MINOR,
+});
+
+export const LOCAL_BRIDGE_REPLY_CAPABILITY = REPLY_TEXT_CAPABILITY;
+export const LOCAL_BRIDGE_REPLY_RECEIPT_CODES = Object.freeze([...REPLY_RECEIPT_CODE_VALUES]);
+export const LOCAL_BRIDGE_REPLY_CLOSE_REASONS = Object.freeze([...REPLY_CLOSE_REASON_VALUES]);
+export const LOCAL_BRIDGE_REPLY_DIRECTIONS = Object.freeze([...REPLY_DIRECTION_VALUES]);
+export const LOCAL_BRIDGE_REPLY_OUTCOME_CODES = Object.freeze([...REPLY_OUTCOME_VALUES]);
 
 export const LOCAL_BRIDGE_NORMALIZATION_FORMULA = Object.freeze({
   maxActiveConversations: MAX_ACTIVE_CONVERSATIONS,
@@ -106,6 +161,11 @@ export const LOCAL_BRIDGE_BOUNDS = Object.freeze({
   maxSocketPathBytes: 103,
   maxSocketNameCharacters: 64,
   maxCapabilities: 16,
+  maxReplyRequestIdCharacters: MAX_REPLY_REQUEST_ID_CHARACTERS,
+  maxReplyRequestDigests: MAX_REPLY_REQUEST_DIGESTS,
+  maxReplyTextBytes: MAX_REPLY_TEXT_BYTES,
+  minReplyTtlSeconds: MIN_REPLY_TTL_SECONDS,
+  maxReplyTtlSeconds: MAX_REPLY_TTL_SECONDS,
   maxActiveConversations: MAX_ACTIVE_CONVERSATIONS,
   maxKnownConversations: MAX_KNOWN_CONVERSATIONS,
   maxSupersededSourceIds: MAX_SUPERSEDED_SOURCE_IDS,
@@ -126,10 +186,7 @@ export const LOCAL_BRIDGE_BOUNDS = Object.freeze({
 export const LOCAL_BRIDGE_CAPABILITIES = Object.freeze([...REQUIRED_CAPABILITIES]);
 
 export const LOCAL_BRIDGE_ERROR_CODES = Object.freeze(LOCAL_BRIDGE_ERROR_CODE_VALUES);
-export const LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES = Object.freeze([
-  "handshake-required",
-  "wrong-direction",
-] as const);
+export const LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES = Object.freeze(["handshake-required"] as const);
 export const LOCAL_BRIDGE_RESULT_CODES = Object.freeze(CONTROL_RESULT_CODE_VALUES);
 
 export type LocalBridgeErrorCode = (typeof LOCAL_BRIDGE_ERROR_CODES)[number];
@@ -168,6 +225,88 @@ export interface LocalBridgeHandshake extends LocalBridgeJsonObject {
   readonly launchToken: string;
   readonly capabilities: readonly string[];
 }
+
+export interface LocalBridgeReplyHandshake extends LocalBridgeJsonObject {
+  readonly kind: typeof REPLY_HANDSHAKE_KIND;
+  readonly protocol: LocalBridgeProtocolVersion;
+  readonly installationId: string;
+  readonly sessionId: string;
+  readonly sourceInstanceId: string;
+  readonly sourceEpoch: number;
+  readonly generation: number;
+  readonly launchToken: string;
+  readonly capabilities: readonly [typeof REPLY_TEXT_CAPABILITY];
+}
+
+export type LocalBridgeReplyReceiptCode = (typeof REPLY_RECEIPT_CODE_VALUES)[number];
+export type LocalBridgeReplyCloseReason = (typeof REPLY_CLOSE_REASON_VALUES)[number];
+export type LocalBridgeReplyDirection = (typeof REPLY_DIRECTION_VALUES)[number];
+
+export interface LocalBridgeReplyRequestFrame extends LocalBridgeJsonObject {
+  readonly kind: typeof REPLY_KIND;
+  readonly requestId: string;
+  readonly generation: number;
+  readonly branchId: string;
+  readonly leafId: string;
+  readonly sourceRevision: number;
+  readonly ttlSeconds: number;
+  readonly text: string;
+}
+
+export interface LocalBridgeReplyReceiptFrame extends LocalBridgeJsonObject {
+  readonly kind: typeof RECEIPT_KIND;
+  readonly code: LocalBridgeReplyReceiptCode;
+}
+
+export interface LocalBridgeReplyCloseFrame extends LocalBridgeJsonObject {
+  readonly kind: typeof REPLY_CLOSE_KIND;
+  readonly reason: LocalBridgeReplyCloseReason;
+}
+
+export type LocalBridgeReplyFrame =
+  | LocalBridgeReplyRequestFrame
+  | LocalBridgeReplyReceiptFrame
+  | LocalBridgeReplyCloseFrame;
+
+export interface LocalBridgeReplyFrameSuccess<
+  T extends LocalBridgeReplyFrame = LocalBridgeReplyFrame,
+> {
+  readonly ok: true;
+  readonly frame: T;
+}
+
+export type LocalBridgeReplyFrameValidation = LocalBridgeReplyFrameSuccess | LocalBridgeFailure;
+
+export interface LocalBridgeReplyHandshakeSuccess {
+  readonly ok: true;
+  readonly handshake: LocalBridgeReplyHandshake;
+}
+
+export type LocalBridgeReplyHandshakeResult = LocalBridgeReplyHandshakeSuccess | LocalBridgeFailure;
+
+export interface LocalBridgeReplyForwarded {
+  readonly ok: true;
+  readonly nextState: LocalBridgeState;
+  readonly request: LocalBridgeReplyRequestFrame;
+  readonly outcome: "forwarded";
+}
+
+export interface LocalBridgeReplyDuplicate {
+  readonly ok: true;
+  readonly nextState: LocalBridgeState;
+  readonly outcome: "duplicate";
+}
+
+export type LocalBridgeReplyRouteSuccess = LocalBridgeReplyForwarded | LocalBridgeReplyDuplicate;
+export type LocalBridgeReplyRoute = LocalBridgeReplyRouteSuccess | LocalBridgeFailure;
+
+export interface LocalBridgeReplySettlementSuccess {
+  readonly ok: true;
+  readonly nextState: LocalBridgeState;
+  readonly receipt: LocalBridgeReplyReceiptFrame;
+}
+
+export type LocalBridgeReplySettlement = LocalBridgeReplySettlementSuccess | LocalBridgeFailure;
 
 export interface LocalBridgeWireResult {
   readonly kind: typeof RESULT_KIND;
@@ -248,6 +387,12 @@ export interface LocalBridgeConversationState {
   readonly activityGeneration: number;
   readonly connected: boolean;
   readonly dormant: boolean;
+  readonly negotiatedMinor: number;
+  readonly replyTextNegotiated: boolean;
+  readonly replyChannelConnected: boolean;
+  readonly replyInFlight: boolean;
+  readonly replyInFlightDigest: string | null;
+  readonly replyRequestDigests: readonly string[];
   readonly sessionMirrorState: SessionMirrorState;
   readonly lastSnapshotSha256: string | null;
   readonly lastSnapshotByteLength: number | null;
@@ -636,8 +781,9 @@ function protocol(
     family !== LOCAL_BRIDGE_FAMILY ||
     major !== LOCAL_BRIDGE_MAJOR ||
     !Number.isSafeInteger(minor) ||
+    Object.is(minor, -0) ||
     minor < 0 ||
-    minor > LOCAL_BRIDGE_MINOR
+    minor > LOCAL_BRIDGE_REPLY_MINOR
   ) {
     return { ok: false, code: "incompatible-protocol" };
   }
@@ -655,7 +801,7 @@ type LocalBridgeCapabilityListResult =
   | { readonly ok: true; readonly capabilities: readonly string[] }
   | { readonly ok: false; readonly code: "malformed-frame" | "incompatible-capability" };
 
-function capabilityList(value: unknown): LocalBridgeCapabilityListResult {
+function capabilityList(value: unknown, negotiatedMinor: number): LocalBridgeCapabilityListResult {
   if (!Array.isArray(value) || value.length > LOCAL_BRIDGE_BOUNDS.maxCapabilities) {
     return { ok: false, code: "malformed-frame" };
   }
@@ -671,6 +817,9 @@ function capabilityList(value: unknown): LocalBridgeCapabilityListResult {
     values.push(name);
   }
   if (!REQUIRED_CAPABILITIES.every((name, index) => values[index] === name)) {
+    return { ok: false, code: "incompatible-capability" };
+  }
+  if (values.includes(REPLY_TEXT_CAPABILITY) && negotiatedMinor < LOCAL_BRIDGE_REPLY_MINOR) {
     return { ok: false, code: "incompatible-capability" };
   }
   return { ok: true, capabilities: Object.freeze(values) };
@@ -769,6 +918,9 @@ function validateRendezvousObject(input: unknown): LocalBridgeRendezvousResult {
     "malformed-rendezvous",
   );
   if (!parsedProtocol.ok) return parsedProtocol;
+  if (parsedProtocol.value.minor !== LOCAL_BRIDGE_DATA_MINOR) {
+    return failure("incompatible-protocol");
+  }
   const installationId = identity(field(object, "installationId"));
   const socketName = checkSocketName(field(object, "socketName"));
   const launchToken = token(field(object, "launchToken"));
@@ -885,11 +1037,14 @@ function validateHandshakeObject(input: unknown): LocalBridgeHandshakeResult {
   if (field(object, "kind") !== HANDSHAKE_KIND) return failure("malformed-frame");
   const parsedProtocol = validateProtocolEnvelope(field(object, "protocol"), "malformed-frame");
   if (!parsedProtocol.ok) return parsedProtocol;
+  if (parsedProtocol.value.minor !== LOCAL_BRIDGE_DATA_MINOR) {
+    return failure("incompatible-protocol");
+  }
   const installationId = identity(field(object, "installationId"));
   const sessionId = identity(field(object, "sessionId"));
   const sourceId = sourceInstanceId(field(object, "sourceInstanceId"));
   const launchToken = token(field(object, "launchToken"));
-  const capabilities = capabilityList(field(object, "capabilities"));
+  const capabilities = capabilityList(field(object, "capabilities"), parsedProtocol.value.minor);
   if (!installationId || !sessionId || !sourceId || !launchToken) {
     return failure("malformed-frame");
   }
@@ -953,6 +1108,322 @@ export function parseLocalBridgeHandshakeFrame(input: unknown): LocalBridgeHands
     const body = parseControlBody(decoded.body);
     if (!body.ok) return body;
     return validateHandshakeObject(body.value);
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+function replyTargetId(value: unknown): string | undefined {
+  return identity(value);
+}
+
+function replyRequestId(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > LOCAL_BRIDGE_BOUNDS.maxReplyRequestIdCharacters * 2 ||
+    characterLength(value) > LOCAL_BRIDGE_BOUNDS.maxReplyRequestIdCharacters ||
+    !isWellFormedUnicode(value)
+  ) {
+    return undefined;
+  }
+  return Buffer.byteLength(value, "utf8") <= LOCAL_BRIDGE_BOUNDS.maxReplyRequestIdCharacters * 4
+    ? value
+    : undefined;
+}
+
+function isSafeReplyText(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      ((codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) &&
+        codePoint !== 0x09 &&
+        codePoint !== 0x0a) ||
+      REPLY_TEXT_FORMAT_OR_SEPARATOR.test(character)
+    ) {
+      return false;
+    }
+  }
+  return !value.trimStart().startsWith("/");
+}
+
+function replyText(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    !isWellFormedUnicode(value) ||
+    !isSafeReplyText(value)
+  ) {
+    return undefined;
+  }
+  return Buffer.byteLength(value, "utf8") <= LOCAL_BRIDGE_BOUNDS.maxReplyTextBytes
+    ? value
+    : undefined;
+}
+
+function validateReplyRequestObject(input: unknown): LocalBridgeReplyFrameValidation {
+  const object = normalizeObject(input, DIRECT_NORMALIZATION_LIMITS);
+  if (
+    !object ||
+    !hasOnlyKeys(object, [
+      "kind",
+      "requestId",
+      "generation",
+      "branchId",
+      "leafId",
+      "sourceRevision",
+      "ttlSeconds",
+      "text",
+    ])
+  ) {
+    return failure("malformed-frame");
+  }
+  if (field(object, "kind") !== REPLY_KIND) return failure("malformed-frame");
+  const requestId = replyRequestId(field(object, "requestId"));
+  const generation = uint(field(object, "generation"), LOCAL_BRIDGE_BOUNDS.maxActivityGeneration);
+  const branchId = replyTargetId(field(object, "branchId"));
+  const leafId = replyTargetId(field(object, "leafId"));
+  const sourceRevision = uint(
+    field(object, "sourceRevision"),
+    LOCAL_BRIDGE_BOUNDS.maxBridgeRevision,
+  );
+  const ttlSeconds = uint(field(object, "ttlSeconds"), LOCAL_BRIDGE_BOUNDS.maxReplyTtlSeconds);
+  const text = replyText(field(object, "text"));
+  if (
+    !requestId ||
+    generation === undefined ||
+    !branchId ||
+    !leafId ||
+    sourceRevision === undefined ||
+    ttlSeconds === undefined ||
+    ttlSeconds < LOCAL_BRIDGE_BOUNDS.minReplyTtlSeconds ||
+    !text
+  ) {
+    return failure("malformed-frame");
+  }
+  return {
+    ok: true,
+    frame: Object.freeze({
+      kind: REPLY_KIND,
+      requestId,
+      generation,
+      branchId,
+      leafId,
+      sourceRevision,
+      ttlSeconds,
+      text,
+    }),
+  };
+}
+
+function validateReplyReceiptObject(input: unknown): LocalBridgeReplyFrameValidation {
+  const object = normalizeObject(input, DIRECT_NORMALIZATION_LIMITS);
+  if (!object || !hasOnlyKeys(object, ["kind", "code"])) return failure("malformed-frame");
+  if (field(object, "kind") !== RECEIPT_KIND) return failure("malformed-frame");
+  const code = field(object, "code");
+  if (
+    typeof code !== "string" ||
+    !REPLY_RECEIPT_CODE_VALUES.includes(code as LocalBridgeReplyReceiptCode)
+  ) {
+    return failure("malformed-frame");
+  }
+  return {
+    ok: true,
+    frame: Object.freeze({ kind: RECEIPT_KIND, code: code as LocalBridgeReplyReceiptCode }),
+  };
+}
+
+function validateReplyCloseObject(input: unknown): LocalBridgeReplyFrameValidation {
+  const object = normalizeObject(input, DIRECT_NORMALIZATION_LIMITS);
+  if (!object || !hasOnlyKeys(object, ["kind", "reason"])) return failure("malformed-frame");
+  if (field(object, "kind") !== REPLY_CLOSE_KIND) return failure("malformed-frame");
+  const reason = field(object, "reason");
+  if (
+    typeof reason !== "string" ||
+    !REPLY_CLOSE_REASON_VALUES.includes(reason as LocalBridgeReplyCloseReason)
+  ) {
+    return failure("malformed-frame");
+  }
+  return {
+    ok: true,
+    frame: Object.freeze({ kind: REPLY_CLOSE_KIND, reason: reason as LocalBridgeReplyCloseReason }),
+  };
+}
+
+export function validateLocalBridgeReplyFrame(
+  input: unknown,
+  direction: unknown,
+): LocalBridgeReplyFrameValidation {
+  try {
+    if (!REPLY_DIRECTION_VALUES.includes(direction as LocalBridgeReplyDirection)) {
+      return failure("wrong-direction");
+    }
+    const object = normalizeObject(input, DIRECT_NORMALIZATION_LIMITS);
+    if (!object || typeof field(object, "kind") !== "string") return failure("malformed-frame");
+    const kind = field(object, "kind");
+    if (kind === REPLY_KIND) {
+      return direction === "bridge-to-producer"
+        ? validateReplyRequestObject(object)
+        : failure("wrong-direction");
+    }
+    if (kind === RECEIPT_KIND) {
+      return direction === "producer-to-bridge"
+        ? validateReplyReceiptObject(object)
+        : failure("wrong-direction");
+    }
+    if (kind === REPLY_CLOSE_KIND) {
+      return direction === "producer-to-bridge"
+        ? validateReplyCloseObject(object)
+        : failure("wrong-direction");
+    }
+    return failure("malformed-frame");
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+export function parseLocalBridgeReplyFrame(
+  input: unknown,
+  direction: unknown,
+): LocalBridgeReplyFrameValidation {
+  try {
+    const decoded = decodeLengthPrefixedFrame(input);
+    if (!decoded.ok) return decoded;
+    const body = parseControlBody(decoded.body);
+    if (!body.ok) return body;
+    return validateLocalBridgeReplyFrame(body.value, direction);
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+export function encodeLocalBridgeReplyFrame(
+  input: unknown,
+  direction: unknown,
+): LocalBridgeEncodedFrameResult {
+  try {
+    const validated = validateLocalBridgeReplyFrame(input, direction);
+    if (!validated.ok) return validated;
+    const raw = Buffer.from(JSON.stringify(validated.frame), "utf8");
+    if (raw.byteLength > LOCAL_BRIDGE_BOUNDS.maxControlFrameBytes) {
+      return failure("control-frame-too-large");
+    }
+    return encodeLengthPrefixedFrame(raw);
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+function validateReplyHandshakeObject(input: unknown): LocalBridgeReplyHandshakeResult {
+  const object = normalizeObject(input, DIRECT_NORMALIZATION_LIMITS);
+  const keys = [
+    "kind",
+    "protocol",
+    "installationId",
+    "sessionId",
+    "sourceInstanceId",
+    "sourceEpoch",
+    "generation",
+    "launchToken",
+    "capabilities",
+  ] as const;
+  if (!object || !hasOnlyKeys(object, keys)) return failure("malformed-frame");
+  if (field(object, "kind") !== REPLY_HANDSHAKE_KIND) return failure("malformed-frame");
+  const parsedProtocol = validateProtocolEnvelope(field(object, "protocol"), "malformed-frame");
+  if (!parsedProtocol.ok) return parsedProtocol;
+  if (parsedProtocol.value.minor !== LOCAL_BRIDGE_REPLY_MINOR) {
+    return failure("incompatible-protocol");
+  }
+  const installationId = identity(field(object, "installationId"));
+  const sessionId = identity(field(object, "sessionId"));
+  const sourceId = sourceInstanceId(field(object, "sourceInstanceId"));
+  const sourceEpoch = uint(field(object, "sourceEpoch"), LOCAL_BRIDGE_BOUNDS.maxSourceEpoch);
+  const generation = uint(field(object, "generation"), LOCAL_BRIDGE_BOUNDS.maxActivityGeneration);
+  const launchToken = token(field(object, "launchToken"));
+  const capabilities = field(object, "capabilities");
+  if (
+    !installationId ||
+    !sessionId ||
+    !sourceId ||
+    sourceEpoch === undefined ||
+    sourceEpoch < 1 ||
+    generation === undefined ||
+    generation < 1 ||
+    !launchToken ||
+    !Array.isArray(capabilities) ||
+    capabilities.length !== 1 ||
+    capabilities[0] !== REPLY_TEXT_CAPABILITY
+  ) {
+    return failure("malformed-frame");
+  }
+  return {
+    ok: true,
+    handshake: Object.freeze({
+      kind: REPLY_HANDSHAKE_KIND,
+      protocol: parsedProtocol.value,
+      installationId,
+      sessionId,
+      sourceInstanceId: sourceId,
+      sourceEpoch,
+      generation,
+      launchToken,
+      capabilities: Object.freeze([REPLY_TEXT_CAPABILITY] as const),
+    }),
+  };
+}
+
+export function validateLocalBridgeReplyHandshake(input: unknown): LocalBridgeReplyHandshakeResult {
+  try {
+    return validateReplyHandshakeObject(input);
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+export function parseLocalBridgeReplyHandshakeFrame(
+  input: unknown,
+): LocalBridgeReplyHandshakeResult {
+  try {
+    const decoded = decodeLengthPrefixedFrame(input);
+    if (!decoded.ok) return decoded;
+    const body = parseControlBody(decoded.body);
+    if (!body.ok) return body;
+    return validateReplyHandshakeObject(body.value);
+  } catch {
+    return failure("malformed-frame");
+  }
+}
+
+export function isLocalBridgeReplyExpired(ttlSeconds: unknown, elapsedSeconds: unknown): boolean {
+  const ttl =
+    typeof ttlSeconds === "number" &&
+    !Object.is(ttlSeconds, -0) &&
+    Number.isSafeInteger(ttlSeconds) &&
+    ttlSeconds >= LOCAL_BRIDGE_BOUNDS.minReplyTtlSeconds &&
+    ttlSeconds <= LOCAL_BRIDGE_BOUNDS.maxReplyTtlSeconds
+      ? ttlSeconds
+      : undefined;
+  return (
+    ttl !== undefined &&
+    typeof elapsedSeconds === "number" &&
+    Number.isFinite(elapsedSeconds) &&
+    elapsedSeconds >= 0 &&
+    elapsedSeconds >= ttl
+  );
+}
+
+export function encodeLocalBridgeReplyHandshakeFrame(
+  input: unknown,
+): LocalBridgeEncodedFrameResult {
+  try {
+    const validated = validateReplyHandshakeObject(input);
+    if (!validated.ok) return validated;
+    const raw = Buffer.from(JSON.stringify(validated.handshake), "utf8");
+    if (raw.byteLength > LOCAL_BRIDGE_BOUNDS.maxControlFrameBytes) {
+      return failure("control-frame-too-large");
+    }
+    return encodeLengthPrefixedFrame(raw);
   } catch {
     return failure("malformed-frame");
   }
@@ -1157,6 +1628,32 @@ function commandIdentity(input: unknown):
   return { ok: true, sessionId, sourceInstanceId: sourceId, frame };
 }
 
+function commandReplyFrame(input: unknown):
+  | {
+      readonly ok: true;
+      readonly sessionId: string;
+      readonly sourceInstanceId: string;
+      readonly frame: Uint8Array | LocalBridgeJsonObject;
+    }
+  | LocalBridgeFailure {
+  const record = readOwnRecord(input);
+  if (
+    !record ||
+    Object.keys(record).length !== 3 ||
+    !Object.keys(record).every((key) => ["sessionId", "sourceInstanceId", "frame"].includes(key))
+  ) {
+    return failure("invalid-input");
+  }
+  const sessionId = identity(record.sessionId);
+  const sourceId = sourceInstanceId(record.sourceInstanceId);
+  if (!sessionId || !sourceId) return failure("invalid-input");
+  const frameBytes = copyBytes(record.frame);
+  if (frameBytes) return { ok: true, sessionId, sourceInstanceId: sourceId, frame: frameBytes };
+  const frame = normalizeObject(record.frame, DIRECT_NORMALIZATION_LIMITS);
+  if (!frame) return failure("invalid-input");
+  return { ok: true, sessionId, sourceInstanceId: sourceId, frame };
+}
+
 function commandOwner(
   input: unknown,
 ):
@@ -1178,6 +1675,10 @@ function commandOwner(
 
 function snapshotDigest(value: unknown): string | undefined {
   return typeof value === "string" && SNAPSHOT_DIGEST_PATTERN.test(value) ? value : undefined;
+}
+
+function replyDigest(value: unknown): string | undefined {
+  return typeof value === "string" && REPLY_REQUEST_DIGEST_PATTERN.test(value) ? value : undefined;
 }
 
 function normalizeSessionMirrorState(input: unknown): SessionMirrorState | undefined {
@@ -1283,20 +1784,31 @@ function normalizeLocalBridgeState(input: unknown): LocalBridgeState | undefined
     const record = isJsonObject(item) ? item : undefined;
     if (
       !record ||
-      !hasOnlyKeys(record, [
-        "installationId",
-        "sessionId",
-        "ownerSourceInstanceId",
-        "sourceEpoch",
-        "activityGeneration",
-        "connected",
-        "dormant",
-        "sessionMirrorState",
-        "lastSnapshotSha256",
-        "lastSnapshotByteLength",
-        "lastSnapshotRevision",
-        "supersededSourceInstanceIds",
-      ])
+      !hasOptionalOnlyKeys(
+        record,
+        [
+          "installationId",
+          "sessionId",
+          "ownerSourceInstanceId",
+          "sourceEpoch",
+          "activityGeneration",
+          "connected",
+          "dormant",
+          "sessionMirrorState",
+          "lastSnapshotSha256",
+          "lastSnapshotByteLength",
+          "lastSnapshotRevision",
+          "supersededSourceInstanceIds",
+        ],
+        [
+          "negotiatedMinor",
+          "replyTextNegotiated",
+          "replyChannelConnected",
+          "replyInFlight",
+          "replyInFlightDigest",
+          "replyRequestDigests",
+        ],
+      )
     ) {
       return undefined;
     }
@@ -1310,6 +1822,27 @@ function normalizeLocalBridgeState(input: unknown): LocalBridgeState | undefined
     );
     const connected = field(record, "connected");
     const dormant = field(record, "dormant");
+    const negotiatedMinorValue = field(record, "negotiatedMinor");
+    const negotiatedMinor =
+      negotiatedMinorValue === undefined
+        ? LOCAL_BRIDGE_READ_ONLY_MINOR
+        : uint(negotiatedMinorValue, LOCAL_BRIDGE_DATA_MINOR);
+    const replyTextNegotiatedValue = field(record, "replyTextNegotiated");
+    const replyTextNegotiated =
+      replyTextNegotiatedValue === undefined ? false : replyTextNegotiatedValue;
+    const replyChannelConnectedValue = field(record, "replyChannelConnected");
+    const replyChannelConnected =
+      replyChannelConnectedValue === undefined ? false : replyChannelConnectedValue;
+    const replyInFlightValue = field(record, "replyInFlight");
+    const replyInFlight = replyInFlightValue === undefined ? false : replyInFlightValue;
+    const replyInFlightDigestValue = field(record, "replyInFlightDigest");
+    const replyInFlightDigest =
+      replyInFlightDigestValue === undefined || replyInFlightDigestValue === null
+        ? null
+        : replyDigest(replyInFlightDigestValue);
+    const replyRequestDigestsValue = field(record, "replyRequestDigests");
+    const replyRequestDigests =
+      replyRequestDigestsValue === undefined ? [] : replyRequestDigestsValue;
     const mirrorState = normalizeSessionMirrorState(field(record, "sessionMirrorState"));
     const lastSnapshotSha256Value = field(record, "lastSnapshotSha256");
     const lastSnapshotSha256 =
@@ -1331,9 +1864,18 @@ function normalizeLocalBridgeState(input: unknown): LocalBridgeState | undefined
       sourceEpoch === undefined ||
       sourceEpoch < 1 ||
       activityGeneration === undefined ||
+      negotiatedMinor === undefined ||
       typeof connected !== "boolean" ||
       typeof dormant !== "boolean" ||
+      typeof replyTextNegotiated !== "boolean" ||
+      typeof replyChannelConnected !== "boolean" ||
+      typeof replyInFlight !== "boolean" ||
       !mirrorState ||
+      (replyInFlightDigestValue !== undefined &&
+        replyInFlightDigestValue !== null &&
+        replyInFlightDigest === undefined) ||
+      !Array.isArray(replyRequestDigests) ||
+      replyRequestDigests.length > LOCAL_BRIDGE_BOUNDS.maxReplyRequestDigests ||
       lastSnapshotSha256 === undefined ||
       lastSnapshotByteLength === undefined ||
       lastSnapshotRevision === undefined ||
@@ -1342,6 +1884,28 @@ function normalizeLocalBridgeState(input: unknown): LocalBridgeState | undefined
       return undefined;
     }
     if (mirrorState.sessionId !== null && mirrorState.sessionId !== sessionId) return undefined;
+    if (!replyTextNegotiated && replyChannelConnected) return undefined;
+    if (!replyChannelConnected && replyInFlight) return undefined;
+    if (replyInFlight !== (replyInFlightDigest !== null)) return undefined;
+    const recentReplyDigests: string[] = [];
+    for (const digest of replyRequestDigests) {
+      const normalizedDigest = replyDigest(digest);
+      if (!normalizedDigest || recentReplyDigests.includes(normalizedDigest)) return undefined;
+      recentReplyDigests.push(normalizedDigest);
+    }
+    if (
+      replyInFlightDigest !== undefined &&
+      replyInFlightDigest !== null &&
+      !recentReplyDigests.includes(replyInFlightDigest)
+    ) {
+      return undefined;
+    }
+    if (!connected && (replyTextNegotiated || replyChannelConnected || replyInFlight)) {
+      return undefined;
+    }
+    if (!connected && (replyInFlightDigest !== null || recentReplyDigests.length !== 0)) {
+      return undefined;
+    }
     if (dormant && connected) return undefined;
     if (lastSnapshotSha256 === null && lastSnapshotByteLength !== null) return undefined;
     if (lastSnapshotSha256 === null && lastSnapshotRevision !== null) return undefined;
@@ -1381,6 +1945,12 @@ function normalizeLocalBridgeState(input: unknown): LocalBridgeState | undefined
         activityGeneration,
         connected,
         dormant,
+        negotiatedMinor,
+        replyTextNegotiated,
+        replyChannelConnected,
+        replyInFlight,
+        replyInFlightDigest: replyInFlightDigest ?? null,
+        replyRequestDigests: Object.freeze(recentReplyDigests),
         sessionMirrorState: mirrorState,
         lastSnapshotSha256,
         lastSnapshotByteLength,
@@ -1519,6 +2089,12 @@ export function acceptLocalBridgeHandshake(
         activityGeneration: 0,
         connected: true,
         dormant: false,
+        negotiatedMinor: handshake.handshake.protocol.minor,
+        replyTextNegotiated: false,
+        replyChannelConnected: false,
+        replyInFlight: false,
+        replyInFlightDigest: null,
+        replyRequestDigests: Object.freeze([]),
         sessionMirrorState: createSessionMirrorState(),
         lastSnapshotSha256: null,
         lastSnapshotByteLength: null,
@@ -1553,6 +2129,12 @@ export function acceptLocalBridgeHandshake(
         activityGeneration,
         connected: true,
         dormant: false,
+        negotiatedMinor: handshake.handshake.protocol.minor,
+        replyTextNegotiated: false,
+        replyChannelConnected: false,
+        replyInFlight: false,
+        replyInFlightDigest: null,
+        replyRequestDigests: Object.freeze([]),
       });
       const nextState = freezeState(
         "open",
@@ -1593,6 +2175,12 @@ export function acceptLocalBridgeHandshake(
       activityGeneration: 0,
       connected: true,
       dormant: false,
+      negotiatedMinor: handshake.handshake.protocol.minor,
+      replyTextNegotiated: false,
+      replyChannelConnected: false,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+      replyRequestDigests: Object.freeze([]),
       sessionMirrorState: createSessionMirrorState(),
       lastSnapshotSha256: null,
       lastSnapshotByteLength: null,
@@ -1607,6 +2195,235 @@ export function acceptLocalBridgeHandshake(
       state.conversations.map((item) => (item === current ? takeover : item)),
     );
     return stateTransition(nextState, "ready", state.bridgeRevision, takeover.sourceEpoch, true);
+  } catch {
+    return failure("invalid-input");
+  }
+}
+
+function parseReplyHandshakeInput(input: unknown): LocalBridgeReplyHandshakeResult {
+  return copyBytes(input) !== undefined
+    ? parseLocalBridgeReplyHandshakeFrame(input)
+    : validateLocalBridgeReplyHandshake(input);
+}
+
+function parseReplyFrameInput(
+  input: unknown,
+  direction: LocalBridgeReplyDirection,
+): LocalBridgeReplyFrameValidation {
+  return copyBytes(input) !== undefined
+    ? parseLocalBridgeReplyFrame(input, direction)
+    : validateLocalBridgeReplyFrame(input, direction);
+}
+
+function parseReplyReceiptInput(input: unknown): LocalBridgeReplyFrameValidation {
+  return parseReplyFrameInput(input, "producer-to-bridge");
+}
+
+function localReplyRequestDigest(requestId: string): string {
+  return createHash("sha256").update(Buffer.from(requestId, "utf8")).digest("hex");
+}
+
+function rememberReplyDigest(recentDigests: readonly string[], digest: string): readonly string[] {
+  const next = [...recentDigests, digest];
+  if (next.length > LOCAL_BRIDGE_BOUNDS.maxReplyRequestDigests) next.shift();
+  return Object.freeze(next);
+}
+
+export function acceptLocalBridgeReplyHandshake(
+  stateInput: unknown,
+  input: unknown,
+): LocalBridgeTransition {
+  try {
+    const state = normalizedStateOrFailure(stateInput);
+    if ("error" in state) return state;
+    if (state.status === "closed") return failure("closed");
+    const parsed = parseReplyHandshakeInput(input);
+    if (!parsed.ok) return parsed;
+    const handshake = parsed.handshake;
+    if (handshake.installationId !== state.installationId) return failure("installation-mismatch");
+    if (handshake.launchToken !== state.launchToken) return failure("token-mismatch");
+    const conversation = disconnectedConversation(
+      state,
+      handshake.sessionId,
+      handshake.sourceInstanceId,
+    );
+    if ("error" in conversation) return conversation;
+    if (!conversation.connected) return failure("not-owner");
+    if (conversation.negotiatedMinor !== LOCAL_BRIDGE_DATA_MINOR) {
+      return failure("incompatible-protocol");
+    }
+    if (handshake.protocol.minor !== LOCAL_BRIDGE_REPLY_MINOR) {
+      return failure("incompatible-protocol");
+    }
+    if (handshake.sourceEpoch !== conversation.sourceEpoch) return failure("stale-source");
+    if (conversation.replyChannelConnected) return failure("busy");
+    const connected = Object.freeze({
+      ...conversation,
+      replyTextNegotiated: true,
+      replyChannelConnected: true,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+      replyRequestDigests: Object.freeze([]),
+    });
+    const nextState = freezeState(
+      "open",
+      state.installationId,
+      state.launchToken,
+      state.bridgeRevision,
+      state.conversations.map((item) => (item === conversation ? connected : item)),
+    );
+    return stateTransition(
+      nextState,
+      "ready",
+      state.bridgeRevision,
+      conversation.sourceEpoch,
+      conversation.sessionMirrorState.sessionId === null,
+    );
+  } catch {
+    return failure("invalid-input");
+  }
+}
+
+export function routeLocalBridgeReply(stateInput: unknown, input: unknown): LocalBridgeReplyRoute {
+  try {
+    const state = normalizedStateOrFailure(stateInput);
+    if ("error" in state) return state;
+    if (state.status === "closed") return failure("closed");
+    const command = commandReplyFrame(input);
+    if (!command.ok) return command;
+    const conversation = disconnectedConversation(
+      state,
+      command.sessionId,
+      command.sourceInstanceId,
+    );
+    if ("error" in conversation) return conversation;
+    if (!conversation.connected) return failure("not-owner");
+    if (!conversation.replyTextNegotiated) return failure("reply-not-negotiated");
+    if (!conversation.replyChannelConnected) return failure("reply-channel-disconnected");
+    const parsed = parseReplyFrameInput(command.frame, "bridge-to-producer");
+    if (!parsed.ok) return parsed;
+    if (parsed.frame.kind !== REPLY_KIND) return failure("wrong-direction");
+    const requestDigest = localReplyRequestDigest(parsed.frame.requestId);
+    if (conversation.replyRequestDigests.includes(requestDigest)) {
+      return {
+        ok: true,
+        nextState: state,
+        outcome: "duplicate",
+      };
+    }
+    if (conversation.replyInFlight) return failure("busy");
+    const updated = Object.freeze({
+      ...conversation,
+      replyInFlight: true,
+      replyInFlightDigest: requestDigest,
+      replyRequestDigests: rememberReplyDigest(conversation.replyRequestDigests, requestDigest),
+    });
+    const nextState = freezeState(
+      "open",
+      state.installationId,
+      state.launchToken,
+      state.bridgeRevision,
+      state.conversations.map((item) => (item === conversation ? updated : item)),
+    );
+    return {
+      ok: true,
+      nextState,
+      request: parsed.frame,
+      outcome: "forwarded",
+    };
+  } catch {
+    return failure("invalid-input");
+  }
+}
+
+export function settleLocalBridgeReply(
+  stateInput: unknown,
+  input: unknown,
+): LocalBridgeReplySettlement {
+  try {
+    const state = normalizedStateOrFailure(stateInput);
+    if ("error" in state) return state;
+    if (state.status === "closed") return failure("closed");
+    const record = readOwnRecord(input);
+    if (
+      !record ||
+      Object.keys(record).length !== 3 ||
+      !Object.keys(record).every((key) =>
+        ["sessionId", "sourceInstanceId", "receipt"].includes(key),
+      )
+    ) {
+      return failure("invalid-input");
+    }
+    const sessionId = identity(record.sessionId);
+    const sourceId = sourceInstanceId(record.sourceInstanceId);
+    if (!sessionId || !sourceId) return failure("invalid-input");
+    const conversation = disconnectedConversation(state, sessionId, sourceId);
+    if ("error" in conversation) return conversation;
+    if (!conversation.connected || !conversation.replyChannelConnected) {
+      return failure("reply-channel-disconnected");
+    }
+    if (!conversation.replyInFlight) return failure("reply-not-pending");
+    const parsed = parseReplyReceiptInput(record.receipt);
+    if (!parsed.ok) return parsed;
+    if (parsed.frame.kind !== RECEIPT_KIND) return failure("wrong-direction");
+    const updated = Object.freeze({
+      ...conversation,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+    });
+    const nextState = freezeState(
+      "open",
+      state.installationId,
+      state.launchToken,
+      state.bridgeRevision,
+      state.conversations.map((item) => (item === conversation ? updated : item)),
+    );
+    return { ok: true, nextState, receipt: parsed.frame };
+  } catch {
+    return failure("invalid-input");
+  }
+}
+
+export function closeLocalBridgeReplyChannel(
+  stateInput: unknown,
+  input: unknown,
+): LocalBridgeTransition {
+  try {
+    const state = normalizedStateOrFailure(stateInput);
+    if ("error" in state) return state;
+    if (state.status === "closed") return failure("closed");
+    const command = commandOwner(input);
+    if (!command.ok) return command;
+    const conversation = disconnectedConversation(
+      state,
+      command.sessionId,
+      command.sourceInstanceId,
+    );
+    if ("error" in conversation) return conversation;
+    if (!conversation.replyChannelConnected && !conversation.replyTextNegotiated) {
+      return stateTransition(state, "disconnected", state.bridgeRevision, conversation.sourceEpoch);
+    }
+    const updated = Object.freeze({
+      ...conversation,
+      replyTextNegotiated: false,
+      replyChannelConnected: false,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+      replyRequestDigests: Object.freeze([]),
+    });
+    const nextState = freezeState(
+      "open",
+      state.installationId,
+      state.launchToken,
+      state.bridgeRevision,
+      state.conversations.map((item) => (item === conversation ? updated : item)),
+    );
+    return stateTransition(
+      nextState,
+      "disconnected",
+      state.bridgeRevision,
+      conversation.sourceEpoch,
+    );
   } catch {
     return failure("invalid-input");
   }
@@ -1630,7 +2447,17 @@ export function disconnectLocalBridge(stateInput: unknown, input: unknown): Loca
     }
     const activityGeneration = incrementActivityGeneration(conversation.activityGeneration);
     if (activityGeneration === undefined) return failure("revision-exhausted");
-    const disconnected = Object.freeze({ ...conversation, activityGeneration, connected: false });
+    const disconnected = Object.freeze({
+      ...conversation,
+      activityGeneration,
+      connected: false,
+      negotiatedMinor: LOCAL_BRIDGE_READ_ONLY_MINOR,
+      replyTextNegotiated: false,
+      replyChannelConnected: false,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+      replyRequestDigests: Object.freeze([]),
+    });
     const nextState = freezeState(
       "open",
       state.installationId,
@@ -1839,6 +2666,12 @@ export function evictIdleLocalBridge(stateInput: unknown, input: unknown): Local
       ...conversation,
       connected: false,
       dormant: true,
+      negotiatedMinor: LOCAL_BRIDGE_READ_ONLY_MINOR,
+      replyTextNegotiated: false,
+      replyChannelConnected: false,
+      replyInFlight: false,
+      replyInFlightDigest: null,
+      replyRequestDigests: Object.freeze([]),
       sessionMirrorState: createSessionMirrorState(),
       lastSnapshotSha256: null,
       lastSnapshotByteLength: null,

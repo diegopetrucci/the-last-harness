@@ -1,21 +1,21 @@
 {
   "unsupportedFamily": {
-    "family": "future-device",
+    "family": "future-local-bridge",
     "major": 0,
     "minor": 0
   },
   "unsupportedMajor": {
-    "family": "device-mirror",
+    "family": "local-bridge",
     "major": 1,
     "minor": 0
   },
   "unsupportedMinor": {
-    "family": "device-mirror",
+    "family": "local-bridge",
     "major": 0,
     "minor": 2
   },
   "negativeZero": {
-    "family": "device-mirror",
+    "family": "local-bridge",
     "major": 0,
     "minor": -0
   },

@@ -19,23 +19,41 @@ const {
   LOCAL_BRIDGE_ERROR_CODES,
   LOCAL_BRIDGE_NORMALIZATION_FORMULA,
   LOCAL_BRIDGE_PROTOCOL,
+  LOCAL_BRIDGE_READ_ONLY_PROTOCOL,
+  LOCAL_BRIDGE_REPLY_PROTOCOL,
   LOCAL_BRIDGE_RESULT_CODES,
+  LOCAL_BRIDGE_REPLY_CAPABILITY,
+  LOCAL_BRIDGE_REPLY_RECEIPT_CODES,
+  LOCAL_BRIDGE_REPLY_CLOSE_REASONS,
+  LOCAL_BRIDGE_REPLY_DIRECTIONS,
+  LOCAL_BRIDGE_REPLY_OUTCOME_CODES,
   LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES,
   acceptLocalBridgeHandshake,
   applyLocalBridgeData,
+  acceptLocalBridgeReplyHandshake,
+  closeLocalBridgeReplyChannel,
   createLocalBridgeState,
   decodeLengthPrefixedFrame,
   disconnectLocalBridge,
   evictIdleLocalBridge,
   encodeLengthPrefixedFrame,
+  encodeLocalBridgeReplyFrame,
+  encodeLocalBridgeReplyHandshakeFrame,
   encodeLocalBridgeResultFrame,
   parseLocalBridgeDataFrame,
   parseLocalBridgeHandshakeFrame,
   parseLocalBridgeRendezvousJson,
+  parseLocalBridgeReplyFrame,
+  parseLocalBridgeReplyHandshakeFrame,
   parseLocalBridgeResultFrame,
   teardownLocalBridge,
+  routeLocalBridgeReply,
+  settleLocalBridgeReply,
   validateLocalBridgeDirectoryPath,
   validateLocalBridgeHandshake,
+  validateLocalBridgeReplyFrame,
+  validateLocalBridgeReplyHandshake,
+  isLocalBridgeReplyExpired,
   validateLocalBridgeRendezvous,
   validateLocalBridgeResult,
   validateLocalBridgeSocketPath,
@@ -260,6 +278,7 @@ test("manifest inventories deterministic local-bridge fixtures and closed codes"
     major: 0,
     minor: 0,
   });
+  assert.deepStrictEqual(manifest.replyProfile, { ...LOCAL_BRIDGE_REPLY_PROTOCOL });
   assert.equal(manifest.manifestVersion, 1);
   assert.deepStrictEqual(manifest.bounds, LOCAL_BRIDGE_BOUNDS);
   assert.deepStrictEqual(manifest.normalization, LOCAL_BRIDGE_NORMALIZATION_FORMULA);
@@ -268,6 +287,18 @@ test("manifest inventories deterministic local-bridge fixtures and closed codes"
     LOCAL_BRIDGE_NORMALIZATION_FORMULA.budgetBytes,
   );
   assert.deepStrictEqual(manifest.requiredCapabilities, CAPABILITIES);
+  assert.deepStrictEqual(manifest.optionalCapabilities, [LOCAL_BRIDGE_REPLY_CAPABILITY]);
+  assert.deepStrictEqual(manifest.replyReceiptCodes, [...LOCAL_BRIDGE_REPLY_RECEIPT_CODES]);
+  assert.deepStrictEqual(manifest.replyCloseReasons, [...LOCAL_BRIDGE_REPLY_CLOSE_REASONS]);
+  assert.deepStrictEqual(manifest.replyDirections, {
+    bridgeToProducer: ["reply"],
+    producerToBridge: ["receipt", "reply-close"],
+  });
+  assert.deepStrictEqual(
+    [...LOCAL_BRIDGE_REPLY_DIRECTIONS],
+    ["bridge-to-producer", "producer-to-bridge"],
+  );
+  assert.deepStrictEqual(manifest.replyOutcomeCodes, [...LOCAL_BRIDGE_REPLY_OUTCOME_CODES]);
   assert.deepStrictEqual(manifest.resultCodes, [...LOCAL_BRIDGE_RESULT_CODES]);
   assert.deepStrictEqual(manifest.runtimeOnlyErrorCodes, [
     ...LOCAL_BRIDGE_RUNTIME_ONLY_ERROR_CODES,
@@ -303,6 +334,18 @@ test("rendezvous is versioned, randomized, bounded, and lexically path-restricte
   const parsed = parseLocalBridgeRendezvousJson(JSON.stringify(fixture.rendezvous));
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.rendezvous, fixture.rendezvous);
+  const readOnlyRendezvous = validateLocalBridgeRendezvous({
+    ...fixture.rendezvous,
+    protocol: { ...LOCAL_BRIDGE_READ_ONLY_PROTOCOL },
+  });
+  assert.equal(readOnlyRendezvous.ok, true);
+  assertFailure(
+    validateLocalBridgeRendezvous({
+      ...fixture.rendezvous,
+      protocol: { ...LOCAL_BRIDGE_REPLY_PROTOCOL },
+    }),
+    "incompatible-protocol",
+  );
   const directory = validateLocalBridgeDirectoryPath(fixture.companionDirectory);
   assert.equal(directory.ok, true);
   assert.equal(
@@ -430,6 +473,7 @@ test("malformed, truncated, oversized, and non-UTF-8 frames fail closed", () => 
 
 test("handshake performs version, installation, token, and capability checks", () => {
   const major = readFixture("invalid-major-version");
+  const invalidVersions = readFixture("invalid-version");
   const state = stateFrom({
     installationId: major.installationId,
     launchToken: major.launchToken,
@@ -451,6 +495,19 @@ test("handshake performs version, installation, token, and capability checks", (
     ),
     "incompatible-protocol",
   );
+  for (const protocol of [invalidVersions.unsupportedMinor, invalidVersions.negativeZero]) {
+    assertFailure(
+      validateLocalBridgeHandshake(hello("conversation-future-minor", SOURCE_A, { protocol })),
+      invalidVersions.expectedCode,
+    );
+    assertFailure(
+      validateLocalBridgeRendezvous({
+        ...readFixture("valid-rendezvous").rendezvous,
+        protocol,
+      }),
+      invalidVersions.expectedCode,
+    );
+  }
   assertFailure(
     acceptLocalBridgeHandshake(
       state,
@@ -505,8 +562,382 @@ test("handshake performs version, installation, token, and capability checks", (
     "malformed-frame",
   );
   assert.equal(RUNTIME_ONLY_ERROR_CODES.has("handshake-required"), true);
-  assert.equal(RUNTIME_ONLY_ERROR_CODES.has("wrong-direction"), true);
+  assert.equal(RUNTIME_ONLY_ERROR_CODES.has("wrong-direction"), false);
+  assert.equal(LOCAL_BRIDGE_ERROR_CODES.includes("wrong-direction"), true);
   assert.equal(state.conversations.length, 0);
+});
+
+test("minor-1 reply capability is separately owner-bound and idempotent", () => {
+  const fixture = readFixture("valid-reply-channel");
+  const invalid = readFixture("invalid-reply-boundaries");
+  assertFailure(
+    validateLocalBridgeHandshake(invalid.minorZeroWithReply),
+    "incompatible-capability",
+  );
+  assert.deepEqual(fixture.dataHello.protocol, { family: "local-bridge", major: 0, minor: 0 });
+  assert.deepEqual(fixture.replyHandshake.protocol, { ...LOCAL_BRIDGE_REPLY_PROTOCOL });
+  assert.equal(validateLocalBridgeHandshake(fixture.minorZeroReadOnly).ok, true);
+  const replyHandshake = validateLocalBridgeReplyHandshake(fixture.replyHandshake);
+  assert.equal(replyHandshake.ok, true);
+  assert.equal(replyHandshake.handshake.generation, 3);
+  assert.deepEqual(replyHandshake.handshake.capabilities, [LOCAL_BRIDGE_REPLY_CAPABILITY]);
+  assert.deepEqual(
+    [...LOCAL_BRIDGE_REPLY_RECEIPT_CODES],
+    [
+      "accepted",
+      "unconfirmed",
+      "invalid",
+      "unauthorized",
+      "stale",
+      "busy",
+      "duplicate",
+      "expired",
+      "disconnected",
+    ],
+  );
+  assert.equal(LOCAL_BRIDGE_REPLY_CLOSE_REASONS.includes(fixture.close.reason), true);
+  assert.equal(validateLocalBridgeReplyFrame(fixture.close, "producer-to-bridge").ok, true);
+  assertFailure(
+    validateLocalBridgeReplyFrame(fixture.close, "bridge-to-producer"),
+    "wrong-direction",
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(
+      { ...fixture.close, reason: "unknown-close-reason" },
+      "producer-to-bridge",
+    ),
+    "malformed-frame",
+  );
+  assert.equal(isLocalBridgeReplyExpired(fixture.reply.ttlSeconds, 29.9), false);
+  assert.equal(isLocalBridgeReplyExpired(fixture.reply.ttlSeconds, 30), true);
+  assert.equal(isLocalBridgeReplyExpired(0, 0), false);
+  assert.equal(
+    validateLocalBridgeReplyFrame(fixture.multilineReply, "bridge-to-producer").ok,
+    true,
+  );
+  assert.equal(
+    validateLocalBridgeReplyFrame(fixture.multilineReply, "bridge-to-producer").frame.text,
+    fixture.multilineReply.text,
+  );
+
+  const readOnlyOwner = accept(
+    stateFrom(),
+    fixture.minorZeroReadOnly.sessionId,
+    fixture.minorZeroReadOnly.sourceInstanceId,
+    {
+      protocol: fixture.minorZeroReadOnly.protocol,
+      capabilities: fixture.minorZeroReadOnly.capabilities,
+    },
+  );
+  assert.equal(readOnlyOwner.ok, true);
+  assertFailure(
+    routeLocalBridgeReply(readOnlyOwner.nextState, {
+      sessionId: fixture.minorZeroReadOnly.sessionId,
+      sourceInstanceId: fixture.minorZeroReadOnly.sourceInstanceId,
+      frame: fixture.reply,
+    }),
+    "reply-not-negotiated",
+  );
+
+  let state = stateFrom();
+  const owner = accept(state, fixture.dataHello.sessionId, fixture.dataHello.sourceInstanceId, {
+    protocol: fixture.dataHello.protocol,
+    capabilities: fixture.dataHello.capabilities,
+  });
+  state = owner.nextState;
+  assert.equal(state.conversations[0].replyTextNegotiated, false);
+  const channel = acceptLocalBridgeReplyHandshake(state, fixture.replyHandshake);
+  assert.equal(channel.ok, true);
+  assert.equal(channel.result.snapshotRequired, true);
+  state = channel.nextState;
+  assert.equal(state.conversations[0].replyTextNegotiated, true);
+  assert.equal(state.conversations[0].replyChannelConnected, true);
+  assertFailure(acceptLocalBridgeReplyHandshake(state, fixture.replyHandshake), "busy");
+  assertFailure(
+    acceptLocalBridgeReplyHandshake(state, {
+      ...fixture.replyHandshake,
+      sourceInstanceId: SOURCE_C,
+    }),
+    "not-owner",
+  );
+  assertFailure(
+    acceptLocalBridgeReplyHandshake(state, { ...fixture.replyHandshake, sourceEpoch: 2 }),
+    "stale-source",
+  );
+
+  const encodedHandshake = encodeLocalBridgeReplyHandshakeFrame(fixture.replyHandshake);
+  assert.equal(encodedHandshake.ok, true);
+  const parsedHandshake = parseLocalBridgeReplyHandshakeFrame(encodedHandshake.frame);
+  assert.equal(parsedHandshake.ok, true);
+  assert.deepEqual(parsedHandshake.handshake, fixture.replyHandshake);
+
+  const encodedReply = encodeLocalBridgeReplyFrame(fixture.reply, "bridge-to-producer");
+  assert.equal(encodedReply.ok, true);
+  const parsedReply = parseLocalBridgeReplyFrame(encodedReply.frame, "bridge-to-producer");
+  assert.equal(parsedReply.ok, true);
+  assert.deepEqual(parsedReply.frame, fixture.reply);
+  const routed = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    frame: fixture.reply,
+  });
+  assert.equal(routed.ok, true);
+  assert.equal(routed.outcome, "forwarded");
+  state = routed.nextState;
+  assert.equal(state.conversations[0].replyInFlight, true);
+  assert.equal(JSON.stringify(state).includes(fixture.reply.text), false);
+  assert.equal(JSON.stringify(state).includes(fixture.reply.requestId), false);
+
+  assertFailure(
+    routeLocalBridgeReply(state, {
+      sessionId: fixture.dataHello.sessionId,
+      sourceInstanceId: fixture.dataHello.sourceInstanceId,
+      frame: fixture.replyB,
+    }),
+    "busy",
+  );
+  const duplicate = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    frame: fixture.reply,
+  });
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.outcome, "duplicate");
+  assert.equal(Object.hasOwn(duplicate, "request"), false);
+  assert.equal(JSON.stringify(duplicate).includes(fixture.reply.text), false);
+  const settled = settleLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    receipt: fixture.receipt,
+  });
+  assert.equal(settled.ok, true);
+  assert.deepEqual(settled.receipt, fixture.receipt);
+  assert.deepEqual(Object.keys(settled.receipt), ["kind", "code"]);
+  state = settled.nextState;
+
+  const second = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    frame: fixture.replyB,
+  });
+  assert.equal(second.ok, true);
+  state = second.nextState;
+  const secondSettled = settleLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    receipt: { kind: "receipt", code: "unconfirmed" },
+  });
+  assert.equal(secondSettled.ok, true);
+  state = secondSettled.nextState;
+  const replayA = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    frame: fixture.reply,
+  });
+  assert.equal(replayA.ok, true);
+  assert.equal(replayA.outcome, "duplicate");
+  assert.equal(state.conversations[0].replyRequestDigests.length, 2);
+  assert.equal(
+    state.conversations[0].replyRequestDigests.length <= LOCAL_BRIDGE_BOUNDS.maxReplyRequestDigests,
+    true,
+  );
+  for (const code of LOCAL_BRIDGE_REPLY_RECEIPT_CODES) {
+    const candidate = validateLocalBridgeReplyFrame(
+      { kind: "receipt", code },
+      "producer-to-bridge",
+    );
+    assert.equal(candidate.ok, true);
+    assert.deepEqual(Object.keys(candidate.frame), ["kind", "code"]);
+  }
+  const closed = closeLocalBridgeReplyChannel(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+  });
+  assert.equal(closed.ok, true);
+  assert.equal(closed.nextState.conversations[0].replyTextNegotiated, false);
+  assert.equal(closed.nextState.conversations[0].replyChannelConnected, false);
+  assertFailure(
+    routeLocalBridgeReply(closed.nextState, {
+      sessionId: fixture.dataHello.sessionId,
+      sourceInstanceId: fixture.dataHello.sourceInstanceId,
+      frame: fixture.reply,
+    }),
+    "reply-not-negotiated",
+  );
+  const snapshotted = publish(
+    closed.nextState,
+    fixture.dataHello.sessionId,
+    fixture.dataHello.sourceInstanceId,
+    snapshotEnvelope(fixture.dataHello.sessionId, {
+      eventId: "reply-handshake-snapshot",
+      revision: 1,
+      cursor: "reply-handshake-cursor",
+      snapshotId: "reply-handshake-snapshot-id",
+      status: "idle",
+    }),
+  );
+  const reconnectedChannel = acceptLocalBridgeReplyHandshake(
+    snapshotted.nextState,
+    fixture.replyHandshake,
+  );
+  assert.equal(reconnectedChannel.ok, true);
+  assert.equal(reconnectedChannel.result.snapshotRequired, false);
+
+  assertFailure(
+    validateLocalBridgeReplyFrame(invalid.invalidText, "bridge-to-producer"),
+    "malformed-frame",
+  );
+  assert.equal(
+    validateLocalBridgeReplyFrame(
+      { ...fixture.reply, text: "x".repeat(LOCAL_BRIDGE_BOUNDS.maxReplyTextBytes) },
+      "bridge-to-producer",
+    ).ok,
+    true,
+  );
+  assert.equal(
+    validateLocalBridgeReplyFrame(
+      {
+        ...fixture.reply,
+        text: invalid.unicodeTextCharacter.repeat(invalid.unicodeTextExactCharacters),
+      },
+      "bridge-to-producer",
+    ).ok,
+    true,
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(
+      { ...fixture.reply, text: "x".repeat(LOCAL_BRIDGE_BOUNDS.maxReplyTextBytes + 1) },
+      "bridge-to-producer",
+    ),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(
+      {
+        ...fixture.reply,
+        text: invalid.unicodeTextCharacter.repeat(invalid.unicodeTextOverCharacters),
+      },
+      "bridge-to-producer",
+    ),
+    "malformed-frame",
+  );
+  assert.equal(
+    validateLocalBridgeReplyFrame(
+      {
+        ...fixture.reply,
+        requestId: invalid.unicodeTextCharacter.repeat(
+          LOCAL_BRIDGE_BOUNDS.maxReplyRequestIdCharacters,
+        ),
+      },
+      "bridge-to-producer",
+    ).ok,
+    true,
+  );
+  for (const text of invalid.leadingWhitespaceSlashTexts) {
+    assertFailure(
+      validateLocalBridgeReplyFrame({ ...fixture.reply, text }, "bridge-to-producer"),
+      "malformed-frame",
+    );
+  }
+  for (const text of [
+    invalid.controlText,
+    invalid.formatText,
+    invalid.bidiText,
+    invalid.lineSeparatorText,
+  ]) {
+    assertFailure(
+      validateLocalBridgeReplyFrame({ ...fixture.reply, text }, "bridge-to-producer"),
+      "malformed-frame",
+    );
+  }
+  assertFailure(
+    validateLocalBridgeReplyFrame(invalid.invalidTtl, "bridge-to-producer"),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(invalid.invalidReceipt, "producer-to-bridge"),
+    "malformed-frame",
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(invalid.wrongDirection, "bridge-to-producer"),
+    "wrong-direction",
+  );
+  assertFailure(
+    validateLocalBridgeReplyFrame(fixture.receipt, "bridge-to-producer"),
+    "wrong-direction",
+  );
+});
+
+test("local reply channels clear safely across disconnect, takeover, and teardown", () => {
+  const fixture = readFixture("valid-reply-channel");
+  let state = stateFrom();
+  state = accept(state, fixture.dataHello.sessionId, fixture.dataHello.sourceInstanceId).nextState;
+  state = acceptLocalBridgeReplyHandshake(state, fixture.replyHandshake).nextState;
+  const unknownOwner = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: SOURCE_C,
+    frame: fixture.reply,
+  });
+  assertFailure(unknownOwner, "not-owner");
+
+  const pendingForEviction = routeLocalBridgeReply(state, {
+    sessionId: fixture.dataHello.sessionId,
+    sourceInstanceId: fixture.dataHello.sourceInstanceId,
+    frame: fixture.reply,
+  });
+  assert.equal(pendingForEviction.ok, true);
+  const idleEviction = evictIdleLocalBridge(
+    pendingForEviction.nextState,
+    idleCommand(
+      pendingForEviction.nextState,
+      fixture.dataHello.sessionId,
+      LOCAL_BRIDGE_BOUNDS.idleEvictionMinutes,
+    ),
+  );
+  assert.equal(idleEviction.ok, true);
+  const evictedConversation = idleEviction.nextState.conversations[0];
+  assert.equal(evictedConversation.replyTextNegotiated, false);
+  assert.equal(evictedConversation.replyChannelConnected, false);
+  assert.equal(evictedConversation.replyInFlight, false);
+  assert.equal(evictedConversation.replyRequestDigests.length, 0);
+
+  const disconnected = disconnect(
+    state,
+    fixture.dataHello.sessionId,
+    fixture.dataHello.sourceInstanceId,
+  );
+  state = disconnected.nextState;
+  assert.equal(state.conversations[0].replyTextNegotiated, false);
+  assert.equal(state.conversations[0].replyChannelConnected, false);
+  assertFailure(acceptLocalBridgeReplyHandshake(state, fixture.replyHandshake), "not-owner");
+
+  const takeover = accept(state, fixture.dataHello.sessionId, SOURCE_C, {
+    capabilities: [...CAPABILITIES],
+  });
+  assert.equal(takeover.result.sourceEpoch, 2);
+  state = takeover.nextState;
+  assertFailure(acceptLocalBridgeReplyHandshake(state, fixture.replyHandshake), "stale-source");
+  assertFailure(
+    routeLocalBridgeReply(state, {
+      sessionId: fixture.dataHello.sessionId,
+      sourceInstanceId: fixture.dataHello.sourceInstanceId,
+      frame: fixture.reply,
+    }),
+    "stale-source",
+  );
+
+  const closed = teardownLocalBridge(state);
+  assert.equal(closed.ok, true);
+  assert.equal(closed.nextState.status, "closed");
+  assertFailure(
+    routeLocalBridgeReply(closed.nextState, {
+      sessionId: fixture.dataHello.sessionId,
+      sourceInstanceId: SOURCE_C,
+      frame: fixture.reply,
+    }),
+    "closed",
+  );
+  assert.equal(teardownLocalBridge(closed.nextState).result.code, "closed");
 });
 
 test("LocalBridge outer identities count Unicode code points and reject malformed scalars", () => {

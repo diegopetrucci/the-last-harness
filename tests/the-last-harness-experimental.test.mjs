@@ -15,6 +15,7 @@ const {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
   SESSION_MIRROR_OBSERVER_FEATURE,
+  SESSION_MIRROR_REPLIES_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -88,6 +89,7 @@ test(
           `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
           `enable ${SESSION_MIRROR_OBSERVER_FEATURE}`,
+          `enable ${SESSION_MIRROR_REPLIES_FEATURE}`,
         ],
       );
       assert.deepEqual(
@@ -97,6 +99,7 @@ test(
           `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
           `status ${SESSION_MIRROR_OBSERVER_FEATURE}`,
+          `status ${SESSION_MIRROR_REPLIES_FEATURE}`,
         ],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -120,6 +123,7 @@ test(
         /\/experimental enable ci-failure-investigation/,
       );
       assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-replies/);
       assert.match(notifications.at(-1)?.message ?? "", /changes apply on the next session/i);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /embedded-subagents/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);

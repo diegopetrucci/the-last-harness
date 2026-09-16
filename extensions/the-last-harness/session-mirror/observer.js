@@ -55,6 +55,7 @@ function initialState(queueCapacity) {
         dirty: false,
         snapshotRequired: false,
         publicationPending: false,
+        activeSnapshotRequested: false,
         queue: [],
         queueCapacity,
         revision: 0,
@@ -242,7 +243,9 @@ export function createSessionMirrorObserverRuntime(options = {}) {
         markMutation();
         enqueue("dirty");
     };
-    const markForceSnapshot = () => {
+    const markForceSnapshot = (allowActive = false) => {
+        if (allowActive)
+            state.activeSnapshotRequested = true;
         state.snapshotRequired = true;
         state.dirty = true;
         state.publicationPending = true;
@@ -370,6 +373,7 @@ export function createSessionMirrorObserverRuntime(options = {}) {
         }
         state.successfulPublications = incrementCounter(state.successfulPublications);
         if (state.mutationSerial === operation.mutationSerial) {
+            state.activeSnapshotRequested = false;
             state.snapshotRequired = false;
             state.dirty = false;
             state.publicationPending = false;
@@ -435,9 +439,13 @@ export function createSessionMirrorObserverRuntime(options = {}) {
             recordDiagnostic("stale-generation");
             return;
         }
-        if (!state.enabled || !state.settled || !state.publicationPending || activeSink !== undefined) {
+        if (!state.enabled ||
+            (!state.settled && !state.activeSnapshotRequested) ||
+            !state.publicationPending ||
+            activeSink !== undefined) {
             return;
         }
+        state.activeSnapshotRequested = false;
         const view = readSessionView();
         if (!isCurrent(token)) {
             recordDiagnostic("stale-generation");
@@ -614,6 +622,7 @@ export function createSessionMirrorObserverRuntime(options = {}) {
             state.dirty = true;
             state.snapshotRequired = true;
             state.publicationPending = false;
+            state.activeSnapshotRequested = false;
             state.queue = [];
             state.revision = 0;
             state.publicationSerial = 0;
@@ -688,10 +697,10 @@ export function createSessionMirrorObserverRuntime(options = {}) {
             lifecycleDepth -= 1;
         }
     };
-    const requestSnapshot = () => {
+    const requestSnapshot = (allowActive = false) => {
         lifecycleDepth += 1;
         try {
-            markForceSnapshot();
+            markForceSnapshot(allowActive);
         }
         finally {
             lifecycleDepth -= 1;
@@ -709,6 +718,7 @@ export function createSessionMirrorObserverRuntime(options = {}) {
             state.dirty = false;
             state.snapshotRequired = false;
             state.publicationPending = false;
+            state.activeSnapshotRequested = false;
             state.queue = [];
             state.revision = 0;
             state.publicationSerial = 0;

@@ -3,6 +3,13 @@ import { performance } from "node:perf_hooks";
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
 import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";
 import {
+  createSessionMirrorReplyProducer,
+  type SessionMirrorReplyProducer,
+  type SessionMirrorReplyProducerOptions,
+  type SessionMirrorReplyProducerState,
+} from "./session-mirror/session-mirror-reply-producer.js";
+import { type LocalBridgePublicationIdentity } from "./session-mirror/local-bridge-boundary.js";
+import {
   projectRecentSessionMirrorSnapshot,
   type SessionMirrorReadonlySessionManager,
   type SessionMirrorSnapshotProjectionEnvelope,
@@ -63,7 +70,9 @@ export interface SessionMirrorObserverProbeMetrics {
 }
 
 export type SessionMirrorObserverProbeState = SessionMirrorObserverState &
-  SessionMirrorObserverProbeMetrics;
+  SessionMirrorObserverProbeMetrics & {
+    readonly reply?: SessionMirrorReplyProducerState;
+  };
 
 export interface SessionMirrorObserverProbeOptions {
   readonly getSessionManager?: () => SessionMirrorReadonlySessionManager | undefined;
@@ -80,17 +89,33 @@ export interface SessionMirrorObserverProbeOptions {
   readonly bridgeDirectory?: string;
   /** Test seam; production uses the lazy Unix-socket sink when configured. */
   readonly sink?: SessionMirrorObserverSink;
+  /** Explicit second feature gate; observer activation remains the outer gate. */
+  readonly sessionMirrorReplies?: boolean;
+  /** Extension-owned user-message injection seam for the reply producer. */
+  readonly sendUserMessage?: SessionMirrorReplyProducerOptions["sendUserMessage"];
+  readonly isIdle?: SessionMirrorReplyProducerOptions["isIdle"];
+  readonly replyChannelFactory?: SessionMirrorReplyProducerOptions["createChannel"];
+  readonly replyNotify?: SessionMirrorReplyProducerOptions["notify"];
+  readonly replyNow?: SessionMirrorReplyProducerOptions["now"];
+  readonly replyScheduleConfirmation?: SessionMirrorReplyProducerOptions["scheduleConfirmation"];
+  readonly replySetTimeout?: SessionMirrorReplyProducerOptions["setTimeout"];
+  readonly replyClearTimeout?: SessionMirrorReplyProducerOptions["clearTimeout"];
 }
 
 export interface SessionMirrorObserverProbe {
   sessionStart(): void;
   agentStart(): void;
-  messageEnd(): void;
+  input(event?: unknown): void;
+  messageStart(event?: unknown): void;
+  messageEnd(event?: unknown): void;
   turnEnd(): void;
   agentSettled(): void;
+  sessionBeforeTree(): void;
   sessionTree(): void;
+  sessionBeforeCompact(): void;
   sessionCompact(): void;
   sessionShutdown(): void;
+  publicationReady(info: unknown): void;
   requestSnapshot(): void;
   getState(): SessionMirrorObserverProbeState;
 }
@@ -283,11 +308,22 @@ export function createSessionMirrorObserverProbe(
   const attest = options.attest ?? defaultAttestor;
   const project = options.project ?? projectRecentSessionMirrorSnapshot;
   const getSessionManager = options.getSessionManager ?? (() => options.sessionManager);
+  let replyProducer: SessionMirrorReplyProducer | undefined;
+  const notifyPublicationReady = (info: LocalBridgePublicationIdentity): void => {
+    try {
+      replyProducer?.publicationReady(info);
+    } catch {
+      // Reply negotiation is independent of fail-open snapshot publication.
+    }
+  };
   const publicationSink =
     options.sink ??
     (options.bridgeDirectory === undefined
       ? undefined
-      : createSessionMirrorObserverSocketSink({ bridgeDirectory: options.bridgeDirectory }));
+      : createSessionMirrorObserverSocketSink({
+          bridgeDirectory: options.bridgeDirectory,
+          onReady: notifyPublicationReady,
+        }));
 
   const measuredAttest: SessionMirrorObserverAttestor = (input) => {
     const startedAt = readNow(now);
@@ -364,6 +400,24 @@ export function createSessionMirrorObserverProbe(
   };
   const runtime: SessionMirrorObserverRuntime = createSessionMirrorObserverRuntime(runtimeOptions);
 
+  if (options.sessionMirrorReplies === true && typeof options.sendUserMessage === "function") {
+    replyProducer = createSessionMirrorReplyProducer({
+      enabled: true,
+      bridgeDirectory: options.bridgeDirectory,
+      getSessionManager,
+      getObserverState: runtime.getState,
+      sendUserMessage: options.sendUserMessage,
+      isIdle: options.isIdle,
+      requestSnapshot: runtime.requestSnapshot,
+      createChannel: options.replyChannelFactory,
+      now: options.replyNow,
+      scheduleConfirmation: options.replyScheduleConfirmation,
+      setTimeout: options.replySetTimeout,
+      clearTimeout: options.replyClearTimeout,
+      notify: options.replyNotify,
+    });
+  }
+
   const getState = (): SessionMirrorObserverProbeState => {
     let observer: SessionMirrorObserverState;
     try {
@@ -413,24 +467,59 @@ export function createSessionMirrorObserverProbe(
       envelopeBytes: metrics.envelopeBytes,
       timing: Object.freeze({ ...metrics.timing }),
       runtimeFailures: metrics.runtimeFailures,
+      ...(replyProducer === undefined ? {} : { reply: replyProducer.getState() }),
     });
   };
 
+  const invokeReply = (action: () => void): void => {
+    try {
+      action();
+    } catch {
+      metrics.runtimeFailures = incrementCounter(metrics.runtimeFailures);
+    }
+  };
   const sessionStart = (): void => {
     metrics.envelopeCategory = "none";
     metrics.entryCount = 0;
     metrics.rootCount = 0;
     metrics.maxDepth = 0;
     metrics.envelopeBytes = 0;
+    invokeReply(() => replyProducer?.sessionStart());
     invokeLifecycle(() => runtime.sessionStart(), metrics);
   };
-  const agentStart = (): void => invokeLifecycle(() => runtime.agentStart(), metrics);
-  const messageEnd = (): void => invokeLifecycle(() => runtime.messageEnd(), metrics);
-  const turnEnd = (): void => invokeLifecycle(() => runtime.turnEnd(), metrics);
-  const agentSettled = (): void => invokeLifecycle(() => runtime.agentSettled(), metrics);
-  const sessionTree = (): void => invokeLifecycle(() => runtime.sessionTree(), metrics);
-  const sessionCompact = (): void => invokeLifecycle(() => runtime.sessionCompact(), metrics);
+  const agentStart = (): void => {
+    invokeReply(() => replyProducer?.agentStart());
+    invokeLifecycle(() => runtime.agentStart(), metrics);
+  };
+  const input = (event?: unknown): void => invokeReply(() => replyProducer?.input(event));
+  const messageStart = (event?: unknown): void =>
+    invokeReply(() => replyProducer?.messageStart(event));
+  const messageEnd = (event?: unknown): void => {
+    invokeReply(() => replyProducer?.messageEnd(event));
+    invokeLifecycle(() => runtime.messageEnd(), metrics);
+  };
+  const turnEnd = (): void => {
+    invokeReply(() => replyProducer?.turnEnd());
+    invokeLifecycle(() => runtime.turnEnd(), metrics);
+  };
+  const agentSettled = (): void => {
+    invokeReply(() => replyProducer?.agentSettled());
+    invokeLifecycle(() => runtime.agentSettled(), metrics);
+  };
+  const sessionBeforeTree = (): void => invokeReply(() => replyProducer?.sessionBeforeTree());
+  const sessionTree = (): void => {
+    invokeReply(() => replyProducer?.sessionTree());
+    invokeLifecycle(() => runtime.sessionTree(), metrics);
+  };
+  const sessionBeforeCompact = (): void => invokeReply(() => replyProducer?.sessionBeforeCompact());
+  const sessionCompact = (): void => {
+    invokeReply(() => replyProducer?.sessionCompact());
+    invokeLifecycle(() => runtime.sessionCompact(), metrics);
+  };
+  const publicationReady = (info: unknown): void =>
+    invokeReply(() => replyProducer?.publicationReady(info));
   const sessionShutdown = (): void => {
+    invokeReply(() => replyProducer?.sessionShutdown());
     shutdownSink(publicationSink);
     invokeLifecycle(() => runtime.sessionShutdown(), metrics);
     metrics.envelopeCategory = "none";
@@ -444,12 +533,17 @@ export function createSessionMirrorObserverProbe(
   return Object.freeze({
     sessionStart,
     agentStart,
+    input,
+    messageStart,
     messageEnd,
     turnEnd,
     agentSettled,
+    sessionBeforeTree,
     sessionTree,
+    sessionBeforeCompact,
     sessionCompact,
     sessionShutdown,
+    publicationReady,
     requestSnapshot,
     getState,
   });

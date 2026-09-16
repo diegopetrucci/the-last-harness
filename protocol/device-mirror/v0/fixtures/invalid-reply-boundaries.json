@@ -1,0 +1,45 @@
+{
+  "scenario": "invalid-reply-boundaries",
+  "minorZeroWithReply": {
+    "kind": "hello",
+    "protocol": { "family": "device-mirror", "major": 0, "minor": 0 },
+    "capabilities": ["list", "subscribe", "snapshot-replace", "reply-text"]
+  },
+  "invalidText": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 1,
+    "requestId": "fixture-request",
+    "ttlSeconds": 30,
+    "text": "/not-a-command"
+  },
+  "leadingWhitespaceSlashTexts": [" /quit", "\t/quit", "\n/quit", "\u00a0/quit"],
+  "controlText": "safe\u0000text",
+  "formatText": "safe\u200btext",
+  "bidiText": "safe\u202etext",
+  "lineSeparatorText": "safe\u2028text",
+  "invalidTtl": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 1,
+    "requestId": "fixture-request",
+    "ttlSeconds": 0,
+    "text": "bounded"
+  },
+  "invalidReceipt": {
+    "kind": "receipt",
+    "code": "accepted",
+    "requestId": "fixture-request"
+  },
+  "wrongDirection": {
+    "kind": "reply",
+    "handle": "launch-handle-a",
+    "revision": 1,
+    "requestId": "fixture-request",
+    "ttlSeconds": 30,
+    "text": "bounded"
+  },
+  "unicodeTextCharacter": "😀",
+  "unicodeTextExactCharacters": 512,
+  "unicodeTextOverCharacters": 513
+}
