@@ -56,4 +56,6 @@ For each required fix include:
 
 Do not include optional suggestions, style nitpicks, praise sections, or generic checklists.
 
+Categorise your findings into P0, P1, P2s.
+
 If no issues require changes, say so clearly and briefly summarize what you reviewed and any residual risk the delegating primary agent should know about.
