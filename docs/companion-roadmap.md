@@ -1,11 +1,11 @@
 # TLH companion roadmap
 
-This is the canonical, tracked planning record for the TLH companion reader. It
-consolidates the former root plan, the iOS product plan, the Phase 0A
-readiness review, the follow-up live-path review, the Mac architecture record,
-and the approved constraints that reconcile them. The review artifacts used for
-that consolidation are read-only, non-durable inputs; this document does not
-replace or edit them.
+This is the canonical, tracked planning record for the TLH companion reader and
+the separately approved bounded reply prototype. It consolidates the former
+root plan, the iOS product plan, the Phase 0A readiness review, the follow-up
+live-path review, the Mac architecture record, and the approved constraints
+that reconcile them. The review artifacts used for that consolidation are
+read-only, non-durable inputs; this document does not replace or edit them.
 
 Evidence in this document is durable by design. A source claim names a tracked
 path and symbol, or the row records itself as canonical dated evidence. No
@@ -21,10 +21,12 @@ framework output. Examples below are capability descriptions, not wire data.
 | Area                                   | Status                                                    | Meaning                                                                                                                                                                                                                              |
 | -------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Phase 0A                               | **Complete**                                              | The approved Phase 0A gate is closed. The post-review findings below are follow-on work, not a reopening of 0A.                                                                                                                      |
-| Physical direct path                   | **Proven**                                                | Canonical evidence recorded on 2026-09-13 records TLS-PSK-authenticated delivery of a bounded snapshot to physical iOS hardware over Tailscale reachability. This proves feasibility, not production readiness or route enforcement. |
-| Installed Mac composition              | **Observed in the current worktree; clean proof pending** | Canonical evidence recorded on 2026-09-13 records visible-app wiring of the local bridge handoff to device egress with explicit ordering. A clean, exact-revision, reproducible proof remains a validation task.                     |
+| Physical direct path                   | **Proven for read-only only**                             | Canonical evidence recorded on 2026-09-13 records TLS-PSK-authenticated delivery of a bounded snapshot to physical iOS hardware over Tailscale reachability. This proves read-only feasibility, not reply capability, production readiness, or route enforcement. |
+| Installed Mac composition              | **Pushed source evidence; physical proof separately gated** | The pushed Mac sibling revision records visible-app wiring of the local bridge handoff to device egress, ordered lifecycle ownership, fixed configuration states, and race/failure coverage. It is not a merged, installed, or physical-device proof. |
 | TLH hook/snapshot seam                 | **Implemented and validated**                             | Tracked observer lifecycle hooks and the authoritative snapshot projection are implemented and covered by the repository's observer/projection tests. Only compatibility with a future upstream runtime version remains open.        |
-| Post-0A basic usability                | **Current**                                               | The narrow current slice is connection-profile-only protected persistence and one-shot foreground lifecycle reconnect on iOS, with safe state retirement, full-snapshot subscription, and navigation reset.                          |
+| Post-0A basic usability                | **Pushed-but-unmerged source evidence**                   | The pushed iOS sibling revision records bounded protected connection-profile persistence, one-shot foreground lifecycle reconnect, safe state retirement, full-snapshot subscription, and navigation reset. This root task does not claim merge or broad validation. |
+| Reply prototype                        | **Pushed-but-unmerged source evidence**                 | Exact pushed implementation revisions are recorded below for TLH/root (`e43018ec772b2e279c994172ecaf7a64eb2fb4e8`), Mac (`9305231f8b8dc685e91ce38253f64b55cf935868`), and iOS (`6deb95c0947cff881fe8c394c5002cbc4f4b1cca`). All ten approved validation gates ultimately passed, with the initial Mac aggregate assertion and targeted rerun recorded below. This does not claim merge, release, signing, installation, physical reply proof, or live-session reply proof. |
+| Reply physical proof                   | **Deferred; separate gate**                              | Physical reply proof requires the protocol, producer, Mac, and iOS deterministic gates plus explicit security/privacy review and fresh physical-device authorization. |
 | Prototype platform baseline            | **macOS 26/iOS 26 only**                                  | The prototype evidence is limited to those current platform baselines. Expansion to older OS versions is deferred until a later compatibility gate.                                                                                  |
 | Mac launch configuration               | **Deferred**                                              | A stable Mac-side address, port, and pairing configuration for lifecycle/login launches is not part of the current slice. Re-pairing after a Mac process configuration change remains possible.                                      |
 | Full transcript persistence            | **Prohibited**                                            | The Mac's existing isolated session store remains the sole durable full-transcript authority. Companion, phone, Keychain, server, notification, and evidence storage must not become a second transcript.                            |
@@ -74,8 +76,12 @@ framework output. Examples below are capability descriptions, not wire data.
 
 - Token, character, delta, or partial assistant streaming. The first reader
   shows completed assistant turns and optional coarse working/idle state only.
-- Prompts, replies, steering, follow-up, abort, tool approval, branch creation,
-  terminal control, file mutation, or any other iOS-originated command.
+- For the Phase 0A/read-only reader, prompts, replies, steering, follow-up,
+  abort, tool approval, branch creation, terminal control, file mutation, and
+  every other iOS-originated command remain non-goals. That historical
+  read-only boundary remains unchanged; the separately approved reply
+  prototype below is an additive, explicitly negotiated implementation in
+  pushed-but-unmerged source and does not change the reader gate.
 - Attaching to an arbitrary running terminal through stdin/stdout, terminal
   scraping, or session-file tailing. A headless RPC/SDK product would be a
   separately approved product variant.
@@ -111,9 +117,10 @@ These decisions are authoritative when older planning text conflicts with them.
 | Persistence         | The only currently approved companion persistence is one bounded, protected iOS connection profile in Keychain. No transcript, listing, handle, selected conversation, cursor, revision, envelope, or rendered turn is persisted.                  |
 | Reconnect           | The current foreground reconnect creates an authoritative full-snapshot subscription. It persists no cursor and performs no event replay; retained replay is a Phase 0B/later target only.                                                         |
 | Mac lifecycle       | A visible development-signed `LSUIElement` main app with opt-in `SMAppService.mainApp` registration is the Phase 0A shape. Hidden helpers, raw launch-agent registration, privileged services, and silent registration are not.                    |
-| Egress composition  | The former source-ingress-only prohibition is superseded for the current worktree composition: the visible app may own the bounded development device-egress handoff. APNs, server relay, replies, and terminal control remain out of scope.       |
+| Egress composition  | The former source-ingress-only prohibition is superseded for the pushed sibling composition: the visible app may own the bounded development device-egress handoff. APNs, server relay, and terminal control remain out of scope; replies use the separate prototype below. |
 | Code-size policy    | Former hard package, target, Swift LOC, and similar line-count gates are superseded and intentionally omitted as acceptance criteria. Runtime bounds and maintainability remain mandatory.                                                         |
-| Producer behavior   | The TLH producer stays marker-driven and fail-open. A failed publication may remain dirty until a later lifecycle marker or explicit snapshot request; no automatic retry or background sync is inferred.                                          |
+| Producer behavior   | Read-only TLH publication stays marker-driven and fail-open. A failed publication may remain dirty until a later lifecycle marker or explicit snapshot request; neither publication nor the reply prototype adds automatic retry or background sync. |
+| Reply authority     | The approved reply prototype is a separate negotiated channel. The TLH producer, not the Mac or phone, authoritatively checks generation, leaf, revision, unpublished state, idle/busy latch, TTL, and idempotency before any text injection. |
 | Mac configuration   | Stable durable Mac endpoint/pairing configuration is deferred. A saved iOS profile is useful while the Mac configuration remains stable, but cannot promise effortless reconnect after a Mac restart that changes its pairing value.               |
 | Platform baseline   | The prototype baseline is macOS 26/iOS 26 only. Older-version support and compatibility expansion require a later gate and are not implied by the current slice.                                                                                   |
 
@@ -121,6 +128,62 @@ A historical source-sink size metric may be tracked by its owning
 implementation review, but no code-size or target-count number is a canonical
 roadmap stop condition. Any proposed limit must be approved separately and
 must not displace safety or runtime evidence.
+
+### Pushed sibling source evidence (2026-09-14)
+
+The following committed objects are pushed on the current TLH or sibling
+repository branches but are not merged into this repository's current branch.
+They are source-history evidence only: this roadmap does not convert them into
+release status, a clean cross-repository build, an installed-app result, or
+new physical-device proof. The object IDs deliberately exclude sibling
+worktree changes and contain no machine values or transcript data.
+
+| Scope | Pushed revision(s) | Bounded evidence recorded by the revision |
+| ----- | ------------------ | ----------------------------------------- |
+| TLH source publication | `63ca1a43c468085f8c052c656c17204096ffc6f0` | The TLH repository's pushed observer/publication slice retains isolated-profile attestation, bounded fail-open handoff, and the tracked source-side snapshot seam. |
+| Mac read-only transport and reconnect | `e7a367fefacffcc190f2367ad08c4f2d77c01f7f`, `e2c6670231d40c851172dc233bd9cfffd9a497e6`, `89734e3200d2cbb9bd68da775a6c8515a50ffc61`, `ab29818ad4aca0e728474ef86e43e2ae340c7ef4` | TLS-PSK device egress, pinned protocol provenance, aligned mirror boundaries, bounded reader replacement, and producer-owned snapshot retention across reader reconnects are present in the pushed history. |
+| Mac lifecycle hardening | `b137278eb7ce4a85ab46cf2a8d6fef0722379ef8`, `1584eb621d6463caee2dfdac0355faee8d758e43` | Observer transaction-directory ownership/permission handling and the installed visible-app egress coordinator are hardened with fixed configuration presentation, ordered start/stop, asynchronous failure coupling, and deterministic race/failure coverage. |
+| iOS read-only and reconnect | `35877ebc73560ae30304a5a9e5b37db7d098e48c`, `bdd1e0499a1b57d30dfa0f2d51d9e49cfcd62f89`, `8dc62697adb655934ad6cf2ffda77246b05e0e3d` | The pushed iOS history records the live completed-turn reader, dropped-subscription recovery, protected connection-profile persistence, one-shot foreground reconnect, full-snapshot subscription, lifecycle clearing, and live-transport denial for Release/UI-test processes. |
+
+The 2026-09-13 review register remains historical evidence, including the
+earlier no-op installed-app sink, route-enforcement limitation, provenance
+limitation, and other failed or incomplete attempts. The pushed source rows
+record later source-level corrections without erasing those observations.
+The read-only physical record remains limited to read-only delivery; it is not
+physical proof of the reply prototype.
+
+### Pushed reply source evidence
+
+The reply implementation is recorded by these exact pushed commits on the
+respective TLH, Mac, and iOS branches. They remain unmerged into this
+repository's current branch. Workflow-ticket records are not durable evidence;
+the revision IDs and tracked source/tests below are the durable source record.
+
+| Scope | Pushed revision | Bounded evidence recorded by the revision |
+| ----- | --------------- | ----------------------------------------- |
+| TLH/root | `e43018ec772b2e279c994172ecaf7a64eb2fb4e8` | Versioned local-bridge/device-mirror reply contracts and fixtures, the producer reply channel, generated TypeScript/JavaScript parity, feature-gated observer wiring, and deterministic protocol/producer tests. |
+| Mac | `9305231f8b8dc685e91ce38253f64b55cf935868` | DeviceMirror reply frames/state, owner-bound LocalBridge routing, fixed receipts, memory-only **Enable replies (prototype)** authorization, and lifecycle/race/redaction coverage. |
+| iOS | `6deb95c0947cff881fe8c394c5002cbc4f4b1cca` | Capability-gated foreground composition with ephemeral draft/pending/receipt state, opaque target/revision handling, bounded text validation, and client/controller/UI coverage. |
+
+Across these revisions, focused evidence covers read-only compatibility,
+capability negotiation, owner binding, stale/idle/TTL/idempotency behavior,
+fixed receipts and close codes, redaction, bounded lifecycle cleanup, and
+authoritative snapshot-only transcript updates. The producer and channel
+TypeScript/JavaScript pairs are retained as generated/runtime parity evidence.
+These are pushed source/test claims only: they do not claim merge, release,
+signing, installation, physical reply proof, or live-session reply proof.
+
+### Ordered validation record
+
+All ten approved validation gates ultimately passed. The first Mac aggregate
+`swift test` run had one assertion failure at
+`DeviceEgressCoreTests.swift:1696`. After explicit user authorization, only
+that remaining aggregate command was rerun; it passed and the assertion did
+not reproduce. This record therefore describes an initial failed attempt and a
+successful targeted rerun, not a single clean ordered run. The validation is
+source, deterministic-fixture/test, and permitted synthetic/unsigned evidence;
+it does not establish signing, installation, merge, release, physical reply
+proof, or live-session reply proof.
 
 ## Feasibility and architecture
 
@@ -208,9 +271,11 @@ The local bridge may invoke an injected snapshot sink synchronously without
 awaiting device or network work. The sink owns egress retention and transport;
 the bridge owns neither. The TLH producer's whole-publication deadline remains
 on the producer side. Egress starts before local bridge ingress and local
-bridge shutdown emits drop notifications before egress is disabled. The
-follow-up review observed this composition in the current Mac worktree; clean
-exact-revision proof and race coverage remain open.
+bridge shutdown emits drop notifications before egress is disabled. The pushed
+Mac revision records this composition with one lifecycle coordinator, fixed
+configuration presentation, ordered teardown, and deterministic race/failure
+tests. It is source evidence, not a claim that the revision is merged,
+installed, or physically proven.
 
 The direct-run device-egress probe is a development/conformance harness, not a
 silently registered replacement for the visible app. It must not widen Phase 0A
@@ -493,14 +558,16 @@ physical observations are recorded by the row itself.
 | Physical transport is feasible, but iOS route/interface enforcement is not as strong as the Mac listener's selected-interface behavior                                  | **Canonical limitation record (2026-09-13)**              | This row is the canonical dated record; route enforcement remains an open Phase 0B/Phase 1 check.                                                                                                                                                                                                                                           |
 | Canonical running/stopped teardown, registration absence, profile restoration, and content-free receipt behavior                                                        | **Canonical evidence record (2026-09-13)**                | This row is the canonical dated record; no machine or lifecycle state is required to understand it.                                                                                                                                                                                                                                         |
 | Local bridge bounds, fail-open producer behavior, privacy suppression, and disconnect/eviction clearing                                                                 | **Canonical evidence record (2026-09-13)**                | This row is the canonical dated record; TLH fail-open state and bounded publication are also represented by `extensions/the-last-harness/session-mirror/observer.ts:createSessionMirrorObserverRuntime`.                                                                                                                                    |
-| Visible-app LocalBridge-to-device-egress composition has ordered startup and shutdown, but clean exact-revision proof remains pending                                   | **Canonical evidence record (2026-09-13)**                | This row is the canonical dated record; the clean proof is an actionable register item and is not claimed here.                                                                                                                                                                                                                             |
+| Visible-app LocalBridge-to-device-egress composition has ordered startup and shutdown in the pushed Mac revision; physical proof is separately gated | **Canonical source-evidence record (2026-09-14)** | The pushed revision and its deterministic coordinator tests are named above. This row does not claim an installed run, merge, release, or physical-device result. |
 | The production iOS UI is conversations-first and hides synthetic fixtures, while fixture boundaries/resources remain compiled and bundled; UI tests deny live transport | **Canonical evidence and limitation record (2026-09-13)** | This row is the canonical dated record; release-target fixture cleanup is an actionable register item.                                                                                                                                                                                                                                      |
 | The TLH hook/snapshot API is implemented and validated; only future upstream runtime-version compatibility remains open                                                 | **Implemented and validated**                             | `extensions/the-last-harness/session-mirror-observer-facade.ts:createSessionMirrorObserverFacade`, `extensions/the-last-harness/session-mirror-observer-probe.ts:createSessionMirrorObserverProbe`, `extensions/the-last-harness/session-mirror/observer.ts:createSessionMirrorObserverRuntime`, and the tracked observer/projection tests. |
 | Phase 0A product evidence is genuine-session/read-only evidence rather than a single simulated notification                                                             | **Canonical gate-basis record (2026-09-13)**              | This row is the canonical dated record; the Phase 0A gate remains closed and is not reopened by later hardening.                                                                                                                                                                                                                            |
 
-These records do not establish clean cross-repository revisions, durable
-login-item configuration, production background behavior, older-platform
-support, or Phase 0B recovery. Those limits are represented as register items
+These 2026-09-13 records do not establish clean cross-repository revisions,
+durable login-item configuration, production background behavior,
+older-platform support, or Phase 0B recovery. The later pushed source revisions
+are recorded separately above; they do not erase the historical limitations or
+establish physical reply proof. Those limits are represented as register items
 rather than hidden claims of completion.
 
 ## Phase 0A — completed desirability prototype
@@ -531,17 +598,20 @@ The completed intent and gates were:
 Phase 0A did not include persistent/crash-supervised helper behavior, real APNs
 background delivery, encrypted previews, durable replay, multi-user service,
 replies, relay hosting, production operations, or store review. The earlier
-reviewed app-composition blocker is carried as a closure/reproducibility item
-below because the follow-up worktree changed it; it is not a reason to reopen
-the completed desirability gate.
+reviewed no-op app-composition blocker remains preserved as historical failed-
+attempt evidence below. The pushed Mac source revision records a later
+source-level composition correction, but installed and physical proof remain
+separately gated; neither is a reason to reopen the completed desirability gate.
 
 ## Post-0A basic usability
 
-**Status: current narrow slice.** This slice implements the approved connection
-profile and foreground lifecycle convenience after the Phase 0A reader became
-useful. It is not a new Phase 0A trial and does not authorize Mac stable
-configuration, transcript persistence, retries, background sync, or Phase 0B
-work.
+**Status: pushed-but-unmerged source evidence.** The pushed iOS revision records
+the approved connection profile and foreground lifecycle convenience after the
+Phase 0A reader became useful; the pushed Mac revisions record reconnect
+retention and installed-app lifecycle hardening. This is not a new Phase 0A
+trial and does not authorize Mac stable configuration, transcript persistence,
+retries, background sync, or Phase 0B work. No merge, release, or physical
+result is claimed here.
 
 ### Baseline carried forward
 
@@ -561,58 +631,56 @@ work.
   changing it as part of the profile implementation; any required project-file
   edit needs separate authorization.
 
-### Profile-store work
+### Profile-store evidence in the pushed iOS revision
 
-1. Add a redacted versioned profile model and an injectable profile-store
-   boundary.
-2. Implement the exact protected-storage attributes and fixed metadata listed
-   in the connection-persistence invariant above.
-3. Test absent, load, save, update, delete, canonicalization, size bounds,
-   malformed and unsupported versions, temporary unavailability, deletion
-   failure, redaction, and query attributes without emitting protected values.
-4. Keep the previous working profile after failed edits or stale credentials.
+The pushed iOS revision contains a redacted versioned profile model and an
+injectable profile-store boundary. Its source records the exact
+protected-storage attributes and fixed metadata listed in the
+connection-persistence invariant above. Its focused tests cover absent, load,
+save, update, delete, canonicalization, size bounds, malformed and unsupported
+versions, temporary unavailability, deletion failure, redaction, and query
+attributes without emitting protected values. Failed edits and stale
+credentials preserve the previous working profile.
 
-### Controller and lifecycle work
+### Controller and lifecycle evidence in the pushed iOS revision
 
-1. Make launch and foreground resume idempotent and single-flight.
-2. Load and validate the profile only in an active permitted live process.
-3. Capture a generation-bound candidate on Connect and save only after the
-   matching protocol Ready frame.
-4. On foreground reconnect, subscribe to one authoritative full snapshot; do
-   not persist a cursor or replay events in this slice.
-5. On background, retire the generation synchronously, close transport, clear
-   live/transcript projection and detail navigation, and discard derived
-   connection material.
-6. On active, reload protected configuration and make one foreground attempt.
-7. On Clear, invalidate and close first, then wipe editable state and delete the
-   profile; suppress future automatic foreground connection after a successful
-   clear.
-8. Reconcile the iOS README and SECURITY documentation with this exact
-   connection-profile-only Keychain scope, save-after-Ready behavior,
-   foreground-only reconnect, no-transcript rule, and Clear/deletion guidance.
+The pushed source records launch and foreground resume as idempotent and
+single-flight; loads and validates protected configuration only in a permitted
+active live process; binds a candidate to a generation and saves only after the
+matching protocol `Ready`; and starts each foreground reconnect with a fresh
+authoritative full-snapshot subscription. It does not persist a cursor or replay
+events.
+
+On background, the source retires the generation synchronously, closes
+transport, clears live/transcript projection and detail navigation, and drops
+derived connection material. On active, it reloads protected configuration
+for one foreground attempt. Clear invalidates and closes first, wipes editable
+state, deletes the profile, and suppresses later automatic connection after a
+successful clear. The pushed iOS README and SECURITY text records the exact
+connection-profile-only Keychain scope, save-after-Ready behavior,
+foreground-only reconnect, no-transcript rule, and Clear/deletion guidance.
 
 The saved profile is intentionally useful only while the Mac's configured
 address, port, and pairing value remain stable. A durable Mac-side connection
 profile or stable login-launch environment is a later phase, not an implicit
 part of this slice.
 
-### Current-slice validation gate
+### Source-level validation boundary
 
-The slice is ready only when deterministic tests prove the exact profile-store
-and lifecycle contract: profile persistence is bounded and protected,
-connection candidates save once after the matching Ready frame, activation is
-single-flight, stale callbacks cannot save or revive a retired generation,
-background retirement resets navigation and projection, Clear cannot leave an
-old profile that reconnects later, and the iOS README/SECURITY documentation
-matches those rules. Reconnect validation must require listing, subscription,
-and snapshot delivery. Treat reader admission as valid only after listing,
-subscription, and snapshot delivery prove sendability. It must assert a fresh
-authoritative full snapshot with no persisted cursor or event replay. The
-disconnected-producer-drop regression must verify that reconnect listing is empty
-and old handles yield `unknownHandle`, while preserving mandatory
-`producerDisconnect` notification semantics. UI-test and Release processes must
-deny live transport before any protected profile read. No test may include real
-prompts, paths, credentials, pairing values, or transcript text.
+The pushed iOS tests name the source-level contract: bounded protected profile
+persistence, one save after the matching `Ready`, single-flight activation,
+stale-generation rejection, background navigation/projection reset, and Clear
+without a later automatic connection. Reconnect admission requires listing,
+subscription, and snapshot delivery, and starts a fresh authoritative full
+snapshot with no persisted cursor or event replay. The disconnected-producer-
+drop regression requires an empty reconnect listing and `unknownHandle` for
+old handles while preserving `producerDisconnect` notification semantics.
+Release and UI-test processes deny live transport before any protected profile
+read. These are committed source/test claims from the pushed sibling revision; the
+completed ten-gate validation is recorded in the reply evidence section, with
+its initial Mac assertion and targeted rerun stated explicitly. No test or
+future evidence may include real prompts, paths, credentials, pairing values,
+or transcript text.
 
 ### Adjacent post-0A follow-up
 
@@ -629,11 +697,14 @@ single-flight lifecycle work.
 Mac stable launch configuration, QR pairing, device re-pair UX, persistent or
 crash-supervised helper behavior, reader keepalive/takeover, durable cursor
 replay, sleep/wake recovery, sustained-load tuning, real APNs, encrypted
-previews, server control plane, replies, relays, older-version platform
-expansion, fixture-resource cleanup, and automatic TLH producer retry or
-background synchronization remain separately gated. Deadline and modal-privacy
-work is tracked as the adjacent Post-0A follow-up above, not as an unspoken
-extension of the current Keychain mechanics.
+previews, server control plane, and relays remain separately gated. The
+read-only/reconnect revisions remain reply-free; the separately approved
+reply prototype is recorded in pushed-but-unmerged source, remains separately
+negotiated and opt-in, and is specified in Phase 2 below.
+Older-version platform expansion, fixture-resource cleanup, and automatic TLH
+producer retry or background synchronization remain separately gated. Deadline
+and modal-privacy work is tracked as the adjacent Post-0A follow-up above, not
+as an unspoken extension of the current Keychain mechanics.
 
 ## Phase 0B — hard technical validation
 
@@ -698,25 +769,133 @@ redaction, teardown diagnostics, dependency review, fixture-resource cleanup,
 and governing-document reconciliation. Phase 0B rows remain separate and are
 not silently pulled into productization.
 
-## Phase 2 — additive capabilities
+## Phase 2 — bounded companion reply prototype
 
-**Status: deferred.** Only after the read-only path is trusted may the product
-evaluate a separately negotiated reply capability or an owned-server encrypted
-relay.
+**Status: pushed-but-unmerged source evidence; validation complete.** This is
+the additive, foreground-only write prototype after the read-only/reconnect
+source evidence. The exact TLH/root, Mac, and iOS implementation revisions and
+the completed ten-gate validation are recorded above. The source revisions do
+not claim a merge, release, signing or installation result, physical-device
+result, or live-session reply result. The validation record preserves the
+initial Mac aggregate assertion and its user-authorized targeted rerun rather
+than claiming a single clean ordered run. The existing read-only publication
+path remains unchanged and remains useful when the reply capability is absent.
 
-A reply must target an exact opaque installation/device/session/branch/leaf and
-source revision, carry an idempotency key and expiry, require visible separate
-authorization, and return an accepted/rejected/stale/busy receipt. Offline
-commands are rejected or explicitly expired, never silently replayed. The plan
-must decide live/idle eligibility, streaming behavior, stale-leaf handling,
-shutdown behavior, and whether a command means a new prompt, steer, follow-up,
-or another explicitly named operation. It must not silently map to upstream
-controls with different semantics.
+### Capability and dual opt-in boundary
 
-A relay is outbound from the Mac, carries authenticated encrypted envelopes,
-expires ciphertext after a bounded window, and cannot decrypt snapshots,
-previews, replies, or transcripts. Direct Tailscale sync remains a separate
-transport option.
+- The implemented protocol negotiates a separate `reply-text` capability and
+  a separate reply-channel handshake bound to the active producer owner.
+  Read-only peers remain compatible; an unnegotiated or wrong-direction reply
+  is rejected.
+- The TLH side requires observer support **and** the distinct, off-by-default
+  `session-mirror-replies` experimental feature. The ordinary publication
+  transport remains fail-open and unchanged.
+- The Mac side requires the visible **Enable replies (prototype)** control. It
+  is memory-only, off on every launch, is not stored in UserDefaults, and its
+  withdrawal closes authenticated reply channels and clears pending state.
+  Mac idle and revision checks are prefilters only; they never authorize a
+  write.
+- The pushed iOS composer is foreground-only and appears or enables only after
+  the authenticated `Ready` advertises `reply-text` and a current subscribed
+  opaque handle/revision exists. The read-only/reconnect revisions alone still
+  imply no composer or write path.
+
+### Producer-authoritative idle/stale model
+
+- A request targets exact opaque installation/device/session/branch/leaf and
+  source-revision values, plus a request/idempotency key, relative TTL, and
+  bounded plain text. The device edge may carry only the corresponding opaque
+  subscribed handle and revision; receipts never echo raw identifiers.
+- The TLH producer is authoritative for the request's generation, active leaf,
+  source revision, unpublished state, idle/busy latch, TTL, and idempotency.
+  It performs the final checks immediately before injection. A generation,
+  leaf, or revision mismatch is `stale`; non-idle observer status, dirty or
+  snapshot-required state, and publication or sink-in-flight state at admission
+  are also `stale`; TTL expiry is `expired`. `busy` is reserved for a pending
+  request, the busy or compaction latch, or a final live `isIdle()` failure; an
+  already-injected request whose persisted completion cannot be observed is
+  `unconfirmed`.
+- A dormant or replaced owner, disabled authorization, missing capability, or
+  closed channel is `unauthorized` or `disconnected` as appropriate; a stale
+  handle/revision is `stale`. These are producer decisions, not Mac or iOS
+  guesses, and all use the fixed safe receipt vocabulary.
+- The producer injects plain text through the upstream `sendUserMessage`
+  operation only after every check passes. Terminal input, compaction, source,
+  or lifecycle races must not yield `accepted`. The idempotency record is
+  bounded and written before injection, so a duplicate cannot inject a second
+  message.
+- `accepted` is returned only after the producer observes completion of the
+  persisted user-message write. It then requests an authoritative active
+  snapshot containing the completed user entry; it does not publish partial or
+  assistant-delta output. If persistence cannot be observed before the
+  bounded deadline or the channel closes, the result is `unconfirmed`, never
+  an optimistic acceptance.
+
+### Bounds, receipts, and no-retry behavior
+
+- Reply text is plain text of at most **2 KiB UTF-8**. A leading slash is
+  rejected. There is no token/character streaming or alternate command syntax.
+- There is one in-flight request. There is no retry, offline queue, durable
+  command queue, background synchronization, or silent replay. Transport or
+  source failure does not cause an automatic retry. The transcript never gains
+  an optimistic user entry; it changes only through an authoritative snapshot.
+- The fixed reply receipt vocabulary is `accepted`, `unconfirmed`, `invalid`,
+  `unauthorized`, `stale`, `busy`, `duplicate`, `expired`, and
+  `disconnected`. Invalid, unauthorized, stale, busy, duplicate, expired, and
+  disconnected outcomes do not inject text. Close/reject controls use fixed
+  safe codes and never include arbitrary errors.
+- Receipts, descriptions, diagnostics, logs, evidence, and aggregate state
+  contain no reply text, raw session/device/installation identifiers, handles,
+  paths, pairing values, or provider data. Opaque routing values remain
+  actor-private.
+
+### Memory, privacy, and lifecycle invariants
+
+- Pending reply text exists only in transient process memory while it is a
+  focused iOS draft, one request, Mac routing state, or TLH producer state. A
+  focused input buffer is view-local and never enters aggregate/TCA state. The
+  text is not written to Keychain, UserDefaults, files, caches, logs,
+  diagnostics, screenshots, receipts, or evidence. Once accepted, the ordinary
+  TLH session
+  store is the sole durable authority for the resulting user message; no
+  companion creates a second transcript.
+- The TLH reply channel and pending state clear on session or generation
+  shutdown, producer disconnect, listener stop, owner replacement/takeover,
+  expiry, and reply-feature withdrawal. The Mac also clears state when the
+  visible authorization is disabled or the device channel closes. The iOS
+  draft, pending request, and receipt clear synchronously on background,
+  inactive, memory warning, disconnect/close, generation retirement, or
+  authorization withdrawal.
+- The prototype grants no shell, terminal-control, profile, branch, tool,
+  abort, steering, or general command authority. It is a named plain-text
+  user-message operation only; it must not be silently mapped to a different
+  upstream control.
+
+### Implementation and proof gates
+
+The pushed TLH/root, Mac, and iOS revisions define and add the negotiated
+local-bridge/device-mirror extension without changing immutable
+`session-mirror/v1`, then add the TLH producer, Mac bridge, and
+capability-gated iOS composer. Their deterministic protocol fixtures and
+focused tests cover read-only compatibility, wrong-direction rejection, owner
+binding, stale/idle/TTL/idempotency behavior, redaction, bounded lifecycle
+cleanup, and authoritative snapshot-only transcript updates. The `.ts`/`.js`
+producer and channel pairs are retained as generated/runtime parity evidence.
+All ten approved validation gates ultimately passed; the initial Mac aggregate
+assertion and user-authorized targeted rerun are recorded above, without
+representing the result as one clean ordered run.
+
+Physical reply proof is separately gated. It requires the deterministic
+protocol/producer/Mac/iOS gates, an independent security/privacy review, a
+public-safe synthetic environment, explicit review of the no-retry/no-queue
+and no-optimistic-transcript invariants, and a fresh explicit authorization for
+physical-device use. This roadmap update authorizes none of those live actions
+and records no physical reply evidence.
+
+An owned-server encrypted relay remains a separate later capability: it would
+be outbound from the Mac, carry authenticated encrypted envelopes with bounded
+expiry, and never decrypt snapshots, previews, replies, or transcripts. Direct
+Tailscale sync remains a separate transport option.
 
 ## Phase 3 — production and platform-review readiness
 
@@ -767,18 +946,18 @@ technical validation, and Phase 1 is productization.
 
 | Severity | Observation                                                                                                                                                                                                                   | Durable evidence source                                                   | Disposition                                                                                                                                | Target phase      | Validation needed                                                                                                                                    |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Blocker  | The earlier installed app used a no-op local snapshot sink while device delivery lived in a separate probe executable.                                                                                                        | Canonical roadmap evidence (2026-09-13; historical composition record)    | **Accepted** — the historical blocker is addressed in the current composition record; clean closure remains unverified.                    | Post-0A follow-up | Build the visible app from exact revisions, prove source-to-device delivery in one artifact, and run canonical teardown.                             |
-| High     | The installed app duplicates lifecycle coordination and can race a start against disable or quit.                                                                                                                             | Canonical roadmap evidence (2026-09-13; current composition record)       | **Accepted** — stale starts must be made inert by one generation-guarded coordinator.                                                      | Post-0A follow-up | Add coordinator-level race tests for concurrent start, stop, disable, quit, and stale callbacks while preserving egress-before-bridge startup order. |
-| High     | An asynchronous egress failure can leave the bridge apparently healthy; a bridge restart can meet a busy reader and remain wedged.                                                                                            | Canonical roadmap evidence (2026-09-13; current composition record)       | **Accepted** — aggregate status and coupled lifecycle need a single owner.                                                                 | Phase 1           | Inject listener/address/interface failure, restart each component, and verify fixed component-specific status and recovery.                          |
+| Blocker  | The earlier installed app used a no-op local snapshot sink while device delivery lived in a separate probe executable.                                                                                                        | Canonical roadmap evidence (2026-09-13; historical composition record)    | **Historical observation retained; pushed source closure evidence** — `1584eb6…` composes visible-app delivery and lifecycle ownership; installed and physical proof remain separate gates.                    | Post-0A follow-up | Build the visible app from exact revisions, prove source-to-device delivery in one artifact, and run canonical teardown.                             |
+| High     | The installed app duplicates lifecycle coordination and can race a start against disable or quit.                                                                                                                             | Canonical roadmap evidence (2026-09-13; current composition record)       | **Pushed source closure evidence** — `b137278…`/`1584eb6…` record one generation-guarded coordinator and deterministic race coverage; no installed or physical claim is made.                                                      | Post-0A follow-up | Review the pushed coordinator race tests for concurrent start, stop, disable, quit, and stale callbacks while preserving egress-before-bridge startup order. |
+| High     | An asynchronous egress failure can leave the bridge apparently healthy; a bridge restart can meet a busy reader and remain wedged.                                                                                            | Canonical roadmap evidence (2026-09-13; current composition record)       | **Pushed source closure evidence** — `1584eb6…` couples aggregate status and lifecycle failure paths; no installed or physical claim is made.                                                                 | Phase 1           | Review the pushed listener/address/interface failure, restart, fixed-status, and recovery coverage.                          |
 | High     | Login-managed app configuration is process-environment-only and is not a durable stable Mac profile.                                                                                                                          | Canonical roadmap evidence (2026-09-13; current composition record)       | **Accepted and deferred** — stable Mac configuration is intentionally later; current iOS convenience is useful while values remain stable. | Phase 1           | Test direct and approved login launches with safe placeholders; document when re-pairing is required without storing private values in source.       |
-| Medium   | State-directory ownership behavior differs between the committed Mac revision and an apparent human-owned worktree fix.                                                                                                       | Canonical roadmap evidence (2026-09-13; state-directory review record)    | **Unverified** — the fix must be deliberately reviewed and landed by its owner.                                                            | Phase 1           | From a clean revision, test pre-existing safe directories, manager-created directories, modes, provenance, and non-owned cleanup refusal.            |
+| Medium   | State-directory ownership behavior differs between the committed Mac revision and an apparent human-owned worktree fix.                                                                                                       | Canonical roadmap evidence (2026-09-13; state-directory review record)    | **Pushed source closure evidence** — `b137278…` records ownership/permission hardening; merge and clean exact-revision validation remain separate, with no physical claim.                                                            | Phase 1           | From a clean revision, test pre-existing safe directories, manager-created directories, modes, provenance, and non-owned cleanup refusal.            |
 | Medium   | One authenticated reader can remain held after silent path loss because post-authentication keepalive or idle liveness is absent.                                                                                             | Canonical roadmap evidence (2026-09-13; transport-liveness record)        | **Accepted** — this is a reliability concern, not a contradiction of the canonical full-snapshot reconnect record.                         | Phase 0B          | Test abrupt suspension/process death, bounded liveness detection, foreground reconnect, and any newest-reader policy with a security review.         |
-| Medium   | Malformed Mac egress configuration is swallowed and looks like intentional disablement.                                                                                                                                       | Canonical roadmap evidence (2026-09-13; configuration-diagnostics record) | **Accepted** — fixed non-sensitive configuration errors should be visible.                                                                 | Post-0A follow-up | Supply malformed values and verify a bounded diagnostic without echoing values, paths, or framework errors.                                          |
+| Medium   | Malformed Mac egress configuration is swallowed and looks like intentional disablement.                                                                                                                                       | Canonical roadmap evidence (2026-09-13; configuration-diagnostics record) | **Pushed source closure evidence** — `1584eb6…` records fixed non-sensitive configuration diagnostics; clean installed proof remains separately gated.                                                                 | Post-0A follow-up | Review malformed values from the pushed revision and verify a bounded diagnostic without echoing values, paths, or framework errors.                                          |
 | Medium   | Pairing details remain continuously visible in the lifecycle-managed status menu.                                                                                                                                             | Canonical roadmap evidence (2026-09-13; pairing-visibility record)        | **Accepted** — useful for development pairing but unnecessarily exposed after setup.                                                       | Phase 1           | Add reveal-on-demand behavior and ensure details never enter aggregate state, logs, screenshots, or diagnostics.                                     |
 | Medium   | Service-management settlement can be pending or leave a menu with no useful diagnostics; post-quit failures lack a durable status channel.                                                                                    | Canonical roadmap evidence (2026-09-13; teardown-observability record)    | **Accepted** — successful teardown records exist, but failure observability is weak.                                                       | Phase 1           | Exercise pending, failed, quit, and post-quit cases and expose only fixed content-free outcomes.                                                     |
 | Medium   | Low-level hardening remains incomplete: path-free publication status, constant-time launch-token comparison, allow-listed teardown environment, monotonic resubscribe revision floor, and accessibility/keyboard affordances. | Canonical roadmap evidence (2026-09-13; security-hardening record)        | **Accepted** — hardening backlog, not a reason to change the current product boundary.                                                     | Phase 1           | Add focused security, lifecycle, accessibility, and input tests with no content or identity leakage.                                                 |
-| Medium   | Mac README, architecture, and security descriptions lag the installed-app device-egress composition.                                                                                                                          | Canonical roadmap evidence (2026-09-13; governing-document record)        | **Accepted** — governing documentation needs reconciliation after source behavior is stable.                                               | Phase 1           | Compare docs with the tested target graph, lifecycle owner, retention, and teardown behavior; keep all machine values out.                           |
-| Medium   | The app's duplicate composition is not covered by existing coordinator tests; current subprocess coverage uses a stub bridge.                                                                                                 | Canonical roadmap evidence (2026-09-13; test-coverage record)             | **Accepted** — executable-target lifecycle behavior needs deterministic coverage.                                                          | Post-0A follow-up | Add bounded app/coordinator tests for start/stop races, async failure coupling, restart, and aggregate status.                                       |
+| Medium   | Mac README, architecture, and security descriptions lag the installed-app device-egress composition.                                                                                                                          | Canonical roadmap evidence (2026-09-13; governing-document record)        | **Pushed source documentation evidence** — `1584eb6…` reconciles the visible-app lifecycle and security description; merge/release comparison remains separate.                                               | Phase 1           | Compare docs with the tested target graph, lifecycle owner, retention, and teardown behavior; keep all machine values out.                           |
+| Medium   | The app's duplicate composition is not covered by existing coordinator tests; current subprocess coverage uses a stub bridge.                                                                                                 | Canonical roadmap evidence (2026-09-13; test-coverage record)             | **Pushed source test evidence** — `1584eb6…` adds bounded app/coordinator coverage for start/stop races, async failure coupling, restart, and aggregate status; no installed claim is made.                                                          | Post-0A follow-up | Review the pushed bounded app/coordinator tests for start/stop races, async failure coupling, restart, and aggregate status.                                       |
 | Low      | The Mac-to-device implementation needs protocol and negotiated-suite evidence before making stronger transport-security claims.                                                                                               | Canonical roadmap evidence (2026-09-13; transport-security record)        | **Accepted** — physical TLS-PSK feasibility is recorded, but suite and forward-secrecy claims remain scoped.                               | Phase 0B          | Record negotiated safe suite properties in redacted evidence and retain generic fallback on failure.                                                 |
 
 ### iOS companion findings
@@ -787,11 +966,11 @@ technical validation, and Phase 1 is productization.
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | High     | Connection setup, list, and subscribe operations can wait indefinitely; post-ready path loss is not consistently treated as disconnected.                  | Canonical roadmap evidence (2026-09-13; client-lifecycle record)        | **Accepted** — bounded deadlines are adjacent Post-0A foreground reliability work, not part of the current Keychain mechanics.                       | Post-0A follow-up     | Test unavailable Mac/tunnel, path loss, pairing refusal, list timeout, subscribe timeout, cancellation, and fixed non-sensitive error states.                       |
 | High     | The privacy cover is applied only to the root and only in the inactive state; a Settings sheet can sit above it, and background timing can expose content. | Canonical roadmap evidence (2026-09-13; privacy-cover record)           | **Accepted** — app-switcher and modal privacy must be structural and remain separate from profile persistence.                                       | Post-0A follow-up     | Cover and hide accessibility content whenever not active, dismiss or cover Settings, and validate app-switcher snapshots on physical hardware.                      |
-| High     | Background retirement can retain a selected detail ordinal and return to a stale or indefinitely loading route.                                            | Canonical roadmap evidence (2026-09-13; navigation-generation record)   | **Accepted** — generation-bound navigation reset is part of the current lifecycle contract.                                                          | Post-0A follow-up     | Background and foreground repeatedly, verify list-first navigation, and prove stale ordinals cannot select a new-generation conversation.                           |
+| High     | Background retirement can retain a selected detail ordinal and return to a stale or indefinitely loading route.                                            | Canonical roadmap evidence (2026-09-13; navigation-generation record)   | **Pushed source closure evidence** — `8dc6269…` records generation-bound navigation reset and list-first reconnect; clean repeated lifecycle proof remains separate.                                                          | Post-0A follow-up     | Background and foreground repeatedly, verify list-first navigation, and prove stale ordinals cannot select a new-generation conversation.                           |
 | Medium   | The iOS client validates a CGNAT-shaped address but does not prove that traffic uses the Tailscale packet-tunnel interface.                                | Canonical roadmap evidence (2026-09-13; route-enforcement record)       | **Accepted with narrowed claim** — TLS-PSK remains the application authentication boundary; Tailscale-only routing is not yet proven.                | Phase 0B and Phase 1  | Evaluate a supported interface/path constraint or narrow documentation; test cellular and alternate-route cases without exposing values.                            |
-| Medium   | A fresh simulator screenshot run is safe because it has no profile, not because live transport is structurally denied.                                     | Canonical roadmap evidence (2026-09-13; UI-test policy record)          | **Accepted** — this must be fixed before Keychain auto-connect can be trusted.                                                                       | Current post-0A slice | Deny live transport by process/test policy before reading protected configuration or opening a live path.                                                           |
+| Medium   | A fresh simulator screenshot run is safe because it has no profile, not because live transport is structurally denied.                                     | Canonical roadmap evidence (2026-09-13; UI-test policy record)          | **Pushed source closure evidence** — `8dc6269…` denies live transport before protected-profile access for Release/UI-test processes; clean simulator and physical proof remain separate.                                                                       | Current post-0A slice | Review process/test policy denial before protected configuration is read or a live path is opened.                                                           |
 | Medium   | The conversations surface does not distinguish failed, closed, ready-empty, and connecting states well; refresh can silently no-op without a client.       | Canonical roadmap evidence (2026-09-13; conversation-state record)      | **Accepted** — coarse status improves diagnosis without exposing content.                                                                            | Post-0A follow-up     | Add fixed status states and test refresh cancellation/completion under absent, failed, and ready clients.                                                           |
-| Medium   | iOS README and SECURITY descriptions still prohibit protected connection persistence and automatic foreground connection.                                  | Canonical roadmap evidence (2026-09-13; iOS documentation record)       | **Accepted** — reconcile both documents in the current Keychain slice; the old blanket prohibition is superseded by the exact profile-only approval. | Current post-0A slice | Document exact Keychain attributes, save-after-Ready, foreground-only behavior, no-transcript rule, Clear/deletion guidance, and the accepted convenience tradeoff. |
+| Medium   | iOS README and SECURITY descriptions still prohibit protected connection persistence and automatic foreground connection.                                  | Canonical roadmap evidence (2026-09-13; iOS documentation record)       | **Pushed source documentation evidence** — `8dc6269…` records the exact profile-only Keychain scope, save-after-Ready, foreground-only behavior, no-transcript rule, and Clear/deletion guidance. | Current post-0A slice | Review the pushed docs for exact Keychain attributes, save-after-Ready, foreground-only behavior, no-transcript rule, Clear/deletion guidance, and the accepted convenience tradeoff. |
 | Medium   | Human-owned iOS project-file, signing, and project-format churn is unrelated to the current profile slice.                                                 | Canonical roadmap evidence (2026-09-13; project-state record)           | **Accepted boundary** — preserve that churn without values and do not sweep it into this roadmap task.                                               | Current post-0A slice | Keep implementation changes out of project metadata unless separately authorized; never record signing values or identifiers here.                                  |
 | Medium   | The production UI hides fixtures, but fixture boundaries and resources remain compiled and bundled.                                                        | Canonical roadmap evidence (2026-09-13; fixture-boundary record)        | **Accepted** — release footprint and fixture separation need explicit cleanup.                                                                       | Phase 1               | Remove fixture resources and boundary code from the production release target while retaining synthetic test fixtures and structural UI-test transport denial.      |
 | Medium   | The prototype baseline is macOS 26/iOS 26 only; older-version expansion is not validated.                                                                  | Canonical roadmap evidence (2026-09-13; platform-baseline record)       | **Accepted and deferred** — do not imply older-version support from the prototype.                                                                   | Phase 3               | Define supported older versions, run compatibility and privacy validation, and accept the matrix before expansion.                                                  |
@@ -806,7 +985,7 @@ technical validation, and Phase 1 is productization.
 | High     | A review claim said TLS-PSK had never completed from iOS.                                                                         | Canonical roadmap evidence (2026-09-13; physical direct-path record)                                                                                                            | **Downgraded/rejected** — the canonical physical-path record confirms authenticated transport and snapshot delivery.                        | Phase 0A complete; strengthen in Phase 0B    | Preserve the existing record and add wrong-key, replay, expiry, route, and negotiated-suite negative cases without copying sensitive values. |
 | High     | A review claim said real from-app teardown survival was unproven.                                                                 | Canonical roadmap evidence (2026-09-13; teardown record)                                                                                                                        | **Downgraded/rejected** — canonical running/stopped teardown records passed after lifecycle settlement; failure observability remains open. | Phase 1                                      | Re-run bounded failure cases and retain only fixed receipt/absence outcomes.                                                                 |
 | High     | Same-user local peer access was described as a missing mutual-authentication defect.                                              | Canonical roadmap evidence (2026-09-13; local-trust record)                                                                                                                     | **Downgraded/rejected** — the same-user account is the accepted Phase 0A local trust boundary, not an app-authentication claim.             | Ongoing invariant; threat review in Phase 0B | Keep the limitation explicit, preserve restrictive rendezvous checks, and require separate device pairing/authentication.                    |
-| High     | Earlier Phase 0A wording prohibited all device egress from the visible app, while the current composition records bounded egress. | Canonical roadmap evidence (2026-09-13; historical composition record)                                                                                                          | **Downgraded/rejected as stale** — internal bounded composition is allowed; production APNs/server/reply behavior remains deferred.         | Post-0A follow-up                            | Verify one visible-app artifact, lifecycle ordering, fail-open source handoff, and no hidden helper or privileged service.                   |
+| High     | Earlier Phase 0A wording prohibited all device egress from the visible app, while the current composition records bounded egress. | Canonical roadmap evidence (2026-09-13; historical composition record)                                                                                                          | **Downgraded/rejected as stale; pushed source evidence recorded** — internal bounded composition is allowed; production APNs/server/reply behavior remains deferred, and physical proof is separate.         | Post-0A follow-up                            | Verify one visible-app artifact, lifecycle ordering, fail-open source handoff, and no hidden helper or privileged service.                   |
 | Medium   | Former hard package/target/Swift line ceilings were treated as acceptance gates.                                                  | `docs/companion-roadmap.md:Approved decisions and reconciliations`                                                                                                              | **Downgraded/rejected as superseded** — no hard code-size or target-count gate is carried into this roadmap.                                | Ongoing engineering review                   | Check this document and future phase tickets for cohesion, measured runtime limits, and test evidence rather than stale numeric caps.        |
 | Medium   | Hard bounds, queue coalescing, handle retention, and idle eviction were classified as usability defects.                          | `extensions/the-last-harness/session-mirror-observer-probe.ts:SESSION_MIRROR_OBSERVER_PROBE_BOUNDS` and `docs/companion-roadmap.md:Security, privacy, and retention invariants` | **Downgraded/rejected as defects** — bounded behavior is intentional; product policy and measurements remain open.                          | Phase 0B                                     | Measure realistic sessions/devices, test overload and eviction, and document safe omitted-history or fresh-snapshot behavior.                |
 | Medium   | No production-wiring test spans TLH, Node framing, Swift bridge, egress, and iOS.                                                 | Canonical roadmap evidence (2026-09-13; cross-system test-coverage record)                                                                                                      | **Accepted** — the canonical physical record covers the seam, but deterministic regression coverage is absent.                              | Post-0A follow-up and Phase 1                | Build one synthetic, bounded cross-repository harness and assert fail-open, replacement, disconnect, and teardown semantics.                 |
@@ -853,7 +1032,7 @@ infrastructure identifiers.
 | Need for a 0B server                                                                            | Prove direct/local submission is insufficient; if used, prove opaque-only storage and bounded TTL.                                                                                                                                |
 | Stable Mac launch configuration                                                                 | Phase 1 productization gate with user-auditable setup, safe persistence, explicit re-pair/revoke behavior, and no private values in repository evidence.                                                                          |
 | Branch UX                                                                                       | Keep tree semantics now; choose active-branch-only versus branch picker after genuine-session observations.                                                                                                                       |
-| Future reply policy                                                                             | Decide live/idle eligibility, exact revision binding, streaming/busy behavior, expiry, receipts, idempotency, and offline handling before implementation.                                                                         |
+| Reply prototype proof                                                                                                  | Review the pushed TLH/root `e43018ec772b2e279c994172ecaf7a64eb2fb4e8`, Mac `9305231f8b8dc685e91ce38253f64b55cf935868`, and iOS `6deb95c0947cff881fe8c394c5002cbc4f4b1cca` revisions and the completed ten-gate validation record; then prove live/idle eligibility, exact revision binding, expiry, fixed receipts, idempotency, lifecycle clearing, and no-retry/no-queue behavior before any separately authorized physical test.                                                                         |
 | Protocol ownership transfer                                                                     | Require an ADR, fixture migration, compatibility matrix, independent reuse/release need, and coordinated versions.                                                                                                                |
 | Current platform review requirements                                                            | Re-check current SDK and review documentation in Phase 3 using a clean public-safe demo.                                                                                                                                          |
 | Runtime/resource limits                                                                         | Measure realistic sessions and supported devices, then document and test bounds; do not substitute stale code-size caps.                                                                                                          |
@@ -885,8 +1064,9 @@ The following alternatives are not silently reintroduced:
 - Making three permanent repositories or adding a fourth protocol repository
   now: deferred/rejected until independent ownership and release cadence are
   justified.
-- Implementing replies in the read-only prototype: deferred; write authority
-  must be explicit and separately authorized.
+- Adding write authority to the read-only reader: rejected. The separate
+  bounded reply prototype above is recorded in pushed-but-unmerged source,
+  remains explicitly negotiated and opt-in, and is separately gated.
 
 Immediate safety stop conditions are: crossing into the normal profile;
 following an unapproved path or symlink; accepting an unpaired or revoked
@@ -920,5 +1100,9 @@ evidence`.
   cross-system work: `Review evidence register`.
 - Synthetic conformance material and public-safe evidence rules: `Conformance
 fixtures and evidence hygiene`.
+- The pushed-but-unmerged bounded reply prototype, its producer authority,
+  dual opt-ins, fixed receipts, lifecycle/privacy rules, completed validation
+  record, and separate physical gate: `Phase 2 — bounded companion reply
+  prototype`.
 - Future decisions, gates, alternatives, and kill criteria: `Open decisions and
 gates` and `Rejected alternatives and redesign triggers`.
