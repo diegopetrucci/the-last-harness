@@ -137,6 +137,63 @@ describe("async execution runner launch and configuration validation", () => {
     });
   }
 
+  const routeModels = [
+    {
+      provider: "route-test",
+      id: "large-model",
+      fullId: "route-test/large-model",
+      contextWindow: 200_000,
+      nativeContextWindow: 1_000_000,
+      developerChildContextWindow: 272_000,
+    },
+    {
+      provider: "route-fallback",
+      id: "fallback-model",
+      fullId: "route-fallback/fallback-model",
+      contextWindow: 200_000,
+      nativeContextWindow: 450_000,
+      developerChildContextWindow: 272_000,
+    },
+  ];
+
+  function expectedRouteContextWindows(canonicalDeveloper: boolean) {
+    return Object.fromEntries(
+      routeModels.map((model) => [
+        model.fullId,
+        canonicalDeveloper ? model.developerChildContextWindow : model.nativeContextWindow,
+      ]),
+    );
+  }
+
+  function makeRouteArtifactConfig() {
+    return {
+      enabled: false,
+      includeInput: false,
+      includeOutput: false,
+      includeJsonl: false,
+      includeMetadata: false,
+      cleanupDays: 7,
+    };
+  }
+
+  function makeCanonicalDeveloper(agentDir: string) {
+    return makeAgent("developer", {
+      model: routeModels[0]!.fullId,
+      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+    });
+  }
+
+  function readPersistedRunnerConfig(id: string): SubagentRunConfig {
+    return JSON.parse(fs.readFileSync(getAsyncConfigPath(id), "utf-8")) as SubagentRunConfig;
+  }
+
+  async function waitForRouteRun(id: string): Promise<void> {
+    await waitForAsyncResultFile(id);
+    fs.rmSync(getAsyncConfigPath(id), { force: true });
+    fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
+    fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+  }
+
   it("reports the required async runner as available", () => {
     assert.equal(isAsyncAvailable(), true);
   });
@@ -186,6 +243,98 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(startedPayload?.mode, "single");
     assert.equal(startedPayload?.asyncDir, asyncDir);
     await waitForAsyncResultFile(id);
+  });
+
+  it("propagates canonical developer policy through async single planning", async () => {
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const developer = makeCanonicalDeveloper(agentDir);
+    const worker = makeAgent("worker", { model: routeModels[0]!.fullId });
+
+    for (const [agent, canonicalDeveloper] of [
+      [developer, true],
+      [worker, false],
+    ] as const) {
+      const id = `async-context-single-${agent.name}-${Date.now().toString(36)}`;
+      mockPi.onCall({ output: `${agent.name} complete` });
+      try {
+        const result = executeAsyncSingle(id, {
+          agent: agent.name,
+          task: `Run the ${agent.name} route.`,
+          agentConfig: agent,
+          ctx: {
+            pi: { events: { emit() {} } },
+            cwd: tempDir,
+            currentSessionId: "session-context-single",
+          },
+          availableModels: routeModels,
+          artifactConfig: makeRouteArtifactConfig(),
+          shareEnabled: false,
+          sessionRoot: path.join(tempDir, "sessions"),
+          maxSubagentDepth: 2,
+        });
+        assert.equal(result.isError, undefined);
+        const persistedConfig = readPersistedRunnerConfig(id);
+        if (persistedConfig.plan.kind !== "single") {
+          assert.fail("expected an async single runner plan");
+        }
+        assert.deepEqual(
+          persistedConfig.plan.task.contextWindows,
+          expectedRouteContextWindows(canonicalDeveloper),
+        );
+        await waitForRouteRun(id);
+      } catch (error) {
+        await waitForRouteRun(id).catch(() => {});
+        throw error;
+      }
+    }
+  });
+
+  it("propagates canonical developer and native worker policies through async parallel planning", async () => {
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    const developer = makeCanonicalDeveloper(agentDir);
+    const worker = makeAgent("worker", { model: routeModels[0]!.fullId });
+    const id = `async-context-parallel-${Date.now().toString(36)}`;
+    mockPi.onCall({ output: "developer complete" });
+    mockPi.onCall({ output: "worker complete" });
+
+    try {
+      const result = executeAsyncParallel(id, {
+        tasks: [
+          { agent: "developer", task: "Run the developer route." },
+          { agent: "worker", task: "Run the worker route." },
+        ],
+        agents: [developer, worker],
+        ctx: {
+          pi: { events: { emit() {} } },
+          cwd: tempDir,
+          currentSessionId: "session-context-parallel",
+        },
+        availableModels: routeModels,
+        artifactConfig: makeRouteArtifactConfig(),
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+      assert.equal(result.isError, undefined);
+      const persistedConfig = readPersistedRunnerConfig(id);
+      if (persistedConfig.plan.kind !== "parallel") {
+        assert.fail("expected an async parallel runner plan");
+      }
+      assert.deepEqual(
+        persistedConfig.plan.tasks[0]?.contextWindows,
+        expectedRouteContextWindows(true),
+      );
+      assert.deepEqual(
+        persistedConfig.plan.tasks[1]?.contextWindows,
+        expectedRouteContextWindows(false),
+      );
+      await waitForRouteRun(id);
+    } catch (error) {
+      await waitForRouteRun(id).catch(() => {});
+      throw error;
+    }
   });
 
   it("spawns the async runner with node when process.execPath is not node", async () => {

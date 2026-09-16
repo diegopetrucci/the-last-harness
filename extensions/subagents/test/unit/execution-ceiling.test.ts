@@ -58,7 +58,21 @@ describe("human-owned execution policy", () => {
     assert.ok(output.warnings[0]!.length < 300);
   });
 
-  it("consumes only own maxRunTimeMs and keeps custom fallback centralized", () => {
+  it("keeps the one-hour developer ceiling separate from other policy ceilings", () => {
+    assert.equal(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS.developer, 3_600_000);
+    assert.deepEqual(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS, {
+      developer: 3_600_000,
+      "code-reviewer": 1_800_000,
+      "test-runner": 3_600_000,
+      librarian: 14_400_000,
+      oracle: 2_700_000,
+      contrarian: 1_800_000,
+      "repo-scout": 600_000,
+      "web-scout": 300_000,
+      "diff-summarizer": 300_000,
+    });
+    assert.equal(DEFAULT_SUBAGENT_MAX_RUN_TIME_MS, 14_400_000);
+
     const inherited = Object.create({ maxRunTimeMs: 1 });
     assert.equal(resolveExecutionPolicy(inherited).maxRunTimeMs, DEFAULT_SUBAGENT_MAX_RUN_TIME_MS);
     assert.equal(

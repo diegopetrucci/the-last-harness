@@ -4,6 +4,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Context limits for developers are now slightly higher.
+- The `developer` subagent max timeout is now 1h.
+- Developers, after compaction, get told to run `tk show` again.
+
 ## [0.42.0] - 2026-09-14
 
 ### What's new

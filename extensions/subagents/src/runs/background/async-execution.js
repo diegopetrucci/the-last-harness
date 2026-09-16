@@ -12,7 +12,7 @@ import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/ski
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
-import { resolveEffectiveThinking } from "../../shared/model-info.js";
+import { contextWindowsForChildModels, resolveEffectiveThinking } from "../../shared/model-info.js";
 import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
@@ -327,9 +327,9 @@ export function buildAsyncRunnerPlan(id, params) {
             thinking: modelThinking,
             ...(modelIdentity ? { modelIdentity } : {}),
             modelCandidates,
-            contextWindows: Object.fromEntries((availableModels ?? [])
-                .filter((candidate) => typeof candidate.contextWindow === "number" && candidate.contextWindow > 0)
-                .map((candidate) => [candidate.fullId, candidate.contextWindow])),
+            contextWindows: contextWindowsForChildModels(availableModels, {
+                canonicalDeveloper: agent.name === "developer" && isCanonicalPackagedMinorAgent(agent),
+            }),
             ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
             ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
             ...(candidatePlan.filteringNotice
@@ -679,9 +679,9 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                 ...(modelIdentity ? { modelIdentity } : {}),
                 ...(modelResolution ? { modelResolution } : {}),
                 modelCandidates,
-                contextWindows: Object.fromEntries((availableModels ?? [])
-                    .filter((candidate) => typeof candidate.contextWindow === "number" && candidate.contextWindow > 0)
-                    .map((candidate) => [candidate.fullId, candidate.contextWindow])),
+                contextWindows: contextWindowsForChildModels(availableModels, {
+                    canonicalDeveloper: agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig),
+                }),
                 ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
                 ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
                 ...(candidatePlan.filteringNotice

@@ -24,6 +24,7 @@ import { remainingExecutionTimeMs, } from "../../agents/execution-ceiling.js";
 import { lookupPrivateProjectActionReference, projectRunAuthorizationError, requirePersistedProjectCaptureForTarget, authorizePersistedProjectAgentRun, rejectMissingPrivateProjectReference, } from "./project-agent-control.js";
 import { resolveForegroundResumeTarget } from "./foreground-run-state.js";
 import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "./foreground-nested-control.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { indexedLifecycleContinuation, isClaimedPausedLifecycle, pausedForegroundHealthFromResult, pausedForegroundStatusPath, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 function resolveTargetTkTicketId(target) {
@@ -678,7 +679,9 @@ function preflightResumeContextPolicy(target, agentConfig, modelOverride, curren
         (target.modelIdentity ? modelReferenceFromIdentity(target.modelIdentity) : undefined) ??
         agentConfig.model ??
         (currentModel ? `${currentModel.provider}/${currentModel.id}` : undefined);
-    const modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, currentModel?.provider);
+    const modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, currentModel?.provider, {
+        canonicalDeveloper: agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig),
+    });
     const contextAssessment = assessDurableResumeContext(target.contextUsage, modelContextWindow ?? target.contextUsage?.contextWindow);
     if (contextAssessment.blocked) {
         return { kind: "error", message: formatDurableResumeContextBlock(contextAssessment) };
