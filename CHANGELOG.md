@@ -7,7 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Context limits for developers are now slightly higher.
-- The code-owned `developer` subagent execution ceiling is now 3600000 ms (1h), while the four-hour run-level ceiling and all other canonical role ceilings remain unchanged; see [GH #652](https://github.com/diegopetrucci/the-last-harness/issues/652).
+- The `developer` subagent max timeout is now 1h.
 - Pinned canonical developer children now receive one visible post-compaction scope reminder to re-run `tk show`, reread the ticket acceptance criteria, and remain within scope; failed and cancelled compactions do not inject it.
 
 ## [0.42.0] - 2026-09-14
