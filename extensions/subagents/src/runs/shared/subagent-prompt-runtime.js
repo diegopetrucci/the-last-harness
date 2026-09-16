@@ -116,17 +116,23 @@ function hasNativeSupervisorMetadata() {
     const childIndex = process.env[SUBAGENT_CHILD_INDEX_ENV]?.trim();
     return childIndex !== undefined && /^\d+$/.test(childIndex);
 }
-function resolveChildTkTicketGuidance() {
+function resolveChildTkTicketId() {
     const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
     if (childAgentName !== "developer" || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1")
-        return "";
-    const ticketId = normalizeTkTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]);
-    if (!ticketId)
-        return "";
+        return undefined;
+    return normalizeTkTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]);
+}
+function formatChildTkTicketGuidance(ticketId) {
     return [
         "Developer ticket assignment:",
         `Ticket ID: ${ticketId}`,
         `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+    ].join("\n");
+}
+function formatDeveloperCompactionReminder(ticketId) {
+    return [
+        "Developer scope reminder after compaction:",
+        `Re-run \`tk show ${ticketId}\`, reread its acceptance criteria, and remain within the ticket's scope before continuing.`,
     ].join("\n");
 }
 function resolveChildSupervisorGuidance() {
@@ -243,6 +249,7 @@ export default function registerSubagentPromptRuntime(pi) {
     let projectAgentGuidanceSnapshot = "";
     let supervisorGuidanceSnapshot = "";
     let tkTicketGuidanceSnapshot = "";
+    let tkTicketIdSnapshot;
     const handleSessionStart = (_event, ctx) => {
         if (!nativeSupervisorClientRegistered) {
             nativeSupervisorClientRegistered = true;
@@ -250,9 +257,21 @@ export default function registerSubagentPromptRuntime(pi) {
         }
         projectAgentGuidanceSnapshot = resolveChildProjectAgentGuidance(ctx.cwd);
         supervisorGuidanceSnapshot = resolveChildSupervisorGuidance();
-        tkTicketGuidanceSnapshot = resolveChildTkTicketGuidance();
+        tkTicketIdSnapshot = resolveChildTkTicketId();
+        tkTicketGuidanceSnapshot = tkTicketIdSnapshot
+            ? formatChildTkTicketGuidance(tkTicketIdSnapshot)
+            : "";
     };
     pi.on("session_start", handleSessionStart);
+    pi.on("session_compact", (event) => {
+        if (!tkTicketIdSnapshot)
+            return;
+        pi.sendMessage({
+            customType: "tlh-developer-scope-reminder",
+            content: formatDeveloperCompactionReminder(tkTicketIdSnapshot),
+            display: true,
+        }, { deliverAs: event.willRetry ? "steer" : "nextTurn" });
+    });
     pi.on("before_agent_start", (event) => {
         const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
         const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);

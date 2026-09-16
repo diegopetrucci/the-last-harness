@@ -4,6 +4,7 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -13,6 +14,7 @@ import {
   makeAgentConfigs,
   makeAgent,
   makeMinimalCtx,
+  makeModel,
   events,
 } from "../support/helpers.ts";
 import {
@@ -857,6 +859,144 @@ describe(
         } finally {
           fs.rmSync(asyncDir, { recursive: true, force: true });
           fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "routes durable foreground resume context through canonical developer and native worker policies",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const model = makeModel("large-model", {
+          provider: "route-test",
+          contextWindow: 200_000,
+        });
+        Object.defineProperty(model, Symbol.for("the-last-harness.model-context-window-policy"), {
+          value: {
+            nativeContextWindow: 1_000_000,
+            developerChildContextWindow: 272_000,
+          },
+        });
+        const modelReference = `${model.provider}/${model.id}`;
+
+        for (const [role, canonicalDeveloper] of [
+          ["developer", true],
+          ["worker", false],
+        ] as const) {
+          const runId = `foreground-context-route-${role}-${Date.now().toString(36)}`;
+          const asyncDir = path.join(ASYNC_DIR, runId);
+          const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+          const acceptance = pausedAcceptanceLedger();
+          const contextUsage = {
+            contextTokens: 220_000,
+            contextWindow: 1_000_000,
+            peakTokens: 220_000,
+          };
+          fs.mkdirSync(asyncDir, { recursive: true });
+          fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`);
+          const state = {
+            baseCwd: tempDir,
+            currentSessionId: null,
+            asyncJobs: new Map(),
+            foregroundRuns: new Map(),
+            foregroundControls: new Map(),
+            lastForegroundControlId: null,
+          };
+          const agent =
+            role === "developer"
+              ? makeAgent("developer", {
+                  model: modelReference,
+                  filePath: path.join(getAgentDir(), "tlh", "agents", "subagents", "developer.md"),
+                })
+              : makeAgent("worker", { model: modelReference });
+          state.foregroundRuns.set(runId, {
+            runId,
+            mode: "single",
+            state: "paused",
+            cwd: tempDir,
+            startedAt: 1,
+            updatedAt: 2,
+            children: [
+              {
+                agent: role,
+                status: "paused",
+                sessionFile,
+                pause: { kind: "awaiting_supervisor" },
+                contextUsage,
+                acceptance,
+              },
+            ],
+          });
+          const statusPath = path.join(asyncDir, "status.json");
+          fs.writeFileSync(
+            statusPath,
+            JSON.stringify({
+              runId,
+              mode: "single",
+              state: "paused",
+              steps: [
+                {
+                  agent: role,
+                  status: "paused",
+                  sessionFile,
+                  pause: { kind: "awaiting_supervisor" },
+                  contextUsage,
+                  acceptance,
+                },
+              ],
+            }),
+            "utf-8",
+          );
+          const beforeStatus = fs.readFileSync(statusPath);
+          const observed: Array<Record<string, unknown>> = [];
+          const executeAsyncSingle: ExecuteAsyncSingleOverride = (id, params) => {
+            observed.push({ id, ...params });
+            return {
+              content: [{ text: "stubbed continuation" }],
+              details: { asyncId: `continued-${role}` },
+            };
+          };
+
+          try {
+            const ctx = makeMinimalCtx(tempDir);
+            ctx.model = model;
+            ctx.modelRegistry.getAvailable = () => [model];
+            const result = await makeExecutor(
+              [agent],
+              {},
+              state,
+              runSync,
+              executeAsyncSingle,
+            ).execute(
+              `foreground-context-route-resume-${role}`,
+              { action: "resume", id: runId, message: "Continue." },
+              new AbortController().signal,
+              undefined,
+              ctx,
+            );
+
+            if (canonicalDeveloper) {
+              assert.equal(result.isError, true);
+              assert.match(result.content[0]?.text ?? "", /context window 272000/);
+              assert.equal(observed.length, 0);
+              assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+              assert.equal(state.foregroundRuns.size, 1);
+            } else {
+              assert.equal(result.isError, undefined);
+              assert.equal(observed.length, 1);
+              const availableModels = observed[0]?.availableModels as
+                | Array<Record<string, unknown>>
+                | undefined;
+              assert.equal(availableModels?.[0]?.nativeContextWindow, 1_000_000);
+              assert.equal(availableModels?.[0]?.developerChildContextWindow, 272_000);
+              assert.equal(state.foregroundRuns.size, 0);
+            }
+          } finally {
+            fs.rmSync(asyncDir, { recursive: true, force: true });
+            fs.rmSync(sessionFile, { force: true });
+          }
         }
       },
     );

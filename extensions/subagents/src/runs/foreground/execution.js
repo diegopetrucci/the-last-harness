@@ -193,6 +193,7 @@ function resolveSupervisorPauseMetadata(input) {
     return undefined;
 }
 async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared) {
+    const canonicalDeveloper = agent.name === "developer" && isCanonicalPackagedMinorAgent(agent);
     if (!shared.healthState.closed) {
         shared.healthState.value = resetHealthTransitionState(shared.healthState.value, randomUUID()).state;
     }
@@ -732,7 +733,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
                     result.contextUsage = updateContextUsageDiagnostics(result.contextUsage, evt.message, {
                         restored: shared.restoredSession,
-                        contextWindow: resolveEffectiveContextWindow(result.model ?? model, options.availableModels, options.preferredModelProvider),
+                        contextWindow: resolveEffectiveContextWindow(result.model ?? model, options.availableModels, options.preferredModelProvider, {
+                            canonicalDeveloper,
+                        }),
                     });
                     while (true) {
                         const pressure = detectContextPressureCrossing(result.contextUsage, [...shared.contextPressureCrossedThresholds], now);

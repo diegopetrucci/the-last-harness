@@ -241,36 +241,47 @@ type PromptRuntimeHandler = (
   event: unknown,
   ctx: ReturnType<typeof makeMinimalCtx>,
 ) => TestEventResult;
+type PromptRuntimeEventName = TestEventName | "session_compact" | "session_compact_failed";
 
 type PromptRuntimeHandlers = {
   beforeAgentStart: PromptRuntimeHandler;
   sessionStart: (ctx: ReturnType<typeof makeMinimalCtx>) => TestEventResult;
+  sessionCompact: PromptRuntimeHandler;
+  sessionCompactFailed?: PromptRuntimeHandler;
 };
 
 function isPromptRuntimeHandler(value: unknown): value is PromptRuntimeHandler {
   return typeof value === "function";
 }
 
-function registerPromptRuntimeHandlers(): PromptRuntimeHandlers {
-  const handlers = new Map<TestEventName, PromptRuntimeHandler>();
-  const extensionApi = makeExtensionAPI();
+function registerPromptRuntimeHandlers(
+  sendMessage?: ExtensionAPI["sendMessage"],
+): PromptRuntimeHandlers {
+  const handlers = new Map<PromptRuntimeEventName, PromptRuntimeHandler>();
+  const extensionApi = makeExtensionAPI(sendMessage ? { sendMessage } : {});
   extensionApi.on = ((event: string, handler: unknown) => {
     if (
-      (event as TestEventName) !== "before_agent_start" &&
-      (event as TestEventName) !== "session_start"
+      (event as PromptRuntimeEventName) !== "before_agent_start" &&
+      (event as PromptRuntimeEventName) !== "session_start" &&
+      (event as PromptRuntimeEventName) !== "session_compact" &&
+      (event as PromptRuntimeEventName) !== "session_compact_failed"
     ) {
       return;
     }
-    if (isPromptRuntimeHandler(handler)) handlers.set(event as TestEventName, handler);
+    if (isPromptRuntimeHandler(handler)) handlers.set(event as PromptRuntimeEventName, handler);
   }) as ExtensionAPI["on"];
   registerSubagentPromptRuntime(extensionApi);
   const beforeAgentStart = handlers.get("before_agent_start");
   const sessionStart = handlers.get("session_start");
+  const sessionCompact = handlers.get("session_compact");
   assert.ok(beforeAgentStart, "before_agent_start handler should be registered");
   assert.ok(sessionStart, "session_start handler should be registered");
+  assert.ok(sessionCompact, "session_compact handler should be registered");
   return {
     beforeAgentStart,
     sessionStart: (ctx) => sessionStart({}, ctx),
+    sessionCompact,
+    sessionCompactFailed: handlers.get("session_compact_failed"),
   };
 }
 
@@ -746,6 +757,103 @@ describe("subagent prompt runtime", () => {
       },
       { tkTicketId: "tlhm-o1qg" },
     );
+  });
+
+  it("queues exactly one visible scope reminder with lifecycle-aware delivery", async (t) => {
+    const fixture = makeProjectGuidanceFixture();
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+
+    for (const testCase of [
+      { reason: "threshold" as const, willRetry: false, deliverAs: "nextTurn" as const },
+      { reason: "overflow" as const, willRetry: true, deliverAs: "steer" as const },
+    ]) {
+      const sent: Array<{
+        message: Parameters<ExtensionAPI["sendMessage"]>[0];
+        options: Parameters<ExtensionAPI["sendMessage"]>[1];
+      }> = [];
+      const handlers = registerPromptRuntimeHandlers((message, options) => {
+        sent.push({ message, options });
+      });
+
+      await withChildGuidanceEnv(
+        fixture,
+        "developer",
+        async () => {
+          const ctx = makeMinimalCtx(fixture.cwd);
+          await handlers.sessionStart(ctx);
+          process.env[SUBAGENT_TK_TICKET_ID_ENV] = "tlhf-other";
+
+          // Pi emits session_compact only after a successful compaction. A
+          // non-retry compaction defers delivery to the next real prompt;
+          // overflow retry already has a guaranteed continuation.
+          handlers.sessionCompact({ type: "session_compact", ...testCase }, ctx);
+
+          assert.equal(sent.length, 1);
+          const reminder = sent[0];
+          assert.ok(reminder);
+          assert.equal(reminder.options?.deliverAs, testCase.deliverAs);
+          assert.equal(reminder.options?.triggerTurn, undefined);
+          assert.equal(reminder.message.customType, "tlh-developer-scope-reminder");
+          assert.equal(reminder.message.display, true);
+          assert.equal(typeof reminder.message.content, "string");
+          if (typeof reminder.message.content !== "string") return;
+          assert.match(reminder.message.content, /Re-run `tk show tlhf-v4ul`/);
+          assert.match(reminder.message.content, /reread its acceptance criteria/);
+          assert.match(reminder.message.content, /remain within the ticket's scope/);
+          assert.equal(countOccurrences(reminder.message.content, "tlhf-v4ul"), 1);
+          assert.doesNotMatch(reminder.message.content, /tlhf-other/);
+        },
+        { tkTicketId: "tlhf-v4ul" },
+      );
+    }
+  });
+
+  it("does not inject reminders for failed or out-of-scope child compactions", async (t) => {
+    const fixture = makeProjectGuidanceFixture();
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    const sent: Array<{
+      message: Parameters<ExtensionAPI["sendMessage"]>[0];
+      options: Parameters<ExtensionAPI["sendMessage"]>[1];
+    }> = [];
+    const handlers = registerPromptRuntimeHandlers((message, options) => {
+      sent.push({ message, options });
+    });
+
+    await withChildGuidanceEnv(
+      fixture,
+      "developer",
+      async () => {
+        const ctx = makeMinimalCtx(fixture.cwd);
+        await handlers.sessionStart(ctx);
+        // Failed and cancelled compactions use session_compact_failed; the
+        // runtime deliberately registers no failure handler.
+        assert.equal(handlers.sessionCompactFailed, undefined);
+      },
+      { tkTicketId: "tlhf-v4ul" },
+    );
+
+    for (const testCase of [
+      { role: "architect", tkTicketId: "tlhf-v4ul" },
+      { role: "developer", tkTicketId: undefined },
+      { role: "developer", tkTicketId: "not a ticket" },
+      { role: "custom-agent", tkTicketId: "tlhf-v4ul" },
+    ]) {
+      await withChildGuidanceEnv(
+        fixture,
+        testCase.role,
+        async () => {
+          const ctx = makeMinimalCtx(fixture.cwd);
+          await handlers.sessionStart(ctx);
+          handlers.sessionCompact(
+            { type: "session_compact", reason: "threshold", willRetry: false },
+            ctx,
+          );
+        },
+        testCase.tkTicketId === undefined ? {} : { tkTicketId: testCase.tkTicketId },
+      );
+    }
+
+    assert.equal(sent.length, 0);
   });
 
   it("omits the ticket capsule for missing or invalid developer environment values", async (t) => {

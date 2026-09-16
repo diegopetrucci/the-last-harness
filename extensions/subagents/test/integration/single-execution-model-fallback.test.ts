@@ -4,6 +4,7 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -71,6 +72,52 @@ describe(
 
     function readCallArgs(): string[] {
       return readCall().args;
+    }
+
+    const routeModels = [
+      {
+        provider: "route-test",
+        id: "large-model",
+        fullId: "route-test/large-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 1_000_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "route-fallback",
+        id: "fallback-model",
+        fullId: "route-fallback/fallback-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 450_000,
+        developerChildContextWindow: 272_000,
+      },
+    ];
+
+    function canonicalDeveloperAgent(overrides: Parameters<typeof makeAgent>[1] = {}) {
+      return makeAgent("developer", {
+        model: routeModels[0]!.fullId,
+        filePath: path.join(getAgentDir(), "tlh", "agents", "subagents", "developer.md"),
+        ...overrides,
+      });
+    }
+
+    function makeRouteAssistantMessage(model: string, text: string, errorMessage?: string): object {
+      return {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          model,
+          ...(errorMessage ? { errorMessage, stopReason: "error" } : { stopReason: "stop" }),
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            cost: { total: 0 },
+          },
+        },
+      };
     }
 
     function makeExecutor(
@@ -252,6 +299,88 @@ describe(
       assert.equal(result.usage.turns, 1);
       assert.equal(result.usage.input, 100); // from mock
       assert.equal(result.usage.output, 50); // from mock
+    });
+
+    it("applies the canonical developer window to foreground initial diagnostics", async () => {
+      mockPi.onCall({
+        jsonl: [makeRouteAssistantMessage(routeModels[0]!.fullId, "developer done")],
+      });
+      mockPi.onCall({
+        jsonl: [makeRouteAssistantMessage(routeModels[0]!.fullId, "worker done")],
+      });
+
+      const developer = await runSync(tempDir, [canonicalDeveloperAgent()], "developer", "Task", {
+        runId: "foreground-context-route-developer",
+        availableModels: routeModels,
+      });
+      const worker = await runSync(
+        tempDir,
+        [makeAgent("worker", { model: routeModels[0]!.fullId })],
+        "worker",
+        "Task",
+        { runId: "foreground-context-route-worker", availableModels: routeModels },
+      );
+
+      assert.equal(developer.contextUsage?.contextWindow, 272_000);
+      assert.equal(worker.contextUsage?.contextWindow, 1_000_000);
+    });
+
+    it("keeps foreground fallback diagnostics aligned with the canonical role policy", async () => {
+      mockPi.onCall({
+        jsonl: [
+          makeRouteAssistantMessage(
+            routeModels[0]!.fullId,
+            "temporary provider failure",
+            "rate limit exceeded",
+          ),
+        ],
+        exitCode: 1,
+      });
+      mockPi.onCall({
+        jsonl: [makeRouteAssistantMessage(routeModels[1]!.fullId, "developer fallback done")],
+      });
+      mockPi.onCall({
+        jsonl: [
+          makeRouteAssistantMessage(
+            routeModels[0]!.fullId,
+            "temporary provider failure",
+            "rate limit exceeded",
+          ),
+        ],
+        exitCode: 1,
+      });
+      mockPi.onCall({
+        jsonl: [makeRouteAssistantMessage(routeModels[1]!.fullId, "worker fallback done")],
+      });
+
+      const developer = await runSync(
+        tempDir,
+        [
+          canonicalDeveloperAgent({
+            fallbackModels: [routeModels[1]!.fullId],
+          }),
+        ],
+        "developer",
+        "Task",
+        { runId: "foreground-context-fallback-developer", availableModels: routeModels },
+      );
+      const worker = await runSync(
+        tempDir,
+        [
+          makeAgent("worker", {
+            model: routeModels[0]!.fullId,
+            fallbackModels: [routeModels[1]!.fullId],
+          }),
+        ],
+        "worker",
+        "Task",
+        { runId: "foreground-context-fallback-worker", availableModels: routeModels },
+      );
+
+      assert.deepEqual(developer.attemptedModels, [routeModels[0]!.fullId, routeModels[1]!.fullId]);
+      assert.deepEqual(worker.attemptedModels, [routeModels[0]!.fullId, routeModels[1]!.fullId]);
+      assert.equal(developer.contextUsage?.contextWindow, 272_000);
+      assert.equal(worker.contextUsage?.contextWindow, 450_000);
     });
 
     it("retries with fallback models on retryable provider failures", async () => {

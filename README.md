@@ -74,7 +74,7 @@ The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/e
 
 | Role | `maxExecutionTimeMs` |
 | --- | ---: |
-| `developer` | 7200000 ms (2h) |
+| `developer` | 3600000 ms (1h) |
 | `code-reviewer` | 1800000 ms (30m) |
 | `test-runner` | 3600000 ms (1h) |
 | `librarian` | 14400000 ms (4h) |

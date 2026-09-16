@@ -16,6 +16,8 @@ import {
   sanitizeModelFallbackNotice,
   sanitizeSubagentModelIdentity,
 } from "../../src/runs/shared/model-fallback.ts";
+import { contextWindowForModel } from "../../src/runs/background/pi-streaming.ts";
+import { contextWindowsForChildModels } from "../../src/shared/model-info.ts";
 import type { ModelScopeConfig } from "../../src/runs/shared/model-scope.ts";
 
 describe("model fallback helpers", () => {
@@ -64,6 +66,72 @@ describe("model fallback helpers", () => {
         contextWindow: 4096,
       },
     );
+  });
+
+  it("uses the canonical developer ceiling for background runtime identities", () => {
+    const models = [
+      {
+        provider: "openai-codex",
+        id: "gpt-5.6-luna",
+        fullId: "openai-codex/gpt-5.6-luna",
+        contextWindow: 200_000,
+        nativeContextWindow: 372_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-4.6",
+        fullId: "anthropic/claude-sonnet-4.6",
+        contextWindow: 200_000,
+        nativeContextWindow: 450_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "large-model",
+        fullId: "test-provider/large-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 1_000_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "small-model",
+        fullId: "test-provider/small-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 200_000,
+        developerChildContextWindow: 200_000,
+      },
+    ];
+    const contextWindows = contextWindowsForChildModels(models, { canonicalDeveloper: true });
+
+    assert.deepEqual(contextWindows, {
+      "openai-codex/gpt-5.6-luna": 272_000,
+      "anthropic/claude-sonnet-4.6": 272_000,
+      "test-provider/large-model": 272_000,
+      "test-provider/small-model": 200_000,
+    });
+
+    assert.deepEqual(
+      resolveRuntimeModelContext("openai-codex", "gpt-5.6-luna:high", contextWindows),
+      {
+        identity: { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        contextWindow: 272_000,
+      },
+    );
+    assert.deepEqual(resolveRuntimeModelContext("test-provider", "large-model", contextWindows), {
+      identity: { provider: "test-provider", model: "large-model" },
+      contextWindow: 272_000,
+    });
+    assert.equal(contextWindowForModel("anthropic/claude-sonnet-4.6", contextWindows), 272_000);
+    assert.equal(contextWindowForModel("test-provider/small-model", contextWindows), 200_000);
+
+    assert.deepEqual(contextWindowsForChildModels(models), {
+      "openai-codex/gpt-5.6-luna": 372_000,
+      "anthropic/claude-sonnet-4.6": 450_000,
+      "test-provider/large-model": 1_000_000,
+      "test-provider/small-model": 200_000,
+    });
   });
 
   it("rejects malformed, mismatched, missing, inherited, and unregistered runtime identities", () => {

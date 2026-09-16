@@ -398,6 +398,7 @@ async function runSingleAttempt(
     healthState: HealthTransitionBox;
   },
 ): Promise<SingleResult> {
+  const canonicalDeveloper = agent.name === "developer" && isCanonicalPackagedMinorAgent(agent);
   if (!shared.healthState.closed) {
     shared.healthState.value = resetHealthTransitionState(
       shared.healthState.value,
@@ -996,6 +997,9 @@ async function runSingleAttempt(
               result.model ?? model,
               options.availableModels,
               options.preferredModelProvider,
+              {
+                canonicalDeveloper,
+              },
             ),
           });
           while (true) {

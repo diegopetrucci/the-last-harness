@@ -4,6 +4,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Canonical packaged developer children now use `min(native context window, 272k)` uniformly across providers and model IDs, removing the former Codex GPT-5.6-only exception. Non-developer children retain native windows, primary sessions retain the 200k cap, and foreground/background diagnostics select the matching role policy. With `tlh.contextCap.disabled`, canonical developer children and diagnostics use native windows; the process-local policy restores model windows safely.
+- The code-owned `developer` subagent execution ceiling is now 3600000 ms (1h), while the four-hour run-level ceiling and all other canonical role ceilings remain unchanged; see [GH #652](https://github.com/diegopetrucci/the-last-harness/issues/652).
+- Pinned canonical developer children now receive one visible post-compaction scope reminder to re-run `tk show`, reread the ticket acceptance criteria, and remain within scope; failed and cancelled compactions do not inject it.
+
 ## [0.42.0] - 2026-09-14
 
 ### What's new

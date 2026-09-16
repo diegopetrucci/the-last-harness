@@ -54,7 +54,7 @@ The code-owned ceilings for the nine canonical minor roles are:
 
 | Role | `maxExecutionTimeMs` |
 | --- | ---: |
-| `developer` | 7200000 ms (2h) |
+| `developer` | 3600000 ms (1h) |
 | `code-reviewer` | 1800000 ms (30m) |
 | `test-runner` | 3600000 ms (1h) |
 | `librarian` | 14400000 ms (4h) |
@@ -103,6 +103,8 @@ Keep one writer per working directory. Parallel developers writing the same chec
 When a fresh canonical packaged `developer` child task contains an explicit command such as `tk show tlhm-o1qg`, TLH validates the complete command argument and pins that ID to the child only. The parent sends it through the parent-owned assignment `PI_SUBAGENT_TK_TICKET_ID` environment value passed to the child and adds a small persistent system-prompt capsule that names the ID and requires `tk show` for that same ID before edits. Ticket titles, bodies, correction text, and other parent conversation content are not copied into the capsule. Each child task is inspected independently, so unticketed siblings receive no assignment.
 
 The ID is retained in foreground pause state and async status/result artifacts. A resumed or replacement developer child uses that persisted per-child ID when the revived follow-up text does not repeat the original command; the task text itself is not rewritten. Invalid, missing, or non-developer references are omitted. This channel does not change the run-level ticket metadata or its ambiguity rules.
+
+After each successful compaction, a pinned canonical developer receives exactly one visible scope reminder to re-run `tk show <id>`, reread the ticket acceptance criteria, and remain within scope. For overflow retries, TLH queues that custom message with Pi's `steer` delivery mode so it is present before the guaranteed retry; for non-retry compaction, it uses Pi's `nextTurn` delivery so the pending message is included with the next real prompt without creating an extra assistant turn. `session_compact_failed` events never inject it. Other agents and unpinned developer sessions receive no reminder, and Pi's default summary generation remains unchanged.
 
 ### Final-validation test-runner
 
@@ -286,6 +288,12 @@ Persisted `contextUsage`, `contextPressure`, and `contextPressureCrossedThreshol
 
 The fixed pressure bands (hardcoded, not configurable) are a warning at **80%** and critical at **95%** of the measured context window. A durable resume is blocked when the latest measured usage is at least 80%, and the guidance recommends a fresh narrowly scoped dispatch instead. Missing measurements are left missing rather than replaced with a guessed total.
 
+### Child context-window policy
+
+The **200,000-token effective context cap** applies to primary and other non-child TLH sessions. A child process is identified by TLH's child-runtime signal (`PI_SUBAGENT_CHILD=1`; the child-agent marker is accepted when that signal is absent). An explicit `PI_SUBAGENT_CHILD=0` keeps the process non-child even if a stale marker is present. The canonical developer policy additionally requires `PI_SUBAGENT_CHILD_AGENT=developer` and `PI_SUBAGENT_PROJECT_AGENT_GUIDANCE=1`, which is the parent-verified packaged-agent provenance. Child startup bypasses the primary cap instead of copying the parent's in-process window, and the policy is selected independently in the child without carrying the parent's transcript or context diagnostics into the fresh session.
+
+For an enabled canonical packaged developer child, TLH sets each model's in-process `contextWindow` to `min(native context window, 272,000)`, uniformly across providers and model IDs. This applies the same ceiling to native windows such as 372k, 450k, and 1M while preserving smaller native windows unchanged. Other child roles retain their native context windows. Parent foreground and background pressure/resume diagnostics select the matching role policy rather than the parent's mutated 200,000 registry value; canonical developer diagnostics therefore use the same 272,000 ceiling, while non-developer diagnostics retain native windows. When `tlh.contextCap.disabled` is `true`, canonical developer children and their diagnostics use native windows instead. The child override is process-local: TLH does not write `models.json` or profile settings, and restores any temporarily changed model windows during session shutdown. `/toggle-context-cap` applies or restores the matching policy in the current session.
+
 ### Native supervisor coordination
 
 A child that needs a decision, structured interview, or meaningful progress update uses native `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. Custom/project agents with an active supervisor bridge receive neutral generic guidance; canonical packaged minor prompts already carry role-specific guidance and do not receive a duplicate block. This native supervisor channel and TLH's own status/lifecycle controls are the supported coordination surfaces; the removed external pi-intercom detach request/result/control integration is not supported. Separately installed user extensions remain untouched when TLH primary-agent filtering is disabled.
@@ -415,7 +423,7 @@ Verdict meanings:
 
 | Verdict | Meaning |
 |---|---|
-| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the TTL. |
+| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the live prompt-cache TTL. |
 | `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
 | `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
 | `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |

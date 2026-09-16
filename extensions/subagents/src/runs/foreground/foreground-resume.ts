@@ -85,6 +85,7 @@ import {
   resumeLiveNestedRun,
   type NestedResumeSourceTarget,
 } from "./foreground-nested-control.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
   indexedLifecycleContinuation,
   isClaimedPausedLifecycle,
@@ -934,6 +935,10 @@ function preflightResumeContextPolicy(
     selectedModel,
     availableModels,
     currentModel?.provider,
+    {
+      canonicalDeveloper:
+        agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig),
+    },
   );
   const contextAssessment = assessDurableResumeContext(
     target.contextUsage,

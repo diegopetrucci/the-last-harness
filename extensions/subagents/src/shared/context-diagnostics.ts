@@ -1,5 +1,11 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { findModelInfo, splitKnownThinkingSuffix, type ModelInfo } from "./model-info.ts";
+import {
+  contextWindowForChildModel,
+  findModelInfo,
+  splitKnownThinkingSuffix,
+  type ChildContextWindowOptions,
+  type ModelInfo,
+} from "./model-info.ts";
 import type {
   ContextPressureProjection,
   ContextPressureSeverity,
@@ -448,15 +454,14 @@ export function resolveEffectiveContextWindow(
   model: string | undefined,
   availableModels: ModelInfo[] | undefined,
   preferredProvider?: string,
+  options?: ChildContextWindowOptions,
 ): number | undefined {
-  const contextWindow = findModelInfo(
+  const modelInfo = findModelInfo(
     splitKnownThinkingSuffix(model ?? "").baseModel,
     availableModels,
     preferredProvider,
-  )?.contextWindow;
-  return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
-    ? contextWindow
-    : undefined;
+  );
+  return modelInfo ? contextWindowForChildModel(modelInfo, options) : undefined;
 }
 
 /** Map orchestration state and the final assistant stop to the stable artifact enum. */
