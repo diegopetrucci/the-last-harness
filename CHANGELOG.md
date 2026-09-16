@@ -8,7 +8,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Context limits for developers are now slightly higher.
 - The `developer` subagent max timeout is now 1h.
-- Pinned canonical developer children now receive one visible post-compaction scope reminder to re-run `tk show`, reread the ticket acceptance criteria, and remain within scope; failed and cancelled compactions do not inject it.
+- Developers, after compaction, get told to run `tk show` again.
 
 ## [0.42.0] - 2026-09-14
 
