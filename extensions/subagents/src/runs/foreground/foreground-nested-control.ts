@@ -53,6 +53,8 @@ export type NestedResumeSourceTarget = {
   sessionFile: string;
   pauseKind?: "awaiting_supervisor" | "cohort_pause";
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+  /** True when the nested child already spent its bounded report repair. */
+  reportRepairAttempted?: boolean;
   modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
   modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
   contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
@@ -126,6 +128,8 @@ type NestedResumeStatusStep = {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  /** True when a bounded report-only correction has already started. */
+  reportRepairAttempted?: boolean;
   projectAgentMarker?: true;
 };
 
@@ -161,6 +165,13 @@ function readNestedResumeStatusStep(
   const activeRuntimeMs = (step as { activeRuntimeMs?: unknown }).activeRuntimeMs;
   const activeRuntimeCheckpointAt = (step as { activeRuntimeCheckpointAt?: unknown })
     .activeRuntimeCheckpointAt;
+  const raw = step as Record<string, unknown>;
+  const reportRepairAttempted = raw.reportRepairAttempted;
+  if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean") {
+    throw new Error(
+      `Nested run '${runId}' persisted step reportRepairAttempted must be a boolean.`,
+    );
+  }
   if (
     activeRuntimeMs !== undefined &&
     (typeof activeRuntimeMs !== "number" ||
@@ -171,7 +182,6 @@ function readNestedResumeStatusStep(
       `Nested run '${runId}' persisted step activeRuntimeMs must be a non-negative finite number.`,
     );
   }
-  const raw = step as Record<string, unknown>;
   const modelIdentity =
     sanitizeSubagentModelIdentity(raw.modelIdentity) ??
     canonicalSubagentModelIdentity(
@@ -198,6 +208,7 @@ function readNestedResumeStatusStep(
           activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(activeRuntimeCheckpointAt),
         }
       : {}),
+    ...(reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
     ...(malformedProjectAgentMarker ? { projectAgentMarker: true as const } : {}),
     ...(raw.acceptance
       ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] }
@@ -311,6 +322,10 @@ export function resolveNestedResumeTarget(
     index: 0,
     ...(projectAgentMarker ? { projectAgent: projectAgentMarker } : {}),
     ...(continuationAcceptance ? { continuationAcceptance } : {}),
+    ...(statusStep?.reportRepairAttempted === true ||
+    statusStep?.acceptance?.reportRepairAttempted === true
+      ? { reportRepairAttempted: true }
+      : {}),
     ...(statusModelIdentity ? { modelIdentity: statusModelIdentity } : {}),
     ...(statusModelResolution ? { modelResolution: statusModelResolution } : {}),
     ...(contextUsage ? { contextUsage } : {}),

@@ -289,7 +289,7 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
   });
 
   it("does not add a digest when the async run produced no acceptance report", async () => {
-    // Acceptance disabled → no ## Acceptance Contract in the prompt → mock emits
+    // Acceptance disabled → no acceptance contract in system state → mock emits
     // no block → parseAndStripAcceptanceReport returns no report → artifact stays bare.
     mockPi.onCall({ jsonl: [events.assistantMessage("async findings only")] });
     const id = `async-digest-absent-${Date.now().toString(36)}`;

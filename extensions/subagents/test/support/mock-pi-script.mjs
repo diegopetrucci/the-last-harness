@@ -261,16 +261,36 @@ function defaultAssistantMessage(output) {
   };
 }
 
+const ACCEPTANCE_CONTRACT_MARKERS = [
+  "## TLH Runtime-owned Acceptance Contract",
+  "## Acceptance Contract",
+];
+
+function containsAcceptanceContract(text) {
+  return ACCEPTANCE_CONTRACT_MARKERS.some((marker) => text.includes(marker));
+}
+
+function fileContainsAcceptanceContract(filePath) {
+  try {
+    return containsAcceptanceContract(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    // Ignore unreadable temp prompt references in the mock harness.
+    return false;
+  }
+}
+
 function taskRequestsAcceptance(args) {
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
     if (typeof arg !== "string") continue;
-    if (arg.includes("## Acceptance Contract")) return true;
-    if (!arg.startsWith("@")) continue;
-    try {
-      if (fs.readFileSync(arg.slice(1), "utf-8").includes("## Acceptance Contract")) return true;
-    } catch {
-      // Ignore unreadable temp prompt references in the mock harness.
+    if (containsAcceptanceContract(arg)) return true;
+    if (arg === "--system-prompt" || arg === "--append-system-prompt") {
+      const promptPath = args[index + 1];
+      if (typeof promptPath === "string" && fileContainsAcceptanceContract(promptPath)) return true;
+      index++;
+      continue;
     }
+    if (arg.startsWith("@") && fileContainsAcceptanceContract(arg.slice(1))) return true;
   }
   return false;
 }

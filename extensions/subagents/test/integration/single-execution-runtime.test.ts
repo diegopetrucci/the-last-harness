@@ -58,7 +58,7 @@ describe(
       removeTempDir(tempDir);
     });
 
-    function pausedAcceptanceLedger() {
+    function pausedAcceptanceLedger(reportRepairAttempted = false) {
       return buildSkippedAcceptanceLedger({
         acceptance: resolveEffectiveAcceptance({
           agentName: "echo",
@@ -69,6 +69,7 @@ describe(
         runtimeCheckStatus: "not-applicable",
         id: "paused",
         message: "Acceptance will run after resume.",
+        reportRepairAttempted,
       });
     }
 
@@ -279,6 +280,104 @@ describe(
           assert.deepEqual(effects, ["launch", "format:after-delete"]);
           assert.equal(state.foregroundRuns.has(sourceRunId), false);
         } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "carries a spent report-repair marker through a paused foreground resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `foreground-report-repair-resume-${Date.now().toString(36)}`;
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        const acceptance = pausedAcceptanceLedger(true);
+        const malformedOutput = "Resumed output without a report\n```acceptance-report\n{bad\n```";
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`, "utf-8");
+        fs.writeFileSync(
+          path.join(asyncDir, "status.json"),
+          JSON.stringify({
+            runId,
+            mode: "single",
+            state: "paused",
+            lastUpdate: 1,
+            steps: [
+              {
+                agent: "echo",
+                status: "paused",
+                sessionFile,
+                pause: { kind: "awaiting_supervisor" },
+                acceptance,
+              },
+            ],
+          }),
+          "utf-8",
+        );
+        mockPi.onCall({ output: malformedOutput });
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo")],
+            {},
+            {
+              baseCwd: tempDir,
+              currentSessionId: null,
+              asyncJobs: new Map(),
+              foregroundRuns: new Map([
+                [
+                  runId,
+                  {
+                    runId,
+                    mode: "single",
+                    state: "paused",
+                    cwd: tempDir,
+                    startedAt: 1,
+                    updatedAt: 1,
+                    children: [
+                      {
+                        agent: "echo",
+                        status: "paused",
+                        sessionFile,
+                        pause: { kind: "awaiting_supervisor" },
+                        acceptance,
+                      },
+                    ],
+                  },
+                ],
+              ]),
+              foregroundControls: new Map(),
+              lastForegroundControlId: null,
+            },
+          ).execute(
+            "foreground-report-repair-resume-call",
+            { action: "resume", id: runId, message: "Continue after the interruption." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+          assert.equal(result.isError, undefined);
+          const resumedId = result.details?.asyncId;
+          assert.ok(resumedId, "expected resumed async id");
+          const payload = JSON.parse(
+            fs.readFileSync(await waitForAsyncResultFile(resumedId), "utf-8"),
+          ) as {
+            results: Array<{
+              reportRepairAttempted?: boolean;
+              acceptance?: { reportRepairAttempted?: boolean; status?: string };
+              output?: string;
+            }>;
+          };
+          assert.equal(mockPi.callCount(), 1, "a resumed segment must not launch a second repair");
+          assert.equal(payload.results[0]?.reportRepairAttempted, true);
+          assert.equal(payload.results[0]?.acceptance?.reportRepairAttempted, true);
+          assert.equal(payload.results[0]?.acceptance?.status, "rejected");
+          assert.match(payload.results[0]?.output ?? "", /Resumed output without a report/);
+          fs.rmSync(path.join(ASYNC_DIR, resumedId), { recursive: true, force: true });
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
           fs.rmSync(sessionFile, { force: true });
         }
       },

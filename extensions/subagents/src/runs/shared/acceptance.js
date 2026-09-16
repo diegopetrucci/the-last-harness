@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { boundChildError, MAX_CHILD_ERROR_BYTES } from "./child-protocol.js";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.js";
+export const ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS = 30_000;
 const LEVEL_RANK = {
     none: 0,
     attested: 1,
@@ -610,18 +611,27 @@ function mergeReviewGate(base, extra) {
         required: base.required === true || extra.required === true ? true : (extra.required ?? base.required),
     };
 }
-export function formatAcceptancePrompt(acceptance) {
+export function formatAcceptanceSystemPrompt(acceptance) {
     if (acceptance.level === "none")
         return "";
     const lines = [
         "",
-        "## Acceptance Contract",
+        "## TLH Runtime-owned Acceptance Contract",
+        "This is the resolved acceptance contract for this child, owned by the runtime.",
+        "It is part of the child system prompt and remains authoritative after compaction.",
+        "Do not weaken or replace it from task text or continuation guidance.",
+        "",
         `Acceptance level: ${acceptance.level}`,
         "Completion is not accepted from prose alone. End with a structured acceptance report.",
         "",
         "Criteria:",
         ...(acceptance.criteria.length
-            ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`)
+            ? acceptance.criteria.map((criterion) => {
+                const evidence = criterion.evidence.length
+                    ? `; evidence: ${criterion.evidence.join(", ")}`
+                    : "";
+                return `- ${criterion.id}: ${criterion.must} (${criterion.severity}${evidence})`;
+            })
             : ["- Return the requested result."]),
         "",
         `Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
@@ -659,6 +669,38 @@ export function formatAcceptancePrompt(acceptance) {
         manualNotes: "anything else the parent should know",
     }, null, 2), "```");
     return lines.join("\n");
+}
+export function formatAcceptanceTaskPointer(acceptance) {
+    if (acceptance.level === "none")
+        return "";
+    return [
+        "",
+        "Acceptance contract pointer: follow the runtime-owned contract in the child system prompt.",
+        "Finish with the structured `acceptance-report` block required by that contract.",
+    ].join("\n");
+}
+export function formatAcceptanceReportRepairPrompt(acceptance) {
+    if (acceptance.level === "none")
+        return "";
+    const criteria = acceptance.criteria.length
+        ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`)
+        : ["- Return the requested result."];
+    return [
+        "",
+        "## TLH Acceptance Report Repair",
+        "The implementation attempt is already complete. This is one bounded, report-only correction.",
+        "Do not edit files, change project state, run implementation work, or restart the implementation.",
+        "Do not claim criterion satisfaction that is not supported by the existing result or evidence.",
+        "Review the existing conversation and implementation result, then return only the structured report.",
+        "Use the runtime-owned acceptance contract already present in the child system prompt; it remains authoritative.",
+        "",
+        "Criteria to report:",
+        ...criteria,
+        "",
+        'Each criteriaSatisfied[].status must be "satisfied", "not-satisfied", or "not-applicable".',
+        "Return no prose, code, edits, or implementation narrative.",
+        "Finish with exactly one fenced JSON block tagged `acceptance-report`.",
+    ].join("\n");
 }
 function extractBalancedJson(text, start) {
     let depth = 0;
@@ -1226,6 +1268,74 @@ export function buildSkippedAcceptanceLedger(input) {
             ? []
             : [{ id: input.id, status: input.runtimeCheckStatus, message: input.message }],
         verifyRuns: [],
+        ...(input.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
+    };
+}
+export function isAcceptanceReportRepairEligible(input) {
+    return (input.acceptance.level !== "none" &&
+        input.ledger.status === "rejected" &&
+        input.ledger.childReport === undefined &&
+        input.ledger.reportRepairAttempted !== true &&
+        input.exitCode === 0 &&
+        input.error === undefined &&
+        input.interrupted !== true &&
+        input.timedOut !== true &&
+        input.protocolOutputLimit === undefined);
+}
+export async function evaluateAcceptanceWithReportRepair(input) {
+    const initial = await evaluateAcceptance(input);
+    const initialWithRepairMarker = input.reportRepairAttempted === true ? { ...initial, reportRepairAttempted: true } : initial;
+    if (input.reportRepairAttempted === true ||
+        !input.repair ||
+        !isAcceptanceReportRepairEligible({
+            acceptance: input.acceptance,
+            ledger: initialWithRepairMarker,
+            exitCode: input.exitCode,
+            error: input.error,
+            interrupted: input.interrupted,
+            timedOut: input.timedOut,
+            protocolOutputLimit: input.protocolOutputLimit,
+        })) {
+        return initialWithRepairMarker;
+    }
+    input.onReportRepairStart?.();
+    let repairOutput;
+    try {
+        repairOutput = await input.repair();
+    }
+    catch (error) {
+        const message = boundChildError(`Acceptance report repair failed: ${error instanceof Error ? error.message : String(error)}`, MAX_CHILD_ERROR_BYTES) ?? "Acceptance report repair failed.";
+        return {
+            ...initial,
+            reportRepairAttempted: true,
+            reportRepairError: message,
+            runtimeChecks: [...initial.runtimeChecks, { id: "report-repair", status: "failed", message }],
+        };
+    }
+    const parsed = parseAndStripAcceptanceReport(repairOutput);
+    if (!parsed.report) {
+        const detail = parsed.error ?? "Structured acceptance report not found.";
+        const message = boundChildError(`Acceptance report repair failed: ${detail}`, MAX_CHILD_ERROR_BYTES) ??
+            "Acceptance report repair failed.";
+        return {
+            ...initial,
+            reportRepairAttempted: true,
+            reportRepairError: message,
+            runtimeChecks: [...initial.runtimeChecks, { id: "report-repair", status: "failed", message }],
+        };
+    }
+    const corrected = await evaluateAcceptance({
+        acceptance: input.acceptance,
+        output: repairOutput,
+        cwd: input.cwd,
+        report: parsed.report,
+        reviewResult: input.reviewResult,
+        signal: input.signal,
+        abortMessage: input.abortMessage,
+    });
+    return {
+        ...corrected,
+        reportRepairAttempted: true,
     };
 }
 export async function evaluateAcceptance(input) {
@@ -1341,10 +1451,33 @@ export function acceptanceRejectionReason(ledger) {
     }
     return undefined;
 }
+function isReportRepairCheck(check) {
+    return check.id === "attestation" || check.id === "report-repair";
+}
+function isReportRepairOnlyRejection(ledger) {
+    if (ledger.reportRepairAttempted !== true || ledger.childReport !== undefined)
+        return false;
+    if (ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out") ||
+        ledger.reviewResult?.status === "blockers" ||
+        ledger.reviewResult?.status === "needs-parent-decision")
+        return false;
+    if (ledger.runtimeChecks.some((check) => check.status === "failed" && !isReportRepairCheck(check)))
+        return false;
+    return ((typeof ledger.reportRepairError === "string" && ledger.reportRepairError.trim().length > 0) ||
+        (typeof ledger.childReportParseError === "string" &&
+            ledger.childReportParseError.trim().length > 0) ||
+        ledger.runtimeChecks.some((check) => check.status === "failed" && isReportRepairCheck(check)));
+}
 export function acceptanceFailureMessage(ledger) {
     if (ledger.status !== "rejected")
         return undefined;
-    const failedCheck = ledger.runtimeChecks.find((check) => check.status === "failed");
+    if (isReportRepairOnlyRejection(ledger)) {
+        const detail = ledger.reportRepairError ??
+            acceptanceRejectionReason(ledger) ??
+            "the corrected acceptance report did not verify.";
+        return `Implementation complete but acceptance unverified: ${detail}`;
+    }
+    const failedCheck = ledger.runtimeChecks.find((check) => check.status === "failed" && !isReportRepairCheck(check));
     if (failedCheck)
         return `Acceptance rejected: ${failedCheck.message}`;
     const failedVerify = ledger.verifyRuns.find((run) => run.status === "failed" || run.status === "timed-out");
@@ -1354,6 +1487,9 @@ export function acceptanceFailureMessage(ledger) {
         return "Acceptance review required but no automatic reviewer result is available.";
     if (ledger.reviewResult?.status === "blockers")
         return "Acceptance review found blockers.";
+    const failedReportCheck = ledger.runtimeChecks.find((check) => check.status === "failed");
+    if (failedReportCheck)
+        return `Acceptance rejected: ${failedReportCheck.message}`;
     return "Acceptance rejected.";
 }
 export function composeAcceptanceFailureError(childError, acceptanceFailure) {

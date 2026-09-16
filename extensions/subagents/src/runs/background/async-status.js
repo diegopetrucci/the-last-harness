@@ -228,6 +228,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
             ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
             ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+            ...(step.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
             ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
             ...(step.deadlineAt !== undefined ? { deadlineAt: step.deadlineAt } : {}),
             ...(step.tokens ? { tokens: step.tokens } : {}),

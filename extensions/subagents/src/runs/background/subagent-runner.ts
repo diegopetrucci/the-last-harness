@@ -21,6 +21,7 @@ import {
   type SubagentRunMode,
   type SubagentTerminationReason,
   type ToolBudgetState,
+  type Usage,
   DEFAULT_MAX_OUTPUT,
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
   truncateOutput,
@@ -64,9 +65,11 @@ import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution
 import {
   appendUnexpectedLifecycleTransitionDiagnostic,
   createBackgroundRunStatusOwner,
+  findLatestSessionFile,
   type RunnerStatusStep,
 } from "./run-status-owner.ts";
 import { createBackgroundRunControlOwner } from "./run-control-owner.ts";
+import { createReportRepairState } from "./report-repair-state.ts";
 
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
   "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
@@ -107,6 +110,7 @@ interface StepResult {
   transcriptPath?: string;
   transcriptError?: string;
   acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+  reportRepairAttempted?: boolean;
   pause?: AsyncStatus["pause"];
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
@@ -189,26 +193,14 @@ function appendDiagnosticJsonl(filePath: string, line: string, droppedEventType?
   state.diagnosticsTruncated = true;
 }
 
-function findLatestSessionFile(sessionDir: string): string | null {
-  try {
-    const files = fs
-      .readdirSync(sessionDir)
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => path.join(sessionDir, f));
-    if (files.length === 0) return null;
-    files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-    return files[0] ?? null;
-  } catch {
-    // Session lookup is optional metadata.
-    return null;
-  }
-}
-
-function tokenUsageFromAttempts(attempts: ModelAttempt[] | undefined): TokenUsage | null {
-  if (!attempts || attempts.length === 0) return null;
-  let input = 0;
-  let output = 0;
-  for (const attempt of attempts) {
+function tokenUsageFromAttempts(
+  attempts: ModelAttempt[] | undefined,
+  repairUsage?: Usage,
+): TokenUsage | null {
+  if ((!attempts || attempts.length === 0) && !repairUsage) return null;
+  let input = repairUsage?.input ?? 0;
+  let output = repairUsage?.output ?? 0;
+  for (const attempt of attempts ?? []) {
     input += attempt.usage?.input ?? 0;
     output += attempt.usage?.output ?? 0;
   }
@@ -693,6 +685,7 @@ async function runSubagentWithInput(
     appendDiagnosticEvent,
   });
   const { sessionEnabled, statusPayload, activeRuntimeTrackers, flatStepAcceptances } = statusOwner;
+  const reportRepairState = createReportRepairState(statusPayload, statusOwner.writeStatusPayload);
   const controlOwner = createBackgroundRunControlOwner({
     status: statusOwner,
     id,
@@ -854,7 +847,9 @@ async function runSubagentWithInput(
       const sessionTokens = config.sessionDir
         ? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
         : null;
-      const taskTokens = sessionTokens ?? tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
+      const taskTokens =
+        sessionTokens ??
+        tokenUsageFromAttempts(parallelResults[t]?.modelAttempts, parallelResults[t]?.repairUsage);
       if (!taskTokens) continue;
       statusPayload.steps[fi].tokens = taskTokens;
       previousCumulativeTokens = {
@@ -904,6 +899,7 @@ async function runSubagentWithInput(
         transcriptPath: pr.transcriptPath,
         transcriptError: pr.transcriptError,
         acceptance: pr.acceptance,
+        reportRepairAttempted: reportRepairState.marker(pr, fi),
         pause: pr.interrupted
           ? statusOwner.pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
           : undefined,
@@ -968,6 +964,7 @@ async function runSubagentWithInput(
       transcriptPath: singleResult.transcriptPath,
       transcriptError: singleResult.transcriptError,
       acceptance: singleResult.acceptance,
+      reportRepairAttempted: reportRepairState.marker(singleResult, flatIndex),
       pause: singleResult.interrupted ? statusOwner.pauseMetadataForIndex(flatIndex) : undefined,
       interrupted: singleResult.interrupted,
       timedOut: statusOwner.timedOut || singleResult.timedOut ? true : undefined,
@@ -995,7 +992,7 @@ async function runSubagentWithInput(
     if (cumulativeTokens) {
       previousCumulativeTokens = cumulativeTokens;
     } else {
-      stepTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
+      stepTokens = tokenUsageFromAttempts(singleResult.modelAttempts, singleResult.repairUsage);
       if (stepTokens) {
         previousCumulativeTokens = {
           input: previousCumulativeTokens.input + stepTokens.input,
@@ -1079,6 +1076,7 @@ async function runSubagentWithInput(
       singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
     statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
     statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
+    reportRepairState.apply(singleResult, flatIndex);
     if (pausedStep) statusOwner.applyPausedStepMetadata(flatIndex, stepEndTime);
     if (stepTokens) {
       statusPayload.steps[flatIndex].tokens = stepTokens;
@@ -1264,6 +1262,9 @@ async function runSubagentWithInput(
               onAttemptStart: (attempt) => controlOwner.updateStepModel(fi, attempt),
               onChildEvent: (event) => controlOwner.updateStepFromChildEvent(fi, event),
               onAttemptEnd: () => statusOwner.endStepCompaction(fi),
+              onReportRepairStart: reportRepairState.start(task, fi),
+              resolveRepairSessionFile: () =>
+                statusOwner.resolveTrackedSessionFile(fi, task.sessionFile),
               onChildProtocolOutputLimit: statusOwner.onChildProtocolOutputLimit,
               skipAcceptance: () => statusOwner.timedOut,
               runtimeTracker: activeRuntimeTrackers.get(fi),
@@ -1345,6 +1346,7 @@ async function runSubagentWithInput(
             singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
           statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
           statusPayload.steps[fi].acceptance = singleResult.acceptance;
+          reportRepairState.apply(singleResult, fi);
           if (pausedStep) statusOwner.applyPausedStepMetadata(fi, taskEndTime);
           const parallelAggregateRuntime = statusPayload.steps.reduce(
             (total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0),
@@ -1505,6 +1507,9 @@ async function runSubagentWithInput(
           onAttemptStart: (attempt) => controlOwner.updateStepModel(flatIndex, attempt),
           onChildEvent: (event) => controlOwner.updateStepFromChildEvent(flatIndex, event),
           onAttemptEnd: () => statusOwner.endStepCompaction(flatIndex),
+          onReportRepairStart: reportRepairState.start(seqStep, flatIndex),
+          resolveRepairSessionFile: () =>
+            statusOwner.resolveTrackedSessionFile(flatIndex, seqStep.sessionFile),
           onChildProtocolOutputLimit: statusOwner.onChildProtocolOutputLimit,
           skipAcceptance: () => statusOwner.timedOut,
           runtimeTracker: activeRuntimeTrackers.get(flatIndex),
@@ -1916,6 +1921,7 @@ async function runSubagentWithInput(
           transcriptPath: r.transcriptPath,
           transcriptError: r.transcriptError,
           acceptance: r.acceptance,
+          reportRepairAttempted: reportRepairState.marker(r, -1),
           pause: r.pause,
           activeRuntimeMs: r.activeRuntimeMs,
           activeRuntimeCheckpointAt: r.activeRuntimeCheckpointAt,

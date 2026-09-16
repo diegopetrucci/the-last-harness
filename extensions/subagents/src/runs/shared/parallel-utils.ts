@@ -69,6 +69,8 @@ export interface RunnerSubagentStep {
   timeoutOwner?: "role" | "run";
   /** Active child runtime accumulated before this segment. */
   activeRuntimeMs?: number;
+  /** True after the bounded automatic report-only correction has been attempted. */
+  reportRepairAttempted?: boolean;
   /** Timestamp of the latest authoritative runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
   /**

@@ -10,7 +10,11 @@ import {
   buildAcceptanceReportDigest,
   composeAcceptanceFailureError,
   evaluateAcceptance,
-  formatAcceptancePrompt,
+  evaluateAcceptanceWithReportRepair,
+  formatAcceptanceReportRepairPrompt,
+  formatAcceptanceSystemPrompt,
+  isAcceptanceReportRepairEligible,
+  formatAcceptanceTaskPointer,
   mergeContinuationAcceptance,
   parseAndStripAcceptanceReport,
   isEffectivelyEmpty,
@@ -355,7 +359,7 @@ describe("acceptance gates", () => {
     assert.equal(resolved.verify[0]?.id, "ok");
   });
 
-  it("formats a standardized child prompt section", () => {
+  it("formats the resolved behavioral contract in child system state", () => {
     const resolved = resolveEffectiveAcceptance({
       agentName: "worker",
       task: "Implement a fix",
@@ -365,9 +369,9 @@ describe("acceptance gates", () => {
         stopRules: ["Do not stop after analysis"],
       },
     });
-    const prompt = formatAcceptancePrompt(resolved);
+    const prompt = formatAcceptanceSystemPrompt(resolved);
 
-    assert.match(prompt, /## Acceptance Contract/);
+    assert.match(prompt, /## TLH Runtime-owned Acceptance Contract/);
     assert.match(prompt, /Acceptance level: checked/);
     assert.match(prompt, /Patch the bug/);
     assert.match(prompt, /```acceptance-report/);
@@ -375,6 +379,187 @@ describe("acceptance gates", () => {
     assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied.*not-satisfied.*not-applicable/);
     assert.match(prompt, /partial results.*not-satisfied.*evidence.*partial status/i);
     assert.match(prompt, /"reviewFindings": \[\n    "blocker:/);
+  });
+
+  it("keeps the resolved contract in system state and only a pointer in the task", () => {
+    const acceptance = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: {
+        level: "verified",
+        criteria: [
+          {
+            id: "scope",
+            must: "Only the requested files change",
+            evidence: ["changed-files"],
+            severity: "required",
+          },
+        ],
+        evidence: ["changed-files", "commands-run"],
+        verify: [{ id: "tests", command: "npm test" }],
+        review: { agent: "reviewer", focus: "scope", required: true },
+        stopRules: ["Do not widen scope"],
+      },
+    });
+
+    const systemPrompt = formatAcceptanceSystemPrompt(acceptance);
+    const taskPointer = formatAcceptanceTaskPointer(acceptance);
+    assert.match(systemPrompt, /runtime-owned acceptance contract/i);
+    assert.match(systemPrompt, /Acceptance level: verified/);
+    assert.match(
+      systemPrompt,
+      /- scope: Only the requested files change \(required; evidence: changed-files\)/,
+    );
+    assert.match(systemPrompt, /Required evidence: changed-files, commands-run/);
+    assert.match(systemPrompt, /- tests: npm test/);
+    assert.match(systemPrompt, /Review gate: required by reviewer/);
+    assert.match(systemPrompt, /Review focus: scope/);
+    assert.match(systemPrompt, /- Do not widen scope/);
+    assert.match(systemPrompt, /"criteriaSatisfied":/);
+    assert.doesNotMatch(systemPrompt, /Resolved acceptance contract \(JSON\)/);
+    assert.doesNotMatch(systemPrompt, /inferredReason|inferredEvidence|explicitEvidence/);
+    assert.match(taskPointer, /runtime-owned contract in the child system prompt/i);
+    assert.doesNotMatch(taskPointer, /Only the requested files change/);
+    assert.doesNotMatch(taskPointer, /criteriaSatisfied/);
+
+    const disabled = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: { level: "none", reason: "not needed" },
+    });
+    assert.equal(formatAcceptanceSystemPrompt(disabled), "");
+    assert.equal(formatAcceptanceTaskPointer(disabled), "");
+  });
+
+  it("formats a report-only repair prompt without inviting implementation work", () => {
+    const acceptance = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "Implement a fix",
+      explicit: { level: "checked", criteria: ["Keep the change narrow"] },
+    });
+    const prompt = formatAcceptanceReportRepairPrompt(acceptance);
+    assert.match(prompt, /bounded, report-only correction/i);
+    assert.match(prompt, /do not edit files/i);
+    assert.match(prompt, /do not .*restart the implementation/i);
+    assert.match(prompt, /return only the structured report/i);
+    assert.match(prompt, /criteriaSatisfied\[\]\.status.*satisfied.*not-satisfied.*not-applicable/);
+    assert.match(prompt, /fenced JSON block tagged `acceptance-report`/);
+    assert.equal(
+      formatAcceptanceReportRepairPrompt(
+        resolveEffectiveAcceptance({
+          agentName: "worker",
+          task: "Implement a fix",
+          explicit: { level: "none", reason: "not needed" },
+        }),
+      ),
+      "",
+    );
+  });
+
+  it("repairs one missing report, but never repairs substantive failures or retries", async () => {
+    const cwd = tempRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: { level: "checked", criteria: ["Keep the change narrow"] },
+      });
+      const originalOutput = "implementation summary without a structured report";
+      let repairCalls = 0;
+      const repaired = await evaluateAcceptanceWithReportRepair({
+        acceptance,
+        output: originalOutput,
+        cwd,
+        exitCode: 0,
+        repair: async () => {
+          repairCalls++;
+          return report({
+            criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "reviewed" }],
+          });
+        },
+      });
+      assert.equal(repairCalls, 1);
+      assert.equal(repaired.status, "checked");
+      assert.equal(repaired.reportRepairAttempted, true);
+      assert.equal(repaired.childReport?.criteriaSatisfied?.[0]?.status, "satisfied");
+      assert.equal(originalOutput, "implementation summary without a structured report");
+      const substantiveOutput = report({
+        criteriaSatisfied: [
+          { id: "criterion-1", status: "not-satisfied", evidence: "not verified" },
+        ],
+      });
+      const substantive = await evaluateAcceptanceWithReportRepair({
+        acceptance,
+        output: substantiveOutput,
+        cwd,
+        exitCode: 0,
+        repair: async () => {
+          repairCalls++;
+          return report();
+        },
+      });
+      assert.equal(substantive.status, "rejected");
+      assert.equal(substantive.reportRepairAttempted, undefined);
+      assert.equal(repairCalls, 1);
+      const failedRepair = await evaluateAcceptanceWithReportRepair({
+        acceptance,
+        output: originalOutput,
+        cwd,
+        exitCode: 0,
+        repair: async () => {
+          repairCalls++;
+          return "still no structured report";
+        },
+      });
+      assert.equal(failedRepair.status, "rejected");
+      assert.equal(failedRepair.reportRepairAttempted, true);
+      assert.match(failedRepair.reportRepairError ?? "", /repair failed/i);
+      assert.equal(repairCalls, 2);
+      const retry = await evaluateAcceptanceWithReportRepair({
+        acceptance,
+        output: originalOutput,
+        cwd,
+        exitCode: 0,
+        reportRepairAttempted: failedRepair.reportRepairAttempted,
+        repair: async () => {
+          repairCalls++;
+          return report();
+        },
+      });
+      assert.equal(retry.reportRepairAttempted, true);
+      assert.equal(repairCalls, 2);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("only marks otherwise-successful structural failures as repairable", async () => {
+    const cwd = tempRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: { level: "attested" },
+      });
+      const initial = await evaluateAcceptance({ acceptance, output: "missing", cwd });
+      for (const blocked of [
+        { exitCode: 1 },
+        { exitCode: 0, interrupted: true },
+        { exitCode: 0, timedOut: true },
+        { exitCode: 0, protocolOutputLimit: {} },
+      ]) {
+        assert.equal(
+          isAcceptanceReportRepairEligible({ acceptance, ledger: initial, ...blocked }),
+          false,
+        );
+      }
+      assert.equal(
+        isAcceptanceReportRepairEligible({ acceptance, ledger: initial, exitCode: 0 }),
+        true,
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("parses acceptance-report fences and ignores unrelated json fences", () => {
@@ -994,7 +1179,7 @@ describe("acceptance gates", () => {
       ["criterion-1"],
     );
 
-    const prompt = formatAcceptancePrompt(acceptance);
+    const prompt = formatAcceptanceSystemPrompt(acceptance);
     assert.match(prompt, /- scope: Only the requested files change/);
     assert.match(prompt, /"id": "scope"/);
     assert.doesNotMatch(prompt, /"id": "criterion-1"/);

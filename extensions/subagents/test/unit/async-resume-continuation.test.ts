@@ -877,6 +877,7 @@ describe("async resume lookup", () => {
             success: false,
             exitCode: 0,
             sessionFile,
+            reportRepairAttempted: true,
             acceptance: {
               status: "skipped",
               effectiveAcceptance: strictAcceptance,
@@ -907,6 +908,7 @@ describe("async resume lookup", () => {
       );
       assert.equal(target.kind, "revive");
       assert.equal(target.state, "paused");
+      assert.equal(target.reportRepairAttempted, true);
       // continuationAcceptance carries the full strict contract from the result artifact:
       // verify commands, stop rules, and criteria are all propagated verbatim.
       const ca = target.continuationAcceptance;
@@ -993,7 +995,7 @@ describe("async resume lookup", () => {
   it("F5: result-only paused child whose acceptance arrays hold malformed elements fails closed cleanly", () => {
     // All 5 arrays are PRESENT (so the presence-only predicate would have passed),
     // but criteria holds a null element (and verify a command-less object). Downstream
-    // mergeAcceptanceCriteria/formatAcceptancePrompt dereference criterion.id and would
+    // mergeAcceptanceCriteria/formatAcceptanceSystemPrompt dereferences criterion.id and would
     // throw a raw TypeError; the element-shape predicate must fail closed with the clean
     // incomplete/malformed error instead.
     for (const { label, effectiveAcceptance } of [

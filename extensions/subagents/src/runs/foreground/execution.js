@@ -17,7 +17,7 @@ import { captureSingleOutputSnapshot, injectOutputPathSystemPrompt, validateFile
 import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
-import { acceptanceFailureMessage, composeAcceptanceFailureError, formatAcceptancePrompt, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
+import { ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS, acceptanceFailureMessage, composeAcceptanceFailureError, formatAcceptanceReportRepairPrompt, formatAcceptanceSystemPrompt, formatAcceptanceTaskPointer, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { inspectTkTicketReference, normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { boundSupervisorSummary, createActiveRuntimeTracker, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -39,7 +39,11 @@ function resolveAssignedDeveloperTkTicketId(agent, task, requestedId) {
     return normalizeTkTicketId(requestedId);
 }
 function settleForegroundAcceptance(result, acceptance, options, interruptedAcceptance, healthState) {
-    result.acceptance = acceptance;
+    const reportRepairAttempted = result.reportRepairAttempted === true || acceptance.reportRepairAttempted === true;
+    result.reportRepairAttempted = reportRepairAttempted ? true : undefined;
+    result.acceptance = reportRepairAttempted
+        ? { ...acceptance, reportRepairAttempted: true }
+        : acceptance;
     if (!result.protocolOutputLimit &&
         !result.timedOut &&
         !result.interrupted &&
@@ -48,7 +52,9 @@ function settleForegroundAcceptance(result, acceptance, options, interruptedAcce
         result.exitCode = 0;
         result.error = undefined;
         result.finalOutput = "Interrupted. Waiting for explicit next action.";
-        result.acceptance = interruptedAcceptance;
+        result.acceptance = reportRepairAttempted
+            ? { ...interruptedAcceptance, reportRepairAttempted: true }
+            : interruptedAcceptance;
         if (result.progress) {
             clearHealthForProgress(healthState, result.progress);
             result.progress.error = undefined;
@@ -1117,6 +1123,88 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         healthState: shared.healthState,
     });
 }
+function createForegroundReportRepair(input) {
+    const { result, agent, effectiveAcceptance, runtimeCwd, options, systemPrompt, jsonlPath, artifactPathsResult, transcriptWriter, contextPressureCrossedThresholds, contextPressure, } = input;
+    if (!result.sessionFile)
+        return undefined;
+    return async () => {
+        const repairStartedAt = Date.now();
+        const repairDeadlineAt = options.deadlineAt === undefined
+            ? repairStartedAt + ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS
+            : Math.min(options.deadlineAt, repairStartedAt + ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS);
+        const repairRuntimeTracker = createActiveRuntimeTracker({ segmentStartedAt: repairStartedAt });
+        const repairResult = await runSingleAttempt(runtimeCwd, {
+            ...agent,
+            thinking: result.thinking,
+            tools: [],
+            extensions: [],
+            subagentOnlyExtensions: [],
+            inheritSkills: false,
+            completionGuard: false,
+            supervisorBridge: false,
+            toolBudget: undefined,
+        }, formatAcceptanceReportRepairPrompt(effectiveAcceptance), result.model ?? agent.model, {
+            ...options,
+            sessionFile: result.sessionFile,
+            sessionDir: undefined,
+            share: false,
+            artifactsDir: undefined,
+            outputPath: undefined,
+            outputMode: "inline",
+            onUpdate: undefined,
+            onControlEvent: undefined,
+            onSupervisorPauseTransition: undefined,
+            steerInboxDir: undefined,
+            toolBudget: undefined,
+            timeoutMs: Math.max(0, repairDeadlineAt - repairStartedAt),
+            deadlineAt: repairDeadlineAt,
+            timeoutMessage: "Acceptance report repair timed out.",
+        }, {
+            sessionEnabled: true,
+            systemPrompt,
+            resolvedSkillNames: undefined,
+            skillsWarning: undefined,
+            jsonlPath,
+            artifactPaths: artifactPathsResult,
+            transcriptWriter,
+            attemptNotes: [],
+            restoredSession: true,
+            contextPressureCrossedThresholds,
+            contextPressure,
+            runtimeTracker: repairRuntimeTracker,
+            healthState: {
+                value: createHealthTransitionState(randomUUID()),
+                closed: false,
+            },
+        });
+        sumUsage(result.usage, repairResult.usage);
+        const repairRuntimeMs = normalizeActiveRuntimeMs(repairRuntimeTracker.finalize()) ??
+            normalizeActiveRuntimeMs(repairResult.activeRuntimeMs) ??
+            normalizeActiveRuntimeMs(repairResult.progressSummary?.durationMs) ??
+            0;
+        const durationMs = (result.progressSummary?.durationMs ?? 0) + repairRuntimeMs;
+        result.activeRuntimeMs =
+            (normalizeActiveRuntimeMs(result.activeRuntimeMs) ?? 0) + repairRuntimeMs;
+        result.progressSummary = {
+            toolCount: (result.progressSummary?.toolCount ?? 0) + (repairResult.progressSummary?.toolCount ?? 0),
+            tokens: result.usage.input + result.usage.output,
+            durationMs,
+        };
+        if (result.progress) {
+            result.progress.toolCount += repairResult.progressSummary?.toolCount ?? 0;
+            result.progress.tokens = result.usage.input + result.usage.output;
+            result.progress.durationMs = durationMs;
+        }
+        if (repairResult.exitCode !== 0 ||
+            repairResult.error ||
+            repairResult.interrupted ||
+            repairResult.timedOut ||
+            repairResult.protocolOutputLimit) {
+            throw new Error(repairResult.error ?? "Acceptance report repair did not complete.");
+        }
+        return getFinalOutput(repairResult.messages ?? []);
+    };
+}
 export async function runSync(runtimeCwd, agents, agentName, task, options) {
     const agent = agents.find((a) => a.name === agentName);
     if (!agent) {
@@ -1171,8 +1259,9 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         mode: options.acceptanceContext?.mode ?? "single",
         async: options.acceptanceContext?.async,
     });
-    const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
-    const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+    const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+    const acceptanceTaskPointer = formatAcceptanceTaskPointer(effectiveAcceptance);
+    const taskWithAcceptance = acceptanceTaskPointer ? `${task}\n${acceptanceTaskPointer}` : task;
     const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
     const restoredSession = hasUsableSessionArtifact(options.sessionFile);
     const skillNames = options.skills ?? agent.skills ?? [];
@@ -1196,6 +1285,11 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
     }
     systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
+    if (acceptanceSystemPrompt) {
+        systemPrompt = systemPrompt
+            ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+            : acceptanceSystemPrompt;
+    }
     const fallbackModels = buildFallbackModelList(options.providerFallbackModels, agent.fallbackModels);
     const candidatePlan = buildModelCandidatePlan(options.modelOverride ?? agent.model, fallbackModels, options.availableModels, options.preferredModelProvider, { scope: options.modelScope, registry: options.modelRegistry });
     const candidates = candidatePlan.candidates;
@@ -1351,11 +1445,26 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         artifactPathsResult,
         transcriptWriter,
     });
+    const reportRepair = createForegroundReportRepair({
+        result,
+        agent,
+        effectiveAcceptance,
+        runtimeCwd,
+        options,
+        systemPrompt,
+        jsonlPath,
+        artifactPathsResult,
+        transcriptWriter,
+        contextPressureCrossedThresholds,
+        contextPressure,
+    });
     const acceptanceEvaluation = evaluateSingleAcceptance({
         result,
         effectiveAcceptance,
         options,
         runtimeCwd,
+        reportRepairAttempted: result.reportRepairAttempted,
+        repair: reportRepair,
     });
     const { interruptedAcceptance, acceptance } = acceptanceEvaluation;
     const evaluatedAcceptance = acceptance instanceof Promise ? await acceptance : acceptance;

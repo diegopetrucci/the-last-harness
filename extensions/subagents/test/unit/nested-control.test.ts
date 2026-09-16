@@ -622,7 +622,15 @@ describe("nested run control behavior", () => {
           mode: "single",
           state: "paused",
           cwd: root,
-          steps: [{ agent: "worker", status: "paused", sessionFile, acceptance: ledger }],
+          steps: [
+            {
+              agent: "worker",
+              status: "paused",
+              sessionFile,
+              reportRepairAttempted: true,
+              acceptance: ledger,
+            },
+          ],
         }),
         "utf-8",
       );
@@ -630,6 +638,7 @@ describe("nested run control behavior", () => {
       const match = resolveSubagentRunId(runId, { nested: { routes: [route] } });
       assert.ok(match?.kind === "nested");
       const target = resolveNestedResumeTarget(match, [root]);
+      assert.equal(target.reportRepairAttempted, true);
       assert.deepEqual(
         target.continuationAcceptance?.inferredEvidence,
         acceptance.inferredEvidence,

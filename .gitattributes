@@ -152,6 +152,7 @@ extensions/subagents/src/runs/background/fleet-view.js linguist-generated=true
 extensions/subagents/src/runs/background/notify.js linguist-generated=true
 extensions/subagents/src/runs/background/pi-streaming.js linguist-generated=true
 extensions/subagents/src/runs/background/result-watcher.js linguist-generated=true
+extensions/subagents/src/runs/background/report-repair-state.js linguist-generated=true
 extensions/subagents/src/runs/background/run-control-owner.js linguist-generated=true
 extensions/subagents/src/runs/background/run-id-resolver.js linguist-generated=true
 extensions/subagents/src/runs/background/run-status-owner.js linguist-generated=true

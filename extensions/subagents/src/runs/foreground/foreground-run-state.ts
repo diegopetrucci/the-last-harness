@@ -399,6 +399,8 @@ export function resolveForegroundResumeTarget(
       index: number;
       cwd: string;
       sessionFile: string;
+      /** True when an earlier segment already spent the bounded report repair. */
+      reportRepairAttempted?: boolean;
       asyncDir?: string;
       pauseKind?: "awaiting_supervisor" | "cohort_pause";
       continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
@@ -497,6 +499,7 @@ export function resolveForegroundResumeTarget(
     index,
     cwd: run.cwd,
     sessionFile,
+    ...(child.acceptance?.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
     ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
       ? { asyncDir: pausedForegroundStatusPath(run.runId) }
       : {}),

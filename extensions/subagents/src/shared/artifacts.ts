@@ -228,11 +228,14 @@ interface ForegroundSubagentArtifactMetadata extends Pick<
   | "skills"
   | "skillsWarning"
   | "activeRuntimeMs"
+  | "reportRepairAttempted"
 > {
   /** Compact metadata intentionally omits this full task text. */
   task?: SingleResult["task"];
   runId: string;
   durationMs?: number;
+  /** Bounded diagnostic when the report-only correction did not verify acceptance. */
+  reportRepairError?: string;
   timeoutMs?: number;
   deadlineAt?: number;
   toolCount?: number;

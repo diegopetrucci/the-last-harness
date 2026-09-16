@@ -77,13 +77,17 @@ function readNestedResumeStatusStep(runId, asyncDir) {
     const activeRuntimeMs = step.activeRuntimeMs;
     const activeRuntimeCheckpointAt = step
         .activeRuntimeCheckpointAt;
+    const raw = step;
+    const reportRepairAttempted = raw.reportRepairAttempted;
+    if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean") {
+        throw new Error(`Nested run '${runId}' persisted step reportRepairAttempted must be a boolean.`);
+    }
     if (activeRuntimeMs !== undefined &&
         (typeof activeRuntimeMs !== "number" ||
             !Number.isFinite(activeRuntimeMs) ||
             activeRuntimeMs < 0)) {
         throw new Error(`Nested run '${runId}' persisted step activeRuntimeMs must be a non-negative finite number.`);
     }
-    const raw = step;
     const modelIdentity = sanitizeSubagentModelIdentity(raw.modelIdentity) ??
         canonicalSubagentModelIdentity(typeof raw.model === "string" ? raw.model : undefined, typeof raw.thinking === "string" ? raw.thinking : undefined);
     const modelResolution = sanitizeSubagentModelResolution(raw.modelResolution);
@@ -104,6 +108,7 @@ function readNestedResumeStatusStep(runId, asyncDir) {
                 activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(activeRuntimeCheckpointAt),
             }
             : {}),
+        ...(reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
         ...(malformedProjectAgentMarker ? { projectAgentMarker: true } : {}),
         ...(raw.acceptance
             ? { acceptance: raw.acceptance }
@@ -189,6 +194,10 @@ export function resolveNestedResumeTarget(match, trustedSessionRoots) {
         index: 0,
         ...(projectAgentMarker ? { projectAgent: projectAgentMarker } : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
+        ...(statusStep?.reportRepairAttempted === true ||
+            statusStep?.acceptance?.reportRepairAttempted === true
+            ? { reportRepairAttempted: true }
+            : {}),
         ...(statusModelIdentity ? { modelIdentity: statusModelIdentity } : {}),
         ...(statusModelResolution ? { modelResolution: statusModelResolution } : {}),
         ...(contextUsage ? { contextUsage } : {}),

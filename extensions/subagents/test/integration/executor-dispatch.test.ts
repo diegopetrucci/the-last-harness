@@ -244,7 +244,11 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.ok((readCallArgs().at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
+    assert.ok(
+      (readCallArgs().at(-1) ?? "").startsWith(
+        "Task: \n\nAcceptance contract pointer: follow the runtime-owned contract",
+      ),
+    );
   });
 
   it("uses tasks instead of the top-level agent for parallel mode", async () => {
@@ -259,7 +263,9 @@ describe("subagent executor dispatch wiring", () => {
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "parallel");
     assert.ok(
-      (readCallArgs().at(-1) ?? "").startsWith("Task: parallel task\n\n## Acceptance Contract"),
+      (readCallArgs().at(-1) ?? "").startsWith(
+        "Task: parallel task\n\nAcceptance contract pointer: follow the runtime-owned contract",
+      ),
     );
   });
 

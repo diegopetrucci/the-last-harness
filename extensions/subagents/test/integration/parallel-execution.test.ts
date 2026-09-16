@@ -1021,7 +1021,7 @@ describe(
 
 Inspect
 
-## Acceptance Contract`),
+Acceptance contract pointer: follow the runtime-owned contract`),
         );
       },
     );

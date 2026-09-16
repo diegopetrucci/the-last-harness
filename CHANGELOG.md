@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### What's new
 
 - Developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
+- Otherwise-successful subagents with a missing or malformed acceptance report now receive one bounded, same-context report-only correction; the original implementation output is preserved and failed correction is reported as acceptance-unverified.
 
 ### Fixed
 

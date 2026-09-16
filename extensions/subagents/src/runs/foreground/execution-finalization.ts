@@ -45,7 +45,7 @@ import {
 import {
   appendAcceptanceReportDigest,
   buildSkippedAcceptanceLedger,
-  evaluateAcceptance,
+  evaluateAcceptanceWithReportRepair,
   parseAndStripAcceptanceReport,
 } from "../shared/acceptance.ts";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.ts";
@@ -677,6 +677,8 @@ type SingleAcceptanceEvaluationInput = {
   effectiveAcceptance: ResolvedAcceptanceConfig;
   options: RunSyncOptions;
   runtimeCwd: string;
+  reportRepairAttempted?: boolean;
+  repair?: () => Promise<string>;
 };
 
 type SingleAcceptanceEvaluation = {
@@ -687,7 +689,7 @@ type SingleAcceptanceEvaluation = {
 export function evaluateSingleAcceptance(
   input: SingleAcceptanceEvaluationInput,
 ): SingleAcceptanceEvaluation {
-  const { result, effectiveAcceptance, options, runtimeCwd } = input;
+  const { result, effectiveAcceptance, options, runtimeCwd, reportRepairAttempted, repair } = input;
   const interruptedAcceptance = buildSkippedAcceptanceLedger({
     acceptance: effectiveAcceptance,
     ledgerStatus: "skipped",
@@ -716,12 +718,22 @@ export function evaluateSingleAcceptance(
   }
   return {
     interruptedAcceptance,
-    acceptance: evaluateAcceptance({
+    acceptance: evaluateAcceptanceWithReportRepair({
       acceptance: effectiveAcceptance,
       output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
       cwd: options.cwd ?? runtimeCwd,
       signal: options.interruptSignal,
       abortMessage: "Interrupted. Waiting for explicit next action.",
+      exitCode: result.exitCode,
+      error: result.error,
+      interrupted: result.interrupted,
+      timedOut: result.timedOut,
+      protocolOutputLimit: result.protocolOutputLimit,
+      reportRepairAttempted,
+      onReportRepairStart: () => {
+        result.reportRepairAttempted = true;
+      },
+      repair,
     }),
   };
 }
@@ -815,6 +827,8 @@ export function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizatio
       exitSignal: result.exitSignal,
       timedOut: result.timedOut,
       terminationReason: result.terminationReason,
+      reportRepairAttempted: result.reportRepairAttempted,
+      reportRepairError: result.acceptance?.reportRepairError,
       contextUsage: result.contextUsage,
       contextPressure: result.contextPressure,
       contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,

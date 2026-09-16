@@ -7,7 +7,7 @@ import { boundChildError, formatProtocolOutputLimit } from "../shared/child-prot
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
-import { appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
+import { appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptanceWithReportRepair, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, resolveSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { transitionHealth, } from "../shared/health-transition.js";
@@ -469,7 +469,7 @@ export function prepareForegroundRunFinalization(input) {
     finalizeTerminationReason(result);
 }
 export function evaluateSingleAcceptance(input) {
-    const { result, effectiveAcceptance, options, runtimeCwd } = input;
+    const { result, effectiveAcceptance, options, runtimeCwd, reportRepairAttempted, repair } = input;
     const interruptedAcceptance = buildSkippedAcceptanceLedger({
         acceptance: effectiveAcceptance,
         ledgerStatus: "skipped",
@@ -496,12 +496,22 @@ export function evaluateSingleAcceptance(input) {
     }
     return {
         interruptedAcceptance,
-        acceptance: evaluateAcceptance({
+        acceptance: evaluateAcceptanceWithReportRepair({
             acceptance: effectiveAcceptance,
             output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
             cwd: options.cwd ?? runtimeCwd,
             signal: options.interruptSignal,
             abortMessage: "Interrupted. Waiting for explicit next action.",
+            exitCode: result.exitCode,
+            error: result.error,
+            interrupted: result.interrupted,
+            timedOut: result.timedOut,
+            protocolOutputLimit: result.protocolOutputLimit,
+            reportRepairAttempted,
+            onReportRepairStart: () => {
+                result.reportRepairAttempted = true;
+            },
+            repair,
         }),
     };
 }
@@ -558,6 +568,8 @@ export function finalizeForegroundArtifacts(input) {
             exitSignal: result.exitSignal,
             timedOut: result.timedOut,
             terminationReason: result.terminationReason,
+            reportRepairAttempted: result.reportRepairAttempted,
+            reportRepairError: result.acceptance?.reportRepairError,
             contextUsage: result.contextUsage,
             contextPressure: result.contextPressure,
             contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,

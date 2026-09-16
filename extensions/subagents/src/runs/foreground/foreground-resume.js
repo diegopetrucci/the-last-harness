@@ -685,6 +685,74 @@ function preflightResumeContextPolicy(target, agentConfig, modelOverride, curren
     }
     return { kind: "ready", modelContextWindow };
 }
+function buildResumeExecutionParams(input) {
+    const { request, runId, target, followUp, claimedPause, persistedProjectAuthorization, restoredModelIdentity, resumeModelResolution, activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs, effectiveCwd, parentSessionFile, artifactsDir, modelScope, agentConfig, availableModels, modelRegistrySnapshot, } = input;
+    const { params, ctx, deps, artifactConfig } = request;
+    const targetRepairMarker = target.kind === "revive" &&
+        "reportRepairAttempted" in target &&
+        target.reportRepairAttempted === true;
+    return {
+        agent: target.agent,
+        ...(claimedPause
+            ? {
+                continuationSource: {
+                    asyncDir: claimedPause.asyncDir,
+                    runId: target.runId,
+                    index: target.index,
+                    claimToken: claimedPause.claimToken,
+                    ...(persistedProjectAuthorization
+                        ? { projectAgent: persistedProjectAuthorization.capture }
+                        : {}),
+                },
+            }
+            : {}),
+        ...(target.source === "async" && target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
+        ...(resolveTargetTkTicketId(target)
+            ? { inheritedTkTicketId: resolveTargetTkTicketId(target) }
+            : {}),
+        task: buildRevivedAsyncTask(target, followUp),
+        modelOverride: params.model,
+        ...(restoredModelIdentity ? { restoredModelIdentity } : {}),
+        ...(resumeModelResolution ? { modelResolution: resumeModelResolution } : {}),
+        ...(target.kind === "revive" && target.contextUsage
+            ? { contextUsage: target.contextUsage }
+            : {}),
+        ...(targetRepairMarker ? { reportRepairAttempted: true } : {}),
+        ...revivedPressureOptions(target, claimedPause),
+        agentConfig,
+        projectAgent: persistedProjectAuthorization?.capture,
+        ctx: {
+            pi: deps.pi,
+            cwd: persistedProjectAuthorization?.canonicalCwd ?? request.requestCwd,
+            currentSessionId: deps.state.currentSessionId,
+            parentSessionId: ctx.sessionManager.getSessionId() ?? undefined,
+            currentModelProvider: ctx.model?.provider,
+            currentModel: ctx.model,
+            modelScope,
+        },
+        cwd: effectiveCwd,
+        maxOutput: params.maxOutput,
+        artifactsDir,
+        artifactConfig,
+        shareEnabled: params.share === true,
+        sessionRoot: deps.getSubagentSessionRoot(parentSessionFile),
+        sessionFile: target.sessionFile,
+        acceptance: params.acceptance,
+        continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
+        activeRuntimeMs,
+        ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
+            ? { activeRuntimeCheckpointAt }
+            : {}),
+        timeoutMs: runTimeoutMs,
+        outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
+        maxSubagentDepth: resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth),
+        controlConfig: resolveControlConfig(deps.config.control, params.control),
+        availableModels,
+        modelRegistry: modelRegistrySnapshot.evidence,
+        providerFallbackModels: providerFallbackModelsForTarget(params),
+        modelFallbackNotice: params.modelFallbackNotice,
+    };
+}
 export async function resumeAsyncRun(input) {
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
     input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -878,68 +946,28 @@ export async function resumeAsyncRun(input) {
     }
     let result;
     try {
-        result = (input.deps.executeAsyncSingle ?? executeAsyncSingle)(runId, {
-            agent: target.agent,
-            ...(claimedPause
-                ? {
-                    continuationSource: {
-                        asyncDir: claimedPause.asyncDir,
-                        runId: target.runId,
-                        index: target.index,
-                        claimToken: claimedPause.claimToken,
-                        ...(persistedProjectAuthorization
-                            ? { projectAgent: persistedProjectAuthorization.capture }
-                            : {}),
-                    },
-                }
-                : {}),
-            ...(target.source === "async" && target.tkTicket
-                ? { inheritedTkTicket: target.tkTicket }
-                : {}),
-            ...(resolveTargetTkTicketId(target)
-                ? { inheritedTkTicketId: resolveTargetTkTicketId(target) }
-                : {}),
-            task: buildRevivedAsyncTask(target, followUp),
-            modelOverride: input.params.model,
-            ...(restoredModelIdentity ? { restoredModelIdentity } : {}),
-            ...(resumeModelResolution ? { modelResolution: resumeModelResolution } : {}),
-            ...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
-                ? { contextUsage: target.contextUsage }
-                : {}),
-            ...revivedPressureOptions(target, claimedPause),
-            agentConfig,
-            projectAgent: persistedProjectAuthorization?.capture,
-            ctx: {
-                pi: input.deps.pi,
-                cwd: persistedProjectAuthorization?.canonicalCwd ?? input.requestCwd,
-                currentSessionId: input.deps.state.currentSessionId,
-                parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
-                currentModelProvider: input.ctx.model?.provider,
-                currentModel: input.ctx.model,
-                modelScope,
-            },
-            cwd: effectiveCwd,
-            maxOutput: input.params.maxOutput,
-            artifactsDir,
-            artifactConfig: input.artifactConfig,
-            shareEnabled: input.params.share === true,
-            sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
-            sessionFile: target.sessionFile,
-            acceptance: input.params.acceptance,
-            continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
+        const executionParams = buildResumeExecutionParams({
+            request: input,
+            runId,
+            target,
+            followUp,
+            claimedPause,
+            persistedProjectAuthorization,
+            restoredModelIdentity,
+            resumeModelResolution,
             activeRuntimeMs,
-            ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
-                ? { activeRuntimeCheckpointAt }
-                : {}),
-            timeoutMs: runTimeoutMs,
-            outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
-            maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
-            controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+            activeRuntimeCheckpointAt,
+            successfulCompletion,
+            runTimeoutMs,
+            effectiveCwd,
+            parentSessionFile,
+            artifactsDir,
+            modelScope,
+            agentConfig,
             availableModels,
-            modelRegistry: modelRegistrySnapshot.evidence,
-            providerFallbackModels: providerFallbackModelsForTarget(input.params),
-            modelFallbackNotice: input.params.modelFallbackNotice,
+            modelRegistrySnapshot,
         });
+        result = (input.deps.executeAsyncSingle ?? executeAsyncSingle)(runId, executionParams);
     }
     catch (error) {
         claimedPause?.rollbackReserved();

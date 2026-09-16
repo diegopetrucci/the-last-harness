@@ -80,6 +80,24 @@ describe(
       return readCall().args;
     }
 
+    function checkedAcceptanceReport(criterionId: string): string {
+      return [
+        "Corrected report only.",
+        "```acceptance-report",
+        JSON.stringify({
+          criteriaSatisfied: [
+            { id: criterionId, status: "satisfied", evidence: "existing result" },
+          ],
+          changedFiles: ["src/changed.ts"],
+          testsAddedOrUpdated: ["test/changed.test.ts"],
+          commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+          residualRisks: [],
+          noStagedFiles: true,
+        }),
+        "```",
+      ].join("\n");
+    }
+
     function makeExecutor(
       agents = [makeAgent("echo")],
       config: Record<string, unknown> = {},
@@ -279,7 +297,7 @@ describe(
       assert.deepEqual(jsonlRecords[3], 42);
       assert.deepEqual(jsonlRecords[4], unknownEvent);
       // Record 5 is the assistant message_end event. The default acceptance level is "auto",
-      // so formatAcceptancePrompt emits a "## Acceptance Contract" section; the mock's
+      // so the runtime-owned system prompt includes the acceptance contract; the mock's
       // taskRequestsAcceptance detects it and withAcceptanceReport appends an acceptance
       // report to the assistant text. Assert structure and key fields, not exact text.
       const r5 = jsonlRecords[5] as {
@@ -315,6 +333,171 @@ describe(
           .map((record) => record.text),
         ["null", '[1,"two"]', '"primitive"', "42", JSON.stringify(unknownEvent)],
       );
+    });
+
+    it("keeps the resolved acceptance contract in system state for foreground children", async () => {
+      mockPi.onCall({
+        output: [
+          "Completed the requested change.",
+          "```acceptance-report",
+          JSON.stringify({
+            criteriaSatisfied: [
+              { id: "scope", status: "satisfied", evidence: "reviewed the diff" },
+            ],
+            residualRisks: [],
+            manualNotes: "The requested scope was preserved.",
+          }),
+          "```",
+        ].join("\n"),
+      });
+      const result = await runSync(
+        tempDir,
+        [makeAgent("worker", { completionGuard: false })],
+        "worker",
+        "Implement the fix",
+        {
+          acceptance: {
+            level: "attested",
+            criteria: [{ id: "scope", must: "Only the requested files change" }],
+          },
+        },
+      );
+
+      const call = readCall();
+      const taskArg = call.args.at(-1) ?? "";
+      const systemPrompt = call.systemPrompts[0]?.text ?? "";
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.acceptance?.status, "attested");
+      assert.match(systemPrompt, /"id": "scope"/);
+      assert.match(systemPrompt, /Only the requested files change/);
+      assert.match(systemPrompt, /```acceptance-report/);
+      assert.match(taskArg, /Acceptance contract pointer/);
+      assert.doesNotMatch(taskArg, /Only the requested files change/);
+      assert.doesNotMatch(taskArg, /TLH Runtime-owned Acceptance Contract|Acceptance level:/);
+    });
+
+    it("repairs a malformed report once in the same foreground session without replacing output", async () => {
+      const criterionId = "report-shape";
+      const sessionFile = path.join(tempDir, "foreground-repair-session.jsonl");
+      const artifactsDir = path.join(tempDir, "foreground-repair-artifacts");
+      const malformedOutput = [
+        "Implementation output must remain intact.",
+        "```acceptance-report",
+        '{"criteriaSatisfied": [}',
+        "```",
+      ].join("\n");
+      mockPi.onCall({ output: malformedOutput });
+      mockPi.onCall({ output: checkedAcceptanceReport(criterionId) });
+
+      const result = await runSync(
+        tempDir,
+        [makeAgent("worker", { completionGuard: false })],
+        "worker",
+        "Implement the requested change",
+        {
+          sessionFile,
+          artifactsDir,
+          artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+          acceptance: {
+            level: "checked",
+            criteria: [{ id: criterionId, must: "The requested change is complete" }],
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.error, undefined);
+      assert.equal(result.acceptance?.status, "checked");
+      assert.equal(result.acceptance?.reportRepairAttempted, true);
+      assert.equal(result.reportRepairAttempted, true);
+      assert.deepEqual(result.usage, {
+        input: 200,
+        output: 100,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: 0.002,
+        turns: 2,
+      });
+      assert.equal(result.progress.tokens, 300);
+      assert.match(result.finalOutput ?? "", /Implementation output must remain intact/);
+      assert.ok(result.finalOutput?.includes('{"criteriaSatisfied": [}'));
+      assert.equal(mockPi.callCount(), 2, "expected one implementation call and one repair call");
+
+      const callFiles = fs
+        .readdirSync(mockPi.dir)
+        .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+        .sort();
+      assert.equal(callFiles.length, 2);
+      const calls = callFiles.map(
+        (name) =>
+          JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord,
+      );
+      const firstArgs = calls[0]?.args ?? [];
+      const repairArgs = calls[1]?.args ?? [];
+      assert.equal(firstArgs[firstArgs.indexOf("--session") + 1], sessionFile);
+      assert.equal(repairArgs[repairArgs.indexOf("--session") + 1], sessionFile);
+      assert.match(repairArgs.at(-1) ?? "", /TLH Acceptance Report Repair/);
+      assert.ok(repairArgs.includes("--no-tools"));
+      assert.ok(repairArgs.includes("--no-extensions"));
+      assert.ok(repairArgs.includes("--no-skills"));
+
+      assert.ok(result.artifactPaths, "expected repair artifacts");
+      const artifactOutput = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+      assert.match(artifactOutput, /Implementation output must remain intact/);
+      assert.ok(artifactOutput.includes('{"criteriaSatisfied": [}'));
+      const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+        reportRepairAttempted?: boolean;
+      };
+      assert.equal(metadata.reportRepairAttempted, true);
+    });
+
+    it("keeps a failed report repair rejected and performs no second repair", async () => {
+      const sessionFile = path.join(tempDir, "failed-repair-session.jsonl");
+      const malformedOutput = [
+        "Original implementation output.",
+        "```acceptance-report",
+        '{"criteriaSatisfied": [}',
+        "```",
+      ].join("\n");
+      mockPi.onCall({ output: malformedOutput });
+      mockPi.onCall({
+        output: [
+          "```acceptance-report",
+          JSON.stringify({
+            criteriaSatisfied: [
+              { id: "report-shape", status: "not-satisfied", evidence: "not proven" },
+            ],
+            changedFiles: ["src/changed.ts"],
+            testsAddedOrUpdated: ["test/changed.test.ts"],
+            commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+            residualRisks: [],
+            noStagedFiles: true,
+          }),
+          "```",
+        ].join("\n"),
+      });
+
+      const result = await runSync(
+        tempDir,
+        [makeAgent("worker", { completionGuard: false })],
+        "worker",
+        "Implement the requested change",
+        {
+          sessionFile,
+          acceptance: {
+            level: "checked",
+            criteria: [{ id: "report-shape", must: "The requested change is complete" }],
+          },
+        },
+      );
+
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.acceptance?.status, "rejected");
+      assert.equal(result.acceptance?.reportRepairAttempted, true);
+      assert.equal(result.acceptance?.reportRepairError, undefined);
+      assert.equal(result.acceptance?.childReport?.criteriaSatisfied[0]?.status, "not-satisfied");
+      assert.match(result.finalOutput ?? "", /Original implementation output/);
+      assert.equal(mockPi.callCount(), 2);
     });
 
     it("resolves skills from the effective task cwd", async () => {

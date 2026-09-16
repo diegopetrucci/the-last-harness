@@ -197,6 +197,7 @@ export interface BackgroundRunStatusOwner {
       | "projectAgent"
       | "projectAgentGuidance"
       | "tkTicketId"
+      | "reportRepairAttempted"
     >,
   ): SingleStepResultValue;
   timedOutStepResult(
@@ -209,6 +210,7 @@ export interface BackgroundRunStatusOwner {
       | "projectAgent"
       | "projectAgentGuidance"
       | "tkTicketId"
+      | "reportRepairAttempted"
     >,
   ): SingleStepResultValue;
   pauseMetadataForIndex(index: number, pausedAt?: number): AsyncStatus["pause"] | undefined;
@@ -368,6 +370,7 @@ export function createBackgroundRunStatusOwner(
             ),
           }
         : {}),
+      ...(task.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
       ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
       ...(transcriptPath ? { transcriptPath } : {}),
       skills: task.skills,
@@ -1146,12 +1149,14 @@ export function createBackgroundRunStatusOwner(
       | "projectAgent"
       | "projectAgentGuidance"
       | "tkTicketId"
+      | "reportRepairAttempted"
     >,
   ): SingleStepResultValue {
     return {
       agent: task.agent,
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
       ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
+      ...(task.reportRepairAttempted ? { reportRepairAttempted: true } : {}),
       output: "Paused after interrupt. Waiting for explicit next action.",
       exitCode: 0,
       interrupted: true,
@@ -1173,12 +1178,14 @@ export function createBackgroundRunStatusOwner(
       | "projectAgent"
       | "projectAgentGuidance"
       | "tkTicketId"
+      | "reportRepairAttempted"
     >,
   ): SingleStepResultValue {
     return {
       agent: task.agent,
       ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
       ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
+      ...(task.reportRepairAttempted ? { reportRepairAttempted: true } : {}),
       output: timeoutMessage ?? "Subagent timed out.",
       error: timeoutMessage ?? "Subagent timed out.",
       exitCode: 1,
@@ -1336,7 +1343,7 @@ interface TrackedStepSessionState {
   discoveredSessionFile?: string;
 }
 
-function findLatestSessionFile(sessionDir: string): string | null {
+export function findLatestSessionFile(sessionDir: string): string | null {
   try {
     const files = fs
       .readdirSync(sessionDir)
@@ -1346,6 +1353,7 @@ function findLatestSessionFile(sessionDir: string): string | null {
     files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
     return files[0] ?? null;
   } catch {
+    // Session lookup is optional metadata.
     return null;
   }
 }

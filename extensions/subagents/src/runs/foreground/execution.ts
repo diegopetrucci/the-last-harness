@@ -17,6 +17,7 @@ import {
   type ControlEvent,
   type ModelAttempt,
   type RunSyncOptions,
+  type ResolvedAcceptanceConfig,
   type SingleResult,
   type SubagentModelIdentity,
   type Usage,
@@ -89,9 +90,12 @@ import {
   summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
 import {
+  ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS,
   acceptanceFailureMessage,
   composeAcceptanceFailureError,
-  formatAcceptancePrompt,
+  formatAcceptanceReportRepairPrompt,
+  formatAcceptanceSystemPrompt,
+  formatAcceptanceTaskPointer,
   resolveEffectiveAcceptance,
 } from "../shared/acceptance.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -170,7 +174,12 @@ function settleForegroundAcceptance(
   interruptedAcceptance: AcceptanceLedger,
   healthState: HealthTransitionBox,
 ): void {
-  result.acceptance = acceptance;
+  const reportRepairAttempted =
+    result.reportRepairAttempted === true || acceptance.reportRepairAttempted === true;
+  result.reportRepairAttempted = reportRepairAttempted ? true : undefined;
+  result.acceptance = reportRepairAttempted
+    ? { ...acceptance, reportRepairAttempted: true }
+    : acceptance;
   if (
     !result.protocolOutputLimit &&
     !result.timedOut &&
@@ -181,7 +190,9 @@ function settleForegroundAcceptance(
     result.exitCode = 0;
     result.error = undefined;
     result.finalOutput = "Interrupted. Waiting for explicit next action.";
-    result.acceptance = interruptedAcceptance;
+    result.acceptance = reportRepairAttempted
+      ? { ...interruptedAcceptance, reportRepairAttempted: true }
+      : interruptedAcceptance;
     if (result.progress) {
       clearHealthForProgress(healthState, result.progress);
       result.progress.error = undefined;
@@ -1417,6 +1428,125 @@ async function runSingleAttempt(
   });
 }
 
+function createForegroundReportRepair(input: {
+  result: SingleResult;
+  agent: AgentConfig;
+  effectiveAcceptance: ResolvedAcceptanceConfig;
+  runtimeCwd: string;
+  options: RunSyncOptions;
+  systemPrompt: string;
+  jsonlPath?: string;
+  artifactPathsResult?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  contextPressureCrossedThresholds: Set<ContextPressureThreshold>;
+  contextPressure?: ContextPressureProjection;
+}): (() => Promise<string>) | undefined {
+  const {
+    result,
+    agent,
+    effectiveAcceptance,
+    runtimeCwd,
+    options,
+    systemPrompt,
+    jsonlPath,
+    artifactPathsResult,
+    transcriptWriter,
+    contextPressureCrossedThresholds,
+    contextPressure,
+  } = input;
+  if (!result.sessionFile) return undefined;
+
+  return async (): Promise<string> => {
+    const repairStartedAt = Date.now();
+    const repairDeadlineAt =
+      options.deadlineAt === undefined
+        ? repairStartedAt + ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS
+        : Math.min(options.deadlineAt, repairStartedAt + ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS);
+    const repairRuntimeTracker = createActiveRuntimeTracker({ segmentStartedAt: repairStartedAt });
+    const repairResult = await runSingleAttempt(
+      runtimeCwd,
+      {
+        ...agent,
+        thinking: result.thinking,
+        tools: [],
+        extensions: [],
+        subagentOnlyExtensions: [],
+        inheritSkills: false,
+        completionGuard: false,
+        supervisorBridge: false,
+        toolBudget: undefined,
+      },
+      formatAcceptanceReportRepairPrompt(effectiveAcceptance),
+      result.model ?? agent.model,
+      {
+        ...options,
+        sessionFile: result.sessionFile,
+        sessionDir: undefined,
+        share: false,
+        artifactsDir: undefined,
+        outputPath: undefined,
+        outputMode: "inline",
+        onUpdate: undefined,
+        onControlEvent: undefined,
+        onSupervisorPauseTransition: undefined,
+        steerInboxDir: undefined,
+        toolBudget: undefined,
+        timeoutMs: Math.max(0, repairDeadlineAt - repairStartedAt),
+        deadlineAt: repairDeadlineAt,
+        timeoutMessage: "Acceptance report repair timed out.",
+      },
+      {
+        sessionEnabled: true,
+        systemPrompt,
+        resolvedSkillNames: undefined,
+        skillsWarning: undefined,
+        jsonlPath,
+        artifactPaths: artifactPathsResult,
+        transcriptWriter,
+        attemptNotes: [],
+        restoredSession: true,
+        contextPressureCrossedThresholds,
+        contextPressure,
+        runtimeTracker: repairRuntimeTracker,
+        healthState: {
+          value: createHealthTransitionState(randomUUID()),
+          closed: false,
+        },
+      },
+    );
+    sumUsage(result.usage, repairResult.usage);
+    const repairRuntimeMs =
+      normalizeActiveRuntimeMs(repairRuntimeTracker.finalize()) ??
+      normalizeActiveRuntimeMs(repairResult.activeRuntimeMs) ??
+      normalizeActiveRuntimeMs(repairResult.progressSummary?.durationMs) ??
+      0;
+    const durationMs = (result.progressSummary?.durationMs ?? 0) + repairRuntimeMs;
+    result.activeRuntimeMs =
+      (normalizeActiveRuntimeMs(result.activeRuntimeMs) ?? 0) + repairRuntimeMs;
+    result.progressSummary = {
+      toolCount:
+        (result.progressSummary?.toolCount ?? 0) + (repairResult.progressSummary?.toolCount ?? 0),
+      tokens: result.usage.input + result.usage.output,
+      durationMs,
+    };
+    if (result.progress) {
+      result.progress.toolCount += repairResult.progressSummary?.toolCount ?? 0;
+      result.progress.tokens = result.usage.input + result.usage.output;
+      result.progress.durationMs = durationMs;
+    }
+    if (
+      repairResult.exitCode !== 0 ||
+      repairResult.error ||
+      repairResult.interrupted ||
+      repairResult.timedOut ||
+      repairResult.protocolOutputLimit
+    ) {
+      throw new Error(repairResult.error ?? "Acceptance report repair did not complete.");
+    }
+    return getFinalOutput(repairResult.messages ?? []);
+  };
+}
+
 /**
  * Run a subagent synchronously (blocking until complete)
  */
@@ -1488,8 +1618,9 @@ export async function runSync(
     mode: options.acceptanceContext?.mode ?? "single",
     async: options.acceptanceContext?.async,
   });
-  const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
-  const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
+  const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+  const acceptanceTaskPointer = formatAcceptanceTaskPointer(effectiveAcceptance);
+  const taskWithAcceptance = acceptanceTaskPointer ? `${task}\n${acceptanceTaskPointer}` : task;
   const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
   // A configured session path is often preallocated for a fresh run. Capture
   // whether an artifact existed before the first child is spawned so fallback
@@ -1522,6 +1653,11 @@ export async function runSync(
     systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
   }
   systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
+  if (acceptanceSystemPrompt) {
+    systemPrompt = systemPrompt
+      ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+      : acceptanceSystemPrompt;
+  }
 
   const fallbackModels = buildFallbackModelList(
     options.providerFallbackModels,
@@ -1715,11 +1851,26 @@ export async function runSync(
     transcriptWriter,
   });
 
+  const reportRepair = createForegroundReportRepair({
+    result,
+    agent,
+    effectiveAcceptance,
+    runtimeCwd,
+    options,
+    systemPrompt,
+    jsonlPath,
+    artifactPathsResult,
+    transcriptWriter,
+    contextPressureCrossedThresholds,
+    contextPressure,
+  });
   const acceptanceEvaluation = evaluateSingleAcceptance({
     result,
     effectiveAcceptance,
     options,
     runtimeCwd,
+    reportRepairAttempted: result.reportRepairAttempted,
+    repair: reportRepair,
   });
   const { interruptedAcceptance, acceptance } = acceptanceEvaluation;
   const evaluatedAcceptance = acceptance instanceof Promise ? await acceptance : acceptance;

@@ -573,6 +573,10 @@ export interface AcceptanceLedger {
   runtimeChecks: AcceptanceRuntimeCheck[];
   verifyRuns: AcceptanceVerifyResult[];
   reviewResult?: AcceptanceReviewResult;
+  /** True after the bounded automatic report-only correction has been attempted. */
+  reportRepairAttempted?: boolean;
+  /** Bounded diagnostic when the one report-only correction did not yield a report. */
+  reportRepairError?: string;
   parentDecision?: {
     status: "accepted" | "rejected";
     at: string;
@@ -637,6 +641,8 @@ export interface SingleResult {
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
+  /** True after the bounded automatic report-only correction has been attempted. */
+  reportRepairAttempted?: boolean;
   tkTicket?: TkTicketMetadata;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
@@ -962,6 +968,8 @@ export interface AsyncStatus {
     protocolOutputLimit?: ProtocolOutputLimit;
     processCleanup?: ChildProcessCleanupResult;
     acceptance?: AcceptanceLedger;
+    /** True after the bounded automatic report-only correction has been attempted. */
+    reportRepairAttempted?: boolean;
     pause?: AsyncPauseMetadata;
     cancel?: AsyncCancellationMetadata;
     /** Exact approved project-agent config/provenance; never includes a capability. */
@@ -1034,6 +1042,8 @@ export interface AsyncResultArtifactResultItem {
   transcriptPath?: string;
   transcriptError?: string;
   acceptance?: AcceptanceLedger;
+  /** True after the bounded automatic report-only correction has been attempted. */
+  reportRepairAttempted?: boolean;
   pause?: AsyncPauseMetadata;
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */

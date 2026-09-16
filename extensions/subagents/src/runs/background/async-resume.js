@@ -157,6 +157,9 @@ function validateResultFile(value, resultPath) {
             const interrupted = child.interrupted;
             if (interrupted !== undefined && typeof interrupted !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`);
+            const reportRepairAttempted = child.reportRepairAttempted;
+            if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean")
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].reportRepairAttempted must be a boolean.`);
             const activeRuntimeMs = child.activeRuntimeMs;
             if (activeRuntimeMs !== undefined &&
                 (typeof activeRuntimeMs !== "number" ||
@@ -176,6 +179,7 @@ function validateResultFile(value, resultPath) {
                 sessionFile,
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+                ...(reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
                 ...(model ? { model } : {}),
                 ...(tkTicketId ? { tkTicketId } : {}),
                 ...(thinking ? { thinking } : {}),
@@ -470,6 +474,10 @@ function validateRawStatusStepsForResume(statusPath) {
         const step = steps[index];
         if (!step || typeof step !== "object" || Array.isArray(step))
             continue;
+        const reportRepairAttempted = step.reportRepairAttempted;
+        if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean") {
+            throw new Error(`Invalid async status '${statusPath}': steps[${index}].reportRepairAttempted must be a boolean.`);
+        }
         const activeRuntimeMs = step.activeRuntimeMs;
         if (activeRuntimeMs !== undefined &&
             (typeof activeRuntimeMs !== "number" ||
@@ -597,6 +605,7 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
             : {}),
         ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+        ...(statusStep.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
     };
 }
 function resolveLiveAsyncResumeTarget(context) {
@@ -674,6 +683,8 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     const healthMetadata = resolveResumeHealthMetadata(selectedStatusStep, context.resultSteps[index]);
     const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
     const tkTicketId = resolvePersistedTkTicketId(context, index, selectedStatusStep, target.agent);
+    const reportRepairAttempted = selectedStatusStep?.reportRepairAttempted === true ||
+        context.resultSteps[index]?.reportRepairAttempted === true;
     const targetWithModelMetadata = {
         ...target,
         ...(tkTicketId ? { tkTicketId } : {}),
@@ -698,6 +709,7 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
             ? { claimed: true }
             : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
+        ...(reportRepairAttempted ? { reportRepairAttempted: true } : {}),
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);

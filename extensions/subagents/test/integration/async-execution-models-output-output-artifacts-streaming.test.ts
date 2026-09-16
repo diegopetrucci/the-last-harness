@@ -18,6 +18,7 @@ import {
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
+import { resolveEffectiveAcceptance } from "../../src/runs/shared/acceptance.ts";
 
 import {
   ASYNC_DIR,
@@ -59,6 +60,19 @@ function readJsonRecords(value: unknown, source: string): Array<Record<string, u
 function requiredString(value: unknown, source: string): string {
   if (typeof value !== "string") throw new Error(`Expected string in ${source}`);
   return value;
+}
+
+function acceptanceReport(criterionId: string): string {
+  return [
+    "completed",
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [{ id: criterionId, status: "satisfied", evidence: "checked" }],
+      residualRisks: [],
+      manualNotes: "The child completed the requested scope.",
+    }),
+    "```",
+  ].join("\n");
 }
 
 describe("async execution output and event streaming", () => {
@@ -237,6 +251,168 @@ describe("async execution output and event streaming", () => {
       .map((line, index) => parseJsonRecord(line, `events.jsonl line ${index + 1}`))
       .find((event) => event.type === "subagent.run.completed");
     assert.equal(completedEvent?.totalCost, undefined);
+  });
+
+  it("background fresh runs put the resolved acceptance contract in system state", async () => {
+    const criterionId = "fresh-scope";
+    const id = `async-fresh-acceptance-${Date.now().toString(36)}`;
+    mockPi.onCall({
+      matchArgIncludes: "fresh acceptance task",
+      output: acceptanceReport(criterionId),
+    });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "fresh acceptance task",
+      agentConfig: makeAgent("worker", { completionGuard: false }),
+      acceptance: {
+        level: "attested",
+        criteria: [{ id: criterionId, must: "Only fresh files change" }],
+        evidence: ["manual-notes", "residual-risks"],
+      },
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+
+    const payload = readJsonRecord(await waitForAsyncResultFile(id));
+    assert.equal(payload.success, true);
+    const call = await waitForMockPiCall(mockPi, 0);
+    const systemPrompt = call.systemPrompts.map((prompt) => prompt.text ?? "").join("\n");
+    const task = call.args.find((arg) => arg.includes("fresh acceptance task")) ?? "";
+    assert.match(systemPrompt, /Acceptance level: attested/);
+    assert.match(systemPrompt, /- fresh-scope: Only fresh files change/);
+    assert.match(task, /Acceptance contract pointer/);
+    assert.doesNotMatch(task, /Only fresh files change/);
+  });
+
+  it("background persisted continuations retain the resolved acceptance contract", async () => {
+    const criterionId = "persisted-scope";
+    const persistedAcceptance = resolveEffectiveAcceptance({
+      agentName: "worker",
+      task: "persisted acceptance task",
+      explicit: {
+        level: "attested",
+        criteria: [{ id: criterionId, must: "Only persisted files change" }],
+        evidence: ["manual-notes", "residual-risks"],
+      },
+      mode: "single",
+      async: true,
+    });
+    const id = `async-persisted-acceptance-${Date.now().toString(36)}`;
+    mockPi.onCall({
+      matchArgIncludes: "persisted acceptance task",
+      output: acceptanceReport(criterionId),
+    });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "persisted acceptance task",
+      agentConfig: makeAgent("worker", { completionGuard: false }),
+      acceptance: { level: "none", reason: "attempted continuation weakening" },
+      continuationAcceptance: persistedAcceptance,
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+
+    const payload = readJsonRecord(await waitForAsyncResultFile(id));
+    assert.equal(payload.success, true);
+    const call = await waitForMockPiCall(mockPi, 0);
+    const systemPrompt = call.systemPrompts.map((prompt) => prompt.text ?? "").join("\n");
+    const task = call.args.find((arg) => arg.includes("persisted acceptance task")) ?? "";
+    assert.match(systemPrompt, /Acceptance level: attested/);
+    assert.match(systemPrompt, /- persisted-scope: Only persisted files change/);
+    assert.match(task, /Acceptance contract pointer/);
+    assert.doesNotMatch(task, /Only persisted files change/);
+  });
+
+  it("parallel children keep their own acceptance contracts in system state", async () => {
+    const leftId = "parallel-left-scope";
+    const rightId = "parallel-right-scope";
+    const id = `async-parallel-acceptance-${Date.now().toString(36)}`;
+    mockPi.onCall({
+      matchArgIncludes: "parallel left acceptance task",
+      output: acceptanceReport(leftId),
+    });
+    mockPi.onCall({
+      matchArgIncludes: "parallel right acceptance task",
+      output: acceptanceReport(rightId),
+    });
+    const start = executeAsyncParallel(id, {
+      tasks: [
+        {
+          agent: "left",
+          task: "parallel left acceptance task",
+          acceptance: {
+            level: "attested",
+            criteria: [{ id: leftId, must: "Only left files change" }],
+            evidence: ["manual-notes", "residual-risks"],
+          },
+        },
+        {
+          agent: "right",
+          task: "parallel right acceptance task",
+          acceptance: {
+            level: "attested",
+            criteria: [{ id: rightId, must: "Only right files change" }],
+            evidence: ["manual-notes", "residual-risks"],
+          },
+        },
+      ],
+      concurrency: 1,
+      agents: [
+        makeAgent("left", { completionGuard: false }),
+        makeAgent("right", { completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+
+    const payload = readJsonRecord(await waitForAsyncResultFile(id));
+    assert.equal(payload.success, true);
+    const leftCall = await waitForMockPiCall(mockPi, 0);
+    const rightCall = await waitForMockPiCall(mockPi, 1);
+    const leftPrompt = leftCall.systemPrompts.map((prompt) => prompt.text ?? "").join("\n");
+    const rightPrompt = rightCall.systemPrompts.map((prompt) => prompt.text ?? "").join("\n");
+    const leftTask =
+      leftCall.args.find((arg) => arg.includes("parallel left acceptance task")) ?? "";
+    const rightTask =
+      rightCall.args.find((arg) => arg.includes("parallel right acceptance task")) ?? "";
+    assert.match(leftPrompt, /- parallel-left-scope: Only left files change/);
+    assert.doesNotMatch(leftPrompt, /parallel-right-scope/);
+    assert.match(rightPrompt, /- parallel-right-scope: Only right files change/);
+    assert.doesNotMatch(rightPrompt, /parallel-left-scope/);
+    assert.match(leftTask, /Acceptance contract pointer/);
+    assert.match(rightTask, /Acceptance contract pointer/);
+    assert.doesNotMatch(leftTask, /Only left files change/);
+    assert.doesNotMatch(rightTask, /Only right files change/);
   });
 
   it("background file-only runs write full output but return only a file reference", async () => {

@@ -13,7 +13,7 @@ import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
-import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
+import { formatAcceptanceSystemPrompt, mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
@@ -291,6 +291,20 @@ export function buildAsyncRunnerPlan(id, params) {
         if (validationError)
             throw new AsyncStartValidationError(validationError);
         const task = injectSingleOutputInstruction(`${readInstructions.prefix}${taskSpec.task ?? ""}${progressInstructions.suffix}`, outputPath);
+        const effectiveAcceptance = resolveEffectiveAcceptance({
+            explicit: taskSpec.acceptance,
+            agentName: taskSpec.agent,
+            acceptanceRole: agent.acceptanceRole,
+            task,
+            mode: "parallel",
+            async: true,
+        });
+        const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+        if (acceptanceSystemPrompt) {
+            systemPrompt = systemPrompt
+                ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+                : acceptanceSystemPrompt;
+        }
         const requestedModel = behavior.model ?? agent.model;
         const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
         const fallbackModels = buildFallbackModelList(taskSpec.providerFallbackModels, agent.fallbackModels);
@@ -350,14 +364,7 @@ export function buildAsyncRunnerPlan(id, params) {
             outputMode: behavior.outputMode,
             sessionFile,
             maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
-            effectiveAcceptance: resolveEffectiveAcceptance({
-                explicit: taskSpec.acceptance,
-                agentName: taskSpec.agent,
-                acceptanceRole: agent.acceptanceRole,
-                task,
-                mode: "parallel",
-                async: true,
-            }),
+            effectiveAcceptance,
             acceptanceInput: taskSpec.acceptance,
             acceptanceRole: agent.acceptanceRole,
             ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
@@ -589,7 +596,7 @@ export function executeAsyncParallel(id, params) {
     };
 }
 function buildAsyncSingleRunnerPlan(params, inputs) {
-    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, continuationAcceptance, acceptance, toolBudget, activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
+    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, continuationAcceptance, acceptance, toolBudget, reportRepairAttempted, activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
     const { task, taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, outputPath, outputMode, runDeadlineAt, childLocation, } = inputs;
     const thinkingSuffixOptions = {
         availableModels,
@@ -654,6 +661,22 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
     if ("error" in runtimePolicy)
         return { error: runtimePolicy.error };
     const { activeRuntimeMs: resolvedActiveRuntimeMs, activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt, effectiveTimeoutMs, timeoutOwner, effectiveDeadlineAt, } = runtimePolicy;
+    const effectiveAcceptance = continuationAcceptance
+        ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ?? continuationAcceptance)
+        : resolveEffectiveAcceptance({
+            explicit: acceptance,
+            agentName: agent,
+            acceptanceRole: agentConfig.acceptanceRole,
+            task,
+            mode: "single",
+            async: true,
+        });
+    const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+    const childSystemPrompt = acceptanceSystemPrompt
+        ? systemPrompt
+            ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+            : acceptanceSystemPrompt
+        : systemPrompt;
     const taskReference = agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
         ? inspectTkTicketReference(task)
         : undefined;
@@ -693,7 +716,7 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                 subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
                 completionGuard: agentConfig.completionGuard,
                 supervisorBridge: agentConfig.supervisorBridge,
-                systemPrompt,
+                systemPrompt: childSystemPrompt,
                 systemPromptMode: agentConfig.systemPromptMode,
                 inheritProjectContext: agentConfig.inheritProjectContext,
                 inheritSkills: agentConfig.inheritSkills,
@@ -713,17 +736,8 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                     }
                     : {}),
                 maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
-                effectiveAcceptance: continuationAcceptance
-                    ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ??
-                        continuationAcceptance)
-                    : resolveEffectiveAcceptance({
-                        explicit: acceptance,
-                        agentName: agent,
-                        acceptanceRole: agentConfig.acceptanceRole,
-                        task,
-                        mode: "single",
-                        async: true,
-                    }),
+                effectiveAcceptance,
+                ...(reportRepairAttempted ? { reportRepairAttempted: true } : {}),
                 ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
                 ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
                 ...(timeoutOwner ? { timeoutOwner } : {}),

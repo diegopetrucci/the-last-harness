@@ -128,6 +128,8 @@ type AsyncResumeTarget = {
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  /** True once this logical child has spent its one automatic report-repair attempt. */
+  reportRepairAttempted?: boolean;
   /** Selected-child success, independent of the aggregate async lifecycle state. */
   successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
@@ -424,6 +426,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         throw new Error(
           `Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`,
         );
+      const reportRepairAttempted = child.reportRepairAttempted;
+      if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean")
+        throw new Error(
+          `Invalid async result file '${resultPath}': results[${index}].reportRepairAttempted must be a boolean.`,
+        );
       const activeRuntimeMs = child.activeRuntimeMs;
       if (
         activeRuntimeMs !== undefined &&
@@ -457,6 +464,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         sessionFile,
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+        ...(reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
         ...(model ? { model } : {}),
         ...(tkTicketId ? { tkTicketId } : {}),
         ...(thinking ? { thinking } : {}),
@@ -824,6 +832,12 @@ function validateRawStatusStepsForResume(statusPath: string): void {
   for (let index = 0; index < steps.length; index++) {
     const step = steps[index];
     if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const reportRepairAttempted = (step as Record<string, unknown>).reportRepairAttempted;
+    if (reportRepairAttempted !== undefined && typeof reportRepairAttempted !== "boolean") {
+      throw new Error(
+        `Invalid async status '${statusPath}': steps[${index}].reportRepairAttempted must be a boolean.`,
+      );
+    }
     const activeRuntimeMs = (step as Record<string, unknown>).activeRuntimeMs;
     if (
       activeRuntimeMs !== undefined &&
@@ -1002,6 +1016,7 @@ function buildLiveAsyncResumeTarget(
       : {}),
     ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+    ...(statusStep.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
   };
 }
 
@@ -1124,6 +1139,9 @@ function buildTerminalAsyncResumeTarget(
   );
   const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
   const tkTicketId = resolvePersistedTkTicketId(context, index, selectedStatusStep, target.agent);
+  const reportRepairAttempted =
+    selectedStatusStep?.reportRepairAttempted === true ||
+    context.resultSteps[index]?.reportRepairAttempted === true;
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
     ...(tkTicketId ? { tkTicketId } : {}),
@@ -1148,6 +1166,7 @@ function buildTerminalAsyncResumeTarget(
       ? { claimed: true }
       : {}),
     ...(continuationAcceptance ? { continuationAcceptance } : {}),
+    ...(reportRepairAttempted ? { reportRepairAttempted: true } : {}),
   };
   const diagnosticMetadata = resolveResumeDiagnosticMetadata(
     index,

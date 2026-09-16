@@ -39,6 +39,7 @@ import {
   type SubagentModelResolution,
   type SubagentTerminationReason,
   type ToolBudgetState,
+  type Usage,
 } from "../../shared/types.ts";
 import { type RunnerSubagentStep as SubagentStep } from "../shared/parallel-utils.ts";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.ts";
@@ -73,12 +74,14 @@ import {
   type ActiveRuntimeTracker,
 } from "../shared/lifecycle-state.ts";
 import {
+  ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS,
   acceptanceFailureMessage,
   appendAcceptanceReportDigest,
   buildSkippedAcceptanceLedger,
   composeAcceptanceFailureError,
-  evaluateAcceptance,
-  formatAcceptancePrompt,
+  evaluateAcceptanceWithReportRepair,
+  formatAcceptanceReportRepairPrompt,
+  formatAcceptanceTaskPointer,
   parseAndStripAcceptanceReport,
 } from "../shared/acceptance.ts";
 import {
@@ -96,12 +99,24 @@ import {
 
 type AppendDiagnosticJsonl = (filePath: string, line: string, droppedEventType?: string) => void;
 
-function costSummaryFromAttempts(attempts: ModelAttempt[] | undefined): CostSummary | undefined {
-  if (!attempts || attempts.length === 0) return undefined;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let costUsd = 0;
-  for (const attempt of attempts) {
+function addUsage(target: Usage, source: Usage): void {
+  target.input += source.input;
+  target.output += source.output;
+  target.cacheRead += source.cacheRead;
+  target.cacheWrite += source.cacheWrite;
+  target.cost += source.cost;
+  target.turns += source.turns;
+}
+
+function costSummaryFromAttempts(
+  attempts: ModelAttempt[] | undefined,
+  repairUsage?: Usage,
+): CostSummary | undefined {
+  if ((!attempts || attempts.length === 0) && !repairUsage) return undefined;
+  let inputTokens = repairUsage?.input ?? 0;
+  let outputTokens = repairUsage?.output ?? 0;
+  let costUsd = repairUsage?.cost ?? 0;
+  for (const attempt of attempts ?? []) {
     inputTokens += attempt.usage?.input ?? 0;
     outputTokens += attempt.usage?.output ?? 0;
     costUsd += attempt.usage?.cost ?? 0;
@@ -141,6 +156,9 @@ interface SingleStepContext {
   /** Called after each child attempt has fully settled, including failures. */
   onAttemptEnd?: () => void;
   onChildProtocolOutputLimit?: (limit: ProtocolOutputLimit) => void;
+  onReportRepairStart?: () => void;
+  /** Resolve a same-context session before constructing the report-repair callback. */
+  resolveRepairSessionFile?: () => string | undefined;
   skipAcceptance?: () => boolean;
   /** Shared runner-owned tracker used by checkpoints and final settlement. */
   runtimeTracker?: ActiveRuntimeTracker;
@@ -184,6 +202,8 @@ type SingleStepResultValue = {
   attemptedModels?: string[];
   modelAttempts?: ModelAttempt[];
   totalCost?: CostSummary;
+  /** Usage spent by the bounded report-only correction, for runner token accounting. */
+  repairUsage?: Usage;
   artifactPaths?: ArtifactPaths;
   processCleanup?: ChildProcessCleanupResult;
   transcriptPath?: string;
@@ -195,6 +215,8 @@ type SingleStepResultValue = {
   sessionFile?: string;
   completionGuardTriggered?: boolean;
   acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+  /** True after the bounded automatic report-only correction has been attempted. */
+  reportRepairAttempted?: boolean;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
   modelFallbackNotice?: string;
@@ -226,6 +248,7 @@ interface SingleStepExecutionState {
   firstAttemptIdentity?: SubagentModelIdentity;
   aggregateContextUsage?: ContextUsageDiagnostics;
   finalAttemptContextUsage?: ContextUsageDiagnostics;
+  repairUsage?: Usage;
 }
 
 interface SingleStepSetup {
@@ -308,8 +331,8 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   let task = step.task;
   const taskForCompletionGuard = task;
   if (step.effectiveAcceptance) {
-    const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance);
-    if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
+    const acceptanceTaskPointer = formatAcceptanceTaskPointer(step.effectiveAcceptance);
+    if (acceptanceTaskPointer) task = `${task}\n${acceptanceTaskPointer}`;
   }
   const sessionEnabled = Boolean(step.sessionFile) || stepContext.sessionEnabled;
   const sessionDir = step.sessionFile ? undefined : stepContext.sessionDir;
@@ -465,6 +488,7 @@ function prepareSingleStepAttempt(input: {
       sessionDir,
       sessionFile: step.sessionFile,
       model: candidate,
+      thinking: attemptThinking,
       inheritProjectContext: step.inheritProjectContext,
       inheritSkills: step.inheritSkills,
       requireReadTool: step.inheritSkills || Boolean(step.skills?.length),
@@ -645,8 +669,20 @@ function prepareSingleStepAcceptance(input: {
   finalResult?: SingleStepRuntimeResult;
   output: string;
   report?: SingleStepAcceptanceReport;
+  transcriptWriter?: ChildTranscriptWriter;
+  appendDiagnosticJsonl: AppendDiagnosticJsonl;
+  onRepairComplete?: (run: RunPiStreamingResult) => void;
 }): SingleStepAcceptanceEvaluation {
-  const { step, ctx, finalResult, output, report } = input;
+  const {
+    step,
+    ctx,
+    finalResult,
+    output,
+    report,
+    transcriptWriter,
+    appendDiagnosticJsonl,
+    onRepairComplete,
+  } = input;
   const acceptanceAbortController = new AbortController();
   const acceptanceAbortListeners: Array<() => void> = [];
   const relayAcceptanceAbort = (signal: AbortSignal | undefined, abort: () => void) => {
@@ -668,10 +704,132 @@ function prepareSingleStepAcceptance(input: {
     interruptedDuringAcceptance = true;
     acceptanceAbortController.abort();
   });
+  let removeRepairAbort = (): void => {};
   const teardown = () => {
     ctx.registerInterrupt?.(undefined);
+    removeRepairAbort();
     for (const removeAbortListener of acceptanceAbortListeners) removeAbortListener();
   };
+  let repairInterrupt: (() => void) | undefined;
+  let repairTimeout: (() => void) | undefined;
+  const repairAbort = () => repairInterrupt?.();
+  const repairSessionFile = step.effectiveAcceptance
+    ? (ctx.resolveRepairSessionFile?.() ?? step.sessionFile)
+    : undefined;
+  const repair =
+    step.effectiveAcceptance && repairSessionFile
+      ? async (): Promise<string> => {
+          const repairOutputFile = path.join(
+            path.dirname(ctx.outputFile),
+            `${path.basename(ctx.outputFile)}.acceptance-repair`,
+          );
+          const repairModel = finalResult?.configuredModel ?? finalResult?.model ?? step.model;
+          const repairThinking = dispatchThinkingDropped(step, repairModel)
+            ? undefined
+            : resolveEffectiveThinking(repairModel, step.thinking);
+          const repairStartedAt = Date.now();
+          const repairDeadlineAt = Math.min(
+            ctx.deadlineAt ?? Number.MAX_SAFE_INTEGER,
+            repairStartedAt + ACCEPTANCE_REPORT_REPAIR_TIMEOUT_MS,
+          );
+          let repairArgs: string[];
+          let repairEnv: Record<string, string | undefined>;
+          let repairTempDir: string | undefined;
+          let repairTimer: DeadlineTimer | undefined;
+          try {
+            ({
+              args: repairArgs,
+              env: repairEnv,
+              tempDir: repairTempDir,
+            } = buildPiArgs({
+              parentSessionId: step.parentSessionId,
+              baseArgs: ["--mode", "json", "-p"],
+              task: formatAcceptanceReportRepairPrompt(step.effectiveAcceptance!),
+              sessionEnabled: true,
+              sessionFile: repairSessionFile,
+              model: repairModel,
+              thinking: repairThinking,
+              inheritProjectContext: false,
+              inheritSkills: false,
+              requireReadTool: false,
+              tools: [],
+              extensions: [],
+              subagentOnlyExtensions: [],
+              supervisorBridge: false,
+              systemPrompt: step.systemPrompt ?? "",
+              systemPromptMode: step.systemPromptMode,
+              cwd: step.cwd ?? ctx.cwd,
+              promptFileStem: step.agent,
+              runId: ctx.id,
+              childAgentName: step.agent,
+              projectAgentGuidance: false,
+              childIndex: ctx.flatIndex,
+            }));
+            repairTimer = scheduleDeadline(repairDeadlineAt, () => repairTimeout?.());
+            const repairRun = await runPiStreaming(
+              repairArgs,
+              step.cwd ?? ctx.cwd,
+              repairOutputFile,
+              appendDiagnosticJsonl,
+              repairEnv,
+              ctx.piPackageRoot,
+              ctx.piArgv1,
+              step.maxSubagentDepth,
+              {
+                eventsPath: path.join(path.dirname(ctx.outputFile), "events.jsonl"),
+                runId: ctx.id,
+                stepIndex: ctx.flatIndex,
+                agent: step.agent,
+                includeChildEventProjections: ctx.artifactConfig.includeChildEventProjections,
+              },
+              (interrupt) => {
+                repairInterrupt = interrupt;
+              },
+              undefined,
+              transcriptWriter,
+              (timeout) => {
+                repairTimeout = timeout;
+                ctx.registerTimeout?.(timeout);
+              },
+              "Acceptance report repair timed out.",
+              undefined,
+              {
+                restored: true,
+                configuredModel: repairModel,
+                contextWindow: contextWindowForModel(repairModel, step.contextWindows),
+                contextWindows: step.contextWindows,
+              },
+            );
+            onRepairComplete?.(repairRun);
+            if (
+              repairRun.exitCode !== 0 ||
+              repairRun.error ||
+              repairRun.interrupted ||
+              repairRun.timedOut ||
+              repairRun.protocolOutputLimit
+            ) {
+              throw new Error(repairRun.error ?? "Acceptance report repair did not complete.");
+            }
+            return repairRun.finalOutput;
+          } finally {
+            repairTimer?.cancel();
+            repairInterrupt = undefined;
+            repairTimeout = undefined;
+            ctx.registerTimeout?.(undefined);
+            cleanupTempDir(repairTempDir);
+            try {
+              fs.rmSync(repairOutputFile, { force: true });
+            } catch {
+              // Best-effort cleanup for the private report-repair output stream.
+            }
+          }
+        }
+      : undefined;
+  if (repair) {
+    acceptanceAbortController.signal.addEventListener("abort", repairAbort);
+    removeRepairAbort = () =>
+      acceptanceAbortController.signal.removeEventListener("abort", repairAbort);
+  }
   const acceptance =
     step.effectiveAcceptance &&
     !finalResult?.interrupted &&
@@ -679,7 +837,7 @@ function prepareSingleStepAcceptance(input: {
     !ctx.interruptSignal?.aborted &&
     !acceptanceAbortController.signal.aborted &&
     !ctx.skipAcceptance?.()
-      ? evaluateAcceptance({
+      ? evaluateAcceptanceWithReportRepair({
           acceptance: step.effectiveAcceptance,
           output,
           report,
@@ -688,6 +846,14 @@ function prepareSingleStepAcceptance(input: {
           abortMessage: interruptedDuringAcceptance
             ? (ctx.interruptMessage ?? "Interrupted. Waiting for explicit next action.")
             : (ctx.timeoutMessage ?? "Subagent timed out."),
+          exitCode: finalResult?.exitCode,
+          error: finalResult?.error,
+          interrupted: finalResult?.interrupted,
+          timedOut: finalResult?.timedOut,
+          protocolOutputLimit: finalResult?.protocolOutputLimit,
+          reportRepairAttempted: step.reportRepairAttempted,
+          onReportRepairStart: ctx.onReportRepairStart,
+          repair,
         })
       : undefined;
   return {
@@ -716,8 +882,11 @@ function finalizeSingleStepOutput(input: {
   step: SubagentStep;
   ctx: SingleStepContext;
   state: SingleStepExecutionState;
+  transcriptWriter?: ChildTranscriptWriter;
+  appendDiagnosticJsonl: AppendDiagnosticJsonl;
+  onRepairComplete?: (run: RunPiStreamingResult) => void;
 }): SingleStepOutputFinalization {
-  const { step, ctx, state } = input;
+  const { step, ctx, state, transcriptWriter, appendDiagnosticJsonl, onRepairComplete } = input;
   const finalResult = state.finalResult;
   const processCleanup =
     finalResult?.processCleanup ??
@@ -794,6 +963,9 @@ function finalizeSingleStepOutput(input: {
     finalResult,
     output: outputForAcceptance,
     report: rawAcceptanceReport,
+    transcriptWriter,
+    appendDiagnosticJsonl,
+    onRepairComplete,
   });
   return {
     processCleanup,
@@ -830,6 +1002,8 @@ function finalizeSingleStepOutcome(input: {
 }): SingleStepOutcome {
   const { step, ctx, state, acceptance, acceptanceWasInterrupted } = input;
   const finalResult = state.finalResult;
+  const reportRepairAttempted =
+    step.reportRepairAttempted === true || acceptance?.reportRepairAttempted === true;
   const effectiveInterrupted =
     !finalResult?.protocolOutputLimit &&
     (finalResult?.interrupted === true ||
@@ -846,6 +1020,7 @@ function finalizeSingleStepOutcome(input: {
           id: "paused",
           message:
             "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+          reportRepairAttempted,
         })
       : undefined;
   const timedOutAfterAcceptance =
@@ -997,6 +1172,12 @@ function finalizeSingleStepArtifacts(input: {
             stderrTruncated: finalResult?.stderrTruncated,
             protocolOutputLimit: finalResult?.protocolOutputLimit,
             terminationReason: outcome.terminationReason,
+            reportRepairAttempted:
+              step.reportRepairAttempted === true ||
+              outcome.effectiveAcceptance?.reportRepairAttempted === true
+                ? true
+                : undefined,
+            reportRepairError: outcome.effectiveAcceptance?.reportRepairError,
             contextUsage: state.aggregateContextUsage,
             contextPressure: step.contextPressure,
             contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
@@ -1057,7 +1238,8 @@ function buildSingleStepResult(input: {
     attemptedModels: state.attemptedModels.length > 0 ? state.attemptedModels : undefined,
     modelAttempts: state.modelAttempts,
     modelFallbackNotice: output.modelFallbackNotice,
-    totalCost: costSummaryFromAttempts(state.modelAttempts),
+    totalCost: costSummaryFromAttempts(state.modelAttempts, state.repairUsage),
+    repairUsage: state.repairUsage,
     artifactPaths: setup.artifactPaths,
     processCleanup: output.processCleanup,
     contextUsage: state.aggregateContextUsage,
@@ -1072,6 +1254,11 @@ function buildSingleStepResult(input: {
     toolBudgetBlocked: state.toolBudgetBlocked || undefined,
     completionGuardTriggered: state.completionGuardTriggeredFinal,
     acceptance: outcome.effectiveAcceptance,
+    reportRepairAttempted:
+      step.reportRepairAttempted === true ||
+      outcome.effectiveAcceptance?.reportRepairAttempted === true
+        ? true
+        : undefined,
     activeRuntimeMs,
   };
 }
@@ -1185,7 +1372,21 @@ export async function runSingleStep(
     if (stopAttempt) break;
   }
 
-  const output = finalizeSingleStepOutput({ step, ctx: stepCtx, state });
+  const onRepairComplete = (run: RunPiStreamingResult): void => {
+    const repairUsage = state.repairUsage ?? (state.repairUsage = emptyUsage());
+    addUsage(repairUsage, run.usage);
+    // The shared tracker spans the acceptance phase; checkpointing here makes
+    // repair runtime visible to lifecycle checkpoints without double-counting.
+    setup.runtimeTracker.checkpoint();
+  };
+  const output = finalizeSingleStepOutput({
+    step,
+    ctx: stepCtx,
+    state,
+    transcriptWriter: setup.transcriptWriter,
+    appendDiagnosticJsonl,
+    onRepairComplete,
+  });
   let acceptance: SingleStepAcceptance | undefined;
   try {
     acceptance = output.acceptance instanceof Promise ? await output.acceptance : output.acceptance;

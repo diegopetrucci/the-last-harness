@@ -127,9 +127,15 @@ export interface RunSyncResult {
   acceptance?: {
     explicit?: boolean;
     status?: string;
+    reportRepairAttempted?: boolean;
+    reportRepairError?: string;
+    childReport?: {
+      criteriaSatisfied: Array<{ id?: string; status?: string }>;
+    };
     verifyRuns?: Array<{ status?: string }>;
     runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
   };
+  reportRepairAttempted?: boolean;
   /** Typed from production ChildProcessCleanupResult so new fields are caught. */
   processCleanup?: ChildProcessCleanupResult;
 }

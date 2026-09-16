@@ -104,6 +104,7 @@ export function createBackgroundRunStatusOwner(input) {
                     activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt),
                 }
                 : {}),
+            ...(task.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
             ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
             ...(transcriptPath ? { transcriptPath } : {}),
             skills: task.skills,
@@ -747,6 +748,7 @@ export function createBackgroundRunStatusOwner(input) {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
             ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
+            ...(task.reportRepairAttempted ? { reportRepairAttempted: true } : {}),
             output: "Paused after interrupt. Waiting for explicit next action.",
             exitCode: 0,
             interrupted: true,
@@ -762,6 +764,7 @@ export function createBackgroundRunStatusOwner(input) {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
             ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
+            ...(task.reportRepairAttempted ? { reportRepairAttempted: true } : {}),
             output: timeoutMessage ?? "Subagent timed out.",
             error: timeoutMessage ?? "Subagent timed out.",
             exitCode: 1,
@@ -910,7 +913,7 @@ export function createBackgroundRunStatusOwner(input) {
     };
     return owner;
 }
-function findLatestSessionFile(sessionDir) {
+export function findLatestSessionFile(sessionDir) {
     try {
         const files = fs
             .readdirSync(sessionDir)

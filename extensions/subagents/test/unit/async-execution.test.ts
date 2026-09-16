@@ -129,6 +129,50 @@ describe("async runner execution", () => {
     });
   });
 
+  it("keeps independent resolved acceptance contracts in parallel child system prompts", () => {
+    const result = buildAsyncRunnerPlan("run-acceptance-contracts", {
+      tasks: [
+        {
+          agent: "left",
+          task: "parallel left task",
+          acceptance: {
+            level: "attested",
+            criteria: [{ id: "left-scope", must: "Only left files change" }],
+            evidence: ["manual-notes", "residual-risks"],
+          },
+        },
+        {
+          agent: "right",
+          task: "parallel right task",
+          acceptance: {
+            level: "attested",
+            criteria: [{ id: "right-scope", must: "Only right files change" }],
+            evidence: ["manual-notes", "residual-risks"],
+          },
+        },
+      ],
+      agents: [agent("left"), agent("right")],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+      ctx,
+      maxSubagentDepth: 2,
+    });
+
+    assert.ok("plan" in result, "expected successful plan build");
+    const [left, right] = result.plan.tasks as RunnerSubagentStep[];
+    assert.match(left?.systemPrompt ?? "", /- left-scope: Only left files change/);
+    assert.doesNotMatch(left?.systemPrompt ?? "", /right-scope/);
+    assert.match(right?.systemPrompt ?? "", /- right-scope: Only right files change/);
+    assert.doesNotMatch(right?.systemPrompt ?? "", /left-scope/);
+    assert.deepEqual(
+      (left?.effectiveAcceptance?.criteria ?? []).map((criterion) => criterion.id),
+      ["left-scope"],
+    );
+    assert.deepEqual(
+      (right?.effectiveAcceptance?.criteria ?? []).map((criterion) => criterion.id),
+      ["right-scope"],
+    );
+  });
+
   it("carries omitted, explicit-empty, and named tool policies through runner serialization", () => {
     const policies: Array<AgentConfig["tools"]> = [undefined, null, ["read"]];
     const agents = policies.map((tools, index) => ({

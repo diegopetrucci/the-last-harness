@@ -52,6 +52,7 @@ import {
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import {
+  formatAcceptanceSystemPrompt,
   mergeContinuationAcceptance,
   resolveEffectiveAcceptance,
   validateAcceptanceInput,
@@ -168,6 +169,8 @@ interface AsyncSingleParams {
   nestedRoute?: NestedRouteInfo;
   acceptance?: AcceptanceInput;
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+  /** Persisted marker preventing a second report-only correction on revival. */
+  reportRepairAttempted?: boolean;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
@@ -617,6 +620,20 @@ export function buildAsyncRunnerPlan(
       `${readInstructions.prefix}${taskSpec.task ?? ""}${progressInstructions.suffix}`,
       outputPath,
     );
+    const effectiveAcceptance = resolveEffectiveAcceptance({
+      explicit: taskSpec.acceptance,
+      agentName: taskSpec.agent,
+      acceptanceRole: agent.acceptanceRole,
+      task,
+      mode: "parallel",
+      async: true,
+    });
+    const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+    if (acceptanceSystemPrompt) {
+      systemPrompt = systemPrompt
+        ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+        : acceptanceSystemPrompt;
+    }
 
     const requestedModel = behavior.model ?? agent.model;
     const primaryModel = resolveSubagentModelOverride(
@@ -723,14 +740,7 @@ export function buildAsyncRunnerPlan(
       outputMode: behavior.outputMode,
       sessionFile,
       maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
-      effectiveAcceptance: resolveEffectiveAcceptance({
-        explicit: taskSpec.acceptance,
-        agentName: taskSpec.agent,
-        acceptanceRole: agent.acceptanceRole,
-        task,
-        mode: "parallel",
-        async: true,
-      }),
+      effectiveAcceptance,
       acceptanceInput: taskSpec.acceptance,
       acceptanceRole: agent.acceptanceRole,
       ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
@@ -1062,6 +1072,7 @@ function buildAsyncSingleRunnerPlan(
     continuationAcceptance,
     acceptance,
     toolBudget,
+    reportRepairAttempted,
     activeRuntimeMs,
     activeRuntimeCheckpointAt,
     timeoutMs,
@@ -1190,6 +1201,22 @@ function buildAsyncSingleRunnerPlan(
     timeoutOwner,
     effectiveDeadlineAt,
   } = runtimePolicy;
+  const effectiveAcceptance = continuationAcceptance
+    ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ?? continuationAcceptance)
+    : resolveEffectiveAcceptance({
+        explicit: acceptance,
+        agentName: agent,
+        acceptanceRole: agentConfig.acceptanceRole,
+        task,
+        mode: "single",
+        async: true,
+      });
+  const acceptanceSystemPrompt = formatAcceptanceSystemPrompt(effectiveAcceptance);
+  const childSystemPrompt = acceptanceSystemPrompt
+    ? systemPrompt
+      ? `${systemPrompt}\n\n${acceptanceSystemPrompt}`
+      : acceptanceSystemPrompt
+    : systemPrompt;
   const taskReference =
     agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig)
       ? inspectTkTicketReference(task)
@@ -1236,7 +1263,7 @@ function buildAsyncSingleRunnerPlan(
         subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
         completionGuard: agentConfig.completionGuard,
         supervisorBridge: agentConfig.supervisorBridge,
-        systemPrompt,
+        systemPrompt: childSystemPrompt,
         systemPromptMode: agentConfig.systemPromptMode,
         inheritProjectContext: agentConfig.inheritProjectContext,
         inheritSkills: agentConfig.inheritSkills,
@@ -1264,17 +1291,8 @@ function buildAsyncSingleRunnerPlan(
           maxSubagentDepth,
           agentConfig.maxSubagentDepth,
         ),
-        effectiveAcceptance: continuationAcceptance
-          ? (mergeContinuationAcceptance(continuationAcceptance, acceptance) ??
-            continuationAcceptance)
-          : resolveEffectiveAcceptance({
-              explicit: acceptance,
-              agentName: agent,
-              acceptanceRole: agentConfig.acceptanceRole,
-              task,
-              mode: "single",
-              async: true,
-            }),
+        effectiveAcceptance,
+        ...(reportRepairAttempted ? { reportRepairAttempted: true } : {}),
         ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
         ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),

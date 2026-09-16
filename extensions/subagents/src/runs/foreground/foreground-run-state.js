@@ -355,6 +355,7 @@ export function resolveForegroundResumeTarget(params, state) {
         index,
         cwd: run.cwd,
         sessionFile,
+        ...(child.acceptance?.reportRepairAttempted === true ? { reportRepairAttempted: true } : {}),
         ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
             ? { asyncDir: pausedForegroundStatusPath(run.runId) }
             : {}),
