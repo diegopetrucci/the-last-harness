@@ -6,7 +6,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
-- The bundled `pi-quiet-tools` default extension is removed. Collapsed built-in tool rows now use Pi's native rendering, which shows the invocation plus the last lines of output rather than a single truncated line — collapsed rows are slightly more verbose, and this is intentional. The package is force-removed from the isolated TLH profile on every install or update, so manually re-adding it will not survive a later `tlh update`. Only the isolated TLH profile is affected; normal Pi config under `~/.pi/agent` is never touched.
+- The bundled `pi-quiet-tools` default extension is removed.
+
+## [0.42.1] - 2026-09-16
+
+### Fixed
+
+- Context limits for developers are now slightly higher.
+- The `developer` subagent max timeout is now 1h.
+- Developers, after compaction, get told to run `tk show` again.
 
 ## [0.42.0] - 2026-09-14
 

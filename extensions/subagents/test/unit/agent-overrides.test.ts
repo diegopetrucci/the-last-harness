@@ -127,7 +127,7 @@ describe("canonical packaged agent overrides", () => {
 
   it("applies code-owned max execution defaults before human overrides", () => {
     const expected = {
-      developer: 7_200_000,
+      developer: 3_600_000,
       "code-reviewer": 1_800_000,
       "test-runner": 3_600_000,
       librarian: 14_400_000,
@@ -253,7 +253,7 @@ describe("canonical packaged agent overrides", () => {
 
     const developer = findAgent("developer");
     assert.equal(developer.model, undefined);
-    assert.equal(developer.maxExecutionTimeMs, 7_200_000);
+    assert.equal(developer.maxExecutionTimeMs, 3_600_000);
     assert.equal(developer.override, undefined);
 
     const reviewer = findAgent("code-reviewer");
