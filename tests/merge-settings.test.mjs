@@ -1783,6 +1783,85 @@ test("merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDe
   );
 });
 
+// ── quiet-tools stale opt-out pruner tests ────────────────────────────────
+
+test("merge prunes quiet-tools from tlh.disabledDefaultExtensions and emits a changes line", () => {
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [harnessPackage],
+      tlh: { disabledDefaultExtensions: ["quiet-tools", "notify"] },
+    },
+  );
+
+  const output = runMerge(fixture, { quiet: false });
+  const settings = readJson(fixture.settings);
+
+  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("quiet-tools"),
+    false,
+    "stale quiet-tools opt-out must be removed",
+  );
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+    true,
+    "unrelated opt-out must be preserved",
+  );
+});
+
+test("merge prunes compact-bash (legacy alias) from tlh.disabledDefaultExtensions and emits a changes line", () => {
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [harnessPackage],
+      tlh: { disabledDefaultExtensions: ["compact-bash", "notify"] },
+    },
+  );
+
+  const output = runMerge(fixture, { quiet: false });
+  const settings = readJson(fixture.settings);
+
+  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("compact-bash"),
+    false,
+    "stale compact-bash opt-out must be removed",
+  );
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+    true,
+    "unrelated opt-out must be preserved",
+  );
+});
+
+test("merge prunes both quiet-tools and compact-bash together while preserving unrelated entries", () => {
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [harnessPackage],
+      tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash", "notify"] },
+    },
+  );
+
+  const output = runMerge(fixture, { quiet: false });
+  const settings = readJson(fixture.settings);
+
+  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).some(
+      (v) => v === "quiet-tools" || v === "compact-bash",
+    ),
+    false,
+    "stale quiet-tools and compact-bash opt-outs must be removed",
+  );
+  assert.equal(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+    true,
+    "unrelated opt-out must be preserved",
+  );
+});
+
 test("merge subagents retirement cleanup is idempotent after first run", () => {
   const fixture = tempFixture(
     { packages: [] },

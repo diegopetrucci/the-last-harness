@@ -31,7 +31,6 @@ test("autocomplete hides configured slash commands only in slash-command-name co
       { value: "websearch", label: "/websearch" },
       { value: "curator", label: "/curator" },
       { value: "search", label: "/search" },
-      { value: "quiet-tools", label: "/quiet-tools" },
       { value: "investigate-revalidate-current", label: "/investigate-revalidate-current" },
       { value: "tlh-changelog", label: "/tlh-changelog" },
       { value: "agent", label: "/agent" },
@@ -59,7 +58,6 @@ test("autocomplete keeps hidden commands outside slash-command-name context", as
       { value: "websearch", label: "/websearch" },
       { value: "curator", label: "/curator" },
       { value: "search", label: "/search" },
-      { value: "quiet-tools", label: "/quiet-tools" },
       { value: "investigate-revalidate-current", label: "/investigate-revalidate-current" },
       { value: "agent", label: "/agent" },
     ],
@@ -84,12 +82,11 @@ test("autocomplete returns null when filtering removes every slash-command sugge
         { value: "websearch", label: "/websearch" },
         { value: "curator", label: "/curator" },
         { value: "search", label: "/search" },
-        { value: "quiet-tools", label: "/quiet-tools" },
       ],
     }),
   );
 
-  const result = await provider.getSuggestions(["/quiet-tools"], 0, 13, {
+  const result = await provider.getSuggestions(["/search"], 0, 7, {
     signal: AbortSignal.abort(),
   });
 
