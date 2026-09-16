@@ -367,7 +367,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
 | `/websearch` | `pi-web-access` | Open the web search curator |
 

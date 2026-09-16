@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Removed
+
+- The bundled `pi-quiet-tools` default extension is removed.
+
 ## [0.42.1] - 2026-09-16
 
 ### Fixed

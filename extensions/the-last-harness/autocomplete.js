@@ -7,7 +7,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
     "websearch",
     "curator",
     "search",
-    "quiet-tools",
 ]);
 function stripAutocompleteSourceTag(description) {
     if (!description) {

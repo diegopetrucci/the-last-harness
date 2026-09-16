@@ -38,13 +38,6 @@
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
-    "id": "quiet-tools",
-    "aliases": ["compact-bash"],
-    "replaces": ["npm:@diegopetrucci/pi-compact-bash"],
-    "source": "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-    "description": "Compact collapsed built-in tool output in the TUI without changing model-visible results."
-  },
-  {
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.11",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
