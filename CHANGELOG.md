@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.42.1] - 2026-09-16
+
 ### Fixed
 
 - Context limits for developers are now slightly higher.
