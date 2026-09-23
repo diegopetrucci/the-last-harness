@@ -32,8 +32,10 @@ import {
 } from "./tool-budget.ts";
 import type { ResolvedToolBudget } from "../../shared/types.ts";
 import {
+  blockForcedSystemPrompt,
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-  composeChildPromptRuntime,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
+  setStructuredChildPromptRuntime,
 } from "../../../../shared/subagent-child-boundary.ts";
 import {
   formatProjectAgentGuidance,
@@ -61,8 +63,8 @@ export const NATIVE_SUPERVISOR_GUIDANCE = [
   "Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.",
 ].join("\n");
 
-const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
+const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 
 function readBooleanEnv(name: string): boolean | undefined {
   const value = process.env[name];
@@ -78,36 +80,77 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
     );
 }
 
-type SubagentPromptInheritanceOptions = {
+type ChildPromptInheritanceOptions = {
   inheritProjectContext: boolean;
   inheritSkills: boolean;
 };
 
-export function applySubagentPromptInheritance(
-  systemPromptOptions: Pick<NormalizedBuildSystemPromptOptions, "contextFiles" | "skills">,
-  options: SubagentPromptInheritanceOptions,
-): void {
-  if (!options.inheritProjectContext) systemPromptOptions.contextFiles = [];
-  if (!options.inheritSkills) systemPromptOptions.skills = [];
-
-  // The parent owns orchestration. Remove this skill even when ordinary skills
-  // are inherited, while leaving unrelated or explicitly configured skills alone.
-  systemPromptOptions.skills = systemPromptOptions.skills.filter(
-    (skill) => skill.name !== SUBAGENT_ORCHESTRATION_SKILL_NAME,
-  );
+function isOrchestrationSkill(name: string): boolean {
+  return name.trim().toLowerCase() === SUBAGENT_ORCHESTRATION_SKILL_NAME;
 }
 
+function sanitizePromptOption(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : stripSubagentOrchestrationSkill(value);
+}
+
+function rewriteStructuredSubagentPrompt(
+  systemPromptOptions: NormalizedBuildSystemPromptOptions,
+  options: ChildPromptInheritanceOptions,
+  projectAgentGuidance: string,
+  supervisorGuidance: string,
+  tkTicketGuidance: string,
+): void {
+  blockForcedSystemPrompt(systemPromptOptions);
+  if (!options.inheritProjectContext) {
+    systemPromptOptions.contextFiles = [];
+    delete systemPromptOptions.sections.project_context;
+  }
+
+  systemPromptOptions.skills = options.inheritSkills
+    ? systemPromptOptions.skills.filter((skill) => !isOrchestrationSkill(skill.name))
+    : [];
+  if (!options.inheritSkills) {
+    delete systemPromptOptions.sections.skills;
+  } else if (systemPromptOptions.sections.skills !== undefined) {
+    const sanitizedSkills = stripSubagentOrchestrationSkill(systemPromptOptions.sections.skills);
+    if (sanitizedSkills.trim()) systemPromptOptions.sections.skills = sanitizedSkills;
+    else delete systemPromptOptions.sections.skills;
+  }
+
+  systemPromptOptions.customPrompt = sanitizePromptOption(systemPromptOptions.customPrompt);
+  systemPromptOptions.appendSystemPrompt =
+    sanitizePromptOption(systemPromptOptions.appendSystemPrompt) ?? "";
+  for (const [name, content] of Object.entries(systemPromptOptions.sections)) {
+    if (name === CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION) continue;
+    const sanitized = stripSubagentOrchestrationSkill(content);
+    if (sanitized !== content) systemPromptOptions.sections[name] = sanitized;
+  }
+
+  // Keep the child runtime in a dedicated structured section. Pi renders custom
+  // sections after its standard context, skills, and cwd sections, so the
+  // stable safety boundary remains after those sections without replacing or
+  // reparsing the rendered system prompt.
+  setStructuredChildPromptRuntime(systemPromptOptions.sections, "explicit", [
+    projectAgentGuidance,
+    supervisorGuidance,
+    tkTicketGuidance,
+  ]);
+}
+
+/** Rewrite a Pi 0.87 structured prompt in place. */
 export function rewriteSubagentPrompt(
-  prompt: string,
+  systemPromptOptions: NormalizedBuildSystemPromptOptions,
+  options: ChildPromptInheritanceOptions,
   projectAgentGuidance = "",
   supervisorGuidance = "",
   tkTicketGuidance = "",
-): string {
-  const rewritten = stripSubagentOrchestrationSkill(prompt);
-  return composeChildPromptRuntime(
-    rewritten,
-    [projectAgentGuidance, supervisorGuidance, tkTicketGuidance],
-    "explicit",
+): void {
+  rewriteStructuredSubagentPrompt(
+    systemPromptOptions,
+    options,
+    projectAgentGuidance,
+    supervisorGuidance,
+    tkTicketGuidance,
   );
 }
 
@@ -319,36 +362,15 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
     );
   });
   pi.on("before_agent_start", (event) => {
-    const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
-    const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-    const systemPromptOptions = event.systemPromptOptions;
-    const hasOrchestrationSkill =
-      systemPromptOptions?.skills.some(
-        (skill) => skill.name === SUBAGENT_ORCHESTRATION_SKILL_NAME,
-      ) ?? false;
-    if (
-      inheritProjectContext === undefined &&
-      inheritSkills === undefined &&
-      !hasOrchestrationSkill &&
-      projectAgentGuidanceSnapshot.length === 0 &&
-      supervisorGuidanceSnapshot.length === 0 &&
-      tkTicketGuidanceSnapshot.length === 0
-    )
-      return undefined;
-
-    if (systemPromptOptions) {
-      applySubagentPromptInheritance(systemPromptOptions, {
-        inheritProjectContext: inheritProjectContext ?? true,
-        inheritSkills: inheritSkills ?? true,
-      });
-    }
-    const rewritten = rewriteSubagentPrompt(
-      event.systemPrompt,
+    const projectInheritance = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV) ?? true;
+    const skillsInheritance = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV) ?? true;
+    rewriteSubagentPrompt(
+      event.systemPromptOptions,
+      { inheritProjectContext: projectInheritance, inheritSkills: skillsInheritance },
       projectAgentGuidanceSnapshot,
       supervisorGuidanceSnapshot,
       tkTicketGuidanceSnapshot,
     );
-    if (rewritten === event.systemPrompt) return undefined;
-    return { systemPrompt: rewritten };
+    return undefined;
   });
 }

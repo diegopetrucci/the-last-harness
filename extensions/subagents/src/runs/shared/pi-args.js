@@ -33,6 +33,22 @@ export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 function isExtensionToolPath(tool) {
     return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
+function canonicalChildExtensionPath(extensionPath, cwd) {
+    const resolvedPath = path.resolve(cwd, extensionPath);
+    try {
+        return fs.realpathSync(resolvedPath);
+    }
+    catch {
+        return resolvedPath;
+    }
+}
+function appendUniqueChildExtensionPath(extensionPaths, seenCanonicalPaths, extensionPath, cwd) {
+    const canonicalPath = canonicalChildExtensionPath(extensionPath, cwd);
+    if (seenCanonicalPaths.has(canonicalPath))
+        return;
+    seenCanonicalPaths.add(canonicalPath);
+    extensionPaths.push(extensionPath);
+}
 function resolveToolPolicy(tools, requireReadTool = false) {
     if (tools === undefined) {
         return { namedToolNames: [], toolExtensionPaths: [], hasOnlyExtensionPaths: false };
@@ -162,26 +178,27 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     if (contactSupervisorDisallowed) {
         args.push("--exclude-tools", CONTACT_SUPERVISOR_TOOL_NAME);
     }
-    const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
+    const extensionPaths = [];
+    const seenCanonicalExtensionPaths = new Set();
+    const childCwd = input.cwd ?? process.cwd();
+    for (const extPath of [
+        ...toolExtensionPaths,
+        ...(input.extensions ?? []),
+        ...(input.subagentOnlyExtensions ?? []),
+    ]) {
+        appendUniqueChildExtensionPath(extensionPaths, seenCanonicalExtensionPaths, extPath, childCwd);
+    }
+    const runtimeCanonicalPath = canonicalChildExtensionPath(PROMPT_RUNTIME_EXTENSION_PATH, childCwd);
+    const runtimeIndex = extensionPaths.findIndex((extPath) => canonicalChildExtensionPath(extPath, childCwd) === runtimeCanonicalPath);
+    const runtimeExtensionPath = runtimeIndex === -1 ? PROMPT_RUNTIME_EXTENSION_PATH : extensionPaths[runtimeIndex];
+    if (runtimeIndex !== -1)
+        extensionPaths.splice(runtimeIndex, 1);
+    extensionPaths.push(runtimeExtensionPath);
     if (input.extensions !== undefined) {
         args.push("--no-extensions");
-        for (const extPath of new Set([
-            ...runtimeExtensions,
-            ...toolExtensionPaths,
-            ...input.extensions,
-            ...(input.subagentOnlyExtensions ?? []),
-        ])) {
-            args.push("--extension", extPath);
-        }
     }
-    else {
-        for (const extPath of new Set([
-            ...runtimeExtensions,
-            ...toolExtensionPaths,
-            ...(input.subagentOnlyExtensions ?? []),
-        ])) {
-            args.push("--extension", extPath);
-        }
+    for (const extPath of extensionPaths) {
+        args.push("--extension", extPath);
     }
     if (!input.inheritSkills) {
         args.push("--no-skills");

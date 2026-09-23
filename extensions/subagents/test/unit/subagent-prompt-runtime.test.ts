@@ -6,8 +6,15 @@ import { afterEach, describe, it } from "node:test";
 import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import {
+  createExtensionRuntime,
+  ExtensionRunner,
   ProjectTrustStore,
+  SessionManager,
+  type BuildSystemPromptOptions,
+  type Extension,
   type ExtensionAPI,
+  type NormalizedBuildSystemPromptOptions,
+  type Skill,
   type ToolDefinition,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
@@ -16,10 +23,7 @@ import {
   PACKAGED_MINOR_AGENT_ROLES,
   projectAgentGuidanceFilename,
 } from "../../../shared/project-agent-guidance.ts";
-import {
-  CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
-  CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-} from "../../../shared/subagent-child-boundary.ts";
+import { setStructuredChildPromptRuntime } from "../../../shared/subagent-child-boundary.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
@@ -47,10 +51,24 @@ import {
   type TestEventResult,
 } from "../support/helpers.ts";
 
+type PiSystemPromptModule = {
+  buildSystemPrompt(input: BuildSystemPromptOptions): string;
+  normalizeBuildSystemPromptOptions(
+    input: BuildSystemPromptOptions,
+  ): NormalizedBuildSystemPromptOptions;
+};
+
+const piSystemPrompt = (await import(
+  new URL("./core/system-prompt.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+)) as PiSystemPromptModule;
+const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = piSystemPrompt;
+
 function recordEvents(handlers: Map<TestEventName, TestEventHandler>): TestEventRegistration["on"] {
   return (event, handler) => {
     handlers.set(event, handler);
-    return () => handlers.delete(event);
+    return () => {
+      if (handlers.get(event) === handler) handlers.delete(event);
+    };
   };
 }
 
@@ -63,9 +81,103 @@ function makeToolInfo(name: string): ToolInfo {
   };
 }
 
-function hasSystemPrompt(value: unknown): value is { systemPrompt: string } {
-  if (typeof value !== "object" || value === null || !("systemPrompt" in value)) return false;
-  return typeof value.systemPrompt === "string";
+function makePromptSkill(name: string): Skill {
+  return {
+    name,
+    description: `${name} description`,
+    filePath: `/tmp/${name}/SKILL.md`,
+    baseDir: `/tmp/${name}`,
+    sourceInfo: {
+      path: `/tmp/${name}/SKILL.md`,
+      source: "test",
+      scope: "temporary",
+      origin: "top-level",
+    },
+    disableModelInvocation: false,
+  };
+}
+
+function makeStructuredPromptOptions() {
+  return normalizeBuildSystemPromptOptions({
+    cwd: "/repo",
+    customPrompt: [
+      "Packaged child role.",
+      '<skill name="explicit">Keep this configured skill.</skill>',
+    ].join("\n\n"),
+    contextFiles: [{ path: "/repo/AGENTS.md", content: "Project rules" }],
+    skills: [makePromptSkill("safe-bash"), makePromptSkill("pi-subagents")],
+    sections: {
+      unrelated: "Unrelated section must remain intact.",
+    },
+  });
+}
+
+type StructuredPromptEvent = {
+  systemPrompt: string;
+  systemPromptOptions: NormalizedBuildSystemPromptOptions;
+};
+
+function makePromptEvent(customPrompt = "base prompt"): StructuredPromptEvent {
+  const systemPromptOptions = normalizeBuildSystemPromptOptions({
+    cwd: "/repo",
+    customPrompt,
+  });
+  return {
+    systemPrompt: buildSystemPrompt(systemPromptOptions),
+    systemPromptOptions,
+  };
+}
+
+function renderPrompt(event: StructuredPromptEvent): string {
+  return buildSystemPrompt(event.systemPromptOptions);
+}
+
+type TestPromptHandler = (
+  ...args: never[]
+) => Promise<{ systemPrompt?: string } | void> | { systemPrompt?: string } | void;
+
+function makePromptExtension(path: string, register: (pi: ExtensionAPI) => void): Extension {
+  const handlers = new Map<string, TestPromptHandler[]>();
+  const pi = {
+    on(event: string, handler: unknown): () => void {
+      if (typeof handler !== "function") throw new TypeError("test handler must be callable");
+      const registered = handlers.get(event) ?? [];
+      registered.push(handler as TestPromptHandler);
+      handlers.set(event, registered);
+      return () => {};
+    },
+  } as ExtensionAPI;
+  register(pi);
+  return {
+    path,
+    resolvedPath: path,
+    sourceInfo: { path, source: "test", scope: "temporary", origin: "top-level" },
+    handlers: handlers as Extension["handlers"],
+    tools: new Map(),
+    messageRenderers: new Map(),
+    commands: new Map(),
+    flags: new Map(),
+    shortcuts: new Map(),
+  };
+}
+
+async function emitChainedBeforeAgentStart(
+  options: BuildSystemPromptOptions,
+  registrars: Array<(pi: ExtensionAPI) => void>,
+): Promise<{ systemPromptOptions: NormalizedBuildSystemPromptOptions }> {
+  const cwd = "/repo";
+  const runtime = createExtensionRuntime();
+  const extensions = registrars.map((register, index) =>
+    makePromptExtension(`test-extension-${index}`, register),
+  );
+  const runner = new ExtensionRunner(
+    extensions,
+    runtime,
+    cwd,
+    SessionManager.inMemory(cwd),
+    {} as ConstructorParameters<typeof ExtensionRunner>[4],
+  );
+  return runner.emitBeforeAgentStart("child task", undefined, options);
 }
 
 function countOccurrences(value: string, needle: string): number {
@@ -87,99 +199,19 @@ const envSnapshot = {
   PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
 };
 
-type PromptFixtureOptions = {
-  contextFiles: Array<{ path: string; content: string }>;
-  skills: Array<{ name: string; description: string; filePath: string }>;
-  sections: Record<string, string>;
-};
+const SKILLS_SECTION =
+  "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
 
-function makePromptOptions(): PromptFixtureOptions {
-  return {
-    contextFiles: [{ path: "/repo/AGENTS.md", content: "Project rules" }],
-    skills: [
-      { name: "safe-bash", description: "desc", filePath: "/tmp/SKILL.md" },
-      {
-        name: "pi-subagents",
-        description: "delegate to subagents",
-        filePath: "/tmp/pi-subagents/SKILL.md",
-      },
-    ],
-    sections: { unrelated: "Keep this unrelated prompt section." },
-  };
-}
+const BASE_PROMPT = [
+  "You are a subagent.",
+  "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## /repo/AGENTS.md\n\nProject rules\n\n",
+  SKILLS_SECTION,
+  "\nCurrent date: 2026-04-16",
+  "\nCurrent working directory: /repo",
+].join("");
 
-function renderTaggedPrompt(
-  options: PromptFixtureOptions,
-  preamble = "You are a subagent.",
-): string {
-  const sections = [preamble];
-  if (options.contextFiles.length > 0) {
-    sections.push(
-      [
-        "<project_context>",
-        "Project-specific instructions and guidelines:",
-        ...options.contextFiles.map(
-          (file) =>
-            `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>`,
-        ),
-        "</project_context>",
-      ].join("\n\n"),
-    );
-  }
-  if (options.skills.length > 0) {
-    sections.push(
-      [
-        "<skills>",
-        "The following skills provide specialized instructions for specific tasks.",
-        "Use the read tool to load a skill's file when the task matches its description.",
-        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-        "",
-        "<available_skills>",
-        ...options.skills.flatMap((skill) => [
-          "  <skill>",
-          `    <name>${skill.name}</name>`,
-          `    <description>${skill.description}</description>`,
-          `    <location>${skill.filePath}</location>`,
-          "  </skill>",
-        ]),
-        "</available_skills>",
-        "</skills>",
-      ].join("\n"),
-    );
-  }
-  sections.push("<cwd>\n/repo\n</cwd>");
-  for (const [name, content] of Object.entries(options.sections)) {
-    if (content) sections.push(`<${name}>\n${content}\n</${name}>`);
-  }
-  return sections.join("\n\n");
-}
-
-function makeTaggedPromptEvent(
-  options = makePromptOptions(),
-  preamble = "You are a subagent.",
-): Record<string, unknown> {
-  return {
-    get systemPrompt() {
-      return renderTaggedPrompt(options, preamble);
-    },
-    systemPromptOptions: options,
-  };
-}
-
-const BASE_PROMPT = renderTaggedPrompt(makePromptOptions());
-
-const CONFIGURED_SKILLS_SECTION = [
-  "<configured_skills>",
-  "The following configured skills are available to this subagent.",
-  "<available_skills>",
-  "  <skill>",
-  "    <name>configured-skill</name>",
-  "    <description>explicit agent skill</description>",
-  "    <location>/tmp/configured-skill/SKILL.md</location>",
-  "  </skill>",
-  "</available_skills>",
-  "</configured_skills>",
-].join("\n");
+const CONFIGURED_SKILLS_SECTION =
+  "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
 
 afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined)
@@ -340,9 +372,14 @@ function registerPromptRuntimeHandlers(
       (event as PromptRuntimeEventName) !== "session_compact" &&
       (event as PromptRuntimeEventName) !== "session_compact_failed"
     ) {
-      return;
+      return () => {};
     }
-    if (isPromptRuntimeHandler(handler)) handlers.set(event as PromptRuntimeEventName, handler);
+    if (!isPromptRuntimeHandler(handler)) return () => {};
+    const eventName = event as PromptRuntimeEventName;
+    handlers.set(eventName, handler);
+    return () => {
+      if (handlers.get(eventName) === handler) handlers.delete(eventName);
+    };
   }) as ExtensionAPI["on"];
   registerSubagentPromptRuntime(extensionApi);
   const beforeAgentStart = handlers.get("before_agent_start");
@@ -411,27 +448,22 @@ describe("subagent prompt runtime", () => {
       await withChildGuidanceEnv(fixture, role, async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart(
-          { systemPrompt: `packaged ${role} role` },
-          ctx,
-        );
-        assert.ok(hasSystemPrompt(event));
-        assert.equal((event.systemPrompt.match(/<tlh_project_agent_guidance>/g) ?? []).length, 1);
-        assert.match(event.systemPrompt, new RegExp(`guidance-${role}`));
+        const event = makePromptEvent(`packaged ${role} role`);
+        await handlers.beforeAgentStart(event, ctx);
+        const prompt = renderPrompt(event);
+        assert.equal((prompt.match(/<tlh_project_agent_guidance>/g) ?? []).length, 1);
+        assert.match(prompt, new RegExp(`guidance-${role}`));
         for (const otherRole of PACKAGED_MINOR_AGENT_ROLES) {
-          if (otherRole !== role)
-            assert.doesNotMatch(event.systemPrompt, new RegExp(`guidance-${otherRole}`));
+          if (otherRole !== role) assert.doesNotMatch(prompt, new RegExp(`guidance-${otherRole}`));
         }
-        const guidanceIndex = event.systemPrompt.indexOf(`guidance-${role}`);
-        const boundaryIndex = event.systemPrompt.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS);
+        const guidanceIndex = prompt.indexOf(`guidance-${role}`);
+        const boundaryIndex = prompt.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS);
         assert.ok(guidanceIndex > `packaged ${role} role`.length);
         assert.ok(guidanceIndex < boundaryIndex);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
-        const repeated = await handlers.beforeAgentStart(event, ctx);
-        const repeatedPrompt = hasSystemPrompt(repeated)
-          ? repeated.systemPrompt
-          : event.systemPrompt;
+        await handlers.beforeAgentStart(event, ctx);
+        const repeatedPrompt = renderPrompt(event);
         assert.equal(countOccurrences(repeatedPrompt, "<tlh_project_agent_guidance>"), 1);
         assert.equal(countOccurrences(repeatedPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
         assert.match(repeatedPrompt, new RegExp(`guidance-${role}`));
@@ -459,14 +491,12 @@ describe("subagent prompt runtime", () => {
       await withChildGuidanceEnv(fixture, role, async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart(
-          { systemPrompt: "custom packaged role" },
-          ctx,
-        );
-        assert.ok(hasSystemPrompt(event));
-        assert.doesNotMatch(event.systemPrompt, /TLH Project Agent Guidance/);
-        assert.doesNotMatch(event.systemPrompt, /private developer guidance/);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        const event = makePromptEvent("custom packaged role");
+        await handlers.beforeAgentStart(event, ctx);
+        const prompt = renderPrompt(event);
+        assert.doesNotMatch(prompt, /TLH Project Agent Guidance/);
+        assert.doesNotMatch(prompt, /private developer guidance/);
+        assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       });
     }
   });
@@ -483,20 +513,19 @@ describe("subagent prompt runtime", () => {
         setSupervisorEnv();
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: "custom role" }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.match(event.systemPrompt, /Native supervisor coordination:/);
-        assert.match(event.systemPrompt, /contact_supervisor/);
-        assert.equal(countOccurrences(event.systemPrompt, NATIVE_SUPERVISOR_GUIDANCE), 1);
-        assert.doesNotMatch(event.systemPrompt, /TLH Project Agent Guidance/);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        const event = makePromptEvent("custom role");
+        await handlers.beforeAgentStart(event, ctx);
+        const prompt = renderPrompt(event);
+        assert.match(prompt, /Native supervisor coordination:/);
+        assert.match(prompt, /contact_supervisor/);
+        assert.equal(countOccurrences(prompt, NATIVE_SUPERVISOR_GUIDANCE), 1);
+        assert.doesNotMatch(prompt, /TLH Project Agent Guidance/);
+        assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
-        const repeated = await handlers.beforeAgentStart(event, ctx);
-        const repeatedPrompt = hasSystemPrompt(repeated)
-          ? repeated.systemPrompt
-          : event.systemPrompt;
+        await handlers.beforeAgentStart(event, ctx);
+        const repeatedPrompt = renderPrompt(event);
         assert.equal(countOccurrences(repeatedPrompt, NATIVE_SUPERVISOR_GUIDANCE), 1);
-        assert.ok(repeatedPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        assert.ok(repeatedPrompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { projectAgentGuidance: false },
     );
@@ -514,11 +543,12 @@ describe("subagent prompt runtime", () => {
         setSupervisorEnv();
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: "canonical role" }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.doesNotMatch(event.systemPrompt, /Native supervisor coordination:/);
-        assert.doesNotMatch(event.systemPrompt, /<tlh_project_agent_guidance>/);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        const event = makePromptEvent("canonical role");
+        await handlers.beforeAgentStart(event, ctx);
+        const prompt = renderPrompt(event);
+        assert.doesNotMatch(prompt, /Native supervisor coordination:/);
+        assert.doesNotMatch(prompt, /<tlh_project_agent_guidance>/);
+        assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { projectAgentGuidance: true },
     );
@@ -546,9 +576,10 @@ describe("subagent prompt runtime", () => {
       async () => {
         setSupervisorEnv();
         await handlers.get("session_start")?.({});
-        const event = await handlers.get("before_agent_start")?.({ systemPrompt: "custom role" });
-        assert.ok(hasSystemPrompt(event));
-        assert.doesNotMatch(event.systemPrompt, /Native supervisor coordination:/);
+        const event = makePromptEvent("custom role");
+        await handlers.get("before_agent_start")?.(event);
+        const prompt = renderPrompt(event);
+        assert.doesNotMatch(prompt, /Native supervisor coordination:/);
         assert.deepEqual(registered, []);
       },
       { projectAgentGuidance: false, supervisorBridge: false },
@@ -568,9 +599,9 @@ describe("subagent prompt runtime", () => {
         async () => {
           const ctx = makeMinimalCtx(fixture.cwd);
           await handlers.sessionStart(ctx);
-          const event = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-          assert.ok(hasSystemPrompt(event));
-          assert.doesNotMatch(event.systemPrompt, /verified developer guidance/);
+          const event = makePromptEvent("packaged role");
+          await handlers.beforeAgentStart(event, ctx);
+          assert.doesNotMatch(renderPrompt(event), /verified developer guidance/);
         },
         { projectAgentGuidance: sentinel },
       );
@@ -578,9 +609,9 @@ describe("subagent prompt runtime", () => {
     await withChildGuidanceEnv(fixture, "developer", async () => {
       const ctx = makeMinimalCtx(fixture.cwd);
       await handlers.sessionStart(ctx);
-      const event = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-      assert.ok(hasSystemPrompt(event));
-      assert.match(event.systemPrompt, /verified developer guidance/);
+      const event = makePromptEvent("packaged role");
+      await handlers.beforeAgentStart(event, ctx);
+      assert.match(renderPrompt(event), /verified developer guidance/);
     });
   });
 
@@ -596,16 +627,16 @@ describe("subagent prompt runtime", () => {
       await handlers.sessionStart(ctx);
       fs.writeFileSync(guidancePath, "after session reload", "utf8");
 
-      const stale = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-      assert.ok(hasSystemPrompt(stale));
-      assert.match(stale.systemPrompt, /before session reload/);
-      assert.doesNotMatch(stale.systemPrompt, /after session reload/);
+      const stale = makePromptEvent("packaged role");
+      await handlers.beforeAgentStart(stale, ctx);
+      assert.match(renderPrompt(stale), /before session reload/);
+      assert.doesNotMatch(renderPrompt(stale), /after session reload/);
 
       await handlers.sessionStart(ctx);
-      const refreshed = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-      assert.ok(hasSystemPrompt(refreshed));
-      assert.match(refreshed.systemPrompt, /after session reload/);
-      assert.doesNotMatch(refreshed.systemPrompt, /before session reload/);
+      const refreshed = makePromptEvent("packaged role");
+      await handlers.beforeAgentStart(refreshed, ctx);
+      assert.match(renderPrompt(refreshed), /after session reload/);
+      assert.doesNotMatch(renderPrompt(refreshed), /before session reload/);
     });
   });
 
@@ -618,44 +649,50 @@ describe("subagent prompt runtime", () => {
     await withChildGuidanceEnv(fixture, "developer", async () => {
       const ctx = makeMinimalCtx(fixture.cwd);
       await handlers.sessionStart(ctx);
-      const event = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-      assert.ok(hasSystemPrompt(event));
-      assert.doesNotMatch(event.systemPrompt, /TLH Project Agent Guidance/);
-      assert.doesNotMatch(event.systemPrompt, /untrusted guidance/);
+      const event = makePromptEvent("packaged role");
+      await handlers.beforeAgentStart(event, ctx);
+      const prompt = renderPrompt(event);
+      assert.doesNotMatch(prompt, /TLH Project Agent Guidance/);
+      assert.doesNotMatch(prompt, /untrusted guidance/);
     });
 
     persistProjectTrust(fixture);
     await withChildGuidanceEnv(fixture, "developer", async () => {
       const ctx = makeMinimalCtx(fixture.cwd);
       await handlers.sessionStart(ctx);
-      const trusted = await handlers.beforeAgentStart({ systemPrompt: "packaged role" }, ctx);
-      assert.ok(hasSystemPrompt(trusted));
-      assert.match(trusted.systemPrompt, /untrusted guidance/);
+      const trusted = makePromptEvent("packaged role");
+      await handlers.beforeAgentStart(trusted, ctx);
+      assert.match(renderPrompt(trusted), /untrusted guidance/);
     });
   });
 
-  it("preserves matching guidance after inherited-context rewriting", async (t) => {
+  it("preserves matching guidance after structured inherited-context rewriting", async (t) => {
     const fixture = makeProjectGuidanceFixture();
     t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
     writeProjectGuidance(fixture, "code-reviewer", "review guidance");
     persistProjectTrust(fixture);
 
     const handlers = registerPromptRuntimeHandlers();
-    const prompt = await withChildGuidanceEnv(
+    await withChildGuidanceEnv(
       fixture,
       "code-reviewer",
       async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        return handlers.beforeAgentStart(makeTaggedPromptEvent(), ctx);
+        const options = makeStructuredPromptOptions();
+        const result = await handlers.beforeAgentStart(
+          { systemPrompt: buildSystemPrompt(options), systemPromptOptions: options },
+          ctx,
+        );
+        assert.equal(result, undefined);
+        const rendered = buildSystemPrompt(options);
+        assert.doesNotMatch(rendered, /Project rules/);
+        assert.doesNotMatch(rendered, /<name>pi-subagents<\/name>/);
+        assert.match(rendered, /review guidance/);
+        assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { inheritProjectContext: false, inheritSkills: false },
     );
-    assert.ok(hasSystemPrompt(prompt));
-    assert.doesNotMatch(prompt.systemPrompt, /<project_context>/);
-    assert.doesNotMatch(prompt.systemPrompt, /<name>pi-subagents<\/name>/);
-    assert.match(prompt.systemPrompt, /review guidance/);
-    assert.ok(prompt.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
   });
 
   it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
@@ -770,38 +807,222 @@ describe("subagent prompt runtime", () => {
     }
   });
 
-  it("applies project-context and skill inheritance independently through Pi prompt options", async () => {
-    const handlers = registerPromptRuntimeHandlers();
-    for (const testCase of [
+  it("fails closed on forced prompts before preserving structured child mutations", () => {
+    const options = makeStructuredPromptOptions();
+    setStructuredChildPromptRuntime(options.sections, "explicit", ["explicit first"]);
+    setStructuredChildPromptRuntime(options.sections, "root", ["root child guidance"]);
+    options.forceSystemPrompt = "FORCED full child replacement";
+
+    rewriteSubagentPrompt(
+      options,
       { inheritProjectContext: false, inheritSkills: false },
-      { inheritProjectContext: false, inheritSkills: true },
-      { inheritProjectContext: true, inheritSkills: false },
+      "project child guidance",
+      "supervisor child guidance",
+      "ticket child guidance",
+    );
+
+    const rendered = buildSystemPrompt(options);
+    assert.equal(options.forceSystemPrompt, undefined);
+    assert.doesNotMatch(rendered, /FORCED full child replacement/);
+    assert.deepEqual(options.contextFiles, []);
+    assert.deepEqual(options.skills, []);
+    assert.equal(options.sections.unrelated, "Unrelated section must remain intact.");
+    assert.doesNotMatch(rendered, /<project_context>/);
+    assert.doesNotMatch(rendered, /Project rules/);
+    assert.doesNotMatch(rendered, /<skills>/);
+    assert.doesNotMatch(rendered, /safe-bash description/);
+    assert.match(rendered, /Keep this configured skill/);
+    assert.doesNotMatch(rendered, /pi-subagents/);
+    assert.match(rendered, /Unrelated section must remain intact\./);
+    assert.match(rendered, /root child guidance/);
+    assert.match(rendered, /project child guidance/);
+    assert.match(rendered, /supervisor child guidance/);
+    assert.match(rendered, /ticket child guidance/);
+    assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+    assert.match(rendered, /<!-- tlh:child-root-runtime:start -->/);
+    assert.match(rendered, /<!-- tlh:child-explicit-runtime:start -->/);
+    assert.ok(
+      rendered.indexOf("<tlh_child_root_runtime>") <
+        rendered.indexOf("<tlh_child_explicit_runtime>"),
+    );
+
+    const inheritedOptions = makeStructuredPromptOptions();
+    setStructuredChildPromptRuntime(inheritedOptions.sections, "root", ["root ordering guidance"]);
+    rewriteSubagentPrompt(
+      inheritedOptions,
       { inheritProjectContext: true, inheritSkills: true },
-    ]) {
-      process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = testCase.inheritProjectContext ? "1" : "0";
-      process.env.PI_SUBAGENT_INHERIT_SKILLS = testCase.inheritSkills ? "1" : "0";
-      const options = makePromptOptions();
-      const event = makeTaggedPromptEvent(options);
-      const result = await handlers.beforeAgentStart(event, makeMinimalCtx("/repo"));
-      assert.ok(hasSystemPrompt(result));
-      assert.equal(options.contextFiles.length > 0, testCase.inheritProjectContext);
-      assert.equal(
-        options.skills.some((skill) => skill.name === "safe-bash"),
-        testCase.inheritSkills,
-      );
-      assert.equal(
-        options.skills.some((skill) => skill.name === "pi-subagents"),
-        false,
-      );
-      assert.equal(
-        result.systemPrompt.includes("<project_context>"),
-        testCase.inheritProjectContext,
-      );
-      assert.equal(result.systemPrompt.includes("<skills>"), testCase.inheritSkills);
-      assert.ok(result.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
-      assert.ok(result.systemPrompt.includes("Keep this unrelated prompt section."));
-      assert.ok(!result.systemPrompt.includes("# Project Context"));
-    }
+      "explicit ordering guidance",
+    );
+    const inheritedRendered = buildSystemPrompt(inheritedOptions);
+    const projectContextIndex = inheritedRendered.indexOf("<project_context>");
+    const skillsIndex = inheritedRendered.indexOf("<skills>");
+    const cwdIndex = inheritedRendered.indexOf("<cwd>");
+    const rootRuntimeIndex = inheritedRendered.indexOf("<tlh_child_root_runtime>");
+    const explicitRuntimeIndex = inheritedRendered.indexOf("<tlh_child_explicit_runtime>");
+    assert.ok(projectContextIndex >= 0);
+    assert.ok(skillsIndex >= 0);
+    assert.ok(cwdIndex >= 0);
+    assert.ok(rootRuntimeIndex >= 0);
+    assert.ok(explicitRuntimeIndex >= 0);
+    assert.ok(projectContextIndex < rootRuntimeIndex);
+    assert.ok(skillsIndex < rootRuntimeIndex);
+    assert.ok(cwdIndex < rootRuntimeIndex);
+    assert.ok(rootRuntimeIndex < explicitRuntimeIndex);
+  });
+
+  it("deletes a seeded project_context section when project inheritance is disabled", () => {
+    const options = normalizeBuildSystemPromptOptions({
+      cwd: "/repo",
+      contextFiles: [{ path: "/repo/AGENTS.md", content: "Project rules" }],
+      sections: {
+        project_context: "Parent project section must be removed.",
+        unrelated: "Keep this unrelated section.",
+      },
+    });
+
+    rewriteSubagentPrompt(options, { inheritProjectContext: false, inheritSkills: true });
+
+    const rendered = buildSystemPrompt(options);
+    assert.equal(options.sections.project_context, undefined);
+    assert.deepEqual(options.contextFiles, []);
+    assert.doesNotMatch(rendered, /Parent project section must be removed/);
+    assert.doesNotMatch(rendered, /Project rules/);
+    assert.match(rendered, /Keep this unrelated section/);
+  });
+
+  it("deletes a seeded skills section when skill inheritance is disabled", () => {
+    const options = normalizeBuildSystemPromptOptions({
+      cwd: "/repo",
+      skills: [makePromptSkill("safe-bash"), makePromptSkill("pi-subagents")],
+      sections: {
+        skills: "Parent skills section must be removed.",
+        unrelated: "Keep this unrelated section.",
+      },
+    });
+
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: false });
+
+    const rendered = buildSystemPrompt(options);
+    assert.equal(options.sections.skills, undefined);
+    assert.deepEqual(options.skills, []);
+    assert.doesNotMatch(rendered, /Parent skills section must be removed/);
+    assert.doesNotMatch(rendered, /<name>safe-bash<\/name>/);
+    assert.doesNotMatch(rendered, /<name>pi-subagents<\/name>/);
+    assert.match(rendered, /Keep this unrelated section/);
+  });
+
+  it("sanitizes a seeded skills section while preserving unrelated skill markup", () => {
+    const options = normalizeBuildSystemPromptOptions({
+      cwd: "/repo",
+      skills: [makePromptSkill("safe-bash"), makePromptSkill("pi-subagents")],
+      sections: {
+        skills: [
+          '<skill name="pi-subagents">Remove the parent orchestration skill.</skill>',
+          '<skill name="safe-bash">Keep this configured skill.</skill>',
+        ].join("\n\n"),
+      },
+    });
+
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+
+    const rendered = buildSystemPrompt(options);
+    assert.match(options.sections.skills, /<skill name="safe-bash">/);
+    assert.doesNotMatch(options.sections.skills, /pi-subagents/);
+    assert.doesNotMatch(rendered, /Remove the parent orchestration skill/);
+    assert.match(rendered, /Keep this configured skill/);
+    assert.deepEqual(
+      options.skills.map((skill) => skill.name),
+      ["safe-bash"],
+    );
+  });
+
+  it("removes only the orchestration skill when inherited skills remain enabled", () => {
+    const options = makeStructuredPromptOptions();
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+
+    const rendered = buildSystemPrompt(options);
+    assert.deepEqual(
+      options.skills.map((skill) => skill.name),
+      ["safe-bash"],
+    );
+    assert.match(rendered, /<project_context>/);
+    assert.match(rendered, /Project rules/);
+    assert.match(rendered, /<skills>/);
+    assert.match(rendered, /<name>safe-bash<\/name>/);
+    assert.doesNotMatch(rendered, /<name>pi-subagents<\/name>/);
+    assert.equal(options.sections.unrelated, "Unrelated section must remain intact.");
+    assert.match(rendered, /Unrelated section must remain intact\./);
+  });
+
+  it("sanitizes orchestration skill markup from unrelated structured sections", () => {
+    const options = makeStructuredPromptOptions();
+    options.sections.unrelated = [
+      "Keep this unrelated section.",
+      '<skill name="pi-subagents">Remove the parent orchestration skill.</skill>',
+      '<skill name="safe-bash">Keep this configured skill.</skill>',
+      "<skill>\n  <name>pi-subagents</name>\n  <description>Remove this lazy entry.</description>\n</skill>",
+    ].join("\n\n");
+
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+
+    assert.equal(options.sections.unrelated.includes("pi-subagents"), false);
+    assert.match(options.sections.unrelated, /Keep this unrelated section/);
+    assert.match(options.sections.unrelated, /<skill name="safe-bash">/);
+    const rendered = buildSystemPrompt(options);
+    assert.doesNotMatch(rendered, /Remove the parent orchestration skill/);
+    assert.doesNotMatch(rendered, /Remove this lazy entry/);
+    assert.match(rendered, /Keep this configured skill/);
+  });
+
+  it("mutates normalized prompt options from before_agent_start instead of returning a forced prompt", async () => {
+    const handlers = registerPromptRuntimeHandlers();
+    const options = makeStructuredPromptOptions();
+    options.forceSystemPrompt = "FORCED handler replacement";
+    const event = {
+      systemPrompt: buildSystemPrompt(options),
+      systemPromptOptions: options,
+    };
+
+    process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
+    process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
+    const result = await handlers.beforeAgentStart(event, makeMinimalCtx("/repo"));
+
+    assert.equal(result, undefined);
+    assert.equal(options.forceSystemPrompt, undefined);
+    assert.doesNotMatch(buildSystemPrompt(options), /FORCED handler replacement/);
+    assert.doesNotMatch(buildSystemPrompt(options), /Project rules/);
+    assert.doesNotMatch(buildSystemPrompt(options), /<name>safe-bash<\/name>/);
+    assert.equal(options.sections.unrelated, "Unrelated section must remain intact.");
+    assert.match(buildSystemPrompt(options), new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  });
+
+  it("keeps the explicit child boundary after a later handler returns a forced prompt", async () => {
+    let laterHandlerRan = false;
+    const result = await emitChainedBeforeAgentStart(
+      {
+        ...makeStructuredPromptOptions(),
+        forceSystemPrompt: "FORCED late replacement",
+      },
+      [
+        (pi) => registerSubagentPromptRuntime(pi),
+        (pi) =>
+          pi.on("before_agent_start", () => ({
+            systemPrompt: "FORCED late replacement",
+          })),
+        (pi) =>
+          pi.on("before_agent_start", () => {
+            laterHandlerRan = true;
+            return undefined;
+          }),
+      ],
+    );
+
+    assert.equal(laterHandlerRan, true);
+    assert.equal(result.systemPromptOptions.forceSystemPrompt, undefined);
+    const rendered = buildSystemPrompt(result.systemPromptOptions);
+    assert.doesNotMatch(rendered, /FORCED late replacement/);
+    assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+    assert.match(rendered, /Unrelated section must remain intact\./);
   });
 
   it("persists a validated developer ticket capsule at the prompt boundary", async (t) => {
@@ -814,13 +1035,14 @@ describe("subagent prompt runtime", () => {
       async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.match(event.systemPrompt, /Developer ticket assignment:/);
-        assert.match(event.systemPrompt, /Ticket ID: tlhm-o1qg/);
-        assert.match(event.systemPrompt, /tk show tlhm-o1qg/);
-        assert.equal((event.systemPrompt.match(/tlhm-o1qg/g) ?? []).length, 2);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        const event = makePromptEvent(BASE_PROMPT);
+        await handlers.beforeAgentStart(event, ctx);
+        const prompt = renderPrompt(event);
+        assert.match(prompt, /Developer ticket assignment:/);
+        assert.match(prompt, /Ticket ID: tlhm-o1qg/);
+        assert.match(prompt, /tk show tlhm-o1qg/);
+        assert.equal((prompt.match(/tlhm-o1qg/g) ?? []).length, 2);
+        assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { tkTicketId: "tlhm-o1qg" },
     );
@@ -831,9 +1053,9 @@ describe("subagent prompt runtime", () => {
       async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.doesNotMatch(event.systemPrompt, /Developer ticket assignment:/);
+        const event = makePromptEvent(BASE_PROMPT);
+        await handlers.beforeAgentStart(event, ctx);
+        assert.doesNotMatch(renderPrompt(event), /Developer ticket assignment:/);
       },
       { tkTicketId: "tlhm-o1qg" },
     );
@@ -947,145 +1169,67 @@ describe("subagent prompt runtime", () => {
         async () => {
           const ctx = makeMinimalCtx(fixture.cwd);
           await handlers.sessionStart(ctx);
-          const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-          assert.ok(hasSystemPrompt(event));
-          assert.doesNotMatch(event.systemPrompt, /Developer ticket assignment:/);
-          assert.doesNotMatch(event.systemPrompt, /Ticket ID:/);
+          const event = makePromptEvent(BASE_PROMPT);
+          await handlers.beforeAgentStart(event, ctx);
+          const prompt = renderPrompt(event);
+          assert.doesNotMatch(prompt, /Developer ticket assignment:/);
+          assert.doesNotMatch(prompt, /Ticket ID:/);
         },
         ticketId === undefined ? {} : { tkTicketId: ticketId },
       );
     }
   });
 
-  it("preserves role text containing guidance delimiters while deduplicating the exact snapshot", () => {
-    const roleText = [
-      "Packaged role instructions.",
-      "## TLH Project Agent Guidance",
-      "<tlh_project_agent_guidance>",
-      "This heading and delimiter sequence is legitimate role text.",
-      "</tlh_project_agent_guidance>",
-    ].join("\n");
-    const snapshot = [
-      "## TLH Project Agent Guidance",
-      "",
-      "Source: .tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md",
-      "",
-      "<tlh_project_agent_guidance>",
-      "Runtime guidance.",
-      "</tlh_project_agent_guidance>",
-    ].join("\n");
-    const rewritten = rewriteSubagentPrompt(roleText, snapshot);
-    assert.match(rewritten, /This heading and delimiter sequence is legitimate role text\./);
-    assert.equal(countOccurrences(rewritten, "<tlh_project_agent_guidance>"), 2);
-    assert.equal(countOccurrences(rewritten, "Runtime guidance."), 1);
-
-    const repeated = rewriteSubagentPrompt(rewritten, snapshot);
-    assert.match(repeated, /This heading and delimiter sequence is legitimate role text\./);
-    assert.equal(countOccurrences(repeated, "<tlh_project_agent_guidance>"), 2);
-    assert.equal(countOccurrences(repeated, "Runtime guidance."), 1);
-    assert.ok(repeated.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-  });
-
-  it("preserves quoted runtime blocks and appends only the owned suffix", () => {
-    const snapshot = [
-      "## TLH Project Agent Guidance",
-      "",
-      "Source: .tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md",
-      "",
-      "<tlh_project_agent_guidance>",
-      "Runtime guidance.",
-      "</tlh_project_agent_guidance>",
-    ].join("\n");
-    const quotedPrompt = [
-      "Legitimate role and project text quotes runtime-looking blocks.",
-      "Quoted project guidance:",
-      snapshot,
-      "Continuation after the quoted guidance.",
-      "Quoted child boundary:",
-      CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-      "Continuation after the quoted child boundary.",
-    ].join("\n\n");
-    const explicitRuntimeBlock = [
-      CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-      snapshot,
-      CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
-    ].join("\n");
-    const promptWithRuntimeSuffix =
-      [quotedPrompt, explicitRuntimeBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n") +
-      "\n \t";
-
-    const rewritten = rewriteSubagentPrompt(promptWithRuntimeSuffix, snapshot);
-
-    const expected = [
-      quotedPrompt,
-      explicitRuntimeBlock,
-      CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-    ].join("\n\n");
-    assert.equal(rewritten, expected);
-    assert.equal(countOccurrences(rewritten, snapshot), 2);
-    assert.equal(countOccurrences(rewritten, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 2);
-    assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-
-    const repeated = rewriteSubagentPrompt(rewritten, snapshot);
-    assert.equal(repeated, expected);
-  });
-
   it("injects a child-only boundary that forbids proposing or running subagents", () => {
-    const rewritten = rewriteSubagentPrompt(BASE_PROMPT);
+    const options = makePromptEvent(BASE_PROMPT).systemPromptOptions;
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+    const rewritten = buildSystemPrompt(options);
 
-    assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+    assert.ok(rewritten.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
     assert.ok(rewritten.includes("Do not propose or run subagents."));
     assert.ok(rewritten.includes("If you need to edit files, use the available editing tools."));
     assert.ok(!rewritten.includes("call the actual edit/write tools"));
     assert.ok(
       rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."),
     );
-    const rewrittenAgain = rewriteSubagentPrompt(rewritten);
-    assert.equal(
-      rewrittenAgain.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
-      rewrittenAgain.length - CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS.length,
-    );
-    assert.equal(
-      rewrittenAgain.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
-      rewrittenAgain.length - CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS.length,
-    );
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+    const rewrittenAgain = buildSystemPrompt(options);
+    assert.equal(countOccurrences(rewrittenAgain, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
+    assert.ok(rewrittenAgain.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
   });
 
-  it("keeps explicit and configured prompt sections while inherited skills are stripped", async () => {
-    process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
-    process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
-    const handlers = registerPromptRuntimeHandlers();
+  it("keeps explicitly injected skill content when inherited skills are stripped", () => {
+    const options = makeStructuredPromptOptions();
+    rewriteSubagentPrompt(options, {
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
 
-    const explicitOptions = makePromptOptions();
-    const explicitEvent = makeTaggedPromptEvent(
-      explicitOptions,
-      `${"You are a subagent."}\n\n<skill name="explicit">\nKeep this section\n</skill>`,
-    );
-    const explicitResult = await handlers.beforeAgentStart(explicitEvent, makeMinimalCtx("/repo"));
-    assert.ok(hasSystemPrompt(explicitResult));
-    assert.ok(explicitResult.systemPrompt.includes('<skill name="explicit">'));
-    assert.ok(!explicitResult.systemPrompt.includes("<name>safe-bash</name>"));
-    assert.ok(!explicitResult.systemPrompt.includes("<project_context>"));
+    const rendered = buildSystemPrompt(options);
+    assert.match(rendered, /<skill name="explicit">/);
+    assert.doesNotMatch(rendered, /<skills>/);
+    assert.doesNotMatch(rendered, /Project rules/);
+  });
 
-    const configuredOptions = makePromptOptions();
-    const configuredEvent = makeTaggedPromptEvent(
-      configuredOptions,
-      ["You are a subagent.", CONFIGURED_SKILLS_SECTION].join("\n\n"),
-    );
-    const configuredResult = await handlers.beforeAgentStart(
-      configuredEvent,
-      makeMinimalCtx("/repo"),
-    );
-    assert.ok(hasSystemPrompt(configuredResult));
-    assert.ok(configuredResult.systemPrompt.includes("<name>configured-skill</name>"));
-    assert.ok(configuredResult.systemPrompt.includes("/tmp/configured-skill/SKILL.md"));
-    assert.ok(!configuredResult.systemPrompt.includes("<name>safe-bash</name>"));
-    assert.ok(!configuredResult.systemPrompt.includes("<project_context>"));
-    assert.ok(configuredResult.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
+  it("keeps configured lazy skill references when inherited skills are stripped", () => {
+    const options = makeStructuredPromptOptions();
+    options.appendSystemPrompt = CONFIGURED_SKILLS_SECTION;
+    rewriteSubagentPrompt(options, {
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+
+    const rendered = buildSystemPrompt(options);
+    assert.match(rendered, /<name>configured-skill<\/name>/);
+    assert.match(rendered, /\/tmp\/configured-skill\/SKILL\.md/);
+    assert.doesNotMatch(rendered, /<name>safe-bash<\/name>/);
+    assert.doesNotMatch(rendered, /Project rules/);
   });
 
   it("strips the subagent orchestration skill even when inherited skills remain", () => {
-    const rewritten = rewriteSubagentPrompt(BASE_PROMPT);
+    const options = makePromptEvent(BASE_PROMPT).systemPromptOptions;
+    rewriteSubagentPrompt(options, { inheritProjectContext: true, inheritSkills: true });
+    const rewritten = buildSystemPrompt(options);
 
     assert.ok(rewritten.includes("<name>safe-bash</name>"));
     assert.ok(!rewritten.includes("<name>pi-subagents</name>"));
@@ -1120,7 +1264,7 @@ describe("subagent prompt runtime", () => {
 
     assert.deepEqual(registered, []);
     handlers.get("session_start")?.({});
-    await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
+    await handlers.get("before_agent_start")?.(makePromptEvent(BASE_PROMPT));
     assert.deepEqual(registered, []);
   });
 
@@ -1142,7 +1286,7 @@ describe("subagent prompt runtime", () => {
     );
 
     handlers.get("session_start")?.({});
-    await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
+    await handlers.get("before_agent_start")?.(makePromptEvent(BASE_PROMPT));
 
     assert.deepEqual(registered, ["contact_supervisor"]);
   });
@@ -1167,7 +1311,7 @@ describe("subagent prompt runtime", () => {
     handlers.get("session_start")?.({});
     assert.deepEqual(registered, ["contact_supervisor"]);
 
-    await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
+    await handlers.get("before_agent_start")?.(makePromptEvent(BASE_PROMPT));
     assert.deepEqual(registered, ["contact_supervisor"]);
   });
 
@@ -1184,10 +1328,15 @@ describe("subagent prompt runtime", () => {
     process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
     process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
 
-    const rewritten = await handlers.get("before_agent_start")?.(makeTaggedPromptEvent());
-    assert.ok(hasSystemPrompt(rewritten));
-    assert.ok(!rewritten.systemPrompt.includes("<project_context>"));
-    assert.ok(!rewritten.systemPrompt.includes("<skills>"));
-    assert.ok(rewritten.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
+    const options = makeStructuredPromptOptions();
+    const rewritten = await handlers.get("before_agent_start")?.({
+      systemPrompt: buildSystemPrompt(options),
+      systemPromptOptions: options,
+    });
+    assert.equal(rewritten, undefined);
+    const rendered = buildSystemPrompt(options);
+    assert.ok(!rendered.includes("Project rules"));
+    assert.ok(!rendered.includes("<skills>"));
+    assert.ok(rendered.includes("<cwd>\n/repo\n</cwd>"));
   });
 });
