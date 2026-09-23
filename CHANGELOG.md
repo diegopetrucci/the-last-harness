@@ -6,6 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- The bundled `librarian`, `repo-scout`, and `web-scout` subagents now default to Anthropic Claude Sonnet 4.6 at medium effort instead of Claude Haiku 4.5 at high effort. `diff-summarizer` and `test-runner` continue to use Claude Haiku 4.5 at their existing effort levels. Non-Anthropic provider defaults, including the OpenRouter high-effort entries, are unchanged.
+- The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort instead of high; its Anthropic, xAI, and OpenRouter defaults are unchanged, and `contrarian` still uses OpenAI Codex GPT-5.6 Sol at high effort.
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`; an absent value keeps Pi's default `streaming` behavior. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
 - Documented the separate ownership and overlap rules for Pi-native warming and TLH's default-off async-parent heartbeat: an idle parent overlaps its heartbeat with Pi warming only in `idle` mode, while active child sessions may independently stream-warm during the parent heartbeat; the requests have no shared budget.
 
