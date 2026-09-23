@@ -9,6 +9,7 @@ import {
   bundledExtension,
   bundledExtensionsPath,
   bundledSource,
+  currentPiTranscribeGitSource,
   defaultsScript,
   harnessPackage,
   mergeScript,
@@ -788,26 +789,33 @@ test("tlh-defaults disable migrates the fast alias and removes the replaced pack
   assert.deepEqual(settings.packages, []);
 });
 
-test("future pi-transcribe npm manifest migrates TLH-managed Git installs and preserves manual npm pins", () => {
-  const bundled = bundledExtension("pi-transcribe");
-  assert.ok(bundled, "bundled pi-transcribe default should exist");
-  const futurePiTranscribe = {
-    ...bundled,
-    replaces: [piTranscribeGitSource],
-    migrateReplacements: true,
-    source: piTranscribeNpmSource,
-  };
+test("Pi Voice migration replaces current and historical pi-transcribe pins", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  assert.deepEqual(bundled.aliases, ["pi-transcribe"]);
+  assert.equal(bundled.source, "npm:@earendil-works/pi-voice@0.1.0");
+  assert.equal(bundled.migrateReplacements, true);
 
-  const managedFixture = tempFixture();
-  writeFileSync(managedFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
   writeFileSync(
-    managedFixture.settings,
+    fixture.settings,
     JSON.stringify(
       {
-        packages: [harnessPackage, piTranscribeGitSource, "npm:user-owned-package@1.2.3"],
+        packages: [
+          harnessPackage,
+          currentPiTranscribeGitSource,
+          piTranscribeGitSource,
+          piTranscribeNpmSource,
+          "npm:@earendil-works/pi-transcribe@0.0.0",
+          "npm:user-owned-package@1.2.3",
+        ],
         tlh: {
           defaultExtensionProvenance: {
-            managedPackageIdentities: [packageIdentity(piTranscribeGitSource)],
+            managedPackageIdentities: [
+              packageIdentity(currentPiTranscribeGitSource),
+              packageIdentity(piTranscribeNpmSource),
+            ],
           },
         },
       },
@@ -817,30 +825,41 @@ test("future pi-transcribe npm manifest migrates TLH-managed Git installs and pr
   );
 
   runNode(mergeScript, [
-    managedFixture.defaults,
+    fixture.defaults,
     "--settings",
-    managedFixture.settings,
+    fixture.settings,
     "--default-extensions",
-    managedFixture.extensions,
+    fixture.extensions,
     "--quiet",
   ]);
 
-  const managedSettings = readJson(managedFixture.settings);
-  assert.equal(managedSettings.packages.includes(piTranscribeGitSource), false);
-  assert.equal(managedSettings.packages.includes(piTranscribeNpmSource), true);
-  assert.equal(managedSettings.packages.includes("npm:user-owned-package@1.2.3"), true);
-  assert.deepEqual(managedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
-    "npm:@earendil-works/pi-transcribe",
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    "npm:user-owned-package@1.2.3",
+    bundled.source,
   ]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@earendil-works/pi-voice",
+  ]);
+});
 
-  const manualFixture = tempFixture();
-  const manualPiTranscribeSource = "npm:@earendil-works/pi-transcribe@0.0.0";
-  writeFileSync(manualFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+test("Pi Voice migration removes legacy pins even when they are not provenance-managed", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
   writeFileSync(
-    manualFixture.settings,
+    fixture.settings,
     JSON.stringify(
       {
-        packages: [harnessPackage, manualPiTranscribeSource, "npm:user-owned-package@1.2.3"],
+        packages: [
+          harnessPackage,
+          piTranscribeGitSource,
+          "npm:@earendil-works/pi-transcribe@0.0.0",
+          "npm:user-owned-package@1.2.3",
+        ],
         tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
       },
       null,
@@ -849,21 +868,54 @@ test("future pi-transcribe npm manifest migrates TLH-managed Git installs and pr
   );
 
   runNode(mergeScript, [
-    manualFixture.defaults,
+    fixture.defaults,
     "--settings",
-    manualFixture.settings,
+    fixture.settings,
     "--default-extensions",
-    manualFixture.extensions,
+    fixture.extensions,
     "--quiet",
   ]);
 
-  const manualSettings = readJson(manualFixture.settings);
-  assert.deepEqual(manualSettings.packages, [
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
     harnessPackage,
-    manualPiTranscribeSource,
     "npm:user-owned-package@1.2.3",
+    bundled.source,
   ]);
-  assert.deepEqual(manualSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@earendil-works/pi-voice",
+  ]);
+});
+
+test("tlh-defaults disable accepts the pi-transcribe compatibility alias", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, bundled.source, piTranscribeGitSource],
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "pi-transcribe",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["pi-voice"]);
+  assert.deepEqual(settings.packages, [harnessPackage]);
 });
 
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
