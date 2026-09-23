@@ -4,7 +4,7 @@ import { registerNativeSupervisorClient } from "../../supervisor/native-supervis
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, SUBAGENT_TK_TICKET_ID_ENV, } from "./pi-args.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
-import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, composeChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
+import { blockForcedSystemPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION, setStructuredChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
 import { formatProjectAgentGuidance, inventoryProjectAgentGuidance, PACKAGED_MINOR_AGENT_ROLES, } from "../../../../shared/project-agent-guidance.js";
 import { normalizeTkTicketId } from "./tk-ticket.js";
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
@@ -22,8 +22,8 @@ export const NATIVE_SUPERVISOR_GUIDANCE = [
     "",
     "Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.",
 ].join("\n");
-const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
+const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 function readBooleanEnv(name) {
     const value = process.env[name];
     if (value === undefined)
@@ -35,16 +35,49 @@ export function stripSubagentOrchestrationSkill(prompt) {
         .replace(/\n{0,2}<skill\s+name=["']pi-subagents["'][^>]*>[\s\S]*?<\/skill>\n{0,2}/g, "\n\n")
         .replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
 }
-export function applySubagentPromptInheritance(systemPromptOptions, options) {
-    if (!options.inheritProjectContext)
-        systemPromptOptions.contextFiles = [];
-    if (!options.inheritSkills)
-        systemPromptOptions.skills = [];
-    systemPromptOptions.skills = systemPromptOptions.skills.filter((skill) => skill.name !== SUBAGENT_ORCHESTRATION_SKILL_NAME);
+function isOrchestrationSkill(name) {
+    return name.trim().toLowerCase() === SUBAGENT_ORCHESTRATION_SKILL_NAME;
 }
-export function rewriteSubagentPrompt(prompt, projectAgentGuidance = "", supervisorGuidance = "", tkTicketGuidance = "") {
-    const rewritten = stripSubagentOrchestrationSkill(prompt);
-    return composeChildPromptRuntime(rewritten, [projectAgentGuidance, supervisorGuidance, tkTicketGuidance], "explicit");
+function sanitizePromptOption(value) {
+    return value === undefined ? undefined : stripSubagentOrchestrationSkill(value);
+}
+function rewriteStructuredSubagentPrompt(systemPromptOptions, options, projectAgentGuidance, supervisorGuidance, tkTicketGuidance) {
+    blockForcedSystemPrompt(systemPromptOptions);
+    if (!options.inheritProjectContext) {
+        systemPromptOptions.contextFiles = [];
+        delete systemPromptOptions.sections.project_context;
+    }
+    systemPromptOptions.skills = options.inheritSkills
+        ? systemPromptOptions.skills.filter((skill) => !isOrchestrationSkill(skill.name))
+        : [];
+    if (!options.inheritSkills) {
+        delete systemPromptOptions.sections.skills;
+    }
+    else if (systemPromptOptions.sections.skills !== undefined) {
+        const sanitizedSkills = stripSubagentOrchestrationSkill(systemPromptOptions.sections.skills);
+        if (sanitizedSkills.trim())
+            systemPromptOptions.sections.skills = sanitizedSkills;
+        else
+            delete systemPromptOptions.sections.skills;
+    }
+    systemPromptOptions.customPrompt = sanitizePromptOption(systemPromptOptions.customPrompt);
+    systemPromptOptions.appendSystemPrompt =
+        sanitizePromptOption(systemPromptOptions.appendSystemPrompt) ?? "";
+    for (const [name, content] of Object.entries(systemPromptOptions.sections)) {
+        if (name === CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION)
+            continue;
+        const sanitized = stripSubagentOrchestrationSkill(content);
+        if (sanitized !== content)
+            systemPromptOptions.sections[name] = sanitized;
+    }
+    setStructuredChildPromptRuntime(systemPromptOptions.sections, "explicit", [
+        projectAgentGuidance,
+        supervisorGuidance,
+        tkTicketGuidance,
+    ]);
+}
+export function rewriteSubagentPrompt(systemPromptOptions, options, projectAgentGuidance = "", supervisorGuidance = "", tkTicketGuidance = "") {
+    rewriteStructuredSubagentPrompt(systemPromptOptions, options, projectAgentGuidance, supervisorGuidance, tkTicketGuidance);
 }
 function formatSteerMessage(request) {
     return [
@@ -244,26 +277,9 @@ export default function registerSubagentPromptRuntime(pi) {
         }, { deliverAs: event.willRetry ? "steer" : "nextTurn" });
     });
     pi.on("before_agent_start", (event) => {
-        const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
-        const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-        const systemPromptOptions = event.systemPromptOptions;
-        const hasOrchestrationSkill = systemPromptOptions?.skills.some((skill) => skill.name === SUBAGENT_ORCHESTRATION_SKILL_NAME) ?? false;
-        if (inheritProjectContext === undefined &&
-            inheritSkills === undefined &&
-            !hasOrchestrationSkill &&
-            projectAgentGuidanceSnapshot.length === 0 &&
-            supervisorGuidanceSnapshot.length === 0 &&
-            tkTicketGuidanceSnapshot.length === 0)
-            return undefined;
-        if (systemPromptOptions) {
-            applySubagentPromptInheritance(systemPromptOptions, {
-                inheritProjectContext: inheritProjectContext ?? true,
-                inheritSkills: inheritSkills ?? true,
-            });
-        }
-        const rewritten = rewriteSubagentPrompt(event.systemPrompt, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot, tkTicketGuidanceSnapshot);
-        if (rewritten === event.systemPrompt)
-            return undefined;
-        return { systemPrompt: rewritten };
+        const projectInheritance = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV) ?? true;
+        const skillsInheritance = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV) ?? true;
+        rewriteSubagentPrompt(event.systemPromptOptions, { inheritProjectContext: projectInheritance, inheritSkills: skillsInheritance }, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot, tkTicketGuidanceSnapshot);
+        return undefined;
     });
 }
