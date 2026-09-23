@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, SUBAGENT_TK_TICKET_ID_ENV, } from "./pi-args.js";
@@ -22,57 +22,28 @@ export const NATIVE_SUPERVISOR_GUIDANCE = [
     "",
     "Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.",
 ].join("\n");
+const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
-const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
-const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
-const DATE_HEADER = "\nCurrent date:";
 function readBooleanEnv(name) {
     const value = process.env[name];
     if (value === undefined)
         return undefined;
     return value !== "0";
 }
-function findSectionEnd(prompt, startIndex, nextHeaders) {
-    let endIndex = prompt.length;
-    for (const header of nextHeaders) {
-        const index = prompt.indexOf(header, startIndex);
-        if (index !== -1 && index < endIndex) {
-            endIndex = index;
-        }
-    }
-    return endIndex;
-}
-export function stripProjectContext(prompt) {
-    const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
-    if (startIndex === -1)
-        return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [
-        SKILLS_HEADER,
-        DATE_HEADER,
-    ]);
-    return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
-}
-export function stripInheritedSkills(prompt) {
-    const startIndex = prompt.indexOf(SKILLS_HEADER);
-    if (startIndex === -1)
-        return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + SKILLS_HEADER.length, [DATE_HEADER]);
-    return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
-}
 export function stripSubagentOrchestrationSkill(prompt) {
     return prompt
         .replace(/\n{0,2}<skill\s+name=["']pi-subagents["'][^>]*>[\s\S]*?<\/skill>\n{0,2}/g, "\n\n")
         .replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
 }
-export function rewriteSubagentPrompt(prompt, options, projectAgentGuidance = "", supervisorGuidance = "", tkTicketGuidance = "") {
-    let rewritten = prompt;
-    if (!options.inheritProjectContext) {
-        rewritten = stripProjectContext(rewritten);
-    }
-    if (!options.inheritSkills) {
-        rewritten = stripInheritedSkills(rewritten);
-    }
-    rewritten = stripSubagentOrchestrationSkill(rewritten);
+export function applySubagentPromptInheritance(systemPromptOptions, options) {
+    if (!options.inheritProjectContext)
+        systemPromptOptions.contextFiles = [];
+    if (!options.inheritSkills)
+        systemPromptOptions.skills = [];
+    systemPromptOptions.skills = systemPromptOptions.skills.filter((skill) => skill.name !== SUBAGENT_ORCHESTRATION_SKILL_NAME);
+}
+export function rewriteSubagentPrompt(prompt, projectAgentGuidance = "", supervisorGuidance = "", tkTicketGuidance = "") {
+    const rewritten = stripSubagentOrchestrationSkill(prompt);
     return composeChildPromptRuntime(rewritten, [projectAgentGuidance, supervisorGuidance, tkTicketGuidance], "explicit");
 }
 function formatSteerMessage(request) {
@@ -275,16 +246,22 @@ export default function registerSubagentPromptRuntime(pi) {
     pi.on("before_agent_start", (event) => {
         const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
         const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
+        const systemPromptOptions = event.systemPromptOptions;
+        const hasOrchestrationSkill = systemPromptOptions?.skills.some((skill) => skill.name === SUBAGENT_ORCHESTRATION_SKILL_NAME) ?? false;
         if (inheritProjectContext === undefined &&
             inheritSkills === undefined &&
+            !hasOrchestrationSkill &&
             projectAgentGuidanceSnapshot.length === 0 &&
             supervisorGuidanceSnapshot.length === 0 &&
             tkTicketGuidanceSnapshot.length === 0)
             return undefined;
-        const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
-            inheritProjectContext: inheritProjectContext ?? true,
-            inheritSkills: inheritSkills ?? true,
-        }, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot, tkTicketGuidanceSnapshot);
+        if (systemPromptOptions) {
+            applySubagentPromptInheritance(systemPromptOptions, {
+                inheritProjectContext: inheritProjectContext ?? true,
+                inheritSkills: inheritSkills ?? true,
+            });
+        }
+        const rewritten = rewriteSubagentPrompt(event.systemPrompt, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot, tkTicketGuidanceSnapshot);
         if (rewritten === event.systemPrompt)
             return undefined;
         return { systemPrompt: rewritten };

@@ -36,8 +36,6 @@ import registerSubagentPromptRuntime, {
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
   NATIVE_SUPERVISOR_GUIDANCE,
   rewriteSubagentPrompt,
-  stripInheritedSkills,
-  stripProjectContext,
   stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
 import {
@@ -50,7 +48,10 @@ import {
 } from "../support/helpers.ts";
 
 function recordEvents(handlers: Map<TestEventName, TestEventHandler>): TestEventRegistration["on"] {
-  return (event, handler) => handlers.set(event, handler);
+  return (event, handler) => {
+    handlers.set(event, handler);
+    return () => handlers.delete(event);
+  };
 }
 
 function makeToolInfo(name: string): ToolInfo {
@@ -86,26 +87,99 @@ const envSnapshot = {
   PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
 };
 
-const SKILLS_SECTION =
-  "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>safe-bash</name>\n    <description>desc</description>\n    <location>/tmp/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>pi-subagents</name>\n    <description>delegate to subagents</description>\n    <location>/tmp/pi-subagents/SKILL.md</location>\n  </skill>\n</available_skills>";
+type PromptFixtureOptions = {
+  contextFiles: Array<{ path: string; content: string }>;
+  skills: Array<{ name: string; description: string; filePath: string }>;
+  sections: Record<string, string>;
+};
 
-const BASE_PROMPT = [
-  "You are a subagent.",
-  "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## /repo/AGENTS.md\n\nProject rules\n\n",
-  SKILLS_SECTION,
-  "\nCurrent date: 2026-04-16",
-  "\nCurrent working directory: /repo",
-].join("");
+function makePromptOptions(): PromptFixtureOptions {
+  return {
+    contextFiles: [{ path: "/repo/AGENTS.md", content: "Project rules" }],
+    skills: [
+      { name: "safe-bash", description: "desc", filePath: "/tmp/SKILL.md" },
+      {
+        name: "pi-subagents",
+        description: "delegate to subagents",
+        filePath: "/tmp/pi-subagents/SKILL.md",
+      },
+    ],
+    sections: { unrelated: "Keep this unrelated prompt section." },
+  };
+}
 
-const PROMPT_WITH_EXPLICIT_SKILL = [
-  'You are a subagent.\n\n<skill name="explicit">\nKeep this section\n</skill>',
-  "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## /repo/AGENTS.md\n\nProject rules\n\n",
-  SKILLS_SECTION,
-  "\nCurrent date: 2026-04-16",
-].join("");
+function renderTaggedPrompt(
+  options: PromptFixtureOptions,
+  preamble = "You are a subagent.",
+): string {
+  const sections = [preamble];
+  if (options.contextFiles.length > 0) {
+    sections.push(
+      [
+        "<project_context>",
+        "Project-specific instructions and guidelines:",
+        ...options.contextFiles.map(
+          (file) =>
+            `<project_instructions path="${file.path}">\n${file.content}\n</project_instructions>`,
+        ),
+        "</project_context>",
+      ].join("\n\n"),
+    );
+  }
+  if (options.skills.length > 0) {
+    sections.push(
+      [
+        "<skills>",
+        "The following skills provide specialized instructions for specific tasks.",
+        "Use the read tool to load a skill's file when the task matches its description.",
+        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+        "",
+        "<available_skills>",
+        ...options.skills.flatMap((skill) => [
+          "  <skill>",
+          `    <name>${skill.name}</name>`,
+          `    <description>${skill.description}</description>`,
+          `    <location>${skill.filePath}</location>`,
+          "  </skill>",
+        ]),
+        "</available_skills>",
+        "</skills>",
+      ].join("\n"),
+    );
+  }
+  sections.push("<cwd>\n/repo\n</cwd>");
+  for (const [name, content] of Object.entries(options.sections)) {
+    if (content) sections.push(`<${name}>\n${content}\n</${name}>`);
+  }
+  return sections.join("\n\n");
+}
 
-const CONFIGURED_SKILLS_SECTION =
-  "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
+function makeTaggedPromptEvent(
+  options = makePromptOptions(),
+  preamble = "You are a subagent.",
+): Record<string, unknown> {
+  return {
+    get systemPrompt() {
+      return renderTaggedPrompt(options, preamble);
+    },
+    systemPromptOptions: options,
+  };
+}
+
+const BASE_PROMPT = renderTaggedPrompt(makePromptOptions());
+
+const CONFIGURED_SKILLS_SECTION = [
+  "<configured_skills>",
+  "The following configured skills are available to this subagent.",
+  "<available_skills>",
+  "  <skill>",
+  "    <name>configured-skill</name>",
+  "    <description>explicit agent skill</description>",
+  "    <location>/tmp/configured-skill/SKILL.md</location>",
+  "  </skill>",
+  "</available_skills>",
+  "</configured_skills>",
+].join("\n");
 
 afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined)
@@ -573,12 +647,12 @@ describe("subagent prompt runtime", () => {
       async () => {
         const ctx = makeMinimalCtx(fixture.cwd);
         await handlers.sessionStart(ctx);
-        return handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
+        return handlers.beforeAgentStart(makeTaggedPromptEvent(), ctx);
       },
       { inheritProjectContext: false, inheritSkills: false },
     );
     assert.ok(hasSystemPrompt(prompt));
-    assert.doesNotMatch(prompt.systemPrompt, /# Project Context/);
+    assert.doesNotMatch(prompt.systemPrompt, /<project_context>/);
     assert.doesNotMatch(prompt.systemPrompt, /<name>pi-subagents<\/name>/);
     assert.match(prompt.systemPrompt, /review guidance/);
     assert.ok(prompt.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
@@ -696,32 +770,38 @@ describe("subagent prompt runtime", () => {
     }
   });
 
-  it("strips only the project context block", () => {
-    const rewritten = stripProjectContext(BASE_PROMPT);
-    assert.ok(!rewritten.includes("# Project Context"));
-    assert.ok(
-      rewritten.includes(
-        "The following skills provide specialized instructions for specific tasks.",
-      ),
-    );
-    assert.ok(rewritten.includes("Current date: 2026-04-16"));
-  });
-
-  it("strips only the inherited skills block", () => {
-    const rewritten = stripInheritedSkills(BASE_PROMPT);
-    assert.ok(rewritten.includes("# Project Context"));
-    assert.ok(!rewritten.includes("<available_skills>"));
-    assert.ok(rewritten.includes("Current date: 2026-04-16"));
-  });
-
-  it("can strip both inherited sections together", () => {
-    const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
-      inheritProjectContext: false,
-      inheritSkills: false,
-    });
-    assert.ok(!rewritten.includes("# Project Context"));
-    assert.ok(!rewritten.includes("<available_skills>"));
-    assert.ok(rewritten.includes("Current working directory: /repo"));
+  it("applies project-context and skill inheritance independently through Pi prompt options", async () => {
+    const handlers = registerPromptRuntimeHandlers();
+    for (const testCase of [
+      { inheritProjectContext: false, inheritSkills: false },
+      { inheritProjectContext: false, inheritSkills: true },
+      { inheritProjectContext: true, inheritSkills: false },
+      { inheritProjectContext: true, inheritSkills: true },
+    ]) {
+      process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = testCase.inheritProjectContext ? "1" : "0";
+      process.env.PI_SUBAGENT_INHERIT_SKILLS = testCase.inheritSkills ? "1" : "0";
+      const options = makePromptOptions();
+      const event = makeTaggedPromptEvent(options);
+      const result = await handlers.beforeAgentStart(event, makeMinimalCtx("/repo"));
+      assert.ok(hasSystemPrompt(result));
+      assert.equal(options.contextFiles.length > 0, testCase.inheritProjectContext);
+      assert.equal(
+        options.skills.some((skill) => skill.name === "safe-bash"),
+        testCase.inheritSkills,
+      );
+      assert.equal(
+        options.skills.some((skill) => skill.name === "pi-subagents"),
+        false,
+      );
+      assert.equal(
+        result.systemPrompt.includes("<project_context>"),
+        testCase.inheritProjectContext,
+      );
+      assert.equal(result.systemPrompt.includes("<skills>"), testCase.inheritSkills);
+      assert.ok(result.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
+      assert.ok(result.systemPrompt.includes("Keep this unrelated prompt section."));
+      assert.ok(!result.systemPrompt.includes("# Project Context"));
+    }
   });
 
   it("persists a validated developer ticket capsule at the prompt boundary", async (t) => {
@@ -894,20 +974,12 @@ describe("subagent prompt runtime", () => {
       "Runtime guidance.",
       "</tlh_project_agent_guidance>",
     ].join("\n");
-    const rewritten = rewriteSubagentPrompt(
-      roleText,
-      { inheritProjectContext: true, inheritSkills: true },
-      snapshot,
-    );
+    const rewritten = rewriteSubagentPrompt(roleText, snapshot);
     assert.match(rewritten, /This heading and delimiter sequence is legitimate role text\./);
     assert.equal(countOccurrences(rewritten, "<tlh_project_agent_guidance>"), 2);
     assert.equal(countOccurrences(rewritten, "Runtime guidance."), 1);
 
-    const repeated = rewriteSubagentPrompt(
-      rewritten,
-      { inheritProjectContext: true, inheritSkills: true },
-      snapshot,
-    );
+    const repeated = rewriteSubagentPrompt(rewritten, snapshot);
     assert.match(repeated, /This heading and delimiter sequence is legitimate role text\./);
     assert.equal(countOccurrences(repeated, "<tlh_project_agent_guidance>"), 2);
     assert.equal(countOccurrences(repeated, "Runtime guidance."), 1);
@@ -942,11 +1014,7 @@ describe("subagent prompt runtime", () => {
       [quotedPrompt, explicitRuntimeBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n") +
       "\n \t";
 
-    const rewritten = rewriteSubagentPrompt(
-      promptWithRuntimeSuffix,
-      { inheritProjectContext: true, inheritSkills: true },
-      snapshot,
-    );
+    const rewritten = rewriteSubagentPrompt(promptWithRuntimeSuffix, snapshot);
 
     const expected = [
       quotedPrompt,
@@ -958,19 +1026,12 @@ describe("subagent prompt runtime", () => {
     assert.equal(countOccurrences(rewritten, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 2);
     assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
-    const repeated = rewriteSubagentPrompt(
-      rewritten,
-      { inheritProjectContext: true, inheritSkills: true },
-      snapshot,
-    );
+    const repeated = rewriteSubagentPrompt(rewritten, snapshot);
     assert.equal(repeated, expected);
   });
 
   it("injects a child-only boundary that forbids proposing or running subagents", () => {
-    const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
-      inheritProjectContext: true,
-      inheritSkills: true,
-    });
+    const rewritten = rewriteSubagentPrompt(BASE_PROMPT);
 
     assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
     assert.ok(rewritten.includes("Do not propose or run subagents."));
@@ -979,10 +1040,7 @@ describe("subagent prompt runtime", () => {
     assert.ok(
       rewritten.includes("Do not print tool-call syntax, patches, or pseudo-tool calls as text."),
     );
-    const rewrittenAgain = rewriteSubagentPrompt(rewritten, {
-      inheritProjectContext: true,
-      inheritSkills: true,
-    });
+    const rewrittenAgain = rewriteSubagentPrompt(rewritten);
     assert.equal(
       rewrittenAgain.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
       rewrittenAgain.length - CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS.length,
@@ -993,40 +1051,41 @@ describe("subagent prompt runtime", () => {
     );
   });
 
-  it("keeps explicitly injected skill content when inherited skills are stripped", () => {
-    const rewritten = rewriteSubagentPrompt(PROMPT_WITH_EXPLICIT_SKILL, {
-      inheritProjectContext: false,
-      inheritSkills: false,
-    });
-    assert.ok(rewritten.includes('<skill name="explicit">'));
-    assert.ok(!rewritten.includes("<available_skills>"));
-    assert.ok(!rewritten.includes("# Project Context"));
-  });
+  it("keeps explicit and configured prompt sections while inherited skills are stripped", async () => {
+    process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
+    process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
+    const handlers = registerPromptRuntimeHandlers();
 
-  it("keeps configured lazy skill references when inherited skills are stripped", () => {
-    const prompt = [
-      "You are a subagent.",
-      CONFIGURED_SKILLS_SECTION,
-      "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n## /repo/AGENTS.md\n\nProject rules\n\n",
-      SKILLS_SECTION,
-      "\nCurrent date: 2026-04-16",
-    ].join("");
-    const rewritten = rewriteSubagentPrompt(prompt, {
-      inheritProjectContext: false,
-      inheritSkills: false,
-    });
+    const explicitOptions = makePromptOptions();
+    const explicitEvent = makeTaggedPromptEvent(
+      explicitOptions,
+      `${"You are a subagent."}\n\n<skill name="explicit">\nKeep this section\n</skill>`,
+    );
+    const explicitResult = await handlers.beforeAgentStart(explicitEvent, makeMinimalCtx("/repo"));
+    assert.ok(hasSystemPrompt(explicitResult));
+    assert.ok(explicitResult.systemPrompt.includes('<skill name="explicit">'));
+    assert.ok(!explicitResult.systemPrompt.includes("<name>safe-bash</name>"));
+    assert.ok(!explicitResult.systemPrompt.includes("<project_context>"));
 
-    assert.ok(rewritten.includes("<name>configured-skill</name>"));
-    assert.ok(rewritten.includes("/tmp/configured-skill/SKILL.md"));
-    assert.ok(!rewritten.includes("<name>safe-bash</name>"));
-    assert.ok(!rewritten.includes("# Project Context"));
+    const configuredOptions = makePromptOptions();
+    const configuredEvent = makeTaggedPromptEvent(
+      configuredOptions,
+      ["You are a subagent.", CONFIGURED_SKILLS_SECTION].join("\n\n"),
+    );
+    const configuredResult = await handlers.beforeAgentStart(
+      configuredEvent,
+      makeMinimalCtx("/repo"),
+    );
+    assert.ok(hasSystemPrompt(configuredResult));
+    assert.ok(configuredResult.systemPrompt.includes("<name>configured-skill</name>"));
+    assert.ok(configuredResult.systemPrompt.includes("/tmp/configured-skill/SKILL.md"));
+    assert.ok(!configuredResult.systemPrompt.includes("<name>safe-bash</name>"));
+    assert.ok(!configuredResult.systemPrompt.includes("<project_context>"));
+    assert.ok(configuredResult.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
   });
 
   it("strips the subagent orchestration skill even when inherited skills remain", () => {
-    const rewritten = rewriteSubagentPrompt(BASE_PROMPT, {
-      inheritProjectContext: true,
-      inheritSkills: true,
-    });
+    const rewritten = rewriteSubagentPrompt(BASE_PROMPT);
 
     assert.ok(rewritten.includes("<name>safe-bash</name>"));
     assert.ok(!rewritten.includes("<name>pi-subagents</name>"));
@@ -1125,12 +1184,10 @@ describe("subagent prompt runtime", () => {
     process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
     process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
 
-    const rewritten = await handlers.get("before_agent_start")?.({
-      systemPrompt: BASE_PROMPT,
-    });
+    const rewritten = await handlers.get("before_agent_start")?.(makeTaggedPromptEvent());
     assert.ok(hasSystemPrompt(rewritten));
-    assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
-    assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
-    assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
+    assert.ok(!rewritten.systemPrompt.includes("<project_context>"));
+    assert.ok(!rewritten.systemPrompt.includes("<skills>"));
+    assert.ok(rewritten.systemPrompt.includes("<cwd>\n/repo\n</cwd>"));
   });
 });

@@ -311,6 +311,51 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
   }
 });
 
+test("/tokens explains cache_warm spend separately while keeping assistant counts turn-only", () => {
+  const entries = [
+    assistantEntry("a1", null, "2026-07-12T10:00:00.000Z", {
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: usage({ input: 8000, output: 100, cacheRead: 2000, cost: 0.01 }),
+    }),
+    {
+      type: "usage",
+      id: "warm-1",
+      parentId: "a1",
+      timestamp: "2026-07-12T10:01:00.000Z",
+      kind: "cache_warm",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: usage({ output: 1, cacheRead: 12000, cost: 0.001 }),
+    },
+    assistantEntry("a2", "warm-1", "2026-07-12T10:02:00.000Z", {
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: usage({ input: 12000, output: 80, cost: 0.036 }),
+    }),
+  ];
+  const analysis = analyzeSessionEntries(entries);
+  const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T10:03:00.000Z" });
+
+  assert.match(
+    html,
+    /primary row is a total: it includes assistant-message usage plus Pi-native cache_warm spend/,
+  );
+  assert.match(html, /Pi-native cache_warm \(non-turn\)/);
+  assert.match(html, /<th>Assistant turns<\/th>/);
+  assert.match(html, /<th>Assistant messages<\/th>/);
+  assert.match(html, /includes \$0\.001 Pi-native cache_warm/);
+  assert.match(html, /12,001 tokens.*1 non-turn request/);
+  assert.match(
+    html,
+    /<tr><td>Primary assistant<\/td><td>—<\/td><td>20,000<\/td><td>181<\/td><td>14,000<\/td><td>0<\/td><td>34,181<\/td><td>\$0\.047<\/td><td>2<\/td><td>2<\/td><\/tr>/,
+  );
+  assert.match(
+    html,
+    /<tr><td>Pi-native cache_warm \(non-turn\)<\/td><td>—<\/td><td>0<\/td><td>1<\/td><td>12,000<\/td><td>0<\/td><td>12,001<\/td><td>\$0\.001<\/td><td>0<\/td><td>0<\/td><\/tr>/,
+  );
+});
+
 test("buildTokensReportHtml escapes dynamic content while preserving required report structure", () => {
   const html = buildTokensReportHtml(
     {
@@ -1296,6 +1341,8 @@ test("buildTokensReportHtml renders Cache misses section with cards and worst ta
 
   // Explanatory note present
   assert.match(html, /A cache miss is prompt content/);
+  assert.match(html, /comparison baseline is the most recent provider request/);
+  assert.match(html, /may be an assistant turn or a Pi-native cache_warm refresh/);
   assert.match(html, /Only misses above a small noise floor are counted\./);
 
   // Three metric cards

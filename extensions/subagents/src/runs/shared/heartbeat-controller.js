@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { normalizeContext, } from "@earendil-works/pi-ai";
 import {} from "./heartbeat-config.js";
 import { beginBeat, CACHE_WRITE_MISMATCH_THRESHOLD, closeGap, completeBeat, createHeartbeatState, decideBeat, MIN_REARM_DELAY_MS, openGap, recordProviderRequest, } from "./heartbeat-state.js";
 import { createHeartbeatLogger, } from "./heartbeat-logger.js";
@@ -182,7 +183,7 @@ export function createHeartbeatController(config, deps = {}) {
         try {
             let stream;
             if (deps.streamProvider) {
-                stream = deps.streamProvider(model, { messages: [] }, {
+                stream = deps.streamProvider(model, normalizeContext({ messages: [] }), {
                     onPayload: () => currentCapture.payload,
                     signal: abortCtrl.signal,
                     maxRetries: 0,
@@ -219,7 +220,7 @@ export function createHeartbeatController(config, deps = {}) {
                     ...(auth.env !== undefined ? { env: auth.env } : {}),
                 };
                 const streamModel = auth.baseUrl !== undefined ? { ...model, baseUrl: auth.baseUrl } : model;
-                stream = provider.stream(streamModel, { messages: [] }, options);
+                stream = provider.stream(streamModel, normalizeContext({ messages: [] }), options);
             }
             for await (const event of stream) {
                 if (abortCtrl.signal.aborted)

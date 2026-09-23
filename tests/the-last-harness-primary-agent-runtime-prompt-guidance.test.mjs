@@ -16,6 +16,7 @@ import {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
   registerTlhPrimaryAgentRuntime,
+  createBeforeAgentStartHarness,
   createPiHarness,
   createToolCallContext,
   registerRuntimeHarness,
@@ -57,6 +58,29 @@ function writeProjectGuidance(cwd, role, content) {
 
 function persistProjectTrust(agentDir, cwd, decision = true) {
   new ProjectTrustStore(agentDir).set(cwd, decision);
+}
+
+function makeStructuredPromptOptions(cwd, customPrompt = "packaged code-reviewer role") {
+  return {
+    cwd,
+    customPrompt,
+    contextFiles: [{ path: `${cwd}/AGENTS.md`, content: "Project rules" }],
+    skills: [
+      {
+        name: "safe-bash",
+        description: "safe shell operations",
+        filePath: "/tmp/safe-bash/SKILL.md",
+        disableModelInvocation: false,
+      },
+      {
+        name: "pi-subagents",
+        description: "delegate to subagents",
+        filePath: "/tmp/pi-subagents/SKILL.md",
+        disableModelInvocation: false,
+      },
+    ],
+    sections: { unrelated: "Keep this unrelated prompt section." },
+  };
 }
 
 function guidancePrimaryAgents() {
@@ -477,15 +501,13 @@ test("malformed and duplicate-owner reserved-marker base text remains intact", (
 });
 
 test("marked root and explicit content replace when their text changes", () => {
-  const options = { inheritProjectContext: true, inheritSkills: true };
   const rootOnly = appendBeforeChildSubagentBoundary("base prompt", "root version one");
   assert.equal(rootOnly.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), false);
-  const first = rewriteSubagentPrompt(rootOnly, options, "guidance version one");
+  const first = rewriteSubagentPrompt(rootOnly, "guidance version one");
   assert.match(first, /root version one/);
   assert.ok(first.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
   const second = rewriteSubagentPrompt(
     appendBeforeChildSubagentBoundary(first, "root version two"),
-    options,
     "guidance version two",
   );
 
@@ -501,7 +523,6 @@ test("marked root and explicit content replace when their text changes", () => {
   assert.equal(
     rewriteSubagentPrompt(
       appendBeforeChildSubagentBoundary(second, "root version two"),
-      options,
       "guidance version two",
     ),
     second,
@@ -522,17 +543,14 @@ test("defangs reserved owner markers inside root and guidance additions", () => 
     `nested ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN}outer ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE}`,
     `partial ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN.slice(0, -4)} and ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE.slice(0, -4)}`,
   ].join("\n\n");
-  const options = { inheritProjectContext: true, inheritSkills: true };
   const rootAdditions = ["normal root guidance", markerLookalikes].join("\n\n");
   const explicitAdditions = ["normal project guidance", markerLookalikes].join("\n\n");
   const onePass = rewriteSubagentPrompt(
     appendBeforeChildSubagentBoundary("base prompt", rootAdditions),
-    options,
     explicitAdditions,
   );
   const twoPasses = rewriteSubagentPrompt(
     appendBeforeChildSubagentBoundary(onePass, rootAdditions),
-    options,
     explicitAdditions,
   );
 
@@ -548,6 +566,68 @@ test("defangs reserved owner markers inside root and guidance additions", () => 
   ]) {
     assert.equal((onePass.match(new RegExp(marker, "g")) ?? []).length, 1, marker);
   }
+});
+
+test("child inheritance uses normalized prompt options through the faithful hook harness", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-child-prompt-options-", {
+    cwd: true,
+    test: t,
+  });
+  createSyntheticGitWorktree(fixture.cwd);
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD_AGENT: "code-reviewer",
+      PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: "0",
+      PI_SUBAGENT_SUPERVISOR_BRIDGE: "0",
+      PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "1",
+      PI_SUBAGENT_INHERIT_SKILLS: "1",
+    },
+    async () => {
+      for (const testCase of [
+        { inheritProjectContext: false, inheritSkills: false },
+        { inheritProjectContext: false, inheritSkills: true },
+        { inheritProjectContext: true, inheritSkills: false },
+        { inheritProjectContext: true, inheritSkills: true },
+      ]) {
+        process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = testCase.inheritProjectContext
+          ? "1"
+          : "0";
+        process.env.PI_SUBAGENT_INHERIT_SKILLS = testCase.inheritSkills ? "1" : "0";
+        const pi = createPiHarness();
+        registerSubagentPromptRuntime(pi);
+        const beforeAgentStart = createBeforeAgentStartHarness(pi);
+        const ctx = createToolCallContext([], undefined, { cwd: fixture.cwd });
+        const event = await beforeAgentStart(
+          { systemPromptOptions: makeStructuredPromptOptions(fixture.cwd) },
+          ctx,
+        );
+
+        assert.equal(
+          event.systemPromptOptions.contextFiles.length > 0,
+          testCase.inheritProjectContext,
+        );
+        assert.equal(
+          event.systemPromptOptions.skills.some((skill) => skill.name === "safe-bash"),
+          testCase.inheritSkills,
+        );
+        assert.equal(
+          event.systemPromptOptions.skills.some((skill) => skill.name === "pi-subagents"),
+          false,
+        );
+        assert.equal(
+          event.systemPrompt.includes("<project_context>"),
+          testCase.inheritProjectContext,
+        );
+        assert.equal(event.systemPrompt.includes("<skills>"), testCase.inheritSkills);
+        assert.match(event.systemPrompt, /<cwd>/);
+        assert.match(event.systemPrompt, /Keep this unrelated prompt section/);
+        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+      }
+    },
+  );
 });
 
 test("child hook composition is idempotent in either registration order", async (t) => {
@@ -622,16 +702,15 @@ test("child hook composition is idempotent in either registration order", async 
         for (const event of pi.events.filter((entry) => entry.name === "session_start")) {
           await event.handler({}, ctx);
         }
+        const beforeAgentStart = createBeforeAgentStartHarness(pi);
         let event = {
-          systemPrompt: ["packaged code-reviewer role", quotedRuntimeLookalikes].join("\n\n"),
+          systemPromptOptions: {
+            cwd: fixture.cwd,
+            customPrompt: ["packaged code-reviewer role", quotedRuntimeLookalikes].join("\n\n"),
+          },
         };
         for (let pass = 0; pass < passes; pass += 1) {
-          for (const handler of pi.events
-            .filter((entry) => entry.name === "before_agent_start")
-            .map((entry) => entry.handler)) {
-            const nextEvent = await handler(event, ctx);
-            if (nextEvent) event = nextEvent;
-          }
+          event = await beforeAgentStart(event, ctx);
         }
         return event.systemPrompt;
       }

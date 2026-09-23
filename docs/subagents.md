@@ -460,6 +460,21 @@ Set `enabled: false` in the config block or remove the `heartbeat` key entirely.
 
 To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
 
+### Relationship to Pi-native cache warming
+
+Pi `0.87.1` has a separate native `cacheWarming` setting. It is global to the active isolated profile, defaults to `streaming` when absent, and accepts `off`, `streaming`, or `idle`. The canonical TLH parent and child processes normally share `PI_CODING_AGENT_DIR`, so the same user-owned global value applies to both; it is not a per-child heartbeat switch. Pi's warmer follows each session's most recent real provider request, sends a one-token refresh only when its cache economics allow it, appends a `cache_warm` usage entry, and runs the normal `before_provider_request` payload hook. It is provider work and may cost money.
+
+The two mechanisms have different owners and targets:
+
+| Mechanism | Owner and target | Default | Observable evidence |
+|---|---|---|---|
+| Pi native warming | Pi session; warms that session's latest prompt-cache entry | `cacheWarming: "streaming"` when absent | `/session`, `cache_warm` usage records, and `Cache warmed ...` transcript notices by default (`showCacheMissNotices: true` in TLH unless disabled) |
+| TLH heartbeat | TLH parent; replays a captured parent payload during an idle gap with live async children | `heartbeat.enabled: false` | `subagents/heartbeat.jsonl`, `/subagents-doctor`, and gap summaries |
+
+If both are enabled, an idle parent overlaps its heartbeat with Pi-native warming only when the parent's `cacheWarming` mode is `idle`; Pi's default `streaming` mode stops on parent settlement. Concurrent active child sessions may independently stream-warm while the idle parent heartbeat runs because warming is per session. There is no shared budget or deduplication. Heartbeat does not warm child sessions, and enabling one mechanism does not enable the other.
+
+**Kill switch and rollback:** set global `cacheWarming` to `off` in `/settings` (or the isolated profile's `settings.json`) to stop Pi-native warming; remove the key or select `streaming` to restore Pi's default. Set the separate `heartbeat.enabled` key to `false` or remove the heartbeat block to stop TLH heartbeat requests, then restart/reload as documented above. Preserve a settings/config backup and unrelated keys. To stop all background cache-refresh traffic, disable both switches. Install, update, and `tlh doctor --repair` preserve the user-owned `cacheWarming` value and heartbeat block.
+
 ## Acceptance and artifacts
 
 TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. An explicit fresh-run contract is authoritative: its level, criteria, and evidence replace conflicting inference, so task-appropriate contracts can omit gates such as `tests-added` or `no-staged-files`. Omitted or `auto` acceptance keeps the inferred policy, and continuation/resume can only retain or strengthen the established contract. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.

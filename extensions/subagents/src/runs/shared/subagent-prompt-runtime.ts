@@ -1,5 +1,9 @@
 import * as fs from "node:fs";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  getAgentDir,
+  type ExtensionAPI,
+  type NormalizedBuildSystemPromptOptions,
+} from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.ts";
 import {
   consumeChildMessageRequestsFromDir,
@@ -57,45 +61,13 @@ export const NATIVE_SUPERVISOR_GUIDANCE = [
   "Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.",
 ].join("\n");
 
+const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
-const PROJECT_CONTEXT_HEADER =
-  "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
-const SKILLS_HEADER =
-  "\n\nThe following skills provide specialized instructions for specific tasks.";
-const DATE_HEADER = "\nCurrent date:";
 
 function readBooleanEnv(name: string): boolean | undefined {
   const value = process.env[name];
   if (value === undefined) return undefined;
   return value !== "0";
-}
-
-function findSectionEnd(prompt: string, startIndex: number, nextHeaders: string[]): number {
-  let endIndex = prompt.length;
-  for (const header of nextHeaders) {
-    const index = prompt.indexOf(header, startIndex);
-    if (index !== -1 && index < endIndex) {
-      endIndex = index;
-    }
-  }
-  return endIndex;
-}
-
-export function stripProjectContext(prompt: string): string {
-  const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
-  if (startIndex === -1) return prompt;
-  const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [
-    SKILLS_HEADER,
-    DATE_HEADER,
-  ]);
-  return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
-}
-
-export function stripInheritedSkills(prompt: string): string {
-  const startIndex = prompt.indexOf(SKILLS_HEADER);
-  if (startIndex === -1) return prompt;
-  const endIndex = findSectionEnd(prompt, startIndex + SKILLS_HEADER.length, [DATE_HEADER]);
-  return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
 }
 
 export function stripSubagentOrchestrationSkill(prompt: string): string {
@@ -106,21 +78,32 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
     );
 }
 
+type SubagentPromptInheritanceOptions = {
+  inheritProjectContext: boolean;
+  inheritSkills: boolean;
+};
+
+export function applySubagentPromptInheritance(
+  systemPromptOptions: Pick<NormalizedBuildSystemPromptOptions, "contextFiles" | "skills">,
+  options: SubagentPromptInheritanceOptions,
+): void {
+  if (!options.inheritProjectContext) systemPromptOptions.contextFiles = [];
+  if (!options.inheritSkills) systemPromptOptions.skills = [];
+
+  // The parent owns orchestration. Remove this skill even when ordinary skills
+  // are inherited, while leaving unrelated or explicitly configured skills alone.
+  systemPromptOptions.skills = systemPromptOptions.skills.filter(
+    (skill) => skill.name !== SUBAGENT_ORCHESTRATION_SKILL_NAME,
+  );
+}
+
 export function rewriteSubagentPrompt(
   prompt: string,
-  options: { inheritProjectContext: boolean; inheritSkills: boolean },
   projectAgentGuidance = "",
   supervisorGuidance = "",
   tkTicketGuidance = "",
 ): string {
-  let rewritten = prompt;
-  if (!options.inheritProjectContext) {
-    rewritten = stripProjectContext(rewritten);
-  }
-  if (!options.inheritSkills) {
-    rewritten = stripInheritedSkills(rewritten);
-  }
-  rewritten = stripSubagentOrchestrationSkill(rewritten);
+  const rewritten = stripSubagentOrchestrationSkill(prompt);
   return composeChildPromptRuntime(
     rewritten,
     [projectAgentGuidance, supervisorGuidance, tkTicketGuidance],
@@ -338,20 +321,29 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event) => {
     const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
     const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
+    const systemPromptOptions = event.systemPromptOptions;
+    const hasOrchestrationSkill =
+      systemPromptOptions?.skills.some(
+        (skill) => skill.name === SUBAGENT_ORCHESTRATION_SKILL_NAME,
+      ) ?? false;
     if (
       inheritProjectContext === undefined &&
       inheritSkills === undefined &&
+      !hasOrchestrationSkill &&
       projectAgentGuidanceSnapshot.length === 0 &&
       supervisorGuidanceSnapshot.length === 0 &&
       tkTicketGuidanceSnapshot.length === 0
     )
       return undefined;
-    const rewritten = rewriteSubagentPrompt(
-      event.systemPrompt,
-      {
+
+    if (systemPromptOptions) {
+      applySubagentPromptInheritance(systemPromptOptions, {
         inheritProjectContext: inheritProjectContext ?? true,
         inheritSkills: inheritSkills ?? true,
-      },
+      });
+    }
+    const rewritten = rewriteSubagentPrompt(
+      event.systemPrompt,
       projectAgentGuidanceSnapshot,
       supervisorGuidanceSnapshot,
       tkTicketGuidanceSnapshot,

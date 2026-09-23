@@ -965,7 +965,7 @@ test("bundled Node and modular AgentSession constructors share one exact public 
     assert.notEqual(
       ModularAgentSession,
       BundledAgentSession,
-      "Pi 0.85.1 must expose distinct modular and bundled AgentSession constructors",
+      "Pi 0.87.1 must expose distinct modular and bundled AgentSession constructors",
     );
 
     // The extension loader resolves this module through the normal package root,

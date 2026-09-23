@@ -1160,6 +1160,97 @@ test("cacheMisses: two turns with no cache activity ever are not flagged (no-cac
   );
 });
 
+test("cache-warm usage entries contribute to totals and replace the previous cache-miss baseline", () => {
+  const entries = [
+    assistantEntry("a1", null, "2026-07-12T10:00:00.000Z", {
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: usageRaw({
+        input: 8000,
+        output: 100,
+        cacheRead: 2000,
+        costInput: 0.008,
+        costCacheRead: 0.002,
+      }),
+    }),
+    {
+      type: "usage",
+      id: "warm-1",
+      parentId: "a1",
+      timestamp: "2026-07-12T10:01:00.000Z",
+      kind: "cache_warm",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: {
+        ...usageRaw({
+          output: 1,
+          cacheRead: 12000,
+          costCacheRead: 0.001,
+        }),
+        // A malformed/non-native count must not turn a cache_warm entry into an assistant turn.
+        turns: 99,
+        assistantMessages: 99,
+      },
+    },
+    assistantEntry("a2", "warm-1", "2026-07-12T10:02:00.000Z", {
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+      usage: usageRaw({ input: 12000, output: 80, costInput: 0.036 }),
+    }),
+  ];
+
+  const analysis = analyzeSessionEntries(entries);
+
+  assert.deepEqual(analysis.totals.primary, {
+    inputTokens: 20000,
+    outputTokens: 181,
+    cacheReadTokens: 14000,
+    cacheWriteTokens: 0,
+    totalTokens: 34181,
+    costUsd: 0.047,
+    turns: 2,
+    assistantMessages: 2,
+  });
+  assert.equal(
+    analysis.primaryAssistant.timeline.length,
+    2,
+    "usage entries are not assistant turns",
+  );
+  assert.equal(analysis.primaryAssistant.usageCoverage.withUsage, 2);
+  assert.deepEqual(analysis.primaryAssistant.assistantTurnUsage, {
+    inputTokens: 20000,
+    outputTokens: 180,
+    cacheReadTokens: 2000,
+    cacheWriteTokens: 0,
+    totalTokens: 22180,
+    costUsd: 0.046,
+    turns: 2,
+    assistantMessages: 2,
+  });
+  assert.deepEqual(analysis.primaryAssistant.cacheWarmUsage, {
+    inputTokens: 0,
+    outputTokens: 1,
+    cacheReadTokens: 12000,
+    cacheWriteTokens: 0,
+    totalTokens: 12001,
+    costUsd: 0.001,
+    turns: 0,
+    assistantMessages: 0,
+  });
+  assert.equal(analysis.primaryAssistant.cacheWarmRequestCount, 1);
+
+  assert.equal(analysis.cacheMisses.missCount, 1);
+  assert.equal(
+    analysis.cacheMisses.missedTokens,
+    12000,
+    "the next request is compared with the warmed 12000-token prompt, not the older assistant request",
+  );
+  assert.equal(analysis.cacheMisses.worst[0].turnIndex, 1);
+  assert.equal(analysis.cacheMisses.worst[0].idleMs, 60_000);
+  assert.equal(analysis.cacheMisses.worst[0].modelChanged, false);
+  assert.ok(Math.abs(analysis.cacheMisses.missedCost - 0.036) < 1e-9);
+});
+
 test("cacheMisses: modelRegistry-absent means readPerToken falls back to 0 (cost computed without cache-read discount)", () => {
   // Turn 0: cacheRead=2000 → reportedCache=true
   // Turn 1: cacheRead=0, no priceSource → readPerToken=0

@@ -17,6 +17,8 @@ export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
 export const { normalizeAgentModelDefaults } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
 );
+const { buildSystemPrompt, normalizeBuildSystemPromptOptions } =
+  await import("../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js");
 
 export function createPiHarness() {
   const commands = new Map();
@@ -141,12 +143,63 @@ export function createToolCallContext(branchEntries = [], notifications, overrid
   };
 }
 
+export function createBeforeAgentStartHarness(pi) {
+  const handlers = pi.events
+    .filter((event) => event.name === "before_agent_start")
+    .map((event) => event.handler);
+  assert.ok(handlers.length > 0, "expected a before_agent_start handler");
+
+  return async function emitBeforeAgentStart(inputEvent = {}, ctx = {}) {
+    const inputOptions = inputEvent.systemPromptOptions;
+    const inputPrompt =
+      inputOptions === undefined && typeof inputEvent.systemPrompt === "string"
+        ? inputEvent.systemPrompt
+        : undefined;
+    const systemPromptOptions = normalizeBuildSystemPromptOptions({
+      ...inputOptions,
+      cwd: inputOptions?.cwd ?? ctx?.cwd ?? process.cwd(),
+      ...(inputOptions === undefined && inputPrompt !== undefined
+        ? { forceSystemPrompt: inputPrompt }
+        : {}),
+    });
+    const renderSystemPrompt = () => buildSystemPrompt(systemPromptOptions);
+    const messages = [];
+
+    for (const handler of handlers) {
+      const event = {
+        type: "before_agent_start",
+        prompt: inputEvent.prompt,
+        images: inputEvent.images,
+        get systemPrompt() {
+          return renderSystemPrompt();
+        },
+        systemPromptOptions,
+      };
+      const result = await handler(event, ctx);
+      if (!result) continue;
+      if (result.message) messages.push(result.message);
+      if (result.systemPrompt !== undefined)
+        systemPromptOptions.forceSystemPrompt = result.systemPrompt;
+    }
+
+    return {
+      type: "before_agent_start",
+      prompt: inputEvent.prompt,
+      images: inputEvent.images,
+      systemPromptOptions,
+      messages,
+      get systemPrompt() {
+        return renderSystemPrompt();
+      },
+    };
+  };
+}
+
 export function registerRuntimeHarness(options = {}) {
   const pi = createPiHarness();
   const runtime = registerTlhPrimaryAgentRuntime(pi, { env: {}, ...options });
-  const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;
+  const beforeAgentStart = createBeforeAgentStartHarness(pi);
   const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
-  assert.equal(typeof beforeAgentStart, "function");
   assert.equal(typeof toolCall, "function");
   const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
   return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };

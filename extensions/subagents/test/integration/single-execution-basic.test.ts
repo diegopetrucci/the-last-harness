@@ -140,6 +140,35 @@ describe(
       assert.equal(output, "Hello from mock agent");
     });
 
+    it("keeps a Pi 0.87.1 system-role message_end out of the foreground answer", async () => {
+      mockPi.onCall({
+        jsonl: [
+          {
+            type: "message_end",
+            message: {
+              role: "system",
+              content: [{ type: "text", text: "system diagnostic" }],
+              timestamp: 1,
+            },
+          },
+          mockAssistantMessage("foreground final"),
+        ],
+      });
+
+      const result = await runSync(
+        tempDir,
+        makeAgentConfigs(["echo"]),
+        "echo",
+        "Return the final answer.",
+        {},
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.usage.turns, 1);
+      assert.equal(result.messages.length, 1);
+      assert.equal(getFinalOutput(result.messages), "foreground final");
+    });
+
     it("propagates the packaged child identity through a foreground single launch", async () => {
       mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV] });
       const result = await runSync(

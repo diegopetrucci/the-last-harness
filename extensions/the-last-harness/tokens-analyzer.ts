@@ -199,9 +199,15 @@ export type TlhCacheMissEvent = {
    * those with no miss). Stable across analysis runs on the same entries.
    */
   turnIndex: number;
-  /** Milliseconds elapsed since the previous assistant message's timestamp. */
+  /**
+   * Milliseconds elapsed since the comparison baseline's provider-request timestamp.
+   * The baseline may be a previous assistant message or a Pi-native cache_warm refresh.
+   */
   idleMs: number;
-  /** True when the provider/model key changed relative to the previous assistant message. */
+  /**
+   * True when the provider/model key changed relative to the comparison baseline's
+   * most recent provider request, which may be an assistant message or cache_warm refresh.
+   */
   modelChanged: boolean;
   missedTokens: number;
   missedCost: number;
@@ -222,7 +228,10 @@ type CacheMissPrev = {
   promptTokens: number;
   timestamp: number;
   modelKey: string;
-  /** True once any assistant message in this session has reported cacheRead+cacheWrite>0. */
+  /**
+   * True when the most-recent provider-request baseline (assistant message or Pi-native
+   * cache_warm refresh) has established cache support; carried forward for later comparisons.
+   */
   reportedCache: boolean;
 };
 
@@ -243,6 +252,7 @@ type CacheMissAnalysisState = {
 type CacheMissAnalyzer = {
   reset(): void;
   record(message: CacheMissMessage, timestamp: string): void;
+  recordCacheWarm(message: CacheMissMessage, timestamp: string): void;
   summarize(): TlhCacheMisses;
 };
 
@@ -274,7 +284,14 @@ export type TlhSessionUsageAnalysis = {
     combined: TlhUsageTotals;
   };
   primaryAssistant: {
+    /** All provider-reported primary usage, including Pi-native cache_warm spend. */
     usage: TlhUsageTotals;
+    /** Usage attributed to assistant messages only; cache_warm entries are excluded. */
+    assistantTurnUsage: TlhUsageTotals;
+    /** Usage attributed to Pi-native cache_warm entries only. */
+    cacheWarmUsage: TlhUsageTotals;
+    /** Number of Pi-native cache_warm entries with usable usage data. */
+    cacheWarmRequestCount: number;
     usageCoverage: TlhUsageCoverage;
     models: TlhModelUsage[];
     timeline: TlhUsageTimelineTurn[];
@@ -366,6 +383,9 @@ export function analyzeSessionEntries(
   const activeBranchIds = collectActiveBranchIds(activeLeafId, byId);
   const toolCatalogByName = new Map(toolCatalog.map((tool) => [tool.name, tool]));
   const primaryTotals = createUsageTotals();
+  const primaryAssistantUsage = createUsageTotals();
+  const primaryCacheWarmUsage = createUsageTotals();
+  let primaryCacheWarmRequestCount = 0;
   const primaryCoverage: TlhUsageCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
   const subagentTotals = createUsageTotals();
   const modelUsage = new Map<string, TlhModelUsage>();
@@ -417,6 +437,34 @@ export function analyzeSessionEntries(
       continue;
     }
 
+    if (entry.type === "usage" && entry.kind === "cache_warm") {
+      const usage = normalizeUsage(entry.usage);
+      if (usage) {
+        // Cache-warm entries represent provider spend but not an assistant turn.
+        // Include their tokens/cost in primary totals and model attribution while
+        // keeping turn/message counts tied to assistant messages.
+        addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+        addUsage(primaryCacheWarmUsage, usage, { turns: 0, assistantMessages: 0 });
+        primaryCacheWarmRequestCount += 1;
+        addModelUsage(modelUsage, {
+          provider: entry.provider,
+          modelId: entry.model,
+          source: "primary",
+          usage,
+          countAsTurn: 0,
+          countAsAssistantMessage: 0,
+        });
+      }
+      // Pi's native warmer is the previous provider request for cache-miss
+      // purposes. It must replace the prior assistant baseline without advancing
+      // the assistant turn index.
+      cacheMissAnalyzer.recordCacheWarm(
+        { usage: entry.usage, provider: entry.provider, model: entry.model },
+        entry.timestamp,
+      );
+      continue;
+    }
+
     if (entry.type !== "message") {
       continue;
     }
@@ -429,10 +477,13 @@ export function analyzeSessionEntries(
       if (usage) {
         primaryCoverage.withUsage += 1;
         addUsage(primaryTotals, usage, { turns: 1, assistantMessages: 1 });
+        addUsage(primaryAssistantUsage, usage, { turns: 1, assistantMessages: 1 });
       } else {
         primaryCoverage.withoutUsage += 1;
         primaryTotals.turns += 1;
         primaryTotals.assistantMessages += 1;
+        primaryAssistantUsage.turns += 1;
+        primaryAssistantUsage.assistantMessages += 1;
       }
 
       // Cache-miss detection is primary-session-only; subagent runs are excluded.
@@ -635,6 +686,9 @@ export function analyzeSessionEntries(
     },
     primaryAssistant: {
       usage: primaryTotals,
+      assistantTurnUsage: primaryAssistantUsage,
+      cacheWarmUsage: primaryCacheWarmUsage,
+      cacheWarmRequestCount: primaryCacheWarmRequestCount,
       usageCoverage: primaryCoverage,
       models: sortModelUsage(
         [...modelUsage.values()].filter((model) => model.source === "primary"),
@@ -705,7 +759,7 @@ export function analyzeSessionEntries(
       intercomTargets: [...intercomTargets].sort((left, right) => left.localeCompare(right)),
     },
     caveats: [
-      "Primary assistant token and cost totals use provider-reported assistant usage exactly where the session recorded it.",
+      "Primary assistant token and cost totals use provider-reported assistant usage plus Pi-native cache_warm spend; cache_warm requests are not assistant messages or turns.",
       "Tool, MCP, and source attribution are estimates derived from tool names and the current tool catalog.",
       "Tool I/O token counts are estimated from payload size (~4 chars/token), are not provider-reported, and reflect model-visible tool arguments and result content rather than turn-level token attribution.",
       "Subagent usage appears only when structured session data exposed it; missing discoveries do not prove zero subagent spend.",
@@ -760,6 +814,41 @@ function createCacheMissAnalyzer(priceSource?: ModelPriceSource): CacheMissAnaly
     events: [],
     totalMissedTokens: 0,
     totalMissedCost: 0,
+  };
+
+  const updatePreviousFromUsage = (
+    message: CacheMissMessage,
+    timestamp: string,
+    reportedCache: boolean,
+  ): void => {
+    const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
+    const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
+    const cmCacheRead =
+      numberFromUnknown(
+        rawMsgUsage?.cacheRead ??
+          rawMsgUsage?.cacheReadTokens ??
+          rawMsgUsage?.cache_read_input_tokens ??
+          rawMsgUsage?.cacheReadInputTokens,
+      ) ?? 0;
+    const cmCacheWrite =
+      numberFromUnknown(
+        rawMsgUsage?.cacheWrite ??
+          rawMsgUsage?.cacheWriteTokens ??
+          rawMsgUsage?.cache_creation_input_tokens ??
+          rawMsgUsage?.cacheWriteInputTokens,
+      ) ?? 0;
+    const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
+    if (cmPromptTokens <= 0) return;
+
+    const cmProvider = typeof message.provider === "string" ? message.provider : "";
+    const cmModel = typeof message.model === "string" ? message.model : "";
+    const cmTimestampMs = Date.parse(timestamp);
+    state.previous = {
+      promptTokens: cmPromptTokens,
+      timestamp: Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0,
+      modelKey: `${cmProvider}/${cmModel}`,
+      reportedCache: reportedCache || cmCacheRead + cmCacheWrite > 0,
+    };
   };
 
   return {
@@ -831,16 +920,14 @@ function createCacheMissAnalyzer(priceSource?: ModelPriceSource): CacheMissAnaly
       }
 
       // Update prev for next iteration (only when promptTokens > 0).
-      if (cmPromptTokens > 0) {
-        state.previous = {
-          promptTokens: cmPromptTokens,
-          timestamp: cmTimestamp,
-          modelKey: cmModelKey,
-          // Carry forward: once any message reported cache activity, the flag stays true.
-          reportedCache: (previous?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
-        };
-      }
+      updatePreviousFromUsage(message, timestamp, previous?.reportedCache ?? false);
       state.assistantTurnIndex += 1;
+    },
+    recordCacheWarm(message, timestamp) {
+      // Pi's cache warmer appends a usage entry for a provider request that is
+      // newer than the last assistant message. It is a new cache baseline, not
+      // an assistant turn and therefore does not advance assistantTurnIndex.
+      updatePreviousFromUsage(message, timestamp, true);
     },
     summarize() {
       const worstMisses = [...state.events]

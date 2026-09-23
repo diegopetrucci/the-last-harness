@@ -117,7 +117,7 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: ["pnpm"] }));
 
   const fakePiBody = [
-    'if [[ "${1:-}" == "--version" ]]; then printf "0.85.1\\n"; exit 0; fi',
+    'if [[ "${1:-}" == "--version" ]]; then printf "0.87.1\\n"; exit 0; fi',
     'if [[ "${1:-}" == "install" ]]; then',
     '  if [[ -n "${GIT_INDEX_FILE+x}" ]]; then printf "%s\\n" "$GIT_INDEX_FILE" >"$PI_CHILD_ENV_LOG"; else printf "<unset>\\n" >"$PI_CHILD_ENV_LOG"; fi',
     '  rm -rf "$FOREIGN_DIR"',

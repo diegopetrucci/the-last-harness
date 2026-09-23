@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
+import {
+  fauxAssistantMessage,
+  fauxText,
+  fauxToolCall,
+  type JsonObject,
+  type Message,
+} from "@earendil-works/pi-ai";
 
 import {
   evaluateCompletionMutationGuard,
@@ -11,7 +17,7 @@ import {
 import { isMutatingBashCommand } from "../../src/runs/shared/long-running-guard.ts";
 import { injectSingleOutputInstruction } from "../../src/runs/shared/single-output.ts";
 
-function assistantToolCall(name: string, args: Record<string, unknown> = {}): Message {
+function assistantToolCall(name: string, args: JsonObject = {}): Message {
   return fauxAssistantMessage(fauxToolCall(name, args));
 }
 

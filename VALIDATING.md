@@ -124,13 +124,23 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes in the release validation notes. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. The checkbox form in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this release-tier section are the live owners. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`.
 
 For the current investigation methodology, candidate ranking, and Pi `0.80.6` source/doc evidence behind the packaging recommendation, see [docs/pi-startup-investigation-2026-07-15.md](docs/pi-startup-investigation-2026-07-15.md).
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
+
+The following Pi 0.87.1 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+
+- **Model and thinking:** with a real provider, verify model-selection persistence and provider-backed thinking levels, including the supported maximum-thinking badge.
+- **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
+- **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
+- **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
+- **Published-ref update convergence:** once the release ref advertises Pi `0.87.1`, verify update convergence from that published ref.
+
+The live-provider checks are deferred because the approved verification excludes paid-provider execution and does not treat faux-provider seams as substitutes. Published-ref update convergence is deferred separately because no published ref currently advertises Pi `0.87.1`. Record all release outcomes in the release validation notes/current release tracking; the durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 
 ## Final validation guidance
 
