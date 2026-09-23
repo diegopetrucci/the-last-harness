@@ -5,7 +5,11 @@ import * as path from "node:path";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import type { discoverAgents } from "../../src/agents/agents.ts";
-import { createNestedRoute, projectNestedEvents } from "../../src/runs/shared/nested-events.ts";
+import {
+  createNestedRoute,
+  hasLiveNestedDescendants,
+  projectNestedEvents,
+} from "../../src/runs/shared/nested-events.ts";
 import {
   SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
   SUBAGENT_PARENT_CHILD_INDEX_ENV,
@@ -638,8 +642,16 @@ describe("subagent executor dispatch wiring", { concurrency: 1 }, () => {
         "nested completion event",
       );
       const registry = projectNestedEvents(route);
-      const completedChild = registry.children.find((child) => child.state === "complete");
+      assert.equal(registry.children.length, 1, "awaited nested dispatch has one lifecycle child");
+      assert.equal(registry.children[0]?.id, result.details?.asyncId);
+      assert.equal(
+        hasLiveNestedDescendants(registry.children),
+        false,
+        "completed nested dispatch leaves no cleanup blocker",
+      );
+      const completedChild = registry.children[0];
       assert.ok(completedChild, "expected nested completion record");
+      assert.equal(completedChild.state, "complete");
       assert.equal(completedChild.parentRunId, route.rootRunId);
       assert.equal(completedChild.parentStepIndex, 2);
     } finally {

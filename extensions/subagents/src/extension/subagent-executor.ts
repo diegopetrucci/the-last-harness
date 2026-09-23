@@ -66,11 +66,7 @@ import {
   ticketLookupKey,
 } from "../runs/shared/ticket-context.ts";
 
-import {
-  resolveInheritedNestedRouteFromEnv,
-  resolveNestedParentAddressFromEnv,
-  writeNestedEvent,
-} from "../runs/shared/nested-events.ts";
+import { resolveInheritedNestedRouteFromEnv } from "../runs/shared/nested-events.ts";
 import {
   resolveSubagentRunId,
   type ResolvedSubagentRunId,
@@ -1000,9 +996,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const agents = discoveredAgents;
     const runId = randomUUID().slice(0, 8);
     const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-    const nestedParentAddress = inheritedNestedRoute
-      ? resolveNestedParentAddressFromEnv()
-      : undefined;
     const nestedRoute = inheritedNestedRoute;
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
@@ -1081,87 +1074,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       ticketBodies,
     };
 
-    const writeNestedAwaitedEvent = (
-      type: "subagent.nested.started" | "subagent.nested.completed",
-      result?: SubagentToolResult<Details>,
-    ): void => {
-      if (!inheritedNestedRoute || !nestedParentAddress) return;
-      const now = Date.now();
-      const details = result?.details;
-      const state =
-        type === "subagent.nested.started"
-          ? "running"
-          : result?.isError || details?.results.some((child) => child.exitCode !== 0)
-            ? "failed"
-            : details?.results.some((child) => child.interrupted)
-              ? "paused"
-              : "complete";
-      const errorText = result?.isError
-        ? result.content.find((item) => item.type === "text")?.text
-        : undefined;
-      const agentsForSummary =
-        hasTasks && effectiveParams.tasks
-          ? effectiveParams.tasks.map((task) => task.agent)
-          : effectiveParams.agent
-            ? [effectiveParams.agent]
-            : [];
-      try {
-        writeNestedEvent(inheritedNestedRoute, {
-          type,
-          ts: now,
-          parentRunId: nestedParentAddress.parentRunId,
-          parentStepIndex: nestedParentAddress.parentStepIndex,
-          child: {
-            id: runId,
-            parentRunId: nestedParentAddress.parentRunId,
-            parentStepIndex: nestedParentAddress.parentStepIndex,
-            depth: nestedParentAddress.depth,
-            path: nestedParentAddress.path,
-            cwd: effectiveCwd,
-            ownerState: state === "running" ? "live" : "gone",
-            mode: inferExecutionMode(effectiveParams),
-            state,
-            agent: agentsForSummary[0],
-            ...(details?.results[0]?.projectAgent
-              ? { projectAgent: details.results[0].projectAgent }
-              : {}),
-            agents: agentsForSummary,
-            startedAt: now,
-            ...(state !== "running" ? { endedAt: now } : {}),
-            lastUpdate: now,
-            ...(details?.totalCost ? { totalCost: details.totalCost } : {}),
-            ...(errorText ? { error: errorText } : {}),
-            ...(details?.results.length
-              ? {
-                  steps: details.results.map((child) => ({
-                    agent: child.agent,
-                    ...(child.projectAgent ? { projectAgent: child.projectAgent } : {}),
-                    status: child.interrupted
-                      ? "paused"
-                      : child.exitCode === 0
-                        ? "complete"
-                        : "failed",
-                    ...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
-                    ...(child.error ? { error: child.error } : {}),
-                    ...(child.contextUsage ? { contextUsage: child.contextUsage } : {}),
-                    ...(child.terminationReason
-                      ? { terminationReason: child.terminationReason }
-                      : {}),
-                  })),
-                }
-              : {}),
-          },
-        });
-      } catch (error) {
-        console.error("Failed to emit nested awaited status event:", error);
-      }
-    };
-
-    let nestedAwaitedStarted = false;
-    if (inheritedNestedRoute && nestedParentAddress) {
-      writeNestedAwaitedEvent("subagent.nested.started");
-      nestedAwaitedStarted = true;
-    }
     try {
       const asyncResult = await runAsyncPath(execData, deps);
       if (asyncResult) return asyncResult;
@@ -1170,9 +1082,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         new Error("The awaited subagent runner is unavailable."),
       );
     } catch (error) {
-      const errorResult = toExecutionErrorResult(effectiveParams, error);
-      if (nestedAwaitedStarted) writeNestedAwaitedEvent("subagent.nested.completed", errorResult);
-      return errorResult;
+      return toExecutionErrorResult(effectiveParams, error);
     }
   };
 

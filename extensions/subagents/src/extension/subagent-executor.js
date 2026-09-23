@@ -18,7 +18,7 @@ import { resolveAsyncRunLocation } from "../runs/background/async-resume.js";
 import { normalizeSingleOutputOverride } from "../runs/shared/single-output.js";
 import { readStatus, resolveChildCwd } from "../shared/utils.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey, } from "../runs/shared/ticket-context.js";
-import { resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../runs/shared/nested-events.js";
+import { resolveInheritedNestedRouteFromEnv } from "../runs/shared/nested-events.js";
 import { resolveSubagentRunId, } from "../runs/background/run-id-resolver.js";
 import { inspectSubagentStatus } from "../runs/background/run-status.js";
 import { isAsyncStatusReadError } from "../runs/background/async-status-boundary.js";
@@ -761,9 +761,6 @@ export function createSubagentExecutor(deps) {
         const agents = discoveredAgents;
         const runId = randomUUID().slice(0, 8);
         const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-        const nestedParentAddress = inheritedNestedRoute
-            ? resolveNestedParentAddressFromEnv()
-            : undefined;
         const nestedRoute = inheritedNestedRoute;
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
@@ -827,83 +824,6 @@ export function createSubagentExecutor(deps) {
             modelScope,
             ticketBodies,
         };
-        const writeNestedAwaitedEvent = (type, result) => {
-            if (!inheritedNestedRoute || !nestedParentAddress)
-                return;
-            const now = Date.now();
-            const details = result?.details;
-            const state = type === "subagent.nested.started"
-                ? "running"
-                : result?.isError || details?.results.some((child) => child.exitCode !== 0)
-                    ? "failed"
-                    : details?.results.some((child) => child.interrupted)
-                        ? "paused"
-                        : "complete";
-            const errorText = result?.isError
-                ? result.content.find((item) => item.type === "text")?.text
-                : undefined;
-            const agentsForSummary = hasTasks && effectiveParams.tasks
-                ? effectiveParams.tasks.map((task) => task.agent)
-                : effectiveParams.agent
-                    ? [effectiveParams.agent]
-                    : [];
-            try {
-                writeNestedEvent(inheritedNestedRoute, {
-                    type,
-                    ts: now,
-                    parentRunId: nestedParentAddress.parentRunId,
-                    parentStepIndex: nestedParentAddress.parentStepIndex,
-                    child: {
-                        id: runId,
-                        parentRunId: nestedParentAddress.parentRunId,
-                        parentStepIndex: nestedParentAddress.parentStepIndex,
-                        depth: nestedParentAddress.depth,
-                        path: nestedParentAddress.path,
-                        cwd: effectiveCwd,
-                        ownerState: state === "running" ? "live" : "gone",
-                        mode: inferExecutionMode(effectiveParams),
-                        state,
-                        agent: agentsForSummary[0],
-                        ...(details?.results[0]?.projectAgent
-                            ? { projectAgent: details.results[0].projectAgent }
-                            : {}),
-                        agents: agentsForSummary,
-                        startedAt: now,
-                        ...(state !== "running" ? { endedAt: now } : {}),
-                        lastUpdate: now,
-                        ...(details?.totalCost ? { totalCost: details.totalCost } : {}),
-                        ...(errorText ? { error: errorText } : {}),
-                        ...(details?.results.length
-                            ? {
-                                steps: details.results.map((child) => ({
-                                    agent: child.agent,
-                                    ...(child.projectAgent ? { projectAgent: child.projectAgent } : {}),
-                                    status: child.interrupted
-                                        ? "paused"
-                                        : child.exitCode === 0
-                                            ? "complete"
-                                            : "failed",
-                                    ...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
-                                    ...(child.error ? { error: child.error } : {}),
-                                    ...(child.contextUsage ? { contextUsage: child.contextUsage } : {}),
-                                    ...(child.terminationReason
-                                        ? { terminationReason: child.terminationReason }
-                                        : {}),
-                                })),
-                            }
-                            : {}),
-                    },
-                });
-            }
-            catch (error) {
-                console.error("Failed to emit nested awaited status event:", error);
-            }
-        };
-        let nestedAwaitedStarted = false;
-        if (inheritedNestedRoute && nestedParentAddress) {
-            writeNestedAwaitedEvent("subagent.nested.started");
-            nestedAwaitedStarted = true;
-        }
         try {
             const asyncResult = await runAsyncPath(execData, deps);
             if (asyncResult)
@@ -911,10 +831,7 @@ export function createSubagentExecutor(deps) {
             return toExecutionErrorResult(effectiveParams, new Error("The awaited subagent runner is unavailable."));
         }
         catch (error) {
-            const errorResult = toExecutionErrorResult(effectiveParams, error);
-            if (nestedAwaitedStarted)
-                writeNestedAwaitedEvent("subagent.nested.completed", errorResult);
-            return errorResult;
+            return toExecutionErrorResult(effectiveParams, error);
         }
     };
     const executeWithSingleDispatchGuard = async (id, params, signal, onUpdate, ctx) => {

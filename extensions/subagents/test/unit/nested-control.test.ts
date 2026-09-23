@@ -790,7 +790,7 @@ describe("nested run control behavior", () => {
     }
   });
 
-  it("emits a failed completed nested event when awaited execution throws after start", async () => {
+  it("does not emit a synthetic nested lifecycle when awaited execution throws before runner start", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-awaited-throw-"));
     try {
       const route = createNestedRoute("root-parent");
@@ -818,9 +818,7 @@ describe("nested run control behavior", () => {
       assert.equal(result.isError, true);
       assert.match(text(result), /model registry exploded/);
       const registry = projectNestedEvents(route);
-      assert.equal(registry.children.length, 1);
-      assert.equal(registry.children[0]?.state, "failed");
-      assert.match(registry.children[0]?.error ?? "", /model registry exploded/);
+      assert.equal(registry.children.length, 0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
