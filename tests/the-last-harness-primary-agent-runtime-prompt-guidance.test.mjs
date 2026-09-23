@@ -18,6 +18,10 @@ import {
   registerTlhPrimaryAgentRuntime,
   createPiHarness,
   createToolCallContext,
+  createBeforeAgentStartHarness,
+  makeStructuredPromptEvent,
+  buildSystemPrompt,
+  normalizeBuildSystemPromptOptions,
   registerRuntimeHarness,
   selectablePrimaryAgents,
   contrarianMetadata,
@@ -31,14 +35,12 @@ const { formatProjectAgentGuidance } = await jiti.import(
 const { buildPrimaryExperimentalPrompt, buildChildExperimentalPrompt } = await jiti.import(
   "../extensions/the-last-harness/experimental.ts",
 );
+const { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, default: registerSubagentPromptRuntime } =
+  await jiti.import("../extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts");
 const {
-  CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-  default: registerSubagentPromptRuntime,
-  rewriteSubagentPrompt,
-} = await jiti.import("../extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts");
-const {
-  appendBeforeChildSubagentBoundary,
-  composeChildPromptRuntime,
+  setStructuredChildPromptRuntime,
+  CHILD_SUBAGENT_ROOT_RUNTIME_SECTION,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
   CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
   CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
   CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
@@ -57,6 +59,29 @@ function writeProjectGuidance(cwd, role, content) {
 
 function persistProjectTrust(agentDir, cwd, decision = true) {
   new ProjectTrustStore(agentDir).set(cwd, decision);
+}
+
+function makeStructuredChildPromptOptions(cwd) {
+  return normalizeBuildSystemPromptOptions({
+    cwd,
+    customPrompt: "Packaged child role.",
+    contextFiles: [{ path: join(cwd, "AGENTS.md"), content: "Project rules" }],
+    skills: [
+      {
+        name: "safe-bash",
+        description: "safe shell operations",
+        filePath: "/tmp/safe-bash/SKILL.md",
+        disableModelInvocation: false,
+      },
+      {
+        name: "pi-subagents",
+        description: "delegate to subagents",
+        filePath: "/tmp/pi-subagents/SKILL.md",
+        disableModelInvocation: false,
+      },
+    ],
+    sections: { unrelated: "Keep this unrelated prompt section." },
+  });
 }
 
 function guidancePrimaryAgents() {
@@ -397,98 +422,18 @@ test("project guidance source labels are worktree-relative and encode controls",
   });
 });
 
-test("root hook relocates only a terminal child boundary", () => {
-  const quotedPrompt = [
-    "Legitimate role and project text quotes the child boundary for documentation.",
-    CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-    "Continuation after the quoted child boundary.",
-  ].join("\n\n");
-  const promptWithRuntimeBoundary =
-    [quotedPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n") + "\n \t";
-
-  const rewritten = appendBeforeChildSubagentBoundary(
-    promptWithRuntimeBoundary,
-    "root child additions",
-  );
-
-  const rootRuntimeBlock = [
-    CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
-    "root child additions",
-    CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
-  ].join("\n");
-  assert.equal(
-    rewritten,
-    [quotedPrompt, rootRuntimeBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n"),
-  );
-  assert.equal(
-    rewritten.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1,
-    2,
-    "quoted and runtime-owned boundaries must both survive",
-  );
-  assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-});
-
-test("root hook keeps its no-boundary append-only behavior", () => {
-  const prompt = "base prompt";
-  const rootRuntimeBlock = (content) =>
-    [CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, content, CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE].join("\n");
-  const rewritten = appendBeforeChildSubagentBoundary(prompt, "root child additions");
-  assert.equal(rewritten, [prompt, rootRuntimeBlock("root child additions")].join("\n\n"));
-  assert.equal(rewritten.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), false);
-
-  const replaced = appendBeforeChildSubagentBoundary(rewritten, "updated root additions");
-  assert.equal(replaced, [prompt, rootRuntimeBlock("updated root additions")].join("\n\n"));
-  assert.doesNotMatch(replaced, /root child additions/);
-
-  const cleared = appendBeforeChildSubagentBoundary(replaced, "");
-  assert.equal(cleared, prompt);
-  assert.equal(cleared.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), false);
-});
-
-test("malformed and duplicate-owner reserved-marker base text remains intact", () => {
-  const quotedExplicitBlock = [
-    CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-    "quoted explicit owner content",
-    CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
-  ].join("\n");
-  const prompt = [
-    "## The Last Harness Defaults",
-    "This is unmarked role text at index zero.",
-    "Malformed root marker: <!-- tlh:child-root-runtime:start",
-    "Partial explicit marker: <!-- tlh:child-explicit-runtime:end --",
-    quotedExplicitBlock,
-  ].join("\n\n");
-
-  const onePass = composeChildPromptRuntime(prompt, ["actual explicit additions"], "explicit");
-  const twoPasses = composeChildPromptRuntime(onePass, ["actual explicit additions"], "explicit");
-
-  assert.equal(twoPasses, onePass);
-  assert.match(onePass, /This is unmarked role text at index zero\./);
-  assert.match(onePass, /Malformed root marker: <!-- tlh:child-root-runtime:start/);
-  assert.match(onePass, /Partial explicit marker: <!-- tlh:child-explicit-runtime:end --/);
-  assert.match(onePass, /quoted explicit owner content/);
-  assert.match(onePass, /actual explicit additions/);
-  assert.equal(
-    (onePass.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
-    2,
-    "the quoted explicit block and actual explicit block must both survive",
-  );
-  assert.ok(onePass.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-});
-
-test("marked root and explicit content replace when their text changes", () => {
-  const options = { inheritProjectContext: true, inheritSkills: true };
-  const rootOnly = appendBeforeChildSubagentBoundary("base prompt", "root version one");
-  assert.equal(rootOnly.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), false);
-  const first = rewriteSubagentPrompt(rootOnly, options, "guidance version one");
+test("structured root and explicit sections replace their owned content", () => {
+  const options = makeStructuredPromptEvent().systemPromptOptions;
+  setStructuredChildPromptRuntime(options.sections, "root", ["root version one"]);
+  setStructuredChildPromptRuntime(options.sections, "explicit", ["guidance version one"]);
+  const first = buildSystemPrompt(options);
   assert.match(first, /root version one/);
-  assert.ok(first.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-  const second = rewriteSubagentPrompt(
-    appendBeforeChildSubagentBoundary(first, "root version two"),
-    options,
-    "guidance version two",
-  );
+  assert.match(first, /guidance version one/);
+  assert.ok(first.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
+  setStructuredChildPromptRuntime(options.sections, "root", ["root version two"]);
+  setStructuredChildPromptRuntime(options.sections, "explicit", ["guidance version two"]);
+  const second = buildSystemPrompt(options);
   assert.match(second, /root version two/);
   assert.match(second, /guidance version two/);
   assert.doesNotMatch(second, /root version one|guidance version one/);
@@ -498,43 +443,47 @@ test("marked root and explicit content replace when their text changes", () => {
     1,
   );
   assert.equal(second.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1, 1);
-  assert.equal(
-    rewriteSubagentPrompt(
-      appendBeforeChildSubagentBoundary(second, "root version two"),
-      options,
-      "guidance version two",
-    ),
-    second,
+  assert.ok(
+    Object.keys(options.sections).indexOf(CHILD_SUBAGENT_ROOT_RUNTIME_SECTION) <
+      Object.keys(options.sections).indexOf(CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION),
   );
-  const clearedRoot = appendBeforeChildSubagentBoundary(second, "");
+
+  setStructuredChildPromptRuntime(options.sections, "root", []);
+  const clearedRoot = buildSystemPrompt(options);
   assert.doesNotMatch(clearedRoot, /root version two/);
   assert.match(clearedRoot, /guidance version two/);
   assert.equal(
     (clearedRoot.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length,
     0,
   );
-  assert.ok(clearedRoot.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  assert.ok(clearedRoot.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 });
 
-test("defangs reserved owner markers inside root and guidance additions", () => {
+test("defangs reserved owner markers inside structured runtime additions", () => {
   const markerLookalikes = [
     `balanced ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}`,
     `nested ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN}outer ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE}`,
     `partial ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN.slice(0, -4)} and ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE.slice(0, -4)}`,
   ].join("\n\n");
-  const options = { inheritProjectContext: true, inheritSkills: true };
-  const rootAdditions = ["normal root guidance", markerLookalikes].join("\n\n");
-  const explicitAdditions = ["normal project guidance", markerLookalikes].join("\n\n");
-  const onePass = rewriteSubagentPrompt(
-    appendBeforeChildSubagentBoundary("base prompt", rootAdditions),
-    options,
-    explicitAdditions,
-  );
-  const twoPasses = rewriteSubagentPrompt(
-    appendBeforeChildSubagentBoundary(onePass, rootAdditions),
-    options,
-    explicitAdditions,
-  );
+  const options = makeStructuredPromptEvent().systemPromptOptions;
+  setStructuredChildPromptRuntime(options.sections, "root", [
+    "normal root guidance",
+    markerLookalikes,
+  ]);
+  setStructuredChildPromptRuntime(options.sections, "explicit", [
+    "normal project guidance",
+    markerLookalikes,
+  ]);
+  const onePass = buildSystemPrompt(options);
+  setStructuredChildPromptRuntime(options.sections, "root", [
+    "normal root guidance",
+    markerLookalikes,
+  ]);
+  setStructuredChildPromptRuntime(options.sections, "explicit", [
+    "normal project guidance",
+    markerLookalikes,
+  ]);
+  const twoPasses = buildSystemPrompt(options);
 
   assert.equal(twoPasses, onePass);
   assert.match(onePass, /normal root guidance/);
@@ -548,6 +497,73 @@ test("defangs reserved owner markers inside root and guidance additions", () => 
   ]) {
     assert.equal((onePass.match(new RegExp(marker, "g")) ?? []).length, 1, marker);
   }
+});
+
+test("child inheritance uses normalized prompt options through the faithful hook harness", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-child-prompt-options-", {
+    cwd: true,
+    test: t,
+  });
+  createSyntheticGitWorktree(fixture.cwd);
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD_AGENT: "code-reviewer",
+      PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: "0",
+      PI_SUBAGENT_SUPERVISOR_BRIDGE: "0",
+      PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "1",
+      PI_SUBAGENT_INHERIT_SKILLS: "1",
+    },
+    async () => {
+      for (const testCase of [
+        { inheritProjectContext: false, inheritSkills: false },
+        { inheritProjectContext: false, inheritSkills: true },
+        { inheritProjectContext: true, inheritSkills: false },
+        { inheritProjectContext: true, inheritSkills: true },
+      ]) {
+        process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = testCase.inheritProjectContext
+          ? "1"
+          : "0";
+        process.env.PI_SUBAGENT_INHERIT_SKILLS = testCase.inheritSkills ? "1" : "0";
+
+        const pi = createPiHarness();
+        registerSubagentPromptRuntime(pi);
+        const beforeAgentStart = createBeforeAgentStartHarness(pi);
+        const options = makeStructuredChildPromptOptions(fixture.cwd);
+        const event = {
+          systemPrompt: buildSystemPrompt(options),
+          systemPromptOptions: options,
+        };
+        const result = await beforeAgentStart(
+          event,
+          createToolCallContext([], undefined, { cwd: fixture.cwd }),
+        );
+        const rendered = buildSystemPrompt(result.systemPromptOptions);
+
+        assert.equal(
+          result.systemPromptOptions.contextFiles.length > 0,
+          testCase.inheritProjectContext,
+        );
+        assert.equal(
+          result.systemPromptOptions.skills.some((skill) => skill.name === "safe-bash"),
+          testCase.inheritSkills,
+        );
+        assert.equal(
+          result.systemPromptOptions.skills.some((skill) => skill.name === "pi-subagents"),
+          false,
+        );
+        assert.equal(rendered.includes("<project_context>"), testCase.inheritProjectContext);
+        assert.equal(rendered.includes("<skills>"), testCase.inheritSkills);
+        assert.match(rendered, /<cwd>/);
+        assert.match(rendered, /Keep this unrelated prompt section/);
+        assert.doesNotMatch(rendered, /# Project Context/);
+        assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+        assert.equal(result.systemPromptOptions.forceSystemPrompt, undefined);
+      }
+    },
+  );
 });
 
 test("child hook composition is idempotent in either registration order", async (t) => {
@@ -622,18 +638,18 @@ test("child hook composition is idempotent in either registration order", async 
         for (const event of pi.events.filter((entry) => entry.name === "session_start")) {
           await event.handler({}, ctx);
         }
-        let event = {
-          systemPrompt: ["packaged code-reviewer role", quotedRuntimeLookalikes].join("\n\n"),
-        };
+        const event = makeStructuredPromptEvent(
+          ["packaged code-reviewer role", quotedRuntimeLookalikes].join("\n\n"),
+          fixture.cwd,
+        );
         for (let pass = 0; pass < passes; pass += 1) {
           for (const handler of pi.events
             .filter((entry) => entry.name === "before_agent_start")
             .map((entry) => entry.handler)) {
-            const nextEvent = await handler(event, ctx);
-            if (nextEvent) event = nextEvent;
+            assert.equal(await handler(event, ctx), undefined);
           }
         }
-        return event.systemPrompt;
+        return buildSystemPrompt(event.systemPromptOptions);
       }
 
       const prompts = [];
@@ -653,8 +669,8 @@ test("child hook composition is idempotent in either registration order", async 
         assert.ok(guidanceIndex > roleIndex, `${label}: guidance should follow packaged role`);
         assert.ok(childDefaultsIndex > roleIndex, `${label}: child defaults should remain`);
         assert.ok(
-          onePass.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
-          `${label}: child boundary must remain terminal`,
+          onePass.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
+          `${label}: child boundary must remain present`,
         );
         assert.equal(
           onePass.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1,
@@ -707,6 +723,49 @@ test("child hook composition is idempotent in either registration order", async 
         );
       }
       assert.equal(prompts[1], prompts[0], "hook registration order should not change composition");
+    },
+  );
+});
+
+test("child root hook mutates the structured prompt root section", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-child-root-structured-prompt-", {
+    cwd: true,
+    test: t,
+  });
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
+    async () => {
+      const pi = createPiHarness();
+      registerTlhPrimaryAgentRuntime(pi, {
+        env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
+      });
+      const beforeAgentStart = pi.events.find(
+        (event) => event.name === "before_agent_start",
+      )?.handler;
+      assert.equal(typeof beforeAgentStart, "function");
+
+      const event = makeStructuredPromptEvent("base prompt", fixture.cwd);
+      event.systemPromptOptions.forceSystemPrompt = "FORCED root child replacement";
+      const result = await beforeAgentStart(
+        event,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      );
+
+      assert.equal(result, undefined);
+      assert.equal(event.systemPromptOptions.forceSystemPrompt, undefined);
+      assert.ok(event.systemPromptOptions.sections[CHILD_SUBAGENT_ROOT_RUNTIME_SECTION]);
+      assert.match(
+        event.systemPromptOptions.sections[CHILD_SUBAGENT_ROOT_RUNTIME_SECTION],
+        new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN),
+      );
+      const rendered = buildSystemPrompt(event.systemPromptOptions);
+      assert.doesNotMatch(rendered, /FORCED root child replacement/);
+      assert.match(rendered, /<tlh_child_root_runtime>/);
+      assert.equal(
+        event.systemPromptOptions.sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION],
+        undefined,
+      );
     },
   );
 });
@@ -1223,15 +1282,17 @@ test("child mode keeps parent-only controls disabled while applying commit attri
     assert.equal(typeof beforeAgentStart, "function");
     assert.equal(typeof toolCall, "function");
 
-    const enabledPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
+    const enabledEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+    assert.equal(
+      await beforeAgentStart(
+        enabledEvent,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      ),
+      undefined,
     );
-    assert.match(enabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
-    assert.match(
-      enabledPrompt.systemPrompt,
-      /Co-authored-by: The Last Harness <hi@thelastharness\.com>/,
-    );
+    const enabledPrompt = buildSystemPrompt(enabledEvent.systemPromptOptions);
+    assert.match(enabledPrompt, /## TLH Git Commit Attribution/);
+    assert.match(enabledPrompt, /Co-authored-by: The Last Harness <hi@thelastharness\.com>/);
     const blockedCommit = await toolCall(
       { toolName: "bash", input: { command: 'git commit -m "ship it"' } },
       createToolCallContext([], undefined, { cwd: fixture.cwd }),
@@ -1254,11 +1315,18 @@ test("child mode keeps parent-only controls disabled while applying commit attri
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`,
     );
-    const disabledPrompt = await beforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
+    const disabledEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+    assert.equal(
+      await beforeAgentStart(
+        disabledEvent,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      ),
+      undefined,
     );
-    assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Git Commit Attribution/);
+    assert.doesNotMatch(
+      buildSystemPrompt(disabledEvent.systemPromptOptions),
+      /## TLH Git Commit Attribution/,
+    );
     assert.equal(
       await toolCall(
         { toolName: "bash", input: { command: 'git commit -m "ship it"' } },
@@ -1282,25 +1350,31 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
     )?.handler;
     assert.equal(typeof codeReviewerBeforeAgentStart, "function");
 
-    const defaultPrompt = await codeReviewerBeforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
+    const defaultEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+    assert.equal(
+      await codeReviewerBeforeAgentStart(
+        defaultEvent,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      ),
+      undefined,
     );
-    assert.doesNotMatch(
-      defaultPrompt.systemPrompt,
-      /## TLH Experimental Feature: delta-follow-up-reviews/,
-    );
+    const defaultPrompt = buildSystemPrompt(defaultEvent.systemPromptOptions);
+    assert.doesNotMatch(defaultPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
     for (const enabledFeatures of [true, [123]]) {
       writeFileSync(
         join(fixture.agent, "settings.json"),
         `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`,
       );
-      const malformedPrompt = await codeReviewerBeforeAgentStart(
-        { systemPrompt: "base prompt" },
-        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      const malformedEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+      assert.equal(
+        await codeReviewerBeforeAgentStart(
+          malformedEvent,
+          createToolCallContext([], undefined, { cwd: fixture.cwd }),
+        ),
+        undefined,
       );
       assert.doesNotMatch(
-        malformedPrompt.systemPrompt,
+        buildSystemPrompt(malformedEvent.systemPromptOptions),
         /## TLH Experimental Feature: delta-follow-up-reviews/,
       );
     }
@@ -1310,20 +1384,22 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: deltaConfig } }, null, 2)}\n`,
     );
-    const enabledPrompt = await codeReviewerBeforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
+    const enabledEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+    assert.equal(
+      await codeReviewerBeforeAgentStart(
+        enabledEvent,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      ),
+      undefined,
     );
-    assert.match(
-      enabledPrompt.systemPrompt,
-      /## TLH Experimental Feature: delta-follow-up-reviews/,
-    );
+    const enabledPrompt = buildSystemPrompt(enabledEvent.systemPromptOptions);
+    assert.match(enabledPrompt, /## TLH Experimental Feature: delta-follow-up-reviews/);
     const codeReviewerExperimentalPrompt = buildChildExperimentalPrompt(
       "code-reviewer",
       deltaConfig,
     );
     assert.ok(codeReviewerExperimentalPrompt);
-    assert.ok(enabledPrompt.systemPrompt.includes(codeReviewerExperimentalPrompt));
+    assert.ok(enabledPrompt.includes(codeReviewerExperimentalPrompt));
     const developerPi = createPiHarness();
     registerTlhPrimaryAgentRuntime(developerPi, {
       env: { PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_CHILD_AGENT: "developer" },
@@ -1332,12 +1408,16 @@ test("child mode gates delta follow-up review guidance to enabled code-reviewer 
       (event) => event.name === "before_agent_start",
     )?.handler;
     assert.equal(typeof developerBeforeAgentStart, "function");
-    const developerPrompt = await developerBeforeAgentStart(
-      { systemPrompt: "base prompt" },
-      createToolCallContext([], undefined, { cwd: fixture.cwd }),
+    const developerEvent = makeStructuredPromptEvent("base prompt", fixture.cwd);
+    assert.equal(
+      await developerBeforeAgentStart(
+        developerEvent,
+        createToolCallContext([], undefined, { cwd: fixture.cwd }),
+      ),
+      undefined,
     );
     assert.doesNotMatch(
-      developerPrompt.systemPrompt,
+      buildSystemPrompt(developerEvent.systemPromptOptions),
       /## TLH Experimental Feature: delta-follow-up-reviews/,
     );
   });

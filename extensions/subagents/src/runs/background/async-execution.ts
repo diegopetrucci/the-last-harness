@@ -41,7 +41,11 @@ import {
   type ParentModel,
 } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { resolveEffectiveThinking, type ModelInfo } from "../../shared/model-info.ts";
+import {
+  contextWindowsForChildModels,
+  resolveEffectiveThinking,
+  type ModelInfo,
+} from "../../shared/model-info.ts";
 import {
   type OutputMode,
   type ResolvedArtifactConfig,
@@ -597,14 +601,9 @@ export function buildAsyncRunnerPlan(
       thinking: modelThinking,
       ...(modelIdentity ? { modelIdentity } : {}),
       modelCandidates,
-      contextWindows: Object.fromEntries(
-        (availableModels ?? [])
-          .filter(
-            (candidate) =>
-              typeof candidate.contextWindow === "number" && candidate.contextWindow > 0,
-          )
-          .map((candidate) => [candidate.fullId, candidate.contextWindow!]),
-      ),
+      contextWindows: contextWindowsForChildModels(availableModels, {
+        canonicalDeveloper: agent.name === "developer" && isCanonicalPackagedMinorAgent(agent),
+      }),
       modelFallbackNotice: behavior.modelFallbackNotice,
       tools: agent.tools,
       extensions: agent.extensions,
@@ -1071,14 +1070,10 @@ function buildAsyncSingleRunnerPlan(
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(modelResolution ? { modelResolution } : {}),
         modelCandidates,
-        contextWindows: Object.fromEntries(
-          (availableModels ?? [])
-            .filter(
-              (candidate) =>
-                typeof candidate.contextWindow === "number" && candidate.contextWindow > 0,
-            )
-            .map((candidate) => [candidate.fullId, candidate.contextWindow!]),
-        ),
+        contextWindows: contextWindowsForChildModels(availableModels, {
+          canonicalDeveloper:
+            agentConfig.name === "developer" && isCanonicalPackagedMinorAgent(agentConfig),
+        }),
         modelFallbackNotice,
         tools: agentConfig.tools,
         extensions: agentConfig.extensions,

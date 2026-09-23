@@ -212,7 +212,7 @@ test("phase observer parses markers split per stream and preserves unavailable p
   assert.equal(Object.hasOwn(observed, "observedLines"), false);
   observeInstallerChunk(observed, "npm warning without newline", 1, "stderr");
   observeInstallerChunk(observed, "Refreshing instal", 2, "stdout");
-  observeInstallerChunk(observed, "ler...\nPinning local Pi runtime to 0.85.1...\n", 10, "stdout");
+  observeInstallerChunk(observed, "ler...\nPinning local Pi runtime to 0.87.1...\n", 10, "stdout");
   observeInstallerChunk(observed, "Installing package...\n", 20);
   observeInstallerChunk(observed, "Applying isolated settings...\n", 35);
   observeInstallerChunk(observed, "Creating wrapper command...\n", 50);

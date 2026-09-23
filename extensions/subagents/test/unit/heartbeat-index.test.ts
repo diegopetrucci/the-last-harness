@@ -66,6 +66,12 @@ function makeHeartbeatAgentDir(): string {
   return dir;
 }
 
+function makeDefaultAgentDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-hb-index-default-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
 function testEnv(agentDir: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env[SUBAGENT_CHILD_ENV];
@@ -87,6 +93,169 @@ function runScript(script: string, agentDir: string): void {
     { cwd: projectRoot, env: testEnv(agentDir), stdio: "pipe" },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pi 0.87.1 native cache-warm payload capture and default-off safeguard
+// ---------------------------------------------------------------------------
+
+describe("heartbeat index.ts — native cache-warm payload capture", () => {
+  it("captures the native before_provider_request payload when heartbeat is enabled", () => {
+    const agentDir = makeHeartbeatAgentDir();
+    const script = String.raw`
+      import assert from "node:assert/strict";
+      import registerSubagentExtension from "./src/extension/index.ts";
+      import { SUBAGENT_ASYNC_STARTED_EVENT } from "./src/shared/types.ts";
+
+      const timerCallbacks = [];
+      global.setTimeout = (fn, ms) => {
+        timerCallbacks.push({ fn, ms });
+        return { unref() {} };
+      };
+      global.clearTimeout = () => {};
+
+      const extensionHandlers = new Map();
+      const eventBusListeners = new Map();
+      let observedPayload;
+      const model = {
+        id: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        contextWindow: 200_000,
+        maxTokens: 16_384,
+      };
+      const provider = {
+        stream(_model, _context, options) {
+          observedPayload = options.onPayload?.({}, _model);
+          return (async function* () {})();
+        },
+      };
+      const modelRegistry = {
+        getAvailable() { return []; },
+        getProvider() { return provider; },
+        async getApiKeyAndHeaders() { return { ok: true }; },
+      };
+      const fakePi = new Proxy({
+        events: {
+          on(channel, handler) {
+            const handlers = eventBusListeners.get(channel) ?? new Set();
+            handlers.add(handler);
+            eventBusListeners.set(channel, handlers);
+            return () => handlers.delete(handler);
+          },
+          emit(channel, payload) {
+            for (const handler of eventBusListeners.get(channel) ?? []) handler(payload);
+          },
+        },
+        on(type, handler) {
+          const handlers = extensionHandlers.get(type) ?? [];
+          handlers.push(handler);
+          extensionHandlers.set(type, handlers);
+          return () => {};
+        },
+        appendEntry() {},
+        registerEntryRenderer() {},
+        registerTool() {},
+        registerCommand() {},
+        registerShortcut() {},
+        registerMessageRenderer() {},
+        sendMessage() {},
+        getSessionName() { return undefined; },
+      }, {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          return () => undefined;
+        },
+      });
+
+      registerSubagentExtension(fakePi);
+      assert.ok(extensionHandlers.has("before_provider_request"));
+
+      const SESSION_ID = "hb-native-warm-payload";
+      const makeCtx = () => ({
+        cwd: process.cwd(),
+        hasUI: false,
+        isIdle: () => true,
+        sessionManager: {
+          getSessionId() { return SESSION_ID; },
+          getSessionFile() { return null; },
+        },
+        modelRegistry,
+        model,
+      });
+      const emitPiEvent = async (type, event) => {
+        for (const handler of extensionHandlers.get(type) ?? []) await handler(event, makeCtx());
+      };
+
+      await emitPiEvent("session_start", { type: "session_start", reason: "startup" });
+      const nativeWarmPayload = {
+        model: model.id,
+        messages: [{ role: "user", content: [{ type: "text", text: "synthetic warm request" }] }],
+        max_tokens: 1,
+        stream: true,
+      };
+      await emitPiEvent("before_provider_request", {
+        type: "before_provider_request",
+        payload: nativeWarmPayload,
+      });
+      fakePi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+        id: "job-native-warm-1",
+        sessionId: SESSION_ID,
+        mode: "single",
+        agent: "worker",
+        asyncDir: "/tmp/hb-async-native-warm-1",
+      });
+
+      assert.ok(timerCallbacks.length > 0, "heartbeat gap must schedule a timer");
+      timerCallbacks[0].fn();
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.deepEqual(observedPayload, nativeWarmPayload);
+    `;
+    runScript(script, agentDir);
+  });
+
+  it("does not register payload capture when heartbeat keeps its default-off setting", () => {
+    const agentDir = makeDefaultAgentDir();
+    const script = String.raw`
+      import assert from "node:assert/strict";
+      import registerSubagentExtension from "./src/extension/index.ts";
+
+      const extensionHandlers = new Map();
+      const fakePi = new Proxy({
+        events: { on() { return () => {}; }, emit() {} },
+        on(type, handler) {
+          const handlers = extensionHandlers.get(type) ?? [];
+          handlers.push(handler);
+          extensionHandlers.set(type, handlers);
+          return () => {};
+        },
+        appendEntry() {},
+        registerEntryRenderer() {},
+        registerTool() {},
+        registerCommand() {},
+        registerShortcut() {},
+        registerMessageRenderer() {},
+        sendMessage() {},
+        getSessionName() { return undefined; },
+      }, {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          return () => undefined;
+        },
+      });
+
+      registerSubagentExtension(fakePi);
+      assert.equal(extensionHandlers.has("before_provider_request"), false);
+      assert.equal(extensionHandlers.has("agent_settled"), false);
+    `;
+    runScript(script, agentDir);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Test 1: agent_settled re-arms the heartbeat after a parent turn

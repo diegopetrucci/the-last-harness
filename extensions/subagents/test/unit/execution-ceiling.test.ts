@@ -59,6 +59,22 @@ describe("human-owned execution policy", () => {
     assert.ok(output.warnings[0]!.length < 300);
   });
 
+  it("keeps the one-hour developer ceiling separate from other policy ceilings", () => {
+    assert.equal(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS.developer, 3_600_000);
+    assert.deepEqual(CANONICAL_AGENT_MAX_EXECUTION_TIME_MS, {
+      developer: 3_600_000,
+      "code-reviewer": 1_800_000,
+      "test-runner": 3_600_000,
+      librarian: 14_400_000,
+      oracle: 2_700_000,
+      contrarian: 1_800_000,
+      "repo-scout": 600_000,
+      "web-scout": 300_000,
+      "diff-summarizer": 300_000,
+    });
+    assert.equal(DEFAULT_SUBAGENT_MAX_RUN_TIME_MS, 14_400_000);
+  });
+
   it("resolves a full role timeout without consulting historical runtime", () => {
     assert.equal(roleExecutionTimeoutMs(5_000), 5_000);
     assert.equal(roleExecutionTimeoutMs(undefined), undefined);

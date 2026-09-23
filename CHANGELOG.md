@@ -18,8 +18,14 @@ All notable changes to The Last Harness will be documented in this file.
 - Per-run status now exposes the bounded `view: "transcript"` inspection with optional `lines` from 1 through 500; status listings and transcript reads remain scoped to the current session.
 - Unreadable, invalid, or oversized async `status.json` files are retried once and then reported without automatic remediation; inspect and explicitly repair or undo the file and its sibling artifacts manually. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving needed evidence, remove them manually if desired, and note that the new runtime never auto-deletes them.
 
+### Changed
+
+- Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`; an absent value keeps Pi's default `streaming` behavior. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
+- Documented the separate ownership and overlap rules for Pi-native warming and TLH's default-off async-parent heartbeat: an idle parent overlaps its heartbeat with Pi warming only in `idle` mode, while active child sessions may independently stream-warm during the parent heartbeat; the requests have no shared budget.
+
 ### Removed
 
+- The bundled `pi-quiet-tools` default extension is removed.
 - Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
 - Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
 - Removed the subagent acceptance contract, report parsing, role overrides, and verdict rendering. Terminal lifecycle facts now provide bounded execution evidence without judging task completion; historical status records remain readable and transcript text is preserved.
@@ -28,6 +34,24 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
+
+## [0.42.1] - 2026-09-16
+
+### Fixed
+
+- Context limits for developers are now slightly higher.
+- The `developer` subagent max timeout is now 1h.
+- Developers, after compaction, get told to run `tk show` again.
+
+## [0.42.0] - 2026-09-14
+
+### What's new
+
+- Developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
+
+### Fixed
+
+- Fresh explicit acceptance contracts now override inferred levels and evidence, permit valid no-test declarations and intentional staging when requested, and preserve stricter acceptance across continuations.
 
 ## [0.41.0] - 2026-09-13
 

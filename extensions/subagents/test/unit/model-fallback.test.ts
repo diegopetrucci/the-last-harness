@@ -12,6 +12,11 @@ import {
   sanitizeModelFallbackNotice,
   sanitizeSubagentModelIdentity,
 } from "../../src/runs/shared/model-fallback.ts";
+import { contextWindowForModel } from "../../src/runs/background/pi-streaming.ts";
+import {
+  contextWindowsForChildModels,
+  resolveRuntimeModelContext,
+} from "../../src/shared/model-info.ts";
 import type { ModelScopeConfig } from "../../src/runs/shared/model-scope.ts";
 
 describe("model fallback helpers", () => {
@@ -21,6 +26,54 @@ describe("model fallback helpers", () => {
       resolveSubagentModelOverride(explicit, { provider: "openai", id: "gpt-5" }),
       explicit,
     );
+  });
+
+  it("uses canonical developer and native child context-window policies", () => {
+    const models = [
+      {
+        provider: "openai-codex",
+        id: "gpt-5.6-luna",
+        fullId: "openai-codex/gpt-5.6-luna",
+        contextWindow: 200_000,
+        nativeContextWindow: 372_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "large-model",
+        fullId: "test-provider/large-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 1_000_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "small-model",
+        fullId: "test-provider/small-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 200_000,
+        developerChildContextWindow: 200_000,
+      },
+    ];
+    const developerWindows = contextWindowsForChildModels(models, { canonicalDeveloper: true });
+    assert.deepEqual(developerWindows, {
+      "openai-codex/gpt-5.6-luna": 272_000,
+      "test-provider/large-model": 272_000,
+      "test-provider/small-model": 200_000,
+    });
+    assert.deepEqual(
+      resolveRuntimeModelContext("openai-codex", "gpt-5.6-luna:high", developerWindows),
+      {
+        identity: { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
+        contextWindow: 272_000,
+      },
+    );
+    assert.equal(contextWindowForModel("test-provider/large-model", developerWindows), 272_000);
+    assert.deepEqual(contextWindowsForChildModels(models), {
+      "openai-codex/gpt-5.6-luna": 372_000,
+      "test-provider/large-model": 1_000_000,
+      "test-provider/small-model": 200_000,
+    });
   });
 
   it("inherits the parent model for omitted, false, empty, and inherit values", () => {

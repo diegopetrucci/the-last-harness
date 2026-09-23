@@ -65,7 +65,7 @@ These commands are registered by the TLH extension bundled with this profile.
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
-`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.85.1's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
+`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.87.1's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
 
 With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
 
@@ -367,7 +367,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/quiet-tools` | `pi-quiet-tools` | Toggle one-line collapsed invocations for built-in tool rows |
 | `/search` | `pi-web-access` | Browse stored web search results |
 | `/websearch` | `pi-web-access` | Open the web search curator |
 

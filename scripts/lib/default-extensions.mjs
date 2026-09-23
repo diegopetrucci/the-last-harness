@@ -118,6 +118,11 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     // notify is now bundled first-party; the npm package must be removed to prevent
     // two notify extensions running in parallel and every notification firing twice.
     "npm:@diegopetrucci/pi-notify",
+    // quiet-tools overrode Pi's built-in tool definitions purely for TUI rendering;
+    // TLH now prefers Pi-native interactive rendering and removes it unconditionally.
+    // pi-compact-bash is the legacy npm package name for the same extension.
+    "npm:@diegopetrucci/pi-quiet-tools",
+    "npm:@diegopetrucci/pi-compact-bash",
 ]);
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [];
 export function packageSourceOf(entry) {

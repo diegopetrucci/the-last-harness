@@ -23,6 +23,8 @@ export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 /** Parent-verified provenance for installer-managed TLH minor-agent prompts. */
 export const SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV = "PI_SUBAGENT_PROJECT_AGENT_GUIDANCE";
+/** Parent-owned ticket identity retained so developer reminders survive compaction. */
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV = "PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -65,6 +67,8 @@ interface BuildPiArgsInput {
   childAgentName?: string;
   /** True only when the parent selected the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
+  /** Validated ticket identity for the canonical developer child. */
+  ticketId?: string;
   childIndex?: number;
   steerInboxDir?: string;
 }
@@ -84,6 +88,27 @@ interface ResolvedToolPolicy {
 
 function isExtensionToolPath(tool: string): boolean {
   return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+
+function canonicalChildExtensionPath(extensionPath: string, cwd: string): string {
+  const resolvedPath = path.resolve(cwd, extensionPath);
+  try {
+    return fs.realpathSync(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
+}
+
+function appendUniqueChildExtensionPath(
+  extensionPaths: string[],
+  seenCanonicalPaths: Set<string>,
+  extensionPath: string,
+  cwd: string,
+): void {
+  const canonicalPath = canonicalChildExtensionPath(extensionPath, cwd);
+  if (seenCanonicalPaths.has(canonicalPath)) return;
+  seenCanonicalPaths.add(canonicalPath);
+  extensionPaths.push(extensionPath);
 }
 
 function resolveToolPolicy(
@@ -221,25 +246,33 @@ function buildPiArgsInternal(
     args.push("--exclude-tools", CONTACT_SUPERVISOR_TOOL_NAME);
   }
 
-  const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
+  const extensionPaths: string[] = [];
+  const seenCanonicalExtensionPaths = new Set<string>();
+  const childCwd = input.cwd ?? process.cwd();
+  for (const extPath of [
+    ...toolExtensionPaths,
+    ...(input.extensions ?? []),
+    ...(input.subagentOnlyExtensions ?? []),
+  ]) {
+    // Keep the first spelling and position while matching Pi's realpath-based
+    // extension identity for aliases and symlinked paths.
+    appendUniqueChildExtensionPath(extensionPaths, seenCanonicalExtensionPaths, extPath, childCwd);
+  }
+  // Keep the prompt runtime final among CLI child extensions; its durable
+  // forceSystemPrompt guard also survives later discovered handlers.
+  const runtimeCanonicalPath = canonicalChildExtensionPath(PROMPT_RUNTIME_EXTENSION_PATH, childCwd);
+  const runtimeIndex = extensionPaths.findIndex(
+    (extPath) => canonicalChildExtensionPath(extPath, childCwd) === runtimeCanonicalPath,
+  );
+  const runtimeExtensionPath =
+    runtimeIndex === -1 ? PROMPT_RUNTIME_EXTENSION_PATH : extensionPaths[runtimeIndex];
+  if (runtimeIndex !== -1) extensionPaths.splice(runtimeIndex, 1);
+  extensionPaths.push(runtimeExtensionPath);
   if (input.extensions !== undefined) {
     args.push("--no-extensions");
-    for (const extPath of new Set([
-      ...runtimeExtensions,
-      ...toolExtensionPaths,
-      ...input.extensions,
-      ...(input.subagentOnlyExtensions ?? []),
-    ])) {
-      args.push("--extension", extPath);
-    }
-  } else {
-    for (const extPath of new Set([
-      ...runtimeExtensions,
-      ...toolExtensionPaths,
-      ...(input.subagentOnlyExtensions ?? []),
-    ])) {
-      args.push("--extension", extPath);
-    }
+  }
+  for (const extPath of extensionPaths) {
+    args.push("--extension", extPath);
   }
 
   if (!input.inheritSkills) {
@@ -278,6 +311,12 @@ function buildPiArgsInternal(
   // Always write the provenance sentinel. An inherited "1" must never opt a
   // same-name custom agent into project guidance.
   env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
+  // Always overwrite inherited ticket state. A missing assignment clears it so
+  // a child cannot accidentally retain its parent's ticket reminder.
+  env[SUBAGENT_TK_TICKET_ID_ENV] =
+    input.projectAgentGuidance === true && input.childAgentName === "developer"
+      ? input.ticketId
+      : undefined;
   // Omitted supervisorBridge preserves native supervision; false must suppress
   // both prompt guidance and runtime tool registration in the child.
   env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";

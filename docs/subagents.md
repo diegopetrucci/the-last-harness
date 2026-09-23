@@ -53,17 +53,17 @@ An absent `execution.maxRunTimeMs` uses the bounded default of **14400000 ms (4h
 
 The code-owned ceilings for the nine canonical minor roles are:
 
-| Role              | `maxExecutionTimeMs` |
-| ----------------- | -------------------: |
-| `developer`       |      7200000 ms (2h) |
-| `code-reviewer`   |     1800000 ms (30m) |
-| `test-runner`     |      3600000 ms (1h) |
-| `librarian`       |     14400000 ms (4h) |
-| `oracle`          |     2700000 ms (45m) |
-| `contrarian`      |     1800000 ms (30m) |
-| `repo-scout`      |      600000 ms (10m) |
-| `web-scout`       |       300000 ms (5m) |
-| `diff-summarizer` |       300000 ms (5m) |
+| Role | `maxExecutionTimeMs` |
+| --- | ---: |
+| `developer` | 3600000 ms (1h) |
+| `code-reviewer` | 1800000 ms (30m) |
+| `test-runner` | 3600000 ms (1h) |
+| `librarian` | 14400000 ms (4h) |
+| `oracle` | 2700000 ms (45m) |
+| `contrarian` | 1800000 ms (30m) |
+| `repo-scout` | 600000 ms (10m) |
+| `web-scout` | 300000 ms (5m) |
+| `diff-summarizer` | 300000 ms (5m) |
 
 TLH applies those code-owned role defaults before resolving human overrides. For a canonical role whose definition does not explicitly declare the field, TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry when present, otherwise the active isolated profile's entry from `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. The selected human override accepts a positive safe integer or `false`. An explicit `maxExecutionTimeMs` in a packaged role's frontmatter is definition-owned and remains authoritative for that field. A trusted project custom agent may set a positive safe integer in its own frontmatter; if it omits the field, its custom-agent fallback is **14400000 ms (4h)**. Project custom agents are self-contained and are not completed or overridden by profile/project `subagents.agentOverrides` settings.
 
@@ -108,6 +108,8 @@ Keep one writer per working directory. Parallel developers writing the same chec
 Pass a ticket ID through the model-facing `ticket` parameter rather than embedding `tk show <id>` in task prose. For a single run, use the top-level `ticket`; for parallel work, assign `ticket` independently on each task. TLH trims and validates each ID against a safe letters/numbers/hyphens grammar, runs `tk show <id>` with argv (never a shell) in that child’s effective cwd, and fails the whole dispatch before spawning if any lookup fails or `tk` is unavailable.
 
 The exact stdout body is appended only to that child’s initial prompt under `## Ticket <id>`. Persisted status and result artifacts carry only the child’s normalized `ticketId`; ticket bodies stay out of status text, notifications, and result metadata. A resumed or replacement child may carry the persisted ID without re-reading or copying the original body; its existing session remains the source of the earlier prompt context. Child role prompts should treat an injected ticket body as the source of truth and may run `tk show <id>` only to re-read it.
+
+After each successful compaction, a pinned canonical developer receives exactly one visible scope reminder to re-run `tk show <id>`, reread the ticket acceptance criteria, and remain within scope. For overflow retries, TLH queues that custom message with Pi's `steer` delivery mode so it is present before the guaranteed retry; for non-retry compaction, it uses Pi's `nextTurn` delivery so the pending message is included with the next real prompt without creating an extra assistant turn. `session_compact_failed` events never inject it. Other agents and unpinned developer sessions receive no reminder, and Pi's default summary generation remains unchanged.
 
 ### Final-validation test-runner
 
@@ -362,6 +364,12 @@ Persisted `contextUsage`, `contextPressure`, and `contextPressureCrossedThreshol
 
 The fixed pressure bands (hardcoded, not configurable) are a warning at **80%** and critical at **95%** of the measured context window. A durable resume is blocked when the latest measured usage is at least 80%, and the guidance recommends a fresh narrowly scoped dispatch instead. Missing measurements are left missing rather than replaced with a guessed total.
 
+### Child context-window policy
+
+The **200,000-token effective context cap** applies to primary and other non-child TLH sessions. A child process is identified by TLH's child-runtime signal (`PI_SUBAGENT_CHILD=1`; the child-agent marker is accepted when that signal is absent). An explicit `PI_SUBAGENT_CHILD=0` keeps the process non-child even if a stale marker is present. The canonical developer policy additionally requires `PI_SUBAGENT_CHILD_AGENT=developer` and `PI_SUBAGENT_PROJECT_AGENT_GUIDANCE=1`, which is the parent-verified packaged-agent provenance. Child startup bypasses the primary cap instead of copying the parent's in-process window, and the policy is selected independently in the child without carrying the parent's transcript or context diagnostics into the fresh session.
+
+For an enabled canonical packaged developer child, TLH sets each model's in-process `contextWindow` to `min(native context window, 272,000)`, uniformly across providers and model IDs. This applies the same ceiling to native windows such as 372k, 450k, and 1M while preserving smaller native windows unchanged. Other child roles retain their native context windows. Parent async-runner pressure/resume diagnostics select the matching role policy rather than the parent's mutated 200,000 registry value; canonical developer diagnostics therefore use the same 272,000 ceiling, while non-developer diagnostics retain native windows. When `tlh.contextCap.disabled` is `true`, canonical developer children and their diagnostics use native windows instead. The child override is process-local: TLH does not write `models.json` or profile settings, and restores any temporarily changed model windows during session shutdown. `/toggle-context-cap` applies or restores the matching policy in the current session.
+
 ### Native supervisor coordination
 
 A child that needs a decision, structured interview, or meaningful progress update uses native `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. Custom/project agents with an active supervisor bridge receive neutral generic guidance; canonical packaged minor prompts already carry role-specific guidance and do not receive a duplicate block. This native supervisor channel and TLH's own status/lifecycle controls are the supported coordination surfaces; the removed external pi-intercom detach request/result/control integration is not supported. Separately installed user extensions remain untouched when TLH primary-agent filtering is disabled.
@@ -489,11 +497,11 @@ Outcome values:
 
 Verdict meanings:
 
-| Verdict    | Meaning                                                                                                                                                                                                                                                                                                                                                     |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `saved`    | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the TTL.                                                                                                                                                                                           |
-| `wasted`   | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations).                                                                                                                                                                                                                                                         |
-| `lost`     | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded.                                                                                                                                                  |
+| Verdict | Meaning |
+|---|---|
+| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the live prompt-cache TTL. |
+| `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
+| `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
 | `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
 
 ### Circuit breakers
@@ -527,6 +535,21 @@ When disabled:
 Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
 
 To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
+
+### Relationship to Pi-native cache warming
+
+Pi `0.87.1` has a separate native `cacheWarming` setting. It is global to the active isolated profile, defaults to `streaming` when absent, and accepts `off`, `streaming`, or `idle`. The canonical TLH parent and child processes normally share `PI_CODING_AGENT_DIR`, so the same user-owned global value applies to both; it is not a per-child heartbeat switch. Pi's warmer follows each session's most recent real provider request, sends a one-token refresh only when its cache economics allow it, appends a `cache_warm` usage entry, and runs the normal `before_provider_request` payload hook. It is provider work and may cost money.
+
+The two mechanisms have different owners and targets:
+
+| Mechanism | Owner and target | Default | Observable evidence |
+|---|---|---|---|
+| Pi native warming | Pi session; warms that session's latest prompt-cache entry | `cacheWarming: "streaming"` when absent | `/session`, `cache_warm` usage records, and `Cache warmed ...` transcript notices by default (`showCacheMissNotices: true` in TLH unless disabled) |
+| TLH heartbeat | TLH parent; replays a captured parent payload during an idle gap with live async children | `heartbeat.enabled: false` | `subagents/heartbeat.jsonl`, `/subagents-doctor`, and gap summaries |
+
+If both are enabled, an idle parent overlaps its heartbeat with Pi-native warming only when the parent's `cacheWarming` mode is `idle`; Pi's default `streaming` mode stops on parent settlement. Concurrent active child sessions may independently stream-warm while the idle parent heartbeat runs because warming is per session. There is no shared budget or deduplication. Heartbeat does not warm child sessions, and enabling one mechanism does not enable the other.
+
+**Kill switch and rollback:** set global `cacheWarming` to `off` in `/settings` (or the isolated profile's `settings.json`) to stop Pi-native warming; remove the key or select `streaming` to restore Pi's default. Set the separate `heartbeat.enabled` key to `false` or remove the heartbeat block to stop TLH heartbeat requests, then restart/reload as documented above. Preserve a settings/config backup and unrelated keys. To stop all background cache-refresh traffic, disable both switches. Install, update, and `tlh doctor --repair` preserve the user-owned `cacheWarming` value and heartbeat block.
 
 ## Fallbacks and artifacts
 

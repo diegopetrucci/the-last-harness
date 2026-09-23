@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { findModelInfo, splitKnownThinkingSuffix } from "./model-info.js";
+import { contextWindowForChildModel, findModelInfo, splitKnownThinkingSuffix, } from "./model-info.js";
 const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
 const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
 const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS = Object.freeze([
@@ -336,11 +336,9 @@ export function classifyContextExhaustedTermination(input) {
     }
     return unresolvedIds.size > 0 ? "context_exhausted" : undefined;
 }
-export function resolveEffectiveContextWindow(model, availableModels, preferredProvider) {
-    const contextWindow = findModelInfo(splitKnownThinkingSuffix(model ?? "").baseModel, availableModels, preferredProvider)?.contextWindow;
-    return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
-        ? contextWindow
-        : undefined;
+export function resolveEffectiveContextWindow(model, availableModels, preferredProvider, options) {
+    const modelInfo = findModelInfo(splitKnownThinkingSuffix(model ?? "").baseModel, availableModels, preferredProvider);
+    return modelInfo ? contextWindowForChildModel(modelInfo, options) : undefined;
 }
 export function resolveSubagentTerminationReason(input) {
     if (input.cancelled)

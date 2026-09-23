@@ -72,17 +72,17 @@ Subagent orchestration is first-party TLH functionality: the runtime, prompts, a
 
 The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`): omission means **14400000 ms (4h)**, and the value must be a positive safe integer or `false`. Canonical minor role ceilings are code-owned defaults, applied before human overrides:
 
-| Role              | `maxExecutionTimeMs` |
-| ----------------- | -------------------: |
-| `developer`       |      7200000 ms (2h) |
-| `code-reviewer`   |     1800000 ms (30m) |
-| `test-runner`     |      3600000 ms (1h) |
-| `librarian`       |     14400000 ms (4h) |
-| `oracle`          |     2700000 ms (45m) |
-| `contrarian`      |     1800000 ms (30m) |
-| `repo-scout`      |      600000 ms (10m) |
-| `web-scout`       |       300000 ms (5m) |
-| `diff-summarizer` |       300000 ms (5m) |
+| Role | `maxExecutionTimeMs` |
+| --- | ---: |
+| `developer` | 3600000 ms (1h) |
+| `code-reviewer` | 1800000 ms (30m) |
+| `test-runner` | 3600000 ms (1h) |
+| `librarian` | 14400000 ms (4h) |
+| `oracle` | 2700000 ms (45m) |
+| `contrarian` | 1800000 ms (30m) |
+| `repo-scout` | 600000 ms (10m) |
+| `web-scout` | 300000 ms (5m) |
+| `diff-summarizer` | 300000 ms (5m) |
 
 Human canonical-role overrides use `subagents.agentOverrides.<role>.maxExecutionTimeMs` in the isolated `<agent-dir>/settings.json`. TLH selects the project's role entry when present, otherwise the profile entry, and does not merge the two objects field-by-field; a project entry that omits `maxExecutionTimeMs` therefore leaves the code-owned role default in effect unless authoritative frontmatter declares the field. Trusted custom agents declare a positive-safe-integer `maxExecutionTimeMs` in frontmatter, or use the **14400000 ms (4h)** fallback when omitted. A parallel batch has one shared deadline covering queueing and fallback/retry work, not one caller budget per task. `false` clears only the layer where it is set; another applicable run/role bound may still constrain execution. See [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) for active-time continuation rules, migration/restart guidance, and rollback details.
 

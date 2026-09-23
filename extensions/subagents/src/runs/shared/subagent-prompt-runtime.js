@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "./pi-args.js";
-import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, composeChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, SUBAGENT_TK_TICKET_ID_ENV, } from "./pi-args.js";
+import { blockForcedSystemPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION, setStructuredChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
 import { formatProjectAgentGuidance, inventoryProjectAgentGuidance, PACKAGED_MINOR_AGENT_ROLES, } from "../../../../shared/project-agent-guidance.js";
+import { normalizeTicketId } from "./ticket-context.js";
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -21,57 +22,61 @@ export const NATIVE_SUPERVISOR_GUIDANCE = [
     "Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.",
 ].join("\n");
 const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/name>/;
-const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
-const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
-const DATE_HEADER = "\nCurrent date:";
+const SUBAGENT_ORCHESTRATION_SKILL_NAME = "pi-subagents";
 function readBooleanEnv(name) {
     const value = process.env[name];
     if (value === undefined)
         return undefined;
     return value !== "0";
 }
-function findSectionEnd(prompt, startIndex, nextHeaders) {
-    let endIndex = prompt.length;
-    for (const header of nextHeaders) {
-        const index = prompt.indexOf(header, startIndex);
-        if (index !== -1 && index < endIndex) {
-            endIndex = index;
-        }
-    }
-    return endIndex;
-}
-export function stripProjectContext(prompt) {
-    const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
-    if (startIndex === -1)
-        return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [
-        SKILLS_HEADER,
-        DATE_HEADER,
-    ]);
-    return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
-}
-export function stripInheritedSkills(prompt) {
-    const startIndex = prompt.indexOf(SKILLS_HEADER);
-    if (startIndex === -1)
-        return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + SKILLS_HEADER.length, [DATE_HEADER]);
-    return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
-}
 export function stripSubagentOrchestrationSkill(prompt) {
     return prompt
         .replace(/\n{0,2}<skill\s+name=["']pi-subagents["'][^>]*>[\s\S]*?<\/skill>\n{0,2}/g, "\n\n")
         .replace(/[ \t]*<skill>\s*[\s\S]*?<\/skill>\s*/g, (block) => SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN.test(block) ? "" : block);
 }
-export function rewriteSubagentPrompt(prompt, options, projectAgentGuidance = "", supervisorGuidance = "") {
-    let rewritten = prompt;
+function isOrchestrationSkill(name) {
+    return name.trim().toLowerCase() === SUBAGENT_ORCHESTRATION_SKILL_NAME;
+}
+function sanitizePromptOption(value) {
+    return value === undefined ? undefined : stripSubagentOrchestrationSkill(value);
+}
+function rewriteStructuredSubagentPrompt(systemPromptOptions, options, projectAgentGuidance, supervisorGuidance, tkTicketGuidance) {
+    blockForcedSystemPrompt(systemPromptOptions);
     if (!options.inheritProjectContext) {
-        rewritten = stripProjectContext(rewritten);
+        systemPromptOptions.contextFiles = [];
+        delete systemPromptOptions.sections.project_context;
     }
+    systemPromptOptions.skills = options.inheritSkills
+        ? systemPromptOptions.skills.filter((skill) => !isOrchestrationSkill(skill.name))
+        : [];
     if (!options.inheritSkills) {
-        rewritten = stripInheritedSkills(rewritten);
+        delete systemPromptOptions.sections.skills;
     }
-    rewritten = stripSubagentOrchestrationSkill(rewritten);
-    return composeChildPromptRuntime(rewritten, [projectAgentGuidance, supervisorGuidance], "explicit");
+    else if (systemPromptOptions.sections.skills !== undefined) {
+        const sanitizedSkills = stripSubagentOrchestrationSkill(systemPromptOptions.sections.skills);
+        if (sanitizedSkills.trim())
+            systemPromptOptions.sections.skills = sanitizedSkills;
+        else
+            delete systemPromptOptions.sections.skills;
+    }
+    systemPromptOptions.customPrompt = sanitizePromptOption(systemPromptOptions.customPrompt);
+    systemPromptOptions.appendSystemPrompt =
+        sanitizePromptOption(systemPromptOptions.appendSystemPrompt) ?? "";
+    for (const [name, content] of Object.entries(systemPromptOptions.sections)) {
+        if (name === CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION)
+            continue;
+        const sanitized = stripSubagentOrchestrationSkill(content);
+        if (sanitized !== content)
+            systemPromptOptions.sections[name] = sanitized;
+    }
+    setStructuredChildPromptRuntime(systemPromptOptions.sections, "explicit", [
+        projectAgentGuidance,
+        supervisorGuidance,
+        tkTicketGuidance,
+    ]);
+}
+export function rewriteSubagentPrompt(systemPromptOptions, options, projectAgentGuidance = "", supervisorGuidance = "", tkTicketGuidance = "") {
+    rewriteStructuredSubagentPrompt(systemPromptOptions, options, projectAgentGuidance, supervisorGuidance, tkTicketGuidance);
 }
 function formatSteerMessage(request) {
     return [
@@ -113,6 +118,25 @@ function hasNativeSupervisorMetadata() {
         return false;
     const childIndex = process.env[SUBAGENT_CHILD_INDEX_ENV]?.trim();
     return childIndex !== undefined && /^\d+$/.test(childIndex);
+}
+function resolveChildTkTicketId() {
+    const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
+    if (childAgentName !== "developer" || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1")
+        return undefined;
+    return normalizeTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]).ticketId;
+}
+function formatChildTkTicketGuidance(ticketId) {
+    return [
+        "Developer ticket assignment:",
+        `Ticket ID: ${ticketId}`,
+        `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+    ].join("\n");
+}
+function formatDeveloperCompactionReminder(ticketId) {
+    return [
+        "Developer scope reminder after compaction:",
+        `Re-run \`tk show ${ticketId}\`, reread its acceptance criteria, and remain within the ticket's scope before continuing.`,
+    ].join("\n");
 }
 function resolveChildSupervisorGuidance() {
     if (process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] === "0")
@@ -204,6 +228,8 @@ export default function registerSubagentPromptRuntime(pi) {
     let nativeSupervisorClientRegistered = false;
     let projectAgentGuidanceSnapshot = "";
     let supervisorGuidanceSnapshot = "";
+    let tkTicketGuidanceSnapshot = "";
+    let tkTicketIdSnapshot;
     const handleSessionStart = (_event, ctx) => {
         if (!nativeSupervisorClientRegistered) {
             nativeSupervisorClientRegistered = true;
@@ -211,22 +237,25 @@ export default function registerSubagentPromptRuntime(pi) {
         }
         projectAgentGuidanceSnapshot = resolveChildProjectAgentGuidance(ctx.cwd);
         supervisorGuidanceSnapshot = resolveChildSupervisorGuidance();
+        tkTicketIdSnapshot = resolveChildTkTicketId();
+        tkTicketGuidanceSnapshot = tkTicketIdSnapshot
+            ? formatChildTkTicketGuidance(tkTicketIdSnapshot)
+            : "";
     };
     pi.on("session_start", handleSessionStart);
+    pi.on("session_compact", (event) => {
+        if (!tkTicketIdSnapshot)
+            return;
+        pi.sendMessage({
+            customType: "tlh-developer-scope-reminder",
+            content: formatDeveloperCompactionReminder(tkTicketIdSnapshot),
+            display: true,
+        }, { deliverAs: event.willRetry ? "steer" : "nextTurn" });
+    });
     pi.on("before_agent_start", (event) => {
-        const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
-        const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-        if (inheritProjectContext === undefined &&
-            inheritSkills === undefined &&
-            projectAgentGuidanceSnapshot.length === 0 &&
-            supervisorGuidanceSnapshot.length === 0)
-            return undefined;
-        const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
-            inheritProjectContext: inheritProjectContext ?? true,
-            inheritSkills: inheritSkills ?? true,
-        }, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot);
-        if (rewritten === event.systemPrompt)
-            return undefined;
-        return { systemPrompt: rewritten };
+        const projectInheritance = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV) ?? true;
+        const skillsInheritance = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV) ?? true;
+        rewriteSubagentPrompt(event.systemPromptOptions, { inheritProjectContext: projectInheritance, inheritSkills: skillsInheritance }, projectAgentGuidanceSnapshot, supervisorGuidanceSnapshot, tkTicketGuidanceSnapshot);
+        return undefined;
     });
 }

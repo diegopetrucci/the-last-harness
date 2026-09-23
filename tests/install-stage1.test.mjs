@@ -48,7 +48,7 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
     const runtimePiPath = join(runtimeBinDir, "pi");
     const pathNotice = `warning: ${runtimePiPath} installed but ${runtimeBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${runtimeBinDir}:$PATH"`;
     const refreshDetailPattern =
-      /Running settings-wide extension refresh from merged settings; fallback retries only 9 non-critical bundled default source\(s\) individually\./;
+      /Running settings-wide extension refresh from merged settings; fallback retries only 8 non-critical bundled default source\(s\) individually\./;
 
     assert.equal(result.status, 0, output);
     assert.deepEqual(
@@ -117,7 +117,7 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: ["pnpm"] }));
 
   const fakePiBody = [
-    'if [[ "${1:-}" == "--version" ]]; then printf "0.85.1\\n"; exit 0; fi',
+    'if [[ "${1:-}" == "--version" ]]; then printf "0.87.1\\n"; exit 0; fi',
     'if [[ "${1:-}" == "install" ]]; then',
     '  if [[ -n "${GIT_INDEX_FILE+x}" ]]; then printf "%s\\n" "$GIT_INDEX_FILE" >"$PI_CHILD_ENV_LOG"; else printf "<unset>\\n" >"$PI_CHILD_ENV_LOG"; fi',
     '  rm -rf "$FOREIGN_DIR"',

@@ -446,6 +446,18 @@ function pruneIntercomDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
 }
+function pruneQuietToolsDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["quiet-tools", "compact-bash"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
+}
 function pruneFffDisabledDefaultExtension(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -733,6 +745,7 @@ function main() {
     pruneOracleDisabledDefaultExtension(next, changes);
     pruneRtkDisabledDefaultExtension(next, changes);
     pruneIntercomDisabledDefaultExtension(next, changes);
+    pruneQuietToolsDisabledDefaultExtension(next, changes);
     pruneFffDisabledDefaultExtension(next, changes);
     pruneSubagentsDisabledDefaultExtension(next, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);

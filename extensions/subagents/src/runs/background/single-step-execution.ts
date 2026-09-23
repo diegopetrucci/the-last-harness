@@ -453,6 +453,7 @@ function prepareSingleStepAttempt(input: {
       runId: ctx.id,
       childAgentName: step.agent,
       projectAgentGuidance: step.projectAgentGuidance === true,
+      ticketId: step.ticketId,
       childIndex: ctx.flatIndex,
       steerInboxDir: ctx.steerInboxDir,
     }));

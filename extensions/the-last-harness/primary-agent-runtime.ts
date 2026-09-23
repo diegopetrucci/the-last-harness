@@ -95,7 +95,10 @@ import {
   isThinkingLevel,
   setExtensionThinkingLevel,
 } from "./thinking.js";
-import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import {
+  blockForcedSystemPrompt,
+  setStructuredChildPromptRuntime,
+} from "../shared/subagent-child-boundary.js";
 import type { ProjectAgentGuidanceInventory } from "../shared/project-agent-guidance.js";
 import {
   buildChildSubagentSystemPrompt,
@@ -200,6 +203,7 @@ function registerChildSubagentRuntime(
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    blockForcedSystemPrompt(event.systemPromptOptions);
     const settings = getTlhGlobalSettings(ctx.cwd);
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
@@ -210,9 +214,8 @@ function registerChildSubagentRuntime(
     ]
       .filter(Boolean)
       .join("\n\n");
-    return {
-      systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
-    };
+    setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "root", [additions]);
+    return undefined;
   });
 
   pi.on("tool_call", async (event, ctx) => {

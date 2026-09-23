@@ -15,7 +15,7 @@ import { followsOpenrouterSession, formatProviderModelReference, listAgentModelD
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionPersistenceSession, claimTlhModelSelectionDefaults, endTlhModelSelectionPersistenceSession, installTlhModelSelectionPersistenceOverride, isTlhPersistedModelSelection, updateTlhModelSelectionPersistenceContext, } from "./model-selection-scope.js";
 import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, } from "./thinking.js";
-import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import { blockForcedSystemPrompt, setStructuredChildPromptRuntime, } from "../shared/subagent-child-boundary.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
@@ -36,6 +36,7 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         activateTlhTicketSessionScope(ctx.cwd);
     });
     pi.on("before_agent_start", async (event, ctx) => {
+        blockForcedSystemPrompt(event.systemPromptOptions);
         const settings = getTlhGlobalSettings(ctx.cwd);
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
@@ -46,9 +47,8 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         ]
             .filter(Boolean)
             .join("\n\n");
-        return {
-            systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
-        };
+        setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "root", [additions]);
+        return undefined;
     });
     pi.on("tool_call", async (event, ctx) => {
         if (event.toolName !== "bash") {

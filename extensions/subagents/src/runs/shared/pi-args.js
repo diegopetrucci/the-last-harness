@@ -16,6 +16,7 @@ export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANN
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 export const SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV = "PI_SUBAGENT_PROJECT_AGENT_GUIDANCE";
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV = "PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -29,6 +30,22 @@ export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 function isExtensionToolPath(tool) {
     return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+function canonicalChildExtensionPath(extensionPath, cwd) {
+    const resolvedPath = path.resolve(cwd, extensionPath);
+    try {
+        return fs.realpathSync(resolvedPath);
+    }
+    catch {
+        return resolvedPath;
+    }
+}
+function appendUniqueChildExtensionPath(extensionPaths, seenCanonicalPaths, extensionPath, cwd) {
+    const canonicalPath = canonicalChildExtensionPath(extensionPath, cwd);
+    if (seenCanonicalPaths.has(canonicalPath))
+        return;
+    seenCanonicalPaths.add(canonicalPath);
+    extensionPaths.push(extensionPath);
 }
 function resolveToolPolicy(tools, requireReadTool = false) {
     if (tools === undefined) {
@@ -134,26 +151,27 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     if (contactSupervisorDisallowed) {
         args.push("--exclude-tools", CONTACT_SUPERVISOR_TOOL_NAME);
     }
-    const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
+    const extensionPaths = [];
+    const seenCanonicalExtensionPaths = new Set();
+    const childCwd = input.cwd ?? process.cwd();
+    for (const extPath of [
+        ...toolExtensionPaths,
+        ...(input.extensions ?? []),
+        ...(input.subagentOnlyExtensions ?? []),
+    ]) {
+        appendUniqueChildExtensionPath(extensionPaths, seenCanonicalExtensionPaths, extPath, childCwd);
+    }
+    const runtimeCanonicalPath = canonicalChildExtensionPath(PROMPT_RUNTIME_EXTENSION_PATH, childCwd);
+    const runtimeIndex = extensionPaths.findIndex((extPath) => canonicalChildExtensionPath(extPath, childCwd) === runtimeCanonicalPath);
+    const runtimeExtensionPath = runtimeIndex === -1 ? PROMPT_RUNTIME_EXTENSION_PATH : extensionPaths[runtimeIndex];
+    if (runtimeIndex !== -1)
+        extensionPaths.splice(runtimeIndex, 1);
+    extensionPaths.push(runtimeExtensionPath);
     if (input.extensions !== undefined) {
         args.push("--no-extensions");
-        for (const extPath of new Set([
-            ...runtimeExtensions,
-            ...toolExtensionPaths,
-            ...input.extensions,
-            ...(input.subagentOnlyExtensions ?? []),
-        ])) {
-            args.push("--extension", extPath);
-        }
     }
-    else {
-        for (const extPath of new Set([
-            ...runtimeExtensions,
-            ...toolExtensionPaths,
-            ...(input.subagentOnlyExtensions ?? []),
-        ])) {
-            args.push("--extension", extPath);
-        }
+    for (const extPath of extensionPaths) {
+        args.push("--extension", extPath);
     }
     if (!input.inheritSkills) {
         args.push("--no-skills");
@@ -184,6 +202,10 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
     env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
     env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
+    env[SUBAGENT_TK_TICKET_ID_ENV] =
+        input.projectAgentGuidance === true && input.childAgentName === "developer"
+            ? input.ticketId
+            : undefined;
     env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";
     if (input.parentSessionId) {
         env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;

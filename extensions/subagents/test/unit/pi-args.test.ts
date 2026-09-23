@@ -11,6 +11,7 @@ import {
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
   SUBAGENT_CHILD_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_TK_TICKET_ID_ENV,
   applyThinkingSuffix,
   buildPiArgs,
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
@@ -23,6 +24,7 @@ const originalEnv = {
   PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
   PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
+  PI_SUBAGENT_TK_TICKET_ID: process.env.PI_SUBAGENT_TK_TICKET_ID,
 };
 
 afterEach(() => {
@@ -346,6 +348,109 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(env.PI_SUBAGENT_CHILD, "1");
     assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
     assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
+  });
+
+  it("loads the prompt runtime after tool, custom, and subagent-only extensions", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["./tool-override.ts"],
+      extensions: ["./custom-override.ts"],
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+    assert.deepEqual(extensionArgs.slice(0, -1), [
+      "./tool-override.ts",
+      "./custom-override.ts",
+      "./child-override.ts",
+    ]);
+    assert.match(extensionArgs.at(-1) ?? "", /subagent-prompt-runtime\.ts$/);
+  });
+
+  it("deduplicates canonical child extension aliases while retaining first spelling and order", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-extension-alias-"));
+    const toolPath = path.join(cwd, "tool-override.ts");
+    const customPath = path.join(cwd, "custom-override.ts");
+    fs.writeFileSync(toolPath, "export default () => {};", "utf8");
+    fs.writeFileSync(customPath, "export default () => {};", "utf8");
+
+    try {
+      const toolSpelling = `.${path.sep}${path.basename(toolPath)}`;
+      const customSpelling = `.${path.sep}${path.basename(customPath)}`;
+      const runtimeProbe = buildPiArgs({
+        baseArgs: [],
+        task: "probe",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+      });
+      const runtimePath = runtimeProbe.args.find(
+        (_arg, index) => runtimeProbe.args[index - 1] === "--extension",
+      );
+      assert.ok(runtimePath);
+      const runtimeSpelling = `${path.dirname(runtimePath)}${path.sep}.${path.sep}${path.basename(runtimePath)}`;
+      const { args } = buildPiArgs({
+        baseArgs: ["-p"],
+        task: "hello",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+        tools: [toolSpelling],
+        extensions: [toolPath, customSpelling, runtimeSpelling],
+        subagentOnlyExtensions: [customPath],
+      });
+
+      const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+      assert.deepEqual(extensionArgs.slice(0, -1), [toolSpelling, customSpelling]);
+      assert.equal(extensionArgs.at(-1), runtimeSpelling);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("retains normal extension discovery when no explicit extension list is supplied", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    assert.equal(args.includes("--no-extensions"), false);
+  });
+
+  it("passes the canonical developer ticket identity to the child runtime", () => {
+    const { env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: true,
+      ticketId: "tlht-a8dn",
+      childAgentName: "developer",
+    });
+    assert.equal(env[SUBAGENT_TK_TICKET_ID_ENV], "tlht-a8dn");
+
+    const custom = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: false,
+      ticketId: "custom-ticket",
+      childAgentName: "developer",
+    });
+    assert.equal(custom.env[SUBAGENT_TK_TICKET_ID_ENV], undefined);
   });
 
   it("always emits an explicit project-guidance provenance sentinel", () => {

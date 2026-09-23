@@ -13,6 +13,7 @@ import {
   formatDurableResumeContextBlock,
   parseContextUsageDiagnostics,
   parseSubagentTerminationReason,
+  resolveEffectiveContextWindow,
   resolveSubagentTerminationReason,
   updateContextUsageDiagnostics,
 } from "../../src/shared/context-diagnostics.ts";
@@ -116,6 +117,92 @@ describe("subagent context and termination diagnostics", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("keeps native and canonical-developer windows distinct for diagnostics", () => {
+    const availableModels = [
+      {
+        provider: "openai-codex",
+        id: "gpt-5.6-luna",
+        fullId: "openai-codex/gpt-5.6-luna",
+        contextWindow: 200_000,
+        nativeContextWindow: 372_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-4.6",
+        fullId: "anthropic/claude-sonnet-4.6",
+        contextWindow: 200_000,
+        nativeContextWindow: 450_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "large-model",
+        fullId: "test-provider/large-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 1_000_000,
+        developerChildContextWindow: 272_000,
+      },
+      {
+        provider: "test-provider",
+        id: "small-model",
+        fullId: "test-provider/small-model",
+        contextWindow: 200_000,
+        nativeContextWindow: 200_000,
+        developerChildContextWindow: 200_000,
+      },
+    ];
+
+    assert.equal(
+      resolveEffectiveContextWindow("openai-codex/gpt-5.6-luna", availableModels),
+      372_000,
+      "non-developer diagnostics preserve native Codex GPT-5.6 context",
+    );
+    assert.equal(
+      resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels),
+      450_000,
+      "non-developer diagnostics preserve native context",
+    );
+    assert.equal(
+      resolveEffectiveContextWindow("test-provider/large-model", availableModels),
+      1_000_000,
+    );
+    assert.equal(
+      resolveEffectiveContextWindow("test-provider/small-model", availableModels),
+      200_000,
+    );
+
+    const canonicalDeveloper = { canonicalDeveloper: true };
+    for (const model of availableModels) {
+      assert.equal(
+        resolveEffectiveContextWindow(model.fullId, availableModels, undefined, canonicalDeveloper),
+        Math.min(model.nativeContextWindow, 272_000),
+        `canonical developer diagnostics cap ${model.fullId} uniformly`,
+      );
+    }
+
+    const nativeChildAssessment = assessDurableResumeContext(
+      { contextTokens: 220_000 },
+      resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels, undefined, {
+        canonicalDeveloper: false,
+      }),
+    );
+    assert.equal(nativeChildAssessment.blocked, false);
+    assert.equal(nativeChildAssessment.contextWindow, 450_000);
+
+    const canonicalDeveloperAssessment = assessDurableResumeContext(
+      { contextTokens: 220_000 },
+      resolveEffectiveContextWindow(
+        "openai-codex/gpt-5.6-luna",
+        availableModels,
+        undefined,
+        canonicalDeveloper,
+      ),
+    );
+    assert.equal(canonicalDeveloperAssessment.blocked, true);
+    assert.equal(canonicalDeveloperAssessment.contextWindow, 272_000);
   });
 
   it("blocks exactly at the centralized unsafe threshold and uses the latest total, not peak", () => {

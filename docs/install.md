@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.85.1 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.87.1 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -37,7 +37,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.41.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.42.1/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.41.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; older main-track state without that metadata continues to show `TLH main`.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.42.1`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; older main-track state without that metadata continues to show `TLH main`.
 
 ## Installer options
 
@@ -85,14 +85,14 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.41.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.42.1/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.85.1 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.87.1 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -143,6 +143,14 @@ Release builds with TelemetryDeck identifiers configured send pseudonymous telem
 To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `~/.the-last-harness/agent/settings.json`. This opt-out is user-owned and survives `tlh update` and installer reruns. Per-run opt-outs are `PI_OFFLINE=1`, `TLH_SKIP_TELEMETRY=1`, `TLH_TELEMETRY_DISABLED=1`, or `PI_TELEMETRY=0`. To reset only the pseudonymous install ID, remove `~/.the-last-harness/agent/tlh/telemetry-state.json`.
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
+
+## Pi-native prompt-cache warming
+
+The pinned Pi `0.87.1` runtime has provider-native prompt-cache warming. When the global `cacheWarming` setting is absent, Pi preserves its default **`streaming`** mode; TLH does not add or change that setting during install, update, or repair. The available values are `off`, `streaming` (while an agent run is active), and `idle` (also while idle); both warming modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
+
+This setting is user-owned and global to the isolated profile (`~/.the-last-harness/agent/settings.json`, or the active `PI_CODING_AGENT_DIR`), not project-scoped. Use Pi's `/settings` screen or edit that profile deliberately; back up before manual edits and preserve unknown keys. Canonical TLH parent and child processes share the isolated profile, so one global value governs both unless a separately configured profile is intentionally used. Pi exposes warm status and its economic decision through `/session`. TLH's packaged defaults set `showCacheMissNotices` to `true`, so successful native refreshes appear as `Cache warmed ...` transcript notices by default; set it to `false` to hide them.
+
+Pi-native warming is separate from TLH's async-parent prompt-cache heartbeat. The heartbeat remains default-off and is configured in the first-party subagent config. An idle parent overlaps its heartbeat with Pi-native warming only when the parent's `cacheWarming` mode is `idle`; Pi's default `streaming` mode stops on parent settlement. Concurrent active child sessions may independently stream-warm while the idle parent heartbeat runs because warming is per session. There is no shared budget or deduplication. To stop Pi-native warming, set `cacheWarming` to `off`; to restore the upstream default, remove the key or choose `streaming`. Disable heartbeat separately if you want no TLH heartbeat requests. See [subagents.md](subagents.md#prompt-cache-heartbeat) for the cost model, overlap details, and rollback steps.
 
 ## Doctor
 

@@ -117,7 +117,7 @@ export async function handleThinkingLevelCommand(
 
   // `ThinkingSelectorComponent` is a public Pi component. It owns the picker
   // and visibly documents Enter (session), the `app.thinking.save` keybinding
-  // (Ctrl+S by default, configurable since 0.85.1) to set as default, and
+  // (Ctrl+S by default) to set as default, and
   // `tui.select.cancel` (Escape/Ctrl+C) to cancel. TLH deliberately keeps the
   // persistence callback separate so Pi's ExtensionAPI setter can never write
   // an unguarded default.
