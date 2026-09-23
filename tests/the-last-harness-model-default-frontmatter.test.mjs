@@ -231,8 +231,7 @@ test("production bundled agents declare well-formed xAI defaults", () => {
     );
     assert.ok(
       entry.models.every(
-        (model) =>
-          model.provider === "xai" && typeof model.id === "string" && model.id.length > 0,
+        (model) => model.provider === "xai" && typeof model.id === "string" && model.id.length > 0,
       ),
       `${agent.name} xAI models must have provider and id values`,
     );
