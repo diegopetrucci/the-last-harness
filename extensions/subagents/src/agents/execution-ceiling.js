@@ -1,4 +1,3 @@
-import { normalizeActiveRuntimeMs } from "../runs/shared/lifecycle-state.js";
 export const DEFAULT_SUBAGENT_MAX_RUN_TIME_MS = 14_400_000;
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = DEFAULT_SUBAGENT_MAX_RUN_TIME_MS;
 export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS = Object.freeze({
@@ -61,13 +60,8 @@ export function resolveCustomAgentMaxExecutionTimeMs(maxExecutionTimeMs) {
 export function isPositiveSafeInteger(value) {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
-export function remainingExecutionTimeMs(maxExecutionTimeMs, activeRuntimeMs = 0) {
+export function roleExecutionTimeoutMs(maxExecutionTimeMs) {
     if (maxExecutionTimeMs === undefined)
         return undefined;
-    if (!isPositiveSafeInteger(maxExecutionTimeMs))
-        return 0;
-    const consumedActiveRuntimeMs = normalizeActiveRuntimeMs(activeRuntimeMs);
-    if (consumedActiveRuntimeMs === undefined)
-        return 0;
-    return Math.max(0, maxExecutionTimeMs - consumedActiveRuntimeMs);
+    return isPositiveSafeInteger(maxExecutionTimeMs) ? maxExecutionTimeMs : 0;
 }

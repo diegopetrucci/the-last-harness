@@ -1,5 +1,3 @@
-import { normalizeActiveRuntimeMs } from "../runs/shared/lifecycle-state.ts";
-
 export const DEFAULT_SUBAGENT_MAX_RUN_TIME_MS = 14_400_000;
 export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = DEFAULT_SUBAGENT_MAX_RUN_TIME_MS;
 
@@ -95,13 +93,12 @@ export function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
-export function remainingExecutionTimeMs(
-  maxExecutionTimeMs: number | undefined,
-  activeRuntimeMs: unknown = 0,
-): number | undefined {
+/**
+ * Resolve the role ceiling for one child spawn. The returned duration is never
+ * reduced by an earlier segment; callers must anchor its deadline at the
+ * current child spawn time.
+ */
+export function roleExecutionTimeoutMs(maxExecutionTimeMs: number | undefined): number | undefined {
   if (maxExecutionTimeMs === undefined) return undefined;
-  if (!isPositiveSafeInteger(maxExecutionTimeMs)) return 0;
-  const consumedActiveRuntimeMs = normalizeActiveRuntimeMs(activeRuntimeMs);
-  if (consumedActiveRuntimeMs === undefined) return 0;
-  return Math.max(0, maxExecutionTimeMs - consumedActiveRuntimeMs);
+  return isPositiveSafeInteger(maxExecutionTimeMs) ? maxExecutionTimeMs : 0;
 }

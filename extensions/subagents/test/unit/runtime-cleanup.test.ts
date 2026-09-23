@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { cleanupRuntimeDirs, inspectRuntimeDirs } from "../../src/extension/runtime-cleanup.ts";
+import { MAX_ASYNC_STATUS_BYTES } from "../../src/shared/utils.ts";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -89,12 +90,77 @@ describe("runtime cleanup", () => {
         lastUpdate: now - 1000,
       });
 
-      const result = cleanupRuntimeDirs(paths, { now: () => now, kill: () => true });
+      const result = cleanupRuntimeDirs(paths, { now: () => now });
       assert.equal(result.removedAsyncDirs, 2);
       assert.equal(fs.existsSync(staleEmptyDir), false);
       assert.equal(fs.existsSync(staleCompleteDir), false);
       assert.equal(fs.existsSync(pausedDir), true);
       assert.equal(fs.existsSync(runningDir), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps every malformed or unreadable status directory untouched", () => {
+    const root = tempRoot("pi-runtime-cleanup-invalid-status-");
+    const now = 12 * ONE_DAY_MS;
+    const paths = createPaths(root);
+    const malformed: Array<[string, string]> = [
+      ["null", "null"],
+      ["zero", "0"],
+      ["false", "false"],
+      ["string", JSON.stringify("status")],
+      ["array", "[]"],
+      [
+        "missing-started-at",
+        JSON.stringify({ runId: "missing-started-at", mode: "single", state: "complete" }),
+      ],
+      [
+        "null-started-at",
+        JSON.stringify({
+          runId: "null-started-at",
+          mode: "single",
+          state: "complete",
+          startedAt: null,
+        }),
+      ],
+      [
+        "nan-started-at",
+        '{"runId":"nan-started-at","mode":"single","state":"complete","startedAt":NaN}',
+      ],
+    ];
+    try {
+      const before = new Map<string, Buffer>();
+      for (const [id, content] of malformed) {
+        const dir = path.join(paths.asyncDir, id);
+        fs.mkdirSync(dir, { recursive: true });
+        const statusPath = path.join(dir, "status.json");
+        fs.writeFileSync(statusPath, content, "utf-8");
+        before.set(statusPath, fs.readFileSync(statusPath));
+        setTreeMtime(dir, now - 10 * ONE_DAY_MS);
+      }
+      const oversizedDir = path.join(paths.asyncDir, "oversized");
+      fs.mkdirSync(oversizedDir, { recursive: true });
+      const oversizedPath = path.join(oversizedDir, "status.json");
+      fs.writeFileSync(oversizedPath, "x".repeat(MAX_ASYNC_STATUS_BYTES + 1), "utf-8");
+      before.set(oversizedPath, fs.readFileSync(oversizedPath));
+      setTreeMtime(oversizedDir, now - 10 * ONE_DAY_MS);
+
+      const unreadableDir = path.join(paths.asyncDir, "unreadable");
+      fs.mkdirSync(path.join(unreadableDir, "status.json"), { recursive: true });
+      setTreeMtime(unreadableDir, now - 10 * ONE_DAY_MS);
+
+      const result = cleanupRuntimeDirs(paths, { now: () => now });
+      assert.equal(result.removedAsyncDirs, 0);
+      for (const [statusPath, content] of before) {
+        assert.equal(fs.existsSync(statusPath), true);
+        assert.deepEqual(fs.readFileSync(statusPath), content);
+      }
+      for (const [id] of malformed)
+        assert.equal(fs.existsSync(path.join(paths.asyncDir, id)), true);
+      assert.equal(fs.existsSync(oversizedDir), true);
+      assert.equal(fs.existsSync(unreadableDir), true);
+      assert.equal(fs.existsSync(path.join(root, "quarantined-async-subagent-runs")), false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -124,7 +190,7 @@ describe("runtime cleanup", () => {
       const staleRoute = writeRoute(paths.nestedEventsDir, "gone-root", "stale");
       setTreeMtime(staleRoute, now - 2 * ONE_DAY_MS);
 
-      const counts = inspectRuntimeDirs(paths, { now: () => now, kill: () => true });
+      const counts = inspectRuntimeDirs(paths, { now: () => now });
       assert.equal(counts.topLevelAsyncDirs, 1);
       assert.equal(counts.nestedAsyncDirs, 1);
       assert.equal(counts.activeOrLiveAsyncDirs, 1);

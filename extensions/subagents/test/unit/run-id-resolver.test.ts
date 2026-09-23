@@ -14,19 +14,14 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
-function stateWithForeground(id: string): SubagentState {
+function emptyState(): SubagentState {
   return {
     baseCwd: "",
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map([[id, { runId: id, mode: "single", startedAt: 1, updatedAt: 1 }]]),
-    lastForegroundControlId: id,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
@@ -69,19 +64,19 @@ function writeNestedChild(
 }
 
 function stateWithNestedRoute(route: ReturnType<typeof createNestedRoute>): SubagentState {
-  const state = stateWithForeground("foreground-only");
-  state.foregroundControls.set(route.rootRunId, {
-    runId: route.rootRunId,
+  const state = emptyState();
+  state.asyncJobs.set(route.rootRunId, {
+    asyncId: route.rootRunId,
+    asyncDir: path.join(os.tmpdir(), "nested-run-id-resolver", route.rootRunId),
+    status: "running",
     mode: "single",
-    startedAt: 1,
-    updatedAt: 1,
     nestedRoute: route,
   });
   return state;
 }
 
 describe("subagent run id resolver", () => {
-  it("prefers exact foreground, then exact async, then exact nested before prefix matches", () => {
+  it("prefers exact async, then exact nested before prefix matches", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-id-resolver-"));
     try {
       const asyncRoot = path.join(root, "runs");
@@ -90,14 +85,6 @@ describe("subagent run id resolver", () => {
       nested("root-shared", "shared-id");
       nested("root-prefix", "shared-id-child");
 
-      assert.equal(
-        resolveSubagentRunId("shared-id", {
-          state: stateWithForeground("shared-id"),
-          asyncDirRoot: asyncRoot,
-          resultsDir,
-        })?.kind,
-        "foreground",
-      );
       assert.equal(
         resolveSubagentRunId("shared-id", { asyncDirRoot: asyncRoot, resultsDir })?.kind,
         "async",
@@ -135,10 +122,7 @@ describe("subagent run id resolver", () => {
       () => resolveSubagentRunId("shared-nested"),
       /ambiguous across authorized registries|ambiguous across registries/i,
     );
-    assert.equal(
-      resolveSubagentRunId("shared-nested", { state: stateWithForeground("foreground-only") }),
-      undefined,
-    );
+    assert.equal(resolveSubagentRunId("shared-nested", { state: emptyState() }), undefined);
     const resolved = resolveSubagentRunId("shared-nested", {
       state: stateWithNestedRoute(allowed),
     });

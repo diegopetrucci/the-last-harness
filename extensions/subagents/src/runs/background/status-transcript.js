@@ -1,0 +1,456 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
+import { formatActivityLabel } from "../../shared/status-format.js";
+import {} from "../../shared/types.js";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
+import { readStatus } from "../../shared/utils.js";
+const DEFAULT_TRANSCRIPT_LINES = 80;
+export const MAX_TRANSCRIPT_LINES = 500;
+const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+function transcriptLineLimit(value) {
+    if (value === undefined)
+        return DEFAULT_TRANSCRIPT_LINES;
+    if (!Number.isFinite(value))
+        return DEFAULT_TRANSCRIPT_LINES;
+    return Math.max(1, Math.min(MAX_TRANSCRIPT_LINES, Math.trunc(value)));
+}
+function uniqueStrings(values) {
+    const seen = new Set();
+    const result = [];
+    for (const value of values) {
+        if (!value || seen.has(value))
+            continue;
+        seen.add(value);
+        result.push(value);
+    }
+    return result;
+}
+function resolveMaybeRelative(asyncDir, filePath) {
+    if (!filePath)
+        return undefined;
+    return path.resolve(asyncDir, filePath);
+}
+function pathWithin(base, candidate) {
+    const resolvedBase = path.resolve(base);
+    const resolvedCandidate = path.resolve(candidate);
+    return (resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`));
+}
+function getErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+function isNotFoundError(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
+}
+function readTextTail(filePath, maxLines) {
+    let stat;
+    try {
+        stat = fs.statSync(filePath);
+    }
+    catch (error) {
+        if (isNotFoundError(error))
+            return { path: filePath, lines: [], truncated: false };
+        return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
+    }
+    if (stat.size === 0)
+        return { path: filePath, lines: [], truncated: false };
+    let fd;
+    try {
+        const bytesToRead = Math.min(stat.size, TRANSCRIPT_TAIL_BYTES);
+        const start = stat.size - bytesToRead;
+        const buffer = Buffer.alloc(bytesToRead);
+        fd = fs.openSync(filePath, "r");
+        const bytesRead = fs.readSync(fd, buffer, 0, bytesToRead, start);
+        const content = buffer.subarray(0, bytesRead).toString("utf-8");
+        let lines = content.split(/\r?\n/);
+        if (start > 0 && lines.length > 0)
+            lines = lines.slice(1);
+        if (lines.at(-1) === "")
+            lines = lines.slice(0, -1);
+        return {
+            path: filePath,
+            lines: lines.slice(-maxLines),
+            truncated: start > 0 || lines.length > maxLines,
+        };
+    }
+    catch (error) {
+        return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
+    }
+    finally {
+        if (fd !== undefined)
+            fs.closeSync(fd);
+    }
+}
+function readContainedTextTail(filePath, maxLines, trustedRoots, label) {
+    if (trustedRoots.length === 0)
+        return {
+            path: filePath,
+            lines: [],
+            truncated: false,
+            error: `Refusing to read ${label} transcript path without a trusted root: ${filePath}`,
+        };
+    const resolvedPath = path.resolve(filePath);
+    if (!trustedRoots.some((root) => pathWithin(root, resolvedPath))) {
+        return {
+            path: filePath,
+            lines: [],
+            truncated: false,
+            error: `Refusing to read ${label} transcript path outside trusted roots: ${filePath}`,
+        };
+    }
+    let lstat;
+    try {
+        lstat = fs.lstatSync(resolvedPath);
+    }
+    catch (error) {
+        if (isNotFoundError(error))
+            return { path: filePath, lines: [], truncated: false };
+        return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
+    }
+    if (lstat.isSymbolicLink())
+        return {
+            path: filePath,
+            lines: [],
+            truncated: false,
+            error: `Refusing to read symlink ${label} transcript path: ${filePath}`,
+        };
+    if (!lstat.isFile())
+        return {
+            path: filePath,
+            lines: [],
+            truncated: false,
+            error: `Refusing to read non-file ${label} transcript path: ${filePath}`,
+        };
+    let realPath;
+    let realRoots;
+    try {
+        realPath = fs.realpathSync(resolvedPath);
+        realRoots = trustedRoots
+            .filter((root) => fs.existsSync(root))
+            .map((root) => fs.realpathSync(root));
+    }
+    catch (error) {
+        return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
+    }
+    if (!realRoots.some((root) => pathWithin(root, realPath))) {
+        return {
+            path: filePath,
+            lines: [],
+            truncated: false,
+            error: `Refusing to read ${label} transcript path outside trusted roots: ${filePath}`,
+        };
+    }
+    return readTextTail(resolvedPath, maxLines);
+}
+function stringifyJsonPreview(value, maxLength = 240) {
+    let raw;
+    if (typeof value === "string")
+        raw = value;
+    else
+        raw = JSON.stringify(value);
+    const safe = safeTerminalText(raw);
+    return safe.length > maxLength ? `${safe.slice(0, maxLength)}…` : safe;
+}
+function contentText(content) {
+    if (typeof content === "string")
+        return safeTerminalText(content);
+    if (!Array.isArray(content))
+        return "";
+    return content
+        .map((part) => {
+        if (!part || typeof part !== "object")
+            return "";
+        const entry = part;
+        if (typeof entry.text === "string")
+            return safeTerminalText(entry.text);
+        if (entry.type === "toolCall" || entry.type === "tool_call") {
+            const name = typeof entry.name === "string"
+                ? safeTerminalText(entry.name)
+                : typeof entry.toolName === "string"
+                    ? safeTerminalText(entry.toolName)
+                    : "tool";
+            return `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]`;
+        }
+        if (entry.type === "toolResult" || entry.type === "tool_result") {
+            return `[tool result${entry.result === undefined ? "" : `: ${stringifyJsonPreview(entry.result)}`}]`;
+        }
+        if (entry.content !== undefined)
+            return stringifyJsonPreview(entry.content);
+        return "";
+    })
+        .filter(Boolean)
+        .join("\n");
+}
+function sessionMessageLine(record) {
+    if (!record || typeof record !== "object")
+        return undefined;
+    const outer = record;
+    const message = outer.message && typeof outer.message === "object"
+        ? outer.message
+        : outer;
+    const role = typeof message.role === "string" ? message.role : undefined;
+    if (!role)
+        return undefined;
+    const text = contentText(message.content).trim();
+    if (!text)
+        return undefined;
+    return `${safeTerminalText(role)}: ${text}`;
+}
+function readSessionTranscriptTail(sessionFile, maxLines, trustedRoots) {
+    const tail = readContainedTextTail(sessionFile, Math.max(maxLines * 4, maxLines), trustedRoots, "session");
+    const warnings = [];
+    if (tail.error)
+        warnings.push(`Session read failed for ${sessionFile}: ${tail.error}`);
+    const lines = [];
+    let malformed = 0;
+    for (const line of tail.lines) {
+        if (!line.trim())
+            continue;
+        try {
+            const parsed = JSON.parse(line);
+            const messageLine = sessionMessageLine(parsed);
+            if (messageLine)
+                lines.push(messageLine);
+        }
+        catch {
+            malformed++;
+        }
+    }
+    if (malformed > 0)
+        warnings.push(`Skipped ${malformed} malformed session tail line${malformed === 1 ? "" : "s"}.`);
+    return { lines: lines.slice(-maxLines), warnings };
+}
+function formatActivityFacts(input) {
+    const facts = [];
+    const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
+    if (currentTool && input.currentToolStartedAt !== undefined)
+        facts.push(`tool ${currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+    else if (currentTool)
+        facts.push(`tool ${currentTool}`);
+    if (input.currentPath)
+        facts.push(safeTerminalText(shortenPath(input.currentPath)));
+    if (input.turnCount !== undefined)
+        facts.push(`${input.turnCount} turns`);
+    if (input.toolCount !== undefined)
+        facts.push(`${input.toolCount} tools`);
+    if (input.tokens?.total)
+        facts.push(`${formatTokens(input.tokens.total)} tok`);
+    const activity = formatActivityLabel(input.lastActivityAt, input.activityState);
+    return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
+}
+function validateTranscriptIndex(index, steps) {
+    if (index === undefined)
+        return undefined;
+    if (!Number.isInteger(index))
+        throw new Error("Status transcript index must be an integer.");
+    if (index < 0 || index >= steps.length)
+        throw new Error(`Status transcript index ${index} is out of range for ${steps.length} child step${steps.length === 1 ? "" : "s"}.`);
+    return index;
+}
+function selectTranscriptStep(status, options) {
+    const steps = status.steps ?? [];
+    let selectedIndex = validateTranscriptIndex(options.index, steps);
+    if (selectedIndex === undefined) {
+        if (status.state === "running" &&
+            typeof status.currentStep === "number" &&
+            status.currentStep >= 0 &&
+            status.currentStep < steps.length) {
+            selectedIndex = status.currentStep;
+        }
+        else if (steps.length === 1) {
+            selectedIndex = 0;
+        }
+    }
+    const step = selectedIndex !== undefined ? steps[selectedIndex] : undefined;
+    const hint = options.index === undefined && steps.length > 1
+        ? `Tip: pass index to inspect a specific child status transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
+        : undefined;
+    return { index: selectedIndex, step, hint };
+}
+function stepStateLine(mode, index, step) {
+    if (index === undefined || !step)
+        return undefined;
+    const modelThinking = formatModelThinking(step.model, step.thinking);
+    const parts = [
+        `${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})`,
+        step.status,
+        formatActivityFacts(step),
+        modelThinking,
+        step.error ? `error: ${step.error}` : undefined,
+    ].filter(Boolean);
+    return parts.join(" | ");
+}
+function appendKnownArtifacts(lines, input) {
+    const artifacts = [];
+    for (const outputPath of input.outputPaths)
+        artifacts.push(`Output: ${outputPath}`);
+    if (input.sessionFile)
+        artifacts.push(`Session: ${input.sessionFile}`);
+    if (input.eventsPath)
+        artifacts.push(`Events: ${input.eventsPath}`);
+    if (input.logPath)
+        artifacts.push(`Log: ${input.logPath}`);
+    if (input.resultPath)
+        artifacts.push(`Result: ${input.resultPath}`);
+    if (!artifacts.length)
+        return;
+    lines.push("Artifacts:");
+    for (const artifact of artifacts)
+        lines.push(`  ${safeTerminalText(artifact)}`);
+}
+function appendTranscriptBody(lines, sourceLabel, sourceLines, truncated) {
+    lines.push(`${safeTerminalText(sourceLabel)}${truncated ? " (tail truncated)" : ""}:`);
+    if (sourceLines.length === 0) {
+        lines.push("  (no transcript lines available yet)");
+        return;
+    }
+    for (const line of sourceLines)
+        lines.push(`  ${safeTerminalText(line)}`);
+}
+export function formatAsyncRunTranscript(status, asyncDir, options = {}) {
+    const lineLimit = transcriptLineLimit(options.lines);
+    const selected = selectTranscriptStep(status, options);
+    const stepOutputPath = selected.index !== undefined ? path.join(asyncDir, `output-${selected.index}.log`) : undefined;
+    const runOutputPath = resolveMaybeRelative(asyncDir, status.outputFile);
+    const logPath = path.join(asyncDir, `subagent-log-${status.runId}.md`);
+    const outputPaths = selected.index !== undefined
+        ? uniqueStrings([
+            stepOutputPath,
+            runOutputPath &&
+                stepOutputPath &&
+                path.resolve(runOutputPath) === path.resolve(stepOutputPath)
+                ? runOutputPath
+                : undefined,
+        ])
+        : uniqueStrings([runOutputPath]);
+    const sessionFile = selected.index !== undefined ? selected.step?.sessionFile : status.sessionFile;
+    const eventsPath = path.join(asyncDir, "events.jsonl");
+    const lines = [
+        `Run: ${safeTerminalText(status.runId)}`,
+        `State: ${safeTerminalText(status.state)}`,
+        `Mode: ${safeTerminalText(status.mode)}`,
+        stepStateLine(status.mode, selected.index, selected.step),
+        selected.hint,
+    ].filter((line) => Boolean(line));
+    appendKnownArtifacts(lines, {
+        outputPaths,
+        sessionFile,
+        eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined,
+        logPath: fs.existsSync(logPath) ? logPath : undefined,
+    });
+    const warnings = [];
+    let transcriptLines = [];
+    let transcriptSource = "Status transcript tail (retained output/session; not _transcript.jsonl)";
+    let truncated = false;
+    for (const outputPath of outputPaths) {
+        const tail = readContainedTextTail(outputPath, lineLimit, [asyncDir], "output");
+        if (tail.error)
+            warnings.push(`Output read failed for ${tail.path}: ${tail.error}`);
+        if (tail.lines.length === 0)
+            continue;
+        transcriptLines = tail.lines;
+        transcriptSource = `Status transcript tail from ${tail.path} (not _transcript.jsonl)`;
+        truncated = tail.truncated;
+        break;
+    }
+    if (transcriptLines.length === 0 && selected.step?.recentOutput?.length) {
+        transcriptLines = selected.step.recentOutput.slice(-lineLimit);
+        transcriptSource = "Recent output from status.json";
+    }
+    if (transcriptLines.length === 0 && sessionFile) {
+        const sessionTail = readSessionTranscriptTail(sessionFile, lineLimit, options.sessionRoots ?? []);
+        transcriptLines = sessionTail.lines;
+        warnings.push(...sessionTail.warnings);
+        if (transcriptLines.length > 0)
+            transcriptSource = `Canonical session tail from ${sessionFile} (status transcript view)`;
+    }
+    if (warnings.length) {
+        lines.push("Warnings:");
+        for (const warning of warnings)
+            lines.push(`  ${safeTerminalText(warning)}`);
+    }
+    appendTranscriptBody(lines, transcriptSource, transcriptLines, truncated);
+    return safeTerminalDocument(lines.join("\n"));
+}
+export function formatNestedRunTranscript(run, options = {}) {
+    if (run.asyncDir) {
+        const status = readStatus(run.asyncDir);
+        if (status)
+            return formatAsyncRunTranscript(status, run.asyncDir, options);
+    }
+    const lineLimit = transcriptLineLimit(options.lines);
+    const lines = [
+        `Nested run: ${safeTerminalText(run.id)}`,
+        `State: ${safeTerminalText(run.state)}`,
+        run.mode ? `Mode: ${safeTerminalText(run.mode)}` : undefined,
+        run.agent
+            ? `Agent: ${safeTerminalText(run.agent)}`
+            : run.agents?.length
+                ? `Agents: ${safeTerminalText(run.agents.join(", "))}`
+                : undefined,
+    ].filter((line) => Boolean(line));
+    appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
+    if (!run.sessionFile) {
+        appendTranscriptBody(lines, "Status transcript tail (retained output/session; not _transcript.jsonl)", [], false);
+        return safeTerminalDocument(lines.join("\n"));
+    }
+    const sessionTail = readSessionTranscriptTail(run.sessionFile, lineLimit, options.sessionRoots ?? []);
+    if (sessionTail.warnings.length) {
+        lines.push("Warnings:");
+        for (const warning of sessionTail.warnings)
+            lines.push(`  ${safeTerminalText(warning)}`);
+    }
+    appendTranscriptBody(lines, `Canonical session tail from ${run.sessionFile} (status transcript view)`, sessionTail.lines, false);
+    return safeTerminalDocument(lines.join("\n"));
+}
+export function formatAsyncResultTranscript(data, resultPath, options = {}) {
+    const lineLimit = transcriptLineLimit(options.lines);
+    const runId = data.runId ?? data.id ?? path.basename(resultPath, ".json");
+    const children = Array.isArray(data.results)
+        ? data.results
+        : data.agent
+            ? [
+                {
+                    agent: data.agent,
+                    output: data.output,
+                    summary: data.summary,
+                    sessionFile: data.sessionFile,
+                    state: data.state,
+                    success: data.success,
+                    exitCode: data.exitCode,
+                },
+            ]
+            : [];
+    let index = options.index;
+    if (index !== undefined && !Number.isInteger(index))
+        throw new Error("Status transcript index must be an integer.");
+    if (index === undefined && children.length === 1)
+        index = 0;
+    if (index !== undefined && (index < 0 || index >= children.length))
+        throw new Error(`Status transcript index ${index} is out of range for ${children.length} result child${children.length === 1 ? "" : "ren"}.`);
+    const child = index !== undefined ? children[index] : undefined;
+    const output = index !== undefined
+        ? (child?.output ??
+            child?.summary ??
+            (children.length === 1 ? (data.output ?? data.summary) : undefined) ??
+            "")
+        : (data.output ?? data.summary ?? "");
+    const transcriptLines = output.split(/\r?\n/).slice(-lineLimit);
+    const sessionFile = child?.sessionFile ?? data.sessionFile;
+    const lines = [
+        `Run: ${safeTerminalText(runId)}`,
+        `State: ${safeTerminalText(data.state ?? (data.success ? "complete" : "failed"))}`,
+        index !== undefined && child
+            ? `Child: ${index} (${safeTerminalText(child.agent ?? "subagent")})`
+            : undefined,
+        index === undefined && children.length > 1
+            ? `Tip: pass index to inspect a specific child status transcript (${children.map((candidate, childIndex) => `${childIndex}=${safeTerminalText(candidate.agent ?? "subagent")}`).join(", ")}).`
+            : undefined,
+    ].filter((line) => Boolean(line));
+    appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
+    appendTranscriptBody(lines, "Result status transcript tail (retained result output; not _transcript.jsonl)", transcriptLines.filter((line) => line.trim()), output.split(/\r?\n/).length > lineLimit);
+    return safeTerminalDocument(lines.join("\n"));
+}

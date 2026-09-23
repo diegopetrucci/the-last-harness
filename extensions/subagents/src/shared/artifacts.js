@@ -1,10 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isEffectivelyEmpty } from "../runs/shared/acceptance.js";
 import { DEFAULT_ARTIFACT_CONFIG, TEMP_ARTIFACTS_DIR, } from "./types.js";
 import { getAgentDir } from "./utils.js";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
+function isEffectivelyEmptyArtifactContent(value) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0)
+        return true;
+    return trimmed.split(/\r?\n/).every((line) => {
+        const normalized = line.trim();
+        return normalized.length === 0 || /^([-*_])(?:\s*\1){2,}$/.test(normalized);
+    });
+}
 const LEGACY_DETAILED_ARTIFACT_CONFIG = {
     mode: "debug",
     enabled: true,
@@ -107,20 +115,11 @@ export function getArtifactPaths(artifactsDir, runId, agent, index) {
         metadataPath: path.join(artifactsDir, `${base}_meta.json`),
     };
 }
-export function ensureArtifactsDir(dir) {
-    fs.mkdirSync(dir, { recursive: true });
-}
-export function writeArtifact(filePath, content) {
-    fs.writeFileSync(filePath, content, "utf-8");
-}
 export function writeArtifactWithFloor(filePath, computedContent, rawOutput, isArchive) {
-    const content = !isArchive && rawOutput.trim() && isEffectivelyEmpty(computedContent)
+    const content = !isArchive && rawOutput.trim() && isEffectivelyEmptyArtifactContent(computedContent)
         ? rawOutput
         : computedContent;
     fs.writeFileSync(filePath, content, "utf-8");
-}
-export function writeMetadata(filePath, metadata) {
-    fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 export function appendJsonl(filePath, line) {
     fs.appendFileSync(filePath, `${line}\n`);

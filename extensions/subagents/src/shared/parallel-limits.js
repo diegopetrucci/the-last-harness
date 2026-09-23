@@ -1,0 +1,1 @@
+export const MAX_TOP_LEVEL_PARALLEL_TASKS = 8;

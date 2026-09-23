@@ -104,28 +104,32 @@ Loaded from the staged package.
     pathToFileURL(join(packageRoot, "extensions", "the-last-harness", "project-agent-access.mjs"))
       .href
   );
-  const missingDependencies = await bridge.loadProjectAgentSnapshot({
-    cwd: projectRoot,
-    sessionId: "staged-package-missing-dependencies",
-    agentDir,
-  });
-  assert.equal(missingDependencies.status, "unavailable");
+  await assert.rejects(
+    () =>
+      bridge.loadProjectAgent({
+        cwd: projectRoot,
+        slug: "trusted",
+        agentDir,
+      }),
+    /trust-store dependency is unavailable/i,
+  );
 
-  const result = await bridge.loadProjectAgentSnapshot({
+  const result = await bridge.loadProjectAgent({
     cwd: projectRoot,
-    sessionId: "staged-package-session",
+    slug: "trusted",
     agentDir,
     trustDependencies: {
       createProjectTrustStore: (trustAgentDir) => new ProjectTrustStore(trustAgentDir),
     },
   });
 
-  assert.equal(result.status, "loaded");
-  assert.deepEqual(
-    result.manifest?.entries.map((entry) => entry.agent.name),
-    ["embedded.trusted"],
-    "trusted project definitions must not become silently inert in the staged package",
-  );
+  assert.equal(result.agent.name, "embedded.trusted");
+  const canonicalProjectRoot = realpathSync(projectRoot);
+  assert.deepEqual(result.identity, {
+    slug: "trusted",
+    root: canonicalProjectRoot,
+    cwd: canonicalProjectRoot,
+  });
   const reauthorized = await bridge.reauthorizeTlhProjectAgentTrust(projectRoot, {
     agentDir,
     trustDependencies: {
@@ -133,12 +137,6 @@ Loaded from the staged package.
     },
   });
   assert.equal(reauthorized.trusted, true);
-  await access.retainTlhProjectAgentSnapshotReference(
-    result.capability,
-    "staged-package-runtime-reference",
-  );
-  await access.releaseTlhProjectAgentSnapshotReference("staged-package-runtime-reference");
-
   access.setTlhProjectAgentAccessProvider(() => ({ staged: true }));
   assert.deepEqual(access.getTlhProjectAgentAccess({}), { staged: true });
   access.setTlhProjectAgentAccessProvider(undefined);

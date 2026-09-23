@@ -233,7 +233,7 @@ describe("countLiveAsyncRuns", () => {
       ["b", "failed"],
       ["c", "paused"],
       ["d", "cancelled"],
-      ["e", "continued"],
+      ["e", "complete"],
     ]);
     assert.equal(countLiveAsyncRuns(jobs), 0);
   });

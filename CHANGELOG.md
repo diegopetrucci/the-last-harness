@@ -6,7 +6,28 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### What's new
 
-- Canonical developer subagents now retain their assigned `tk` ticket IDs across compaction, pause, resume, and replacement without copying ticket contents into prompts.
+- Supervisor lifecycle finalization failures now persist `lifecycle.resumeBlockedReason: supervisor_lifecycle_failure`, show resume as unavailable, and permanently reject resume, cancel, and nested revival for that run to avoid duplicate or unowned work; ordinary failed runs remain revivable.
+- Ordinary single and parallel subagent calls now use the TLH-tracked awaited runner by default: the parent waits for the terminal result, while `async: true` preserves detached background execution.
+- `parallel.maxTasks` now supports values from 1 through 8; larger configured values are bounded to 8 to preserve the 16 MiB status/terminal-evidence envelope.
+- Single and parallel subagent tasks accept explicit `ticket` IDs. TLH validates and prefetches each ticket in the child cwd, injects its exact body under `## Ticket <id>`, and persists only the per-child ID across status, results, pause, and resume.
+- Role execution ceilings now use a fresh wall-clock deadline for every child spawn, including fallback and resume; historical active-runtime ledger fields remain readable but no longer affect budgets or new status writes.
+- Subagent model fallback now dispatches exact ordered candidates and retries only classified transient provider failures; model identity, thinking suffixes, and fallback history remain visible across runs and resumes.
+- Recognized stored subagent effort is forwarded unchanged by TLH's defaults layer, including for unavailable or capability-unknown models. Pi validates the suffix and surfaces unsupported model arguments as non-transient failures; only syntactically invalid effort values are omitted with truthful warnings. Effective argv attempts are deduplicated and recorded precisely.
+- Removed fuzzy, catalog, and availability-based model resolution/filtering from subagent fallback dispatch. Candidates are forwarded deterministically, and invalid model arguments stop as non-transient failures instead of triggering another candidate.
+- Detached async completions now deliver one fixed-shape notification immediately per run, with artifact paths before bounded summaries and A1c facts; live awaited owners consume their completions privately, while artifacts left without an owner remain recoverable.
+- Per-run status now exposes the bounded `view: "transcript"` inspection with optional `lines` from 1 through 500; status listings and transcript reads remain scoped to the current session.
+- Unreadable, invalid, or oversized async `status.json` files are retried once and then reported without automatic remediation; inspect and explicitly repair or undo the file and its sibling artifacts manually. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving needed evidence, remove them manually if desired, and note that the new runtime never auto-deletes them.
+
+### Removed
+
+- Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
+- Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
+- Removed the subagent acceptance contract, report parsing, role overrides, and verdict rendering. Terminal lifecycle facts now provide bounded execution evidence without judging task completion; historical status records remain readable and transcript text is preserved.
+- Retired the completion guard, task-intent classifier, and bash mutation/failure heuristics. Legacy `completionGuard` frontmatter and settings keys are ignored; the subagent runtime doctor calls out occurrences found in settings and canonical packaged-agent discovery, while embedded project-agent definitions are not scanned. Remove legacy keys manually when convenient.
+- Removed the retired `control.failedToolAttemptsBeforeAttention` control. Install, update, and `tlh doctor --repair` remove that legacy persisted key from valid isolated-profile configuration while preserving unrelated control values.
+- Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
+- Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
+- Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
 
 ## [0.41.0] - 2026-09-13
 
@@ -57,7 +78,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
-- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status" })` for per-run status; `/subagents-doctor` remains available for read-only diagnostics.
 - Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
 
 ### Fixed

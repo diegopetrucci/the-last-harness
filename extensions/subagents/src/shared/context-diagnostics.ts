@@ -35,7 +35,6 @@ const KNOWN_TERMINATION_REASONS = new Set<SubagentTerminationReason>([
   "model_error",
   "interrupted",
   "timed_out",
-  "tool_budget_blocked",
   "paused",
   "cancelled",
   "process_exit",
@@ -53,8 +52,8 @@ function finiteNonNegativeNumber(value: unknown): number | undefined {
 
 /**
  * Return the first not-yet-notified pressure band crossed by the latest valid
- * per-response measurement. This is intentionally pure so foreground and
- * background execution share identical boundary and deduplication semantics.
+ * per-response measurement. This is intentionally pure so all runner modes
+ * share identical boundary and deduplication semantics.
  */
 export function detectContextPressureCrossing(
   contextUsage: ContextUsageDiagnostics | undefined,
@@ -464,7 +463,6 @@ export function resolveSubagentTerminationReason(input: {
   cancelled?: boolean;
   paused?: boolean;
   timedOut?: boolean;
-  toolBudgetBlocked?: boolean;
   interrupted?: boolean;
   assistantStopReason?: string;
   effectiveExitCode?: number;
@@ -473,7 +471,6 @@ export function resolveSubagentTerminationReason(input: {
   if (input.cancelled) return "cancelled";
   if (input.paused) return "paused";
   if (input.timedOut) return "timed_out";
-  if (input.toolBudgetBlocked) return "tool_budget_blocked";
   if (input.interrupted) return "interrupted";
   switch (input.assistantStopReason) {
     case "length":

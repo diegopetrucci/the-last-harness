@@ -103,12 +103,9 @@ function makeState(sessionId: string | null, ctx: unknown): SubagentState {
     baseCwd: process.cwd(),
     currentSessionId: sessionId,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: ctx as SubagentState["lastUiContext"],
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
@@ -460,8 +457,9 @@ describe("native supervisor channel", () => {
     state.asyncJobs.set(continuedRunId, {
       asyncId: continuedRunId,
       asyncDir: path.join(os.tmpdir(), continuedRunId),
-      status: "continued",
-      steps: [{ agent: "worker", status: "continued", pause: { kind: "awaiting_supervisor" } }],
+      status: "complete",
+      lifecycle: { continuation: { phase: "continued", continuationRunId: "revived" } },
+      steps: [{ agent: "worker", status: "complete" }],
     });
     state.asyncJobs.set(cancelledRunId, {
       asyncId: cancelledRunId,
@@ -473,7 +471,7 @@ describe("native supervisor channel", () => {
       asyncId: completedRunId,
       asyncDir: path.join(os.tmpdir(), completedRunId),
       status: "complete",
-      steps: [{ agent: "worker", status: "completed" }],
+      steps: [{ agent: "worker", status: "complete" }],
     });
     state.asyncJobs.set(failedRunId, {
       asyncId: failedRunId,

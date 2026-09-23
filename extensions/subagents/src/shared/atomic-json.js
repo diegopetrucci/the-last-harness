@@ -4,7 +4,7 @@ const DEFAULT_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 500, 1000, 2000, 4
 const RETRYABLE_RENAME_ERROR_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
-function waitSync(delayMs) {
+export function waitSync(delayMs) {
     if (delayMs <= 0)
         return;
     if (WAIT_VIEW) {

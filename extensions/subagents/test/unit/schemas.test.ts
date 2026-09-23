@@ -67,9 +67,15 @@ describe("SubagentParams schema", () => {
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      ["agent", "task", "cwd", "count", "output", "outputMode", "model"].sort(),
+      ["agent", "task", "ticket", "cwd", "count", "output", "outputMode", "model"].sort(),
       "tasks[] allowlist mismatch",
     );
+    const taskTicketSchema = isSchemaObject(taskSchema?.ticket) ? taskSchema.ticket : undefined;
+    assert.equal(taskTicketSchema?.type, "string");
+    assert.equal(taskTicketSchema?.maxLength, 128);
+    const topLevelTicketSchema = getPropertySchema(SubagentParams, ["ticket"]);
+    assert.equal(topLevelTicketSchema?.type, "string");
+    assert.equal(topLevelTicketSchema?.maxLength, 128);
     const taskCwdSchema = isSchemaObject(taskSchema?.cwd) ? taskSchema.cwd : undefined;
     assert.equal(taskCwdSchema?.type, "string");
     const outputSchema = isSchemaObject(taskSchema?.output) ? taskSchema.output : undefined;
@@ -105,6 +111,23 @@ describe("SubagentParams schema", () => {
 
   it("does not expose a public execution timeout", () => {
     assert.equal(getPropertySchema(SubagentParams, ["timeoutMs"]), undefined);
+  });
+
+  it("exposes only the bounded transcript status options", () => {
+    const viewSchema = getPropertySchema(SubagentParams, ["view"]);
+    assert.ok(viewSchema, "view schema should exist");
+    assert.equal(viewSchema.type, "string");
+    assert.deepEqual(viewSchema.enum, ["transcript"]);
+    assert.match(String(viewSchema.description ?? ""), /action='status'/);
+
+    const linesSchema = getPropertySchema(SubagentParams, ["lines"]);
+    assert.ok(linesSchema, "lines schema should exist");
+    assert.equal(linesSchema.type, "integer");
+    assert.equal(linesSchema.minimum, 1);
+    assert.equal(linesSchema.maximum, 500);
+    assert.match(String(linesSchema.description ?? ""), /1-500/);
+
+    assert.equal(getPropertySchema(SubagentParams, ["dir"]), undefined);
   });
 
   it("includes id, index, and message control parameters", () => {
@@ -298,7 +321,9 @@ describe("SubagentParams schema", () => {
     const validator = CompileSchema(SubagentParams);
     const validValues = [
       { agent: "reviewer", task: "check this" },
+      { agent: "reviewer", task: "check this", ticket: "a".repeat(128) },
       { tasks: [{ agent: "reviewer", task: "check this", cwd: "packages/app" }] },
+      { tasks: [{ agent: "reviewer", task: "check this", ticket: "a".repeat(128) }] },
       {
         tasks: [
           {
@@ -310,6 +335,7 @@ describe("SubagentParams schema", () => {
       },
       { tasks: [{ agent: "reviewer", task: "check this", model: "anthropic/claude-sonnet-4" }] },
       { action: "status", id: "run-1" },
+      { action: "status", id: "run-1", view: "transcript", lines: 500 },
       { action: "interrupt", id: "run-1" },
       { action: "resume", id: "run-1", message: "focus on tests" },
       { action: "resume", id: "run-1", index: 0, message: "focus on tests" },
@@ -326,6 +352,8 @@ describe("SubagentParams schema", () => {
     ];
     const invalidValues = [
       { output: 123 },
+      { agent: "reviewer", task: "check this", ticket: "a".repeat(129) },
+      { tasks: [{ agent: "reviewer", task: "check this", ticket: "a".repeat(129) }] },
       { timeoutMs: 1 },
       { tasks: [{ agent: "reviewer", task: "check this", timeoutMs: 1 }] },
       { tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
@@ -340,9 +368,14 @@ describe("SubagentParams schema", () => {
           { agent: "reviewer", task: "check this", output: "ok.md", nested: { surprise: true } },
         ],
       },
-      // action enum violations
+      // action enum and status transcript option violations
       { action: "create" },
       { action: "not-a-real-action" },
+      { action: "status", view: "fleet" },
+      { action: "status", view: "" },
+      { action: "status", lines: 0 },
+      { action: "status", lines: 501 },
+      { action: "status", lines: 1.5 },
       // additionalProperties: false violations at root
       { skill: "review" },
       { chain: [{ agent: "reviewer" }] },
@@ -352,13 +385,11 @@ describe("SubagentParams schema", () => {
       { config: { name: "reviewer" } },
       { runId: "run-1" },
       { turnBudget: { maxTurns: 5 } },
-      { toolBudget: { hard: 3 } },
+      { toolBudget: { hard: 5 } },
       { share: true },
       { sessionDir: "/tmp/session" },
       { control: {} },
       { dir: "/tmp" },
-      { view: "fleet" },
-      { lines: 80 },
       { scheduleName: "nightly" },
       { chainDir: "/tmp/chain" },
       { chainName: "my-chain" },
@@ -410,6 +441,9 @@ describe("SubagentParams schema", () => {
       "model",
       "cwd",
       "artifacts",
+      "ticket",
+      "view",
+      "lines",
     ].sort();
     assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
@@ -435,13 +469,11 @@ describe("SubagentParams schema", () => {
       "config",
       "control",
       "dir",
-      "view",
-      "lines",
       "sessionDir",
       "runId",
       "maxRuntimeMs",
-      "toolBudget",
       "turnBudget",
+      "toolBudget",
       "acceptance",
       "skill",
       "chainDir",
@@ -455,8 +487,8 @@ describe("SubagentParams schema", () => {
       "chainName",
       "skill",
       "acceptance",
-      "toolBudget",
       "fallbackModels",
+      "toolBudget",
       "modelFallbackNotice",
       "reads",
       "progress",

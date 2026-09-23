@@ -17,14 +17,9 @@ function createState(): SubagentState {
     baseCwd: process.cwd(),
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
@@ -80,20 +75,8 @@ afterEach(() => {
 });
 
 describe("pause-all shortcut handler", () => {
-  it("requests pause for running foreground and async work", () => {
+  it("requests pause for running async work", () => {
     const state = createState();
-    let foregroundInterrupts = 0;
-    state.foregroundControls.set("fg-run", {
-      runId: "fg-run",
-      mode: "single",
-      startedAt: Date.now(),
-      updatedAt: Date.now(),
-      interrupt: () => {
-        foregroundInterrupts++;
-        return true;
-      },
-    });
-
     const asyncDir = fs.mkdtempSync(path.join(os.tmpdir(), "pause-all-shortcut-"));
     cleanupPaths.add(asyncDir);
     fs.writeFileSync(
@@ -129,12 +112,8 @@ describe("pause-all shortcut handler", () => {
     syncBuiltinESMExports();
 
     const result = handlePauseAllShortcut(state, { hasUI: false } as never);
-    assert.match(
-      result.message,
-      /^Pause requested for 2 subagent runs \(1 foreground, 1 async\)\./,
-    );
+    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
     assert.ok(result.level === "info" || result.level === "warning");
-    assert.equal(foregroundInterrupts, 1);
     assertPortableInterruptRequested(asyncDir, 4242, kills);
   });
 

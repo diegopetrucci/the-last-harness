@@ -247,10 +247,11 @@ test("subagent-settings status reports effective overrides and fixed-model indep
     assert.match(message, /override model=openai-codex\/gpt-5\.5, effort=max/i);
     assert.match(message, /effective openai-codex\/gpt-5\.5/i);
     assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
-    // "max" is recognized but not supported by these test models (no thinkingLevelMap entry)
+    // Capability metadata may explain the warning, but the recognized suffix is
+    // forwarded for Pi to validate.
     assert.ok(
       messageLines.includes(
-        '  TLH stored minor-agent effort "max" is not supported by openai-codex/gpt-5.5; using bundled defaults for this run.',
+        '  TLH stored minor-agent effort "max" is not advertised by openai-codex/gpt-5.5; the :max suffix is forwarded and Pi will validate it.',
       ),
     );
   });
@@ -318,15 +319,18 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
     assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
     assert.ok(
       messageLines.includes(
-        '  TLH saved minor-agent model override "openai-codex/gpt-5.999" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.',
+        '  TLH saved minor-agent model override "openai-codex/gpt-5.999" is not in the available registry for code-reviewer; forwarding the model argument to Pi for validation instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.',
       ),
     );
     assert.ok(
       messageLines.includes(
-        '  TLH ignored unsupported stored minor-agent effort "turbo" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.',
+        '  TLH ignored invalid stored minor-agent effort "turbo" for code-reviewer; expected one of off, minimal, low, medium, high, xhigh, max, so no effort suffix was applied.',
       ),
     );
-    assert.equal(messageLines.filter((line) => line.includes("not currently available")).length, 1);
+    assert.equal(
+      messageLines.filter((line) => line.includes("not in the available registry")).length,
+      1,
+    );
     const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
     assert.equal(
       settings.subagents.agentOverrides["code-reviewer"].model,
@@ -340,7 +344,7 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
   });
 });
 
-test("subagent-settings status shows effective off for model-only overrides on non-reasoning models", async (t) => {
+test("subagent-settings status shows bundled effort for model-only overrides on non-reasoning models", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
     cwd: true,
     test: t,
@@ -370,7 +374,7 @@ test("subagent-settings status shows effective off for model-only overrides on n
       notifications[0]?.message ?? "",
       /override model=openai-codex\/plain, effort=default/i,
     );
-    assert.match(notifications[0]?.message ?? "", /effective openai-codex\/plain:off/i);
+    assert.match(notifications[0]?.message ?? "", /effective openai-codex\/plain:max/i);
   });
 });
 
@@ -556,7 +560,7 @@ test("interactive subagent-settings reports model parse failures through notific
   });
 });
 
-test("subagent-settings validates the final model and effort independent of set argument order", async (t) => {
+test("subagent-settings preserves recognized effort independent of set argument order", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
     cwd: true,
     test: t,
@@ -586,11 +590,15 @@ test("subagent-settings validates the final model and effort independent of set 
         modelRegistry: limitedModels,
       });
       await command.handler(args, ctx);
-      assert.match(
+      assert.doesNotMatch(
         notifications.at(-1)?.message ?? "",
         /Effort "high" is not supported by openai-codex\/limited/,
       );
-      assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
+      const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+      assert.deepEqual(settings.subagents.agentOverrides.developer, {
+        model: "openai-codex/limited",
+        thinking: "high",
+      });
     }
 
     writeFileSync(
@@ -603,15 +611,20 @@ test("subagent-settings validates the final model and effort independent of set 
       modelRegistry: limitedModels,
     });
     await command.handler("set developer model openai-codex/limited", ctx);
-    assert.match(
+    assert.doesNotMatch(
       notifications.at(-1)?.message ?? "",
       /Effort "high" is not supported by openai-codex\/limited/,
     );
-    assert.equal(readFileSync(join(fixture.agent, "settings.json"), "utf8"), original);
+    assert.notEqual(readFileSync(join(fixture.agent, "settings.json"), "utf8"), original);
+    const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+    assert.deepEqual(settings.subagents.agentOverrides.developer, {
+      model: "openai-codex/limited",
+      thinking: "high",
+    });
   });
 });
 
-test("interactive model changes validate the persisted effort before writing", async (t) => {
+test("interactive model changes preserve the persisted effort before writing", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
     cwd: true,
     test: t,
@@ -648,15 +661,53 @@ test("interactive model changes validate the persisted effort before writing", a
     ];
     ctx.ui.select = async (_title, options) => selections.shift()?.(options);
     await command.handler("", ctx);
-    assert.match(
+    assert.doesNotMatch(
       notifications.at(-1)?.message ?? "",
       /Effort "high" is not supported by openai-codex\/limited/,
     );
-    assert.equal(readFileSync(join(fixture.agent, "settings.json"), "utf8"), original);
+    assert.notEqual(readFileSync(join(fixture.agent, "settings.json"), "utf8"), original);
+    const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+    assert.deepEqual(settings.subagents.agentOverrides.developer, {
+      model: "openai-codex/limited",
+      thinking: "high",
+    });
   });
 });
 
-test("subagent-settings status and picker show false sentinels with inherited model and effective off", async (t) => {
+test("interactive effort picker preserves recognized values without capability filtering", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
+    cwd: true,
+    test: t,
+  });
+  const pi = createPiHarness();
+  registerSubagentSettingsCommand(pi);
+  const command = pi.commands.get("subagent-settings");
+  assert.ok(command, "subagent-settings command should register");
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { ctx } = createCommandContext({
+      cwd: fixture.cwd,
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "openai-codex", id: "limited", reasoning: true, thinkingLevelMap: {} },
+        ],
+      },
+    });
+    const selections = [
+      (options) => options.find((option) => option.includes("developer")),
+      (options) => options.find((option) => option === "set effort"),
+      (options) => options.find((option) => option === "max"),
+      () => undefined,
+    ];
+    ctx.ui.select = async (_title, options) => selections.shift()?.(options);
+    await command.handler("", ctx);
+
+    const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+    assert.equal(settings.subagents.agentOverrides.developer.thinking, "max");
+  });
+});
+
+test("subagent-settings status and picker show false sentinels with inherited model and bundled effort", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", {
     cwd: true,
     test: t,
@@ -685,8 +736,8 @@ test("subagent-settings status and picker show false sentinels with inherited mo
     await command.handler("status developer", inheritedRun.ctx);
     const inheritedMessage = inheritedRun.notifications.at(-1)?.message ?? "";
     assert.match(inheritedMessage, /override model=disabled \(false\), effort=default/);
-    // Developer agent bundles openai thinking "max"; test model has no thinkingLevelMap for max → falls back to off.
-    assert.match(inheritedMessage, /effective openai-codex\/gpt-5\.4:off/);
+    // Recognized bundled effort is forwarded even when capability metadata lacks max.
+    assert.match(inheritedMessage, /effective openai-codex\/gpt-5\.4:max/);
 
     const disabledRun = createCommandContext({ cwd: fixture.cwd });
     await command.handler("status librarian", disabledRun.ctx);
@@ -703,8 +754,7 @@ test("subagent-settings status and picker show false sentinels with inherited mo
     const librarianOption = pickerRun.selects[0]?.options.find((option) =>
       option.includes("librarian"),
     );
-    // Developer agent bundles openai thinking "max"; test model has no thinkingLevelMap for max → falls back to off.
-    assert.match(developerOption ?? "", /^● developer — openai-codex\/gpt-5\.4:off$/);
+    assert.match(developerOption ?? "", /^● developer — openai-codex\/gpt-5\.4:max$/);
     assert.match(librarianOption ?? "", /^● librarian — openai-codex\/gpt-5\.4:off$/);
   });
 });

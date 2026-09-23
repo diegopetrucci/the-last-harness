@@ -29,9 +29,7 @@ import {
   SUBAGENT_STEER_INBOX_ENV,
   SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
-  SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import registerSubagentPromptRuntime, {
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
   NATIVE_SUPERVISOR_GUIDANCE,
@@ -75,14 +73,12 @@ const envSnapshot = {
   PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
   PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
   PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
-  PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
   PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
   PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: process.env.PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
   PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT,
   PI_SUBAGENT_CHILD_INDEX: process.env.PI_SUBAGENT_CHILD_INDEX,
   PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
-  PI_SUBAGENT_TK_TICKET_ID: process.env[SUBAGENT_TK_TICKET_ID_ENV],
   PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
 };
 
@@ -119,8 +115,6 @@ afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined)
     delete process.env[SUBAGENT_STEER_INBOX_ENV];
   else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
-  if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
-  else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
   if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID === undefined)
     delete process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV];
   else
@@ -144,9 +138,6 @@ afterEach(() => {
   else
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] =
       envSnapshot.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE;
-  if (envSnapshot.PI_SUBAGENT_TK_TICKET_ID === undefined)
-    delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-  else process.env[SUBAGENT_TK_TICKET_ID_ENV] = envSnapshot.PI_SUBAGENT_TK_TICKET_ID;
   if (envSnapshot.PI_SUBAGENT_SUPERVISOR_BRIDGE === undefined)
     delete process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV];
   else process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = envSnapshot.PI_SUBAGENT_SUPERVISOR_BRIDGE;
@@ -191,7 +182,6 @@ async function withChildGuidanceEnv<T>(
     inheritProjectContext?: boolean;
     inheritSkills?: boolean;
     projectAgentGuidance?: boolean | string;
-    tkTicketId?: string;
     supervisorBridge?: boolean | string;
   } = {},
 ): Promise<T> {
@@ -199,7 +189,6 @@ async function withChildGuidanceEnv<T>(
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
     PI_SUBAGENT_CHILD_AGENT: process.env[SUBAGENT_CHILD_AGENT_ENV],
     PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
-    PI_SUBAGENT_TK_TICKET_ID: process.env[SUBAGENT_TK_TICKET_ID_ENV],
     PI_SUBAGENT_SUPERVISOR_BRIDGE: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
     PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
     PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
@@ -214,8 +203,6 @@ async function withChildGuidanceEnv<T>(
         ? "0"
         : String(options.projectAgentGuidance)
     : "1";
-  if (options.tkTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-  else process.env[SUBAGENT_TK_TICKET_ID_ENV] = options.tkTicketId;
   if (Object.hasOwn(options, "supervisorBridge"))
     process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] =
       options.supervisorBridge === true
@@ -573,37 +560,6 @@ describe("subagent prompt runtime", () => {
     assert.ok(prompt.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
   });
 
-  it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
-    const handlers = new Map<TestEventName, TestEventHandler>();
-    const sent: string[] = [];
-    process.env[TOOL_BUDGET_ENV] = JSON.stringify({ soft: 2, hard: 2, block: ["read"] });
-
-    registerSubagentPromptRuntime(
-      makeExtensionAPI({
-        on: recordEvents(handlers),
-        sendUserMessage(content, options) {
-          if (typeof content !== "string" || options?.deliverAs === undefined) {
-            throw new Error("test sendUserMessage expected string steer input");
-          }
-          sent.push(content);
-        },
-      }),
-    );
-
-    const toolCall = handlers.get("tool_call");
-    assert.ok(toolCall, "tool_call handler should be registered");
-    assert.equal(toolCall({ toolName: "grep" }), undefined);
-    assert.equal(toolCall({ toolName: "grep" }), undefined);
-    assert.equal(sent.length, 1);
-    assert.match(sent[0] ?? "", /soft limit reached/);
-    assert.deepEqual(toolCall({ toolName: "read" }), {
-      block: true,
-      reason:
-        "Tool budget hard limit reached after 3 tool calls (hard 2). The 'read' tool is blocked so you can finalize from the context you already have.",
-    });
-    assert.equal(toolCall({ toolName: "write" }), undefined);
-  });
-
   it("delivers steering inbox requests as mid-run user messages", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-steering-runtime-"));
     try {
@@ -711,62 +667,6 @@ describe("subagent prompt runtime", () => {
     assert.ok(!rewritten.includes("# Project Context"));
     assert.ok(!rewritten.includes("<available_skills>"));
     assert.ok(rewritten.includes("Current working directory: /repo"));
-  });
-
-  it("persists a validated developer ticket capsule at the prompt boundary", async (t) => {
-    const fixture = makeProjectGuidanceFixture();
-    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-    const handlers = registerPromptRuntimeHandlers();
-    await withChildGuidanceEnv(
-      fixture,
-      "developer",
-      async () => {
-        const ctx = makeMinimalCtx(fixture.cwd);
-        await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.match(event.systemPrompt, /Developer ticket assignment:/);
-        assert.match(event.systemPrompt, /Ticket ID: tlhm-o1qg/);
-        assert.match(event.systemPrompt, /tk show tlhm-o1qg/);
-        assert.equal((event.systemPrompt.match(/tlhm-o1qg/g) ?? []).length, 2);
-        assert.ok(event.systemPrompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-      },
-      { tkTicketId: "tlhm-o1qg" },
-    );
-
-    await withChildGuidanceEnv(
-      fixture,
-      "custom-agent",
-      async () => {
-        const ctx = makeMinimalCtx(fixture.cwd);
-        await handlers.sessionStart(ctx);
-        const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-        assert.ok(hasSystemPrompt(event));
-        assert.doesNotMatch(event.systemPrompt, /Developer ticket assignment:/);
-      },
-      { tkTicketId: "tlhm-o1qg" },
-    );
-  });
-
-  it("omits the ticket capsule for missing or invalid developer environment values", async (t) => {
-    const fixture = makeProjectGuidanceFixture();
-    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-    const handlers = registerPromptRuntimeHandlers();
-    for (const ticketId of [undefined, "bad id", "ticket.extra"] as const) {
-      await withChildGuidanceEnv(
-        fixture,
-        "developer",
-        async () => {
-          const ctx = makeMinimalCtx(fixture.cwd);
-          await handlers.sessionStart(ctx);
-          const event = await handlers.beforeAgentStart({ systemPrompt: BASE_PROMPT }, ctx);
-          assert.ok(hasSystemPrompt(event));
-          assert.doesNotMatch(event.systemPrompt, /Developer ticket assignment:/);
-          assert.doesNotMatch(event.systemPrompt, /Ticket ID:/);
-        },
-        ticketId === undefined ? {} : { tkTicketId: ticketId },
-      );
-    }
   });
 
   it("preserves role text containing guidance delimiters while deduplicating the exact snapshot", () => {

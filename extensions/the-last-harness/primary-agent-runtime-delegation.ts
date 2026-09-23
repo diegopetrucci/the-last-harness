@@ -67,9 +67,8 @@ function hasExplicitDispatchModel(target: unknown): boolean {
 }
 
 /**
- * Generic provider-aware defaults must never rewrite a project snapshot entry.
- * Embedded model policy is applied below after the snapshot identity gate, so
- * the only mutable exception is OpenRouter's omitted-model session inheritance.
+ * Generic provider-aware defaults must never rewrite an embedded definition.
+ * The only mutable exception is OpenRouter's omitted-model session inheritance.
  */
 export function applyProviderAwareModelsToNonProjectTargets(
   input: unknown,
@@ -81,8 +80,8 @@ export function applyProviderAwareModelsToNonProjectTargets(
 ): void {
   if (!isRecord(input)) return;
   // applyProviderAwareSubagentModels also walks `tasks`; only use it for a
-  // single target here, then handle task targets individually so a project
-  // entry can never be rewritten and generic tasks are not visited twice.
+  // single target here, then handle task targets individually so an embedded
+  // definition can never be rewritten and generic tasks are not visited twice.
   if (
     (!Array.isArray(input.tasks) || input.tasks.length === 0) &&
     !isEmbeddedSubagentTarget(input.agent)

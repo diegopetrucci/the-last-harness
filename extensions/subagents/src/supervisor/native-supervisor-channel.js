@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { CONTACT_SUPERVISOR_TOOL_NAME, SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "../runs/shared/pi-args.js";
 import { POLL_INTERVAL_MS, TEMP_ROOT_DIR } from "../shared/types.js";
 import { writeAtomicJson } from "../shared/atomic-json.js";
+import { isCompletedLifecycleState, isCompletedLifecycleStepState, lifecycleContinuationForIndex, } from "../runs/shared/lifecycle-state.js";
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
 const LEGACY_REPLIES_DIR = "replies";
@@ -352,19 +353,7 @@ function requestExpiresAt(request, now) {
         return expiresAt;
     return Number.isFinite(request.createdAt) ? request.createdAt + askTimeoutMs() : now;
 }
-function isAwaitingSupervisorPause(pause) {
-    return Boolean(pause &&
-        typeof pause === "object" &&
-        pause.kind === "awaiting_supervisor");
-}
 function requestBlockingPhase(request, state) {
-    if (state.foregroundControls.has(request.runId))
-        return "pausing";
-    const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
-    if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {
-        return foregroundChild.status === "paused" ? "paused" : "pausing";
-    }
     const asyncJob = state.asyncJobs.get(request.runId);
     const step = asyncJob?.steps?.[request.childIndex];
     if (step?.pause?.kind === "awaiting_supervisor") {
@@ -376,25 +365,18 @@ function requestBlockingPhase(request, state) {
     return undefined;
 }
 function requestTerminalState(request, state) {
-    const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
-    if (foregroundChild?.cancel?.cancelledAt)
-        return "cancelled";
-    if (foregroundChild?.status === "completed")
-        return "completed";
-    if (foregroundChild?.status === "failed")
-        return "failed";
     const asyncJob = state.asyncJobs.get(request.runId);
     const step = asyncJob?.steps?.[request.childIndex];
-    if (step?.status === "continued" || asyncJob?.status === "continued")
+    const continuation = asyncJob
+        ? lifecycleContinuationForIndex(asyncJob, request.childIndex)
+        : undefined;
+    if (continuation?.phase === "launched" || continuation?.phase === "continued")
         return "continued";
     if (step?.status === "cancelled" || asyncJob?.status === "cancelled")
         return "cancelled";
     if (step?.status === "failed" || asyncJob?.status === "failed")
         return "failed";
-    if (step?.status === "complete" ||
-        step?.status === "completed" ||
-        asyncJob?.status === "complete")
+    if (isCompletedLifecycleStepState(step?.status) || isCompletedLifecycleState(asyncJob?.status))
         return "completed";
     return undefined;
 }

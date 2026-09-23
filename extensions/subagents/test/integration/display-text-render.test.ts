@@ -16,7 +16,7 @@ function assertTerminalSafe(text: string): void {
 }
 
 describe("TUI display boundaries", () => {
-  it("sanitizes foreground live, history, and nested child text", () => {
+  it("sanitizes awaited live, history, and nested child text", () => {
     const result = {
       content: [{ type: "text" as const, text: "running" }],
       details: {

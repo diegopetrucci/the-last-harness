@@ -147,7 +147,7 @@ export function resolveSingleOutput(outputPath, fallbackOutput, beforeRun) {
 export function finalizeSingleOutput(params) {
     let displayOutput = params.truncatedOutput || params.fullOutput;
     const savedPath = params.savedPath;
-    if (savedPath && (params.exitCode === 0 || params.acceptanceRejected)) {
+    if (savedPath && params.exitCode === 0) {
         const outputReference = params.outputReference ?? formatSavedOutputReference(savedPath, params.fullOutput);
         if (params.outputMode === "file-only") {
             return {

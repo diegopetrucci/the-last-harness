@@ -259,10 +259,6 @@ describe("subagent context and termination diagnostics", () => {
       "timed_out",
     );
     assert.equal(
-      resolveSubagentTerminationReason({ toolBudgetBlocked: true, assistantStopReason: "stop" }),
-      "tool_budget_blocked",
-    );
-    assert.equal(
       resolveSubagentTerminationReason({ interrupted: true, assistantStopReason: "stop" }),
       "interrupted",
     );
@@ -291,7 +287,7 @@ describe("subagent context and termination diagnostics", () => {
         { assistantStopReason: "stop", effectiveExitCode: 1 },
         "process_exit",
       ],
-      ["acceptance failure", { assistantStopReason: "stop", effectiveExitCode: 1 }, "process_exit"],
+      ["child failure", { assistantStopReason: "stop", effectiveExitCode: 1 }, "process_exit"],
       ["model error", { assistantStopReason: "error", effectiveExitCode: 1 }, "model_error"],
       ["aborted model", { assistantStopReason: "aborted", effectiveExitCode: 1 }, "interrupted"],
       ["output limit", { assistantStopReason: "length", effectiveExitCode: 1 }, "output_limit"],
@@ -452,7 +448,7 @@ describe("subagent context and termination diagnostics", () => {
       );
     }
     assert.equal(
-      classifyContextExhaustedTermination({ ...base, error: "acceptance failed" }),
+      classifyContextExhaustedTermination({ ...base, error: "child failed" }),
       undefined,
     );
     assert.equal(classifyContextExhaustedTermination({ ...base, exitCode: 1 }), undefined);

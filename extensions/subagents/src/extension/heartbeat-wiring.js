@@ -4,7 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.js";
 import { createHeartbeatController, } from "../runs/shared/heartbeat-controller.js";
 import { getAgentDir } from "../shared/utils.js";
-const ASYNC_TERMINAL_STATUSES = new Set(["complete", "failed", "paused", "cancelled", "continued"]);
+const ASYNC_TERMINAL_STATUSES = new Set(["complete", "failed", "paused", "cancelled"]);
 export function countLiveAsyncRuns(asyncJobs) {
     let count = 0;
     for (const job of asyncJobs.values()) {

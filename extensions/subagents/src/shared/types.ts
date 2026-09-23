@@ -8,10 +8,10 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
-import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
+import type { ProjectAgentIdentity } from "../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
+import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.ts";
 
 // ============================================================================
 // Basic Types
@@ -23,8 +23,6 @@ export interface MaxOutputConfig {
 }
 
 export type OutputMode = "inline" | "file-only";
-
-export type AcceptanceRole = "read-only" | "writer";
 
 /** Internal result shape retained until the Pi 0.83 tool-result hook applies the error flag. */
 export type SubagentToolResult<T> = AgentToolResult<T> & { isError?: boolean };
@@ -53,42 +51,79 @@ export interface Usage {
   turns: number;
 }
 
-export interface ToolBudgetConfig {
-  soft?: number;
-  hard: number;
-  block?: string[] | "*";
-}
-
-export interface ResolvedToolBudget {
-  soft?: number;
-  hard: number;
-  block: string[] | "*";
-}
-
-type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
-
-export interface ToolBudgetState extends ResolvedToolBudget {
-  outcome: ToolBudgetOutcome;
-  toolCount: number;
-  softReachedAt?: number;
-  hardReachedAt?: number;
-  blockedTool?: string;
-}
-
 export interface TokenUsage {
   input: number;
   output: number;
   total: number;
 }
 
+/** Terminal state recorded for one child, independent of the async lifecycle state. */
+export type SubagentTerminalState = "completed" | "failed" | "cancelled" | "paused";
+
+/** Provider usage is explicitly tagged so unavailable usage is not confused with zero. */
+export type ProviderTokenUsage =
+  | { status: "available"; usage: TokenUsage }
+  | { status: "unavailable" };
+
+export type WorkspaceSnapshotUnavailableReason =
+  | "not_git_repository"
+  | "command_failed"
+  | "not_captured";
+
+/** Bounded evidence from one git workspace observation. */
+export type GitWorkspaceSnapshot =
+  | {
+      status: "available";
+      statusPorcelainZ: string;
+      worktreeDiffStat: string;
+      indexDiffStat: string;
+    }
+  | {
+      status: "unavailable";
+      reason: WorkspaceSnapshotUnavailableReason;
+    };
+
+export type SubagentWorkspaceAttribution = "exclusive" | "shared" | "unknown";
+
+/** Evidence captured for one spawn-to-exit attempt of a child. */
+export interface SubagentAttemptFacts {
+  /** Attempts are one-based and contiguous across fallback/resume attempts. */
+  attempt: number;
+  exit: {
+    code: number | null;
+    signal: string | null;
+  };
+  durationMs: number;
+  providerTokens: ProviderTokenUsage;
+  /** Requested calls, not successful mutations or completed tool executions. */
+  requestedToolCalls: {
+    edit: number;
+    write: number;
+    bash: number;
+  };
+  workspace: {
+    baseline: GitWorkspaceSnapshot;
+    post: GitWorkspaceSnapshot;
+    attribution: SubagentWorkspaceAttribution;
+  };
+}
+
+/** Post-run evidence aggregated in explicit attempt order for one child. */
+export interface PostRunFacts {
+  attempts: SubagentAttemptFacts[];
+}
+
+/** Atomic per-child terminal result and its evidence-only post-run facts. */
+export interface SubagentTerminalResult {
+  state: SubagentTerminalState;
+  facts: PostRunFacts;
+}
+
 export type ActivityState = "needs_attention";
 export type ControlEventType = "needs_attention";
 export type ControlNotificationChannel = "event" | "async";
 
-export type ControlEventReason = "idle" | "completion_guard" | "tool_failures" | "context_pressure";
-
-/** Attention causes that activity recovery cannot clear within the run lifecycle. */
-export type DurableAttentionReason = "context_pressure" | "tool_failures" | "completion_guard";
+export type ControlEventReason = "idle" | "context_pressure";
 
 /** Reasons reported by the pinned coding-agent compaction lifecycle events. */
 export type CompactionReason = "manual" | "threshold" | "overflow";
@@ -110,7 +145,6 @@ export interface ContextPressureProjection {
 export interface ControlConfig {
   enabled?: boolean;
   needsAttentionAfterMs?: number;
-  failedToolAttemptsBeforeAttention?: number;
   notifyOn?: ControlEventType[];
   notifyChannels?: ControlNotificationChannel[];
 }
@@ -118,28 +152,8 @@ export interface ControlConfig {
 export interface ResolvedControlConfig {
   enabled: boolean;
   needsAttentionAfterMs: number;
-  failedToolAttemptsBeforeAttention: number;
   notifyOn: ControlEventType[];
   notifyChannels: ControlNotificationChannel[];
-}
-
-/**
- * Smart completion batching for async-completion notifications. Successful
- * sibling completions are held briefly so they arrive as one grouped message;
- * failure and attention signals bypass grouping and always fire immediately.
- */
-export interface CompletionBatchConfig {
-  enabled?: boolean;
-  /** Idle window after each arrival; resets on every new item. */
-  debounceMs?: number;
-  /** Hard cap measured from the first item in a group. */
-  maxWaitMs?: number;
-  /** Shorter idle window for straggler groups. */
-  stragglerDebounceMs?: number;
-  /** Shorter hard cap for straggler groups. */
-  stragglerMaxWaitMs?: number;
-  /** Arrivals within this window after an emit join a straggler group. */
-  stragglerWindowMs?: number;
 }
 
 export interface ControlEvent {
@@ -149,6 +163,8 @@ export interface ControlEvent {
   ts: number;
   agent: string;
   index?: number;
+  /** Lifecycle generation that owns this attention episode. */
+  generation?: number;
   runId: string;
   nestedRunId?: string;
   nestingPath?: NestedRunAddress["path"];
@@ -166,7 +182,6 @@ export interface ControlEvent {
   currentToolDurationMs?: number;
   currentPath?: string;
   elapsedMs?: number;
-  recentFailureSummary?: string;
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused";
@@ -188,7 +203,6 @@ export type SubagentTerminationReason =
   | "model_error"
   | "interrupted"
   | "timed_out"
-  | "tool_budget_blocked"
   | "paused"
   | "cancelled"
   | "process_exit"
@@ -218,6 +232,8 @@ type AsyncLifecycleState =
   | "failed"
   | "paused"
   | "cancelled"
+  /** Historical spellings accepted only at the persisted-status read boundary. */
+  | "completed"
   | "continued";
 export type AsyncPauseState = "awaiting_supervisor" | "cohort_pause";
 
@@ -227,7 +243,7 @@ export interface AsyncPauseMetadata {
   requestedAt?: number;
   pausedAt?: number;
   ownerPid?: number;
-  request?: ForegroundSupervisorRequestMetadata;
+  request?: AwaitedSupervisorRequestMetadata;
 }
 
 export interface AsyncCancellationMetadata {
@@ -235,18 +251,23 @@ export interface AsyncCancellationMetadata {
   cancelledAt?: number;
 }
 
-export interface ForegroundSupervisorRequestMetadata {
+export interface AwaitedSupervisorRequestMetadata {
   tool: "contact_supervisor";
   reason?: "need_decision" | "interview_request";
   requestId?: string;
   summary?: string;
 }
 
-interface ForegroundPauseMetadata extends AsyncPauseMetadata {
-  request?: ForegroundSupervisorRequestMetadata;
+interface AwaitedPauseMetadata extends AsyncPauseMetadata {
+  request?: AwaitedSupervisorRequestMetadata;
 }
 
-export type AsyncLifecycleContinuationPhase = "claimed" | "reserved" | "launched" | "continued";
+export type AsyncLifecycleContinuationPhase =
+  | "claimed"
+  | "reserved"
+  | "launched"
+  | "completed"
+  | "continued";
 
 export interface AsyncLifecycleContinuationMetadata {
   phase?: AsyncLifecycleContinuationPhase;
@@ -254,6 +275,8 @@ export interface AsyncLifecycleContinuationMetadata {
   claimedAt?: number;
   ownerPid?: number;
   launchedAt?: number;
+  completedAt?: number;
+  /** Historical spelling accepted only while reading old status files. */
   continuedAt?: number;
   continuationRunId?: string;
 }
@@ -262,6 +285,8 @@ interface AsyncLifecycleMetadata {
   generation?: number;
   continuation?: AsyncLifecycleContinuationMetadata;
   continuationsByIndex?: Record<string, AsyncLifecycleContinuationMetadata>;
+  /** A fail-closed supervisor lifecycle failure cannot be resumed. */
+  resumeBlockedReason?: "supervisor_lifecycle_failure";
 }
 
 type PublicNestedStepSummary = Pick<
@@ -278,8 +303,6 @@ type PublicNestedStepSummary = Pick<
   | "currentPath"
   | "turnCount"
   | "toolCount"
-  | "toolBudget"
-  | "toolBudgetBlocked"
   | "startedAt"
   | "endedAt"
   | "error"
@@ -322,8 +345,6 @@ export type PublicNestedRunSummary = Pick<
   | "currentPath"
   | "turnCount"
   | "toolCount"
-  | "toolBudget"
-  | "toolBudgetBlocked"
   | "totalTokens"
   | "totalCost"
   | "startedAt"
@@ -345,6 +366,8 @@ export interface SubagentResultChild {
   index?: number;
   artifactPath?: string;
   sessionPath?: string;
+  /** Per-child terminal state and evidence-only facts, when persisted. */
+  terminalResult?: SubagentTerminalResult;
   children?: PublicNestedRunSummary[];
 }
 
@@ -359,8 +382,6 @@ export interface AgentProgress {
   activityState?: ActivityState;
   /** Stable identity for the currently active idle episode, when any. */
   idleEpisodeId?: string;
-  /** Durable health causes retained independently of recoverable idle attention. */
-  durableAttentionReasons?: DurableAttentionReason[];
   /** Compaction is an active operation independent of tool-call state. */
   compaction?: { reason: CompactionReason };
   task: string;
@@ -380,7 +401,7 @@ export interface AgentProgress {
   failedTool?: string;
 }
 
-export interface ToolCallSummary {
+interface ToolCallSummary {
   text: string;
   expandedText?: string;
 }
@@ -430,163 +451,15 @@ export interface ChildProcessCleanupResult {
   warnings?: string[];
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
-
-export type AcceptanceEvidenceKind =
-  | "changed-files"
-  | "tests-added"
-  | "commands-run"
-  | "validation-output"
-  | "residual-risks"
-  | "no-staged-files"
-  | "diff-summary"
-  | "review-findings"
-  | "manual-notes";
-
-interface AcceptanceGate {
-  id: string;
-  must: string;
-  evidence?: AcceptanceEvidenceKind[];
-  severity?: "required" | "recommended";
-}
-
-export interface AcceptanceVerifyCommand {
-  id: string;
-  command: string;
-  timeoutMs?: number;
-  cwd?: string;
-  env?: Record<string, string>;
-  allowFailure?: boolean;
-}
-
-interface AcceptanceReviewGate {
-  agent?: string;
-  focus?: string;
-  required?: boolean;
-}
-
-export interface AcceptanceConfig {
-  level?: AcceptanceLevel;
-  criteria?: Array<string | AcceptanceGate>;
-  evidence?: AcceptanceEvidenceKind[];
-  verify?: AcceptanceVerifyCommand[];
-  review?: AcceptanceReviewGate | false;
-  stopRules?: string[];
-  reason?: string;
-}
-
-export type AcceptanceInput = AcceptanceLevel | false | AcceptanceConfig;
-
-export interface ResolvedAcceptanceGate extends AcceptanceGate {
-  id: string;
-  must: string;
-  evidence: AcceptanceEvidenceKind[];
-  severity: "required" | "recommended";
-}
-
-export interface ResolvedAcceptanceConfig {
-  level: Exclude<AcceptanceLevel, "auto">;
-  explicit: boolean;
-  inferredReason: string[];
-  criteria: ResolvedAcceptanceGate[];
-  evidence: AcceptanceEvidenceKind[];
-  verify: AcceptanceVerifyCommand[];
-  review?: AcceptanceReviewGate | false;
-  stopRules: string[];
-  reason?: string;
-}
-
-export interface AcceptanceReport {
-  criteriaSatisfied?: Array<{
-    id?: string;
-    status: "satisfied" | "not-satisfied" | "not-applicable";
-    evidence: string;
-  }>;
-  changedFiles?: string[];
-  testsAddedOrUpdated?: string[];
-  commandsRun?: Array<{
-    command: string;
-    result: string;
-    summary: string;
-  }>;
-  validationOutput?: string[];
-  residualRisks?: string[];
-  noStagedFiles?: boolean;
-  diffSummary?: string;
-  reviewFindings?: string[];
-  manualNotes?: string;
-  notes?: string;
-}
-
-export type AcceptanceRuntimeCheckStatus = "passed" | "failed" | "not-applicable";
-
-export interface AcceptanceRuntimeCheck {
-  id: string;
-  status: AcceptanceRuntimeCheckStatus;
-  message: string;
-}
-
-export interface AcceptanceVerifyResult {
-  id: string;
-  command: string;
-  cwd?: string;
-  exitCode: number | null;
-  status: "passed" | "failed" | "timed-out" | "allowed-failure";
-  stdout?: string;
-  stderr?: string;
-  durationMs: number;
-}
-
-export interface AcceptanceReviewResult {
-  status: "no-blockers" | "blockers" | "needs-parent-decision";
-  findings: Array<{
-    severity: "blocker" | "non-blocking";
-    file?: string;
-    issue: string;
-    rationale: string;
-  }>;
-}
-
-export type AcceptanceLedgerStatus =
-  | "not-required"
-  | "claimed"
-  | "attested"
-  | "checked"
-  | "verified"
-  | "reviewed"
-  | "accepted"
-  | "rejected"
-  | "skipped";
-
-export interface AcceptanceLedger {
-  status: AcceptanceLedgerStatus;
-  explicit: boolean;
-  effectiveAcceptance: ResolvedAcceptanceConfig;
-  inferredReason: string[];
-  criteria: ResolvedAcceptanceGate[];
-  childReport?: AcceptanceReport;
-  childReportParseError?: string;
-  runtimeChecks: AcceptanceRuntimeCheck[];
-  verifyRuns: AcceptanceVerifyResult[];
-  reviewResult?: AcceptanceReviewResult;
-  parentDecision?: {
-    status: "accepted" | "rejected";
-    at: string;
-    reason?: string;
-  };
-}
-
 export interface SingleResult {
   agent: string;
   task: string;
   /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
+  projectAgent?: ProjectAgentIdentity;
   exitCode: number;
   exitSignal?: NodeJS.Signals;
   interrupted?: boolean;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
@@ -604,9 +477,8 @@ export interface SingleResult {
   error?: string;
   /**
    * Bounded stderr tail retained for diagnostics. Raw stderr is durable in
-   * async output-N.log and, when enabled, the debug child transcript;
-   * foreground runs retain only the bounded stderr tail unless debug is
-   * enabled.
+   * output-N.log for both awaited and detached runs and, when enabled, in the
+   * debug child transcript.
    */
   stderr?: string;
   stderrTruncated?: boolean;
@@ -625,17 +497,14 @@ export interface SingleResult {
   savedOutputPath?: string;
   outputReference?: SavedOutputReference;
   outputSaveError?: string;
-  acceptance?: AcceptanceLedger;
-  pause?: ForegroundPauseMetadata;
+  /** Per-child terminal state and evidence-only facts, when persisted. */
+  terminalResult?: SubagentTerminalResult;
+  pause?: AwaitedPauseMetadata;
   cancel?: AsyncCancellationMetadata;
   transcriptPath?: string;
   transcriptError?: string;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
-  tkTicket?: TkTicketMetadata;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
+  /** Normalized ticket ID, when assigned. */
+  ticketId?: string;
   /**
    * Dispatch-time snapshot of child-location facts. Present only when the
    * child cwd differs from the parent session cwd at the time of dispatch;
@@ -655,7 +524,6 @@ export interface Details {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  toolBudget?: ResolvedToolBudget;
   progress?: AgentProgress[];
   progressSummary?: ProgressSummary;
   artifacts?: {
@@ -715,7 +583,7 @@ export interface ResolvedArtifactConfig extends Omit<ArtifactConfig, "mode" | "i
 }
 
 /** Boundary-facing artifact settings: `mode` is the only consumed field. */
-export interface ExtensionArtifactConfig {
+interface ExtensionArtifactConfig {
   mode?: unknown;
 }
 
@@ -737,7 +605,7 @@ interface NestedRunAddress {
 
 export interface NestedStepSummary {
   agent: string;
-  projectAgent?: ProjectAgentRunCapture;
+  projectAgent?: ProjectAgentIdentity;
   /** Deny-only signal retained when a persisted project-agent marker is malformed. */
   projectAgentMarker?: true;
   status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
@@ -754,13 +622,8 @@ export interface NestedStepSummary {
   toolCount?: number;
   startedAt?: number;
   endedAt?: number;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
   error?: string;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
@@ -768,7 +631,7 @@ export interface NestedStepSummary {
 }
 
 export interface NestedRunSummary extends NestedRunAddress {
-  projectAgent?: ProjectAgentRunCapture;
+  projectAgent?: ProjectAgentIdentity;
   /** Deny-only signal retained when a persisted project-agent marker is malformed. */
   projectAgentMarker?: true;
   /** Persisted execution cwd used to validate a process-starting revival. */
@@ -799,14 +662,9 @@ export interface NestedRunSummary extends NestedRunAddress {
   startedAt?: number;
   endedAt?: number;
   lastUpdate?: number;
-  activeRuntimeMs?: number;
-  /** Last authoritative active-runtime checkpoint written for this run. */
-  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   error?: string;
 }
 
@@ -815,11 +673,6 @@ export interface NestedRouteInfo {
   eventSink: string;
   controlInbox: string;
   capabilityToken: string;
-}
-
-export interface TkTicketMetadata {
-  id: string;
-  title: string;
 }
 
 /** Canonical provider/model/thinking identity persisted with resumable children. */
@@ -840,7 +693,7 @@ export interface SubagentModelResolution {
 export interface AsyncStartedEvent {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
   /** Safe per-child project-agent captures; no opaque capability crosses this event. */
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgents?: ProjectAgentIdentity[];
   id?: string;
   asyncDir?: string;
   pid?: number;
@@ -851,15 +704,18 @@ export interface AsyncStartedEvent {
   timeoutMs?: number;
   deadlineAt?: number;
   nestedRoute?: NestedRouteInfo;
-  tkTicket?: TkTicketMetadata;
 }
 
 export interface AsyncStatus {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Internal-only marker for a caller that owns terminal settlement. */
+  awaited?: boolean;
   runId: string;
   sessionId?: string;
   mode: SubagentRunMode;
   state: AsyncLifecycleState;
+  /** Evidence-only terminal settlement for the run, when available. */
+  terminalResult?: SubagentTerminalResult;
   lifecycle?: AsyncLifecycleMetadata;
   pause?: AsyncPauseMetadata;
   cancel?: AsyncCancellationMetadata;
@@ -876,14 +732,11 @@ export interface AsyncStatus {
   startedAt: number;
   endedAt?: number;
   lastUpdate?: number;
-  activeRuntimeMs?: number;
-  /** Last authoritative active-runtime checkpoint written for this run. */
-  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
+  /** Run-level cleanup evidence retained when the owner stops the runner. */
+  processCleanup?: ChildProcessCleanupResult;
   pid?: number;
   cwd?: string;
   currentStep?: number;
@@ -902,14 +755,14 @@ export interface AsyncStatus {
       | "cancelled";
     children?: NestedRunSummary[];
     sessionFile?: string;
+    /** Child working directory when it differs from the run-level cwd. */
+    cwd?: string;
     transcriptPath?: string;
     transcriptError?: string;
     activityState?: ActivityState;
-    /** Stable identity for the currently active idle episode, when any. */
+    /** Stable identity for the currently active idle attention episode. */
     idleEpisodeId?: string;
-    /** Durable health causes retained independently of recoverable idle attention. */
-    durableAttentionReasons?: DurableAttentionReason[];
-    /** Compaction is an active operation independent of tool-call state. */
+    /** Active compaction operation, when one is in progress. */
     compaction?: { reason: CompactionReason };
     lastActivityAt?: number;
     currentTool?: string;
@@ -924,24 +777,22 @@ export interface AsyncStatus {
     startedAt?: number;
     endedAt?: number;
     durationMs?: number;
-    activeRuntimeMs?: number;
-    /** Timestamp of the last authoritative active-runtime checkpoint. */
-    activeRuntimeCheckpointAt?: number;
-    /** Validated per-child developer ticket assignment, when applicable. */
-    tkTicketId?: string;
+    /** Normalized ticket ID, when assigned. */
+    ticketId?: string;
+    /** Per-child terminal state and evidence-only facts, when persisted. */
+    terminalResult?: SubagentTerminalResult;
     timeoutMs?: number;
     deadlineAt?: number;
     exitCode?: number | null;
     exitSignal?: NodeJS.Signals;
     timedOut?: boolean;
-    toolBudget?: ToolBudgetState;
-    toolBudgetBlocked?: boolean;
     contextUsage?: ContextUsageDiagnostics;
     contextPressure?: ContextPressureProjection;
     contextPressureCrossedThresholds?: ContextPressureThreshold[];
     terminationReason?: SubagentTerminationReason;
     tokens?: TokenUsage;
     skills?: string[];
+    skillsWarning?: string;
     model?: string;
     thinking?: string;
     modelIdentity?: SubagentModelIdentity;
@@ -957,11 +808,10 @@ export interface AsyncStatus {
     stderrTruncated?: boolean;
     protocolOutputLimit?: ProtocolOutputLimit;
     processCleanup?: ChildProcessCleanupResult;
-    acceptance?: AcceptanceLedger;
     pause?: AsyncPauseMetadata;
     cancel?: AsyncCancellationMetadata;
     /** Exact approved project-agent config/provenance; never includes a capability. */
-    projectAgent?: ProjectAgentRunCapture;
+    projectAgent?: ProjectAgentIdentity;
     /**
      * Dispatch-time snapshot of child location facts. Present only when the
      * child cwd differs from the parent session cwd; absent for same-cwd steps.
@@ -973,9 +823,8 @@ export interface AsyncStatus {
   totalTokens?: TokenUsage;
   totalCost?: CostSummary;
   sessionFile?: string;
-  tkTicket?: TkTicketMetadata;
   /** Safe per-child project-agent captures retained for status/control display. */
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgents?: ProjectAgentIdentity[];
 }
 
 export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -988,14 +837,16 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 
 /**
  * Shape of one child step entry in the async result artifact.
- * All three result writers must be structurally compatible with this type.
+ * All four result writers must be structurally compatible with this type.
  */
 export interface AsyncResultArtifactResultItem {
   agent: string;
   /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
+  projectAgent?: ProjectAgentIdentity;
   success: boolean;
   output: string;
+  /** Raw child output before notices or output-mode formatting. */
+  finalOutput?: string;
   error?: string;
   stderr?: string;
   stderrTruncated?: boolean;
@@ -1005,19 +856,14 @@ export interface AsyncResultArtifactResultItem {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
   model?: string;
-  /** Per-child liveness projection retained for result-only async resume recovery. */
+  /** Per-child activity projection retained for result-only async resume recovery. */
   activityState?: ActivityState;
-  idleEpisodeId?: string;
-  durableAttentionReasons?: DurableAttentionReason[];
-  compaction?: { reason: CompactionReason };
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
   attemptedModels?: string[];
@@ -1029,17 +875,22 @@ export interface AsyncResultArtifactResultItem {
   truncated?: boolean;
   transcriptPath?: string;
   transcriptError?: string;
-  acceptance?: AcceptanceLedger;
+  skills?: string[];
+  skillsWarning?: string;
+  outputMode?: OutputMode;
+  savedOutputPath?: string;
+  outputReference?: SavedOutputReference;
+  outputSaveError?: string;
+  childLocation?: ChildLocationSnapshot;
   pause?: AsyncPauseMetadata;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
+  /** Normalized ticket ID, when assigned. */
+  ticketId?: string;
+  /** Per-child terminal state and evidence-only facts, when persisted. */
+  terminalResult?: SubagentTerminalResult;
 }
 
 /**
- * Canonical shape of the async result artifact written to disk by all three
+ * Canonical shape of the async result artifact written to disk by all four
  * result writers. Apply with `satisfies AsyncResultArtifact` — never with a
  * type annotation or cast — so literals are validated without widening and
  * the emitted JSON remains byte-identical.
@@ -1050,6 +901,9 @@ export interface AsyncResultArtifactResultItem {
  */
 export interface AsyncResultArtifact {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Internal-only marker for an awaited caller; detached runs omit it. */
+  awaited?: boolean;
+  generation?: number;
   id: string;
   agent: string;
   mode: SubagentRunMode;
@@ -1059,14 +913,9 @@ export interface AsyncResultArtifact {
   error?: string;
   timeoutMs?: number;
   deadlineAt?: number;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   timedOut?: boolean;
   pause?: AsyncPauseMetadata;
-  /** Aggregate logical runtime across the run's child steps. */
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
+  cancel?: AsyncCancellationMetadata;
   results: AsyncResultArtifactResultItem[];
   exitCode: number;
   timestamp: number;
@@ -1080,7 +929,7 @@ export interface AsyncResultArtifact {
   sessionId?: string | null;
   sessionFile?: string;
   /** Safe per-child captures mirrored into the result artifact. */
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgents?: ProjectAgentIdentity[];
   shareUrl?: string;
   gistUrl?: string;
   shareError?: string;
@@ -1091,7 +940,11 @@ export interface AsyncResultArtifact {
 export interface AsyncJobState {
   asyncId: string;
   asyncDir: string;
+  /** Internal-only marker retained while an awaited run is visible. */
+  awaited?: boolean;
   status: AsyncLifecycleState;
+  /** Continuation metadata projects launch semantics without a legacy status label. */
+  lifecycle?: AsyncStatus["lifecycle"];
   pid?: number;
   sessionId?: string;
   activityState?: ActivityState;
@@ -1113,14 +966,9 @@ export interface AsyncJobState {
   completedSteps?: number;
   startedAt?: number;
   updatedAt?: number;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
   sessionDir?: string;
   outputFile?: string;
   totalTokens?: TokenUsage;
@@ -1132,81 +980,8 @@ export interface AsyncJobState {
   controlEventFileIdentity?: string;
   nestedRoute?: NestedRouteInfo;
   nestedChildren?: NestedRunSummary[];
-  tkTicket?: TkTicketMetadata;
   /** Safe per-child captures retained for the run lifecycle. */
-  projectAgents?: ProjectAgentRunCapture[];
-}
-
-export interface ForegroundResumeChild {
-  agent: string;
-  /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
-  index: number;
-  sessionFile?: string;
-  status: SubagentResultStatus;
-  exitCode?: number;
-  model?: string;
-  thinking?: string;
-  modelIdentity?: SubagentModelIdentity;
-  modelResolution?: SubagentModelResolution;
-  finalOutput?: string;
-  artifactPaths?: ArtifactPaths;
-  transcriptPath?: string;
-  transcriptError?: string;
-  acceptance?: AcceptanceLedger;
-  pause?: ForegroundPauseMetadata;
-  cancel?: AsyncCancellationMetadata;
-  activityState?: ActivityState;
-  idleEpisodeId?: string;
-  durableAttentionReasons?: DurableAttentionReason[];
-  compaction?: { reason: CompactionReason };
-  contextUsage?: ContextUsageDiagnostics;
-  contextPressure?: ContextPressureProjection;
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  terminationReason?: SubagentTerminationReason;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
-  updatedAt?: number;
-}
-
-export interface ForegroundResumeRun {
-  runId: string;
-  mode: SubagentRunMode;
-  cwd: string;
-  updatedAt: number;
-  children: ForegroundResumeChild[];
-}
-
-export interface ForegroundRunControl {
-  runId: string;
-  mode: SubagentRunMode;
-  startedAt: number;
-  updatedAt: number;
-  currentAgent?: string;
-  currentIndex?: number;
-  currentActivityState?: ActivityState;
-  /** Stable identity for the currently active idle episode, when any. */
-  idleEpisodeId?: string;
-  /** Durable health causes retained independently of recoverable idle attention. */
-  durableAttentionReasons?: DurableAttentionReason[];
-  /** Compaction is an active operation independent of tool-call state. */
-  compaction?: { reason: CompactionReason };
-  lastActivityAt?: number;
-  currentTool?: string;
-  currentToolStartedAt?: number;
-  currentPath?: string;
-  turnCount?: number;
-  tokens?: number;
-  toolCount?: number;
-  nestedRoute?: NestedRouteInfo;
-  nestedChildren?: NestedRunSummary[];
-  interrupt?: () => boolean;
-  activeInterrupts?: Map<number, () => boolean>;
-  messageInboxRoot?: string;
-  activeMessageInboxes?: Map<number, string>;
+  projectAgents?: ProjectAgentIdentity[];
 }
 
 export interface SubagentState {
@@ -1214,15 +989,10 @@ export interface SubagentState {
   currentSessionId: string | null;
   subagentInProgress?: boolean;
   asyncJobs: Map<string, AsyncJobState>;
-  foregroundRuns?: Map<string, ForegroundResumeRun>;
-  foregroundControls: Map<string, ForegroundRunControl>;
-  lastForegroundControlId: string | null;
-  pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>>;
   cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
   lastUiContext: ExtensionContext | null;
   liveDetailController?: SubagentLiveDetailController;
   poller: NodeJS.Timeout | null;
-  completionSeen: Map<string, number>;
   watcher: FSWatcher | null;
   watcherRestartTimer: ReturnType<typeof setTimeout> | null;
   resultFileCoalescer: {
@@ -1257,85 +1027,9 @@ export interface SubagentEventBus {
 
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+/** Internal lifecycle hook for heartbeat bookkeeping of owner-consumed runs. */
+export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
-
-// ============================================================================
-// Execution Options
-// ============================================================================
-
-export interface RunSyncOptions {
-  /** Session id of the direct parent session for permission-system ask forwarding. */
-  parentSessionId?: string;
-  /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
-  tkTicket?: TkTicketMetadata;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
-  onSupervisorPauseTransition?: (
-    input:
-      | { stage: "pausing"; result: SingleResult; ownerPid?: number }
-      | { stage: "paused"; result: SingleResult },
-  ) => void;
-  cwd?: string;
-  signal?: AbortSignal;
-  interruptSignal?: AbortSignal;
-  /** Internal resolved allowance used by the process/deadline transport. */
-  timeoutMs?: number;
-  /** Internal diagnostic selected by the execution boundary that owns the deadline. */
-  timeoutMessage?: string;
-  deadlineAt?: number;
-  toolBudget?: ResolvedToolBudget;
-  pauseBlockingSupervisor?: boolean;
-  onUpdate?: (r: SubagentToolResult<Details>) => void;
-  onControlEvent?: (event: ControlEvent) => void;
-  controlConfig?: ResolvedControlConfig;
-  maxOutput?: MaxOutputConfig;
-  artifactsDir?: string;
-  artifactConfig?: ResolvedArtifactConfig;
-  runId: string;
-  index?: number;
-  sessionDir?: string;
-  sessionFile?: string;
-  share?: boolean;
-  outputPath?: string;
-  outputMode?: OutputMode;
-  maxSubagentDepth?: number;
-  nestedRoute?: NestedRouteInfo;
-  /** Override the agent's default model (format: "provider/id" or just "id") */
-  modelOverride?: string;
-  /** Durable explanation for a restored or explicitly overridden model selection. */
-  modelResolution?: SubagentModelResolution;
-  /** Provider-aware fallback candidates generated for this dispatch target. */
-  providerFallbackModels?: string[];
-  /** Latest persisted display projection restored for the same execution segment. */
-  contextPressure?: ContextPressureProjection;
-  /** Thresholds already crossed in this execution, used for restart-safe deduplication. */
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  /** Optional bounded notice for a supplied fallback retry and/or registry filtering. */
-  modelFallbackNotice?: string;
-  /** Registry models available for model resolution and thinking-capability checks */
-  availableModels?: import("./model-info.ts").ModelInfo[];
-  /** Catalog/error evidence used to conservatively filter unavailable fallbacks. */
-  modelRegistry?: import("../runs/shared/model-fallback.ts").ModelRegistryEvidence;
-  /** Current parent-session provider to prefer for ambiguous bare model ids */
-  preferredModelProvider?: string;
-  /** Optional subagent model-scope enforcement for fallback candidates */
-  modelScope?: ModelScopeConfig;
-  /** Skills to make available (overrides agent default if provided) */
-  skills?: string[];
-  steerInboxDir?: string;
-  acceptance?: AcceptanceInput;
-  acceptanceContext?: {
-    mode?: SubagentRunMode;
-    async?: boolean;
-  };
-  /**
-   * Dispatch-time child-location snapshot computed by the caller before
-   * invoking runSync. When present, it is attached to the initial SingleResult
-   * and survives streaming progress updates via object spread.
-   */
-  childLocation?: ChildLocationSnapshot;
-}
 
 interface TopLevelParallelConfig {
   maxTasks?: number;
@@ -1424,7 +1118,7 @@ function resolveTempScopeId(options?: {
   return "shared";
 }
 
-const MAX_PARALLEL = 8;
+export { MAX_TOP_LEVEL_PARALLEL_TASKS };
 const MAX_CONCURRENCY = 4;
 
 /**
@@ -1460,7 +1154,7 @@ export const WIDGET_KEY = "subagent-async";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
-export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
+const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = [
   "list",
   "get",
@@ -1479,7 +1173,10 @@ function normalizeTopLevelParallelValue(value: unknown): number | undefined {
 }
 
 export function resolveTopLevelParallelMaxTasks(value: unknown): number {
-  return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
+  const normalized = normalizeTopLevelParallelValue(value);
+  return normalized === undefined
+    ? MAX_TOP_LEVEL_PARALLEL_TASKS
+    : Math.min(normalized, MAX_TOP_LEVEL_PARALLEL_TASKS);
 }
 
 export function resolveTopLevelParallelConcurrency(configValue: unknown): number {

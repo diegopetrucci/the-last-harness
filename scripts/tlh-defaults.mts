@@ -350,10 +350,19 @@ function assertNotNormalPiSettings(settingsPath: string): void {
 }
 
 function scrubRetiredTlhSettings(settings: Settings): boolean {
-  if (!isPlainObject(settings.tlh)) return false;
-  if (!Object.hasOwn(settings.tlh, "rtk")) return false;
-  delete settings.tlh.rtk;
-  return true;
+  let changed = false;
+  if (isPlainObject(settings.tlh) && Object.hasOwn(settings.tlh, "rtk")) {
+    delete settings.tlh.rtk;
+    changed = true;
+  }
+  if (isPlainObject(settings.subagents) && isPlainObject(settings.subagents.agentOverrides)) {
+    for (const value of Object.values(settings.subagents.agentOverrides)) {
+      if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget")) continue;
+      delete value.toolBudget;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function writeSettings(

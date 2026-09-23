@@ -9,6 +9,7 @@ import {
   canonicalAgentMaxExecutionTimeMs,
   resolveCustomAgentMaxExecutionTimeMs,
   resolveExecutionPolicy,
+  roleExecutionTimeoutMs,
 } from "../../src/agents/execution-ceiling.ts";
 
 describe("human-owned execution policy", () => {
@@ -56,6 +57,13 @@ describe("human-owned execution policy", () => {
     assert.ok(output.warnings[0]?.includes("execution.maxRunTimeMs"));
     assert.ok(output.warnings[0]?.includes("positive safe integer or false"));
     assert.ok(output.warnings[0]!.length < 300);
+  });
+
+  it("resolves a full role timeout without consulting historical runtime", () => {
+    assert.equal(roleExecutionTimeoutMs(5_000), 5_000);
+    assert.equal(roleExecutionTimeoutMs(undefined), undefined);
+    assert.equal(roleExecutionTimeoutMs(0), 0);
+    assert.equal(roleExecutionTimeoutMs(Number.MAX_SAFE_INTEGER + 1), 0);
   });
 
   it("consumes only own maxRunTimeMs and keeps custom fallback centralized", () => {

@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
-import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
@@ -28,14 +28,9 @@ function createState(): SubagentState {
     baseCwd: "",
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },

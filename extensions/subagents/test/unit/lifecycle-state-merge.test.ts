@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  TERMINAL_RUN_STATES,
+  isTerminalLifecycleState,
   lifecycleGeneration,
   mergeAndWriteSourceRunnerStatus,
   transitionLifecycleStatus,
@@ -12,57 +12,41 @@ import {
   writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import {
+  canonicalLifecycleState,
+  canonicalLifecycleStepState,
+} from "../../src/runs/background/async-status-boundary.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
 import { tempRoot } from "../support/lifecycle-state-fixtures.ts";
 
+function validTerminalResult(attempts: number[], state: "completed" | "failed" = "completed") {
+  return {
+    state,
+    facts: {
+      attempts: attempts.map((attempt) => ({
+        attempt,
+        exit: { code: 0, signal: null },
+        durationMs: 12,
+        providerTokens: { status: "unavailable" as const },
+        requestedToolCalls: { edit: 0, write: 0, bash: 0 },
+        workspace: {
+          baseline: { status: "unavailable" as const, reason: "not_git_repository" as const },
+          post: { status: "unavailable" as const, reason: "not_git_repository" as const },
+          attribution: "unknown" as const,
+        },
+      })),
+    },
+  };
+}
+
 describe("lifecycle state helpers", () => {
-  it("merges higher persisted runtime evidence without lowering local lifecycle state", () => {
-    const root = tempRoot("pi-lifecycle-runtime-merge-");
-    try {
-      const asyncDir = path.join(root, "run-runtime-merge");
-      writeNormalizedLifecycleStatus(asyncDir, {
-        runId: "run-runtime-merge",
-        mode: "single",
-        state: "running",
-        startedAt: 100,
-        lastUpdate: 1_900,
-        activeRuntimeMs: 900,
-        activeRuntimeCheckpointAt: 1_900,
-        steps: [
-          {
-            agent: "worker",
-            status: "running",
-            activeRuntimeMs: 900,
-            activeRuntimeCheckpointAt: 1_900,
-          },
-        ],
-      });
-
-      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
-        runId: "run-runtime-merge",
-        mode: "single",
-        state: "running",
-        startedAt: 100,
-        lastUpdate: 1_400,
-        activeRuntimeMs: 400,
-        activeRuntimeCheckpointAt: 1_400,
-        steps: [
-          {
-            agent: "worker",
-            status: "running",
-            activeRuntimeMs: 400,
-            activeRuntimeCheckpointAt: 1_400,
-          },
-        ],
-      });
-
-      assert.equal(merged.activeRuntimeMs, 900);
-      assert.equal(merged.activeRuntimeCheckpointAt, 1_900);
-      assert.equal(merged.steps?.[0]?.activeRuntimeMs, 900);
-      assert.equal(merged.steps?.[0]?.activeRuntimeCheckpointAt, 1_900);
-      assert.equal(readStatus(asyncDir)?.activeRuntimeMs, 900);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+  it("canonicalizes legacy completion labels and fails closed for unknown lifecycle values", () => {
+    assert.equal(canonicalLifecycleState("completed"), "complete");
+    assert.equal(canonicalLifecycleState("continued"), "complete");
+    assert.equal(canonicalLifecycleState("unexpected-root-state"), "failed");
+    assert.equal(canonicalLifecycleStepState("completed"), "complete");
+    assert.equal(canonicalLifecycleStepState("unexpected-step-state"), "failed");
   });
 
   // ── Regression tests for the post-pause source-runner status write race ─────
@@ -155,9 +139,14 @@ describe("lifecycle state helpers", () => {
       assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "resumed-race-run");
       // Generation must not regress below the reservation generation.
       assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
-      // Step data from the source runner must still be written.
-      assert.equal(persisted?.steps?.[0]?.status, "paused");
-      assert.equal(persisted?.steps?.[0]?.exitCode, 0);
+      // Persisted generation owns the step lifecycle label; only safe telemetry
+      // may be appended from the stale source runner.
+      assert.equal(persisted?.steps?.[0]?.status, "pausing");
+      assert.equal(
+        persisted?.steps?.[0]?.exitCode,
+        undefined,
+        "stale terminal evidence must not attach to a persisted nonterminal step",
+      );
       // Return value reflects the merged on-disk content.
       assert.equal(written.lifecycle?.continuation?.phase, "reserved");
     } finally {
@@ -203,16 +192,16 @@ describe("lifecycle state helpers", () => {
 
       const persisted = readStatus(asyncDir);
       // State must not be downgraded to "paused".
-      assert.equal(persisted?.state, "continued");
+      assert.equal(persisted?.state, "complete");
       // Step must not be reverted.
-      assert.equal(persisted?.steps?.[0]?.status, "continued");
+      assert.equal(persisted?.steps?.[0]?.status, "complete");
       // Continuation metadata must be intact.
       assert.equal(persisted?.lifecycle?.continuation?.phase, "continued");
       assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "revived-done");
       // Generation must not regress.
       assert.ok((persisted?.lifecycle?.generation ?? 0) >= 3, "generation must not regress");
       // Return value reflects the merged on-disk content.
-      assert.equal(written.state, "continued");
+      assert.equal(written.state, "complete");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -347,10 +336,9 @@ describe("lifecycle state helpers", () => {
       assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
       // Return value reflects the merged on-disk content.
       assert.equal(written.state, "cancelled");
-      // TERMINAL_RUN_STATES export sanity check (guards the export itself).
-      assert.ok(TERMINAL_RUN_STATES.has("cancelled"));
-      assert.ok(TERMINAL_RUN_STATES.has("continued"));
-      assert.ok(!TERMINAL_RUN_STATES.has("paused"));
+      assert.equal(isTerminalLifecycleState("cancelled"), true);
+      assert.equal(isTerminalLifecycleState("complete"), true);
+      assert.equal(isTerminalLifecycleState("paused"), true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -635,6 +623,239 @@ describe("lifecycle state helpers", () => {
     }
   });
 
+  it("lock-exhausted fallback refuses a mkdir-before-owner lockless rewrite", () => {
+    const root = tempRoot("pi-lifecycle-lock-mkdir-race-");
+    try {
+      const asyncDir = path.join(root, "run-mkdir-race");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-mkdir-race",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        lifecycle: { generation: 0 },
+        steps: [{ agent: "worker", status: "running" }],
+      });
+      // acquireLock() publishes the directory before owner.json. A contender
+      // must treat this incomplete snapshot as live, not use the supervisor
+      // failure fallback to rewrite status.json without the lock.
+      fs.mkdirSync(path.join(asyncDir, ".lifecycle-transition.lock"));
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-mkdir-race",
+        mode: "single",
+        state: "failed",
+        startedAt: 100,
+        endedAt: 200,
+        error: "should not be written during owner publication",
+        lifecycle: { generation: 0 },
+        steps: [{ agent: "worker", status: "failed", endedAt: 200, error: "stale" }],
+      });
+      assert.equal(merged.state, "running");
+      assert.equal(readStatus(asyncDir)?.state, "running");
+      assert.equal(readStatus(asyncDir)?.lifecycle?.generation, 0);
+      assert.equal(fs.existsSync(path.join(asyncDir, ".lifecycle-transition.lock")), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unreadable lock-owner state live during lock-exhausted fallback", () => {
+    const root = tempRoot("pi-lifecycle-lock-owner-read-error-");
+    try {
+      const asyncDir = path.join(root, "run-lock-owner-read-error");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-lock-owner-read-error",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        lifecycle: { generation: 0 },
+        steps: [{ agent: "worker", status: "running" }],
+      });
+      fs.writeFileSync(path.join(asyncDir, ".lifecycle-transition.lock"), "not a directory");
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-lock-owner-read-error",
+        mode: "single",
+        state: "failed",
+        startedAt: 100,
+        endedAt: 200,
+        error: "must remain in memory",
+        lifecycle: { generation: 0 },
+        steps: [{ agent: "worker", status: "failed", endedAt: 200 }],
+      });
+      assert.equal(merged.state, "running");
+      assert.equal(readStatus(asyncDir)?.state, "running");
+      assert.equal(
+        fs.readFileSync(path.join(asyncDir, ".lifecycle-transition.lock"), "utf8"),
+        "not a directory",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lock-exhausted fallback preserves an incomplete cohort snapshot", () => {
+    const root = tempRoot("pi-lifecycle-cohort-lock-exhausted-");
+    try {
+      const asyncDir = path.join(root, "run-cohort-lock-exhausted");
+      const completedTerminalResult = {
+        state: "completed" as const,
+        facts: {
+          attempts: [
+            {
+              attempt: 1,
+              exit: { code: 0, signal: null },
+              durationMs: 12,
+              providerTokens: { status: "unavailable" as const },
+              requestedToolCalls: { edit: 0, write: 0, bash: 0 },
+              workspace: {
+                baseline: { status: "unavailable" as const, reason: "not_git_repository" as const },
+                post: { status: "unavailable" as const, reason: "not_git_repository" as const },
+                attribution: "unknown" as const,
+              },
+            },
+          ],
+        },
+      };
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-cohort-lock-exhausted",
+        mode: "parallel" as const,
+        state: "pausing" as const,
+        startedAt: 100,
+        steps: [
+          {
+            agent: "completed",
+            status: "complete" as const,
+            exitCode: 0,
+            sessionFile: "/safe/completed.jsonl",
+            terminalResult: completedTerminalResult,
+          },
+          {
+            agent: "paused",
+            status: "paused" as const,
+            exitCode: 0,
+            sessionFile: "/safe/paused.jsonl",
+            pause: { kind: "cohort_pause" as const, pausedAt: 200 },
+          },
+        ],
+        lifecycle: { generation: 4 },
+      });
+      fs.mkdirSync(path.join(asyncDir, ".lifecycle-transition.lock"));
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-cohort-lock-exhausted",
+        mode: "parallel" as const,
+        state: "failed" as const,
+        startedAt: 100,
+        endedAt: 300,
+        error: "Async supervisor lifecycle update failed.",
+        steps: [
+          {
+            agent: "completed",
+            status: "failed" as const,
+            exitCode: 1,
+            sessionFile: "/stale/completed.jsonl",
+            terminalResult: { ...completedTerminalResult, state: "failed" as const },
+          },
+          {
+            agent: "paused",
+            status: "failed" as const,
+            exitCode: 1,
+            error: "Async supervisor lifecycle update failed.",
+          },
+        ],
+        lifecycle: {
+          generation: 4,
+          resumeBlockedReason: "supervisor_lifecycle_failure" as const,
+        },
+      });
+
+      assert.equal(merged.state, "pausing");
+      assert.equal(merged.lifecycle?.resumeBlockedReason, undefined);
+      assert.deepEqual(
+        merged.steps?.map((step) => step.status),
+        ["complete", "paused"],
+      );
+      assert.equal(merged.steps?.[0]?.exitCode, 0);
+      assert.equal(merged.steps?.[0]?.sessionFile, "/safe/completed.jsonl");
+      assert.deepEqual(merged.steps?.[0]?.terminalResult, completedTerminalResult);
+      assert.equal(merged.steps?.[1]?.exitCode, 0);
+      assert.deepEqual(merged.steps?.[1]?.pause, { kind: "cohort_pause", pausedAt: 200 });
+
+      const persisted = readStatus(asyncDir);
+      assert.deepEqual(
+        persisted?.steps?.map((step) => step.status),
+        ["complete", "paused"],
+      );
+      assert.equal(persisted?.steps?.[0]?.exitCode, 0);
+      assert.equal(persisted?.steps?.[0]?.sessionFile, "/safe/completed.jsonl");
+      assert.deepEqual(persisted?.steps?.[0]?.terminalResult, completedTerminalResult);
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-cohort-lock-exhausted" },
+            { asyncDirRoot: root, resultsDir: path.join(root, "results") },
+          ),
+        /still pausing/i,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains late terminal facts and session evidence during immutable-step merges", () => {
+    const root = tempRoot("pi-lifecycle-late-evidence-");
+    try {
+      const asyncDir = path.join(root, "run-late-evidence");
+      const fact = (attempt: number) => ({
+        attempt,
+        exit: { code: 0, signal: null },
+        durationMs: 12,
+        providerTokens: { status: "unavailable" as const },
+        requestedToolCalls: { edit: 0, write: 0, bash: 0 },
+        workspace: {
+          baseline: { status: "unavailable" as const, reason: "not_git_repository" as const },
+          post: { status: "unavailable" as const, reason: "not_git_repository" as const },
+          attribution: "unknown" as const,
+        },
+      });
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-late-evidence",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            terminalResult: { state: "completed", facts: { attempts: [fact(1)] } },
+          },
+        ],
+      });
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-late-evidence",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile: "/safe/late-session.jsonl",
+            terminalResult: { state: "completed", facts: { attempts: [fact(1), fact(2)] } },
+          },
+        ],
+      });
+
+      assert.deepEqual(
+        merged.steps?.[0]?.terminalResult?.facts.attempts.map((attempt) => attempt.attempt),
+        [1, 2],
+      );
+      assert.equal(merged.steps?.[0]?.sessionFile, "/safe/late-session.jsonl");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // ── Finding 2: stale run-level pid/pause survive terminal merge ─────────────
   //
   // When the persisted run state is terminal and the in-memory state is non-terminal,
@@ -831,6 +1052,633 @@ describe("lifecycle state helpers", () => {
       );
       // A terminal step has no active pause.
       assert.equal(mergedStep.pause, undefined, "terminal step must not carry an active pause");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("same-generation source writes explicitly clear stale activity fields and may fail a paused run", () => {
+    const root = tempRoot("pi-lifecycle-same-generation-clears-");
+    try {
+      const asyncDir = path.join(root, "run-same-generation-clears");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-same-generation-clears",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        pid: 123,
+        pause: { kind: "awaiting_supervisor", ownerPid: 123 },
+        activityState: "needs_attention",
+        currentTool: "stale-tool",
+        currentPath: "/private/stale",
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", ownerPid: 123 },
+            activityState: "needs_attention",
+            currentTool: "stale-tool",
+            currentPath: "/private/stale",
+          },
+        ],
+        lifecycle: { generation: 2 },
+      });
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-same-generation-clears",
+        mode: "single",
+        state: "failed",
+        startedAt: 100,
+        pid: undefined,
+        pause: undefined,
+        activityState: undefined,
+        currentTool: undefined,
+        currentPath: undefined,
+        error: "source failure",
+        steps: [
+          {
+            agent: "worker",
+            status: "failed",
+            pause: undefined,
+            activityState: undefined,
+            currentTool: undefined,
+            currentPath: undefined,
+            error: "source failure",
+          },
+        ],
+        lifecycle: { generation: 2 },
+      });
+      assert.equal(merged.state, "failed");
+      assert.equal(merged.pid, undefined);
+      assert.equal(merged.pause, undefined);
+      assert.equal(merged.activityState, undefined);
+      assert.equal(merged.currentTool, undefined);
+      assert.equal(merged.currentPath, undefined);
+      assert.equal(merged.steps?.[0]?.status, "failed");
+      assert.equal(merged.steps?.[0]?.pause, undefined);
+      assert.equal(merged.steps?.[0]?.activityState, undefined);
+      assert.equal(merged.steps?.[0]?.currentTool, undefined);
+      assert.equal(merged.steps?.[0]?.currentPath, undefined);
+      assert.equal(readStatus(asyncDir)?.state, "failed");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("newer persisted generations own lifecycle and protected fields while memory fills safe evidence", () => {
+    const root = tempRoot("pi-lifecycle-generation-authority-");
+    try {
+      const asyncDir = path.join(root, "run-generation-authority");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-generation-authority",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        pid: 321,
+        pause: { kind: "cohort_pause", ownerPid: 321 },
+        activityState: "needs_attention",
+        currentTool: "persisted-tool",
+        currentPath: "/private/persisted",
+        error: "persisted lifecycle error",
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "cohort_pause", ownerPid: 321 },
+            activityState: "needs_attention",
+            currentTool: "persisted-tool",
+            currentPath: "/private/persisted",
+          },
+        ],
+        lifecycle: { generation: 4 },
+      });
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-generation-authority",
+        mode: "single",
+        state: "failed",
+        startedAt: 999,
+        pid: 999,
+        pause: { kind: "awaiting_supervisor", ownerPid: 999 },
+        activityState: "needs_attention",
+        currentTool: "memory-tool",
+        currentPath: "/private/memory",
+        error: "stale memory error",
+        sessionFile: "/safe/session.json",
+        steps: [
+          {
+            agent: "worker",
+            status: "failed",
+            pause: { kind: "awaiting_supervisor", ownerPid: 999 },
+            activityState: "needs_attention",
+            currentTool: "memory-tool",
+            currentPath: "/private/memory",
+            sessionFile: "/safe/child-session.json",
+            exitCode: 1,
+            exitSignal: "SIGTERM",
+            endedAt: 200,
+            durationMs: 100,
+            terminationReason: "process_exit",
+            terminalResult: validTerminalResult([1], "failed"),
+            model: "safe-model",
+          },
+        ],
+        lifecycle: { generation: 2 },
+      });
+      assert.equal(merged.state, "paused");
+      assert.equal(merged.pid, 321);
+      assert.deepEqual(merged.pause, { kind: "cohort_pause", ownerPid: 321 });
+      assert.equal(merged.activityState, "needs_attention");
+      assert.equal(merged.currentTool, "persisted-tool");
+      assert.equal(merged.currentPath, "/private/persisted");
+      assert.equal(merged.error, "persisted lifecycle error");
+      assert.equal(merged.sessionFile, "/safe/session.json");
+      assert.equal(merged.steps?.[0]?.status, "paused");
+      assert.equal(merged.steps?.[0]?.currentTool, "persisted-tool");
+      assert.equal(merged.steps?.[0]?.currentPath, "/private/persisted");
+      assert.equal(merged.steps?.[0]?.sessionFile, "/safe/child-session.json");
+      assert.equal(merged.steps?.[0]?.exitCode, undefined);
+      assert.equal(merged.steps?.[0]?.exitSignal, undefined);
+      assert.equal(merged.steps?.[0]?.endedAt, undefined);
+      assert.equal(merged.steps?.[0]?.durationMs, undefined);
+      assert.equal(merged.steps?.[0]?.terminationReason, undefined);
+      assert.equal(merged.steps?.[0]?.terminalResult, undefined);
+      assert.equal(merged.steps?.[0]?.model, "safe-model");
+      assert.equal(lifecycleGeneration(merged), 4);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not attach stale terminal facts to a newer running step", () => {
+    const root = tempRoot("pi-lifecycle-running-terminal-facts-");
+    try {
+      const asyncDir = path.join(root, "run-running-terminal-facts");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-running-terminal-facts",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            compaction: { reason: "threshold" },
+          },
+        ],
+        lifecycle: { generation: 5 },
+      });
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-running-terminal-facts",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        sessionFile: "/safe/running-root-session.jsonl",
+        endedAt: 200,
+        terminalResult: validTerminalResult([1], "failed"),
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            sessionFile: "/safe/running-session.jsonl",
+            transcriptPath: "/safe/running-transcript.jsonl",
+            model: "safe-model",
+            exitCode: 1,
+            exitSignal: "SIGTERM",
+            endedAt: 200,
+            durationMs: 100,
+            terminationReason: "process_exit",
+            terminalResult: validTerminalResult([1], "failed"),
+            compaction: { reason: "manual" },
+          },
+        ],
+        lifecycle: { generation: 3 },
+      });
+
+      const step = merged.steps?.[0];
+      assert.equal(merged.state, "running");
+      assert.equal(lifecycleGeneration(merged), 5);
+      assert.equal(merged.sessionFile, "/safe/running-root-session.jsonl");
+      assert.equal(merged.endedAt, undefined);
+      assert.equal(merged.terminalResult, undefined);
+      assert.equal(step?.status, "running");
+      assert.equal(step?.sessionFile, "/safe/running-session.jsonl");
+      assert.equal(step?.transcriptPath, "/safe/running-transcript.jsonl");
+      assert.equal(step?.model, "safe-model");
+      assert.equal(step?.exitCode, undefined);
+      assert.equal(step?.exitSignal, undefined);
+      assert.equal(step?.endedAt, undefined);
+      assert.equal(step?.durationMs, undefined);
+      assert.equal(step?.terminationReason, undefined);
+      assert.equal(step?.terminalResult, undefined);
+      assert.deepEqual(step?.compaction, { reason: "threshold" });
+      assert.equal(readStatus(asyncDir)?.steps?.[0]?.terminalResult, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges missing terminal facts and terminalResult for a persisted terminal step", () => {
+    const root = tempRoot("pi-lifecycle-terminal-facts-");
+    try {
+      const asyncDir = path.join(root, "run-terminal-facts");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-terminal-facts",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            compaction: { reason: "threshold" },
+          },
+        ],
+        lifecycle: { generation: 5 },
+      });
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-terminal-facts",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        sessionFile: "/safe/terminal-root-session.jsonl",
+        endedAt: 200,
+        terminalResult: validTerminalResult([1], "completed"),
+        steps: [
+          {
+            agent: "worker",
+            status: "failed",
+            sessionFile: "/safe/terminal-session.jsonl",
+            exitCode: 0,
+            exitSignal: "SIGTERM",
+            endedAt: 200,
+            durationMs: 100,
+            terminationReason: "process_exit",
+            terminalResult: validTerminalResult([1, 2], "failed"),
+            compaction: { reason: "manual" },
+          },
+        ],
+        lifecycle: { generation: 3 },
+      });
+
+      const step = merged.steps?.[0];
+      assert.equal(merged.state, "complete");
+      assert.equal(lifecycleGeneration(merged), 5);
+      assert.equal(merged.sessionFile, "/safe/terminal-root-session.jsonl");
+      assert.equal(merged.endedAt, 200);
+      assert.equal(merged.terminalResult?.state, "completed");
+      assert.equal(step?.status, "complete");
+      assert.equal(step?.sessionFile, "/safe/terminal-session.jsonl");
+      assert.equal(step?.exitCode, 0);
+      assert.equal(step?.exitSignal, "SIGTERM");
+      assert.equal(step?.endedAt, 200);
+      assert.equal(step?.durationMs, 100);
+      assert.equal(step?.terminationReason, "process_exit");
+      assert.equal(step?.terminalResult?.state, "completed");
+      assert.deepEqual(
+        step?.terminalResult?.facts.attempts.map((attempt) => attempt.attempt),
+        [1, 2],
+      );
+      assert.deepEqual(step?.compaction, { reason: "threshold" });
+      assert.deepEqual(
+        readStatus(asyncDir)?.steps?.[0]?.terminalResult?.facts.attempts.map(
+          (attempt) => attempt.attempt,
+        ),
+        [1, 2],
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("projects a stale completed terminalResult onto a persisted failed step", () => {
+    const root = tempRoot("pi-lifecycle-failed-terminal-result-");
+    try {
+      const asyncDir = path.join(root, "run-failed-terminal-result");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-failed-terminal-result",
+        mode: "single",
+        state: "failed",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "failed",
+            compaction: { reason: "threshold" },
+          },
+        ],
+        lifecycle: { generation: 5 },
+      });
+
+      const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+        runId: "run-failed-terminal-result",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile: "/safe/failed-session.jsonl",
+            terminalResult: validTerminalResult([1, 2], "completed"),
+            compaction: { reason: "manual" },
+          },
+        ],
+        lifecycle: { generation: 3 },
+      });
+
+      const step = merged.steps?.[0];
+      assert.equal(merged.state, "failed");
+      assert.equal(lifecycleGeneration(merged), 5);
+      assert.equal(step?.status, "failed");
+      assert.equal(step?.sessionFile, "/safe/failed-session.jsonl");
+      assert.equal(step?.terminalResult?.state, "failed");
+      assert.deepEqual(
+        step?.terminalResult?.facts.attempts.map((attempt) => attempt.attempt),
+        [1, 2],
+      );
+      assert.deepEqual(step?.compaction, { reason: "threshold" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps every persisted lifecycle and privacy field across cancelled, paused, and pausing races", () => {
+    const root = tempRoot("pi-lifecycle-adversarial-merge-");
+    try {
+      const cases: Array<{
+        name: string;
+        persisted: AsyncStatus;
+        memory: AsyncStatus;
+        expectedState: AsyncStatus["state"];
+      }> = [
+        {
+          name: "cancelled",
+          persisted: {
+            runId: "cancelled",
+            mode: "single",
+            state: "cancelled",
+            startedAt: 100,
+            cancel: { summary: "persisted cancel", cancelledAt: 200 },
+            steps: [{ agent: "worker", status: "cancelled", startedAt: 100 }],
+            lifecycle: { generation: 2 },
+          },
+          memory: {
+            runId: "cancelled",
+            mode: "single",
+            state: "paused",
+            startedAt: 999,
+            pid: 999,
+            pause: { kind: "awaiting_supervisor", ownerPid: 999 },
+            cancel: { summary: "stale cancel" },
+            error: "stale error",
+            activityState: "needs_attention",
+            currentTool: "stale-tool",
+            currentPath: "/private/stale",
+            currentStep: 9,
+            timedOut: true,
+            sessionFile: "/private/stale-session",
+            lastActivityAt: 900,
+            steps: [
+              {
+                agent: "worker",
+                status: "paused",
+                startedAt: 999,
+                currentTool: "stale-tool",
+                currentToolArgs: "secret args",
+                currentPath: "/private/stale",
+                timedOut: true,
+                error: "stale step error",
+                sessionFile: "/private/stale-child",
+                turnCount: 4,
+              },
+            ],
+            lifecycle: { generation: 1 },
+          } as AsyncStatus,
+          expectedState: "cancelled",
+        },
+        {
+          name: "paused",
+          persisted: {
+            runId: "paused",
+            mode: "single",
+            state: "paused",
+            startedAt: 100,
+            steps: [{ agent: "worker", status: "paused", startedAt: 100 }],
+            lifecycle: {
+              generation: 2,
+              continuation: { phase: "reserved", claimToken: "keep", continuationRunId: "resume" },
+            },
+          },
+          memory: {
+            runId: "paused",
+            mode: "single",
+            state: "pausing",
+            startedAt: 999,
+            pid: 999,
+            pause: { kind: "cohort_pause", ownerPid: 999 },
+            currentTool: "stale-tool",
+            currentStep: 9,
+            lastActivityAt: 901,
+            steps: [{ agent: "worker", status: "pausing", currentTool: "stale-tool" }],
+            lifecycle: { generation: 1 },
+          },
+          expectedState: "paused",
+        },
+        {
+          name: "pausing",
+          persisted: {
+            runId: "pausing",
+            mode: "single",
+            state: "pausing",
+            startedAt: 100,
+            pid: 42,
+            currentTool: "persisted-tool",
+            currentStep: 0,
+            pause: { kind: "awaiting_supervisor", ownerPid: 42 },
+            steps: [{ agent: "worker", status: "pausing", currentTool: "persisted-tool" }],
+            lifecycle: { generation: 2 },
+          },
+          memory: {
+            runId: "pausing",
+            mode: "single",
+            state: "paused",
+            startedAt: 999,
+            pid: 999,
+            pause: { kind: "cohort_pause", ownerPid: 999 },
+            currentTool: "stale-tool",
+            currentStep: 9,
+            lastActivityAt: 902,
+            steps: [{ agent: "worker", status: "paused", currentTool: "stale-tool" }],
+            lifecycle: { generation: 1 },
+          },
+          expectedState: "pausing",
+        },
+      ];
+      for (const scenario of cases) {
+        const asyncDir = path.join(root, scenario.name);
+        writeNormalizedLifecycleStatus(asyncDir, scenario.persisted);
+        const merged = mergeAndWriteSourceRunnerStatus(asyncDir, scenario.memory);
+        assert.equal(merged.state, scenario.expectedState);
+        assert.equal(merged.startedAt, 100);
+        assert.equal(merged.pid, scenario.name === "pausing" ? 42 : undefined);
+        assert.equal(
+          merged.currentTool,
+          scenario.name === "pausing" ? "persisted-tool" : undefined,
+        );
+        assert.equal(merged.currentStep, scenario.name === "pausing" ? 0 : undefined);
+        assert.equal(merged.pause?.ownerPid, scenario.name === "pausing" ? 42 : undefined);
+        assert.equal(merged.error, undefined);
+        assert.equal(
+          merged.sessionFile,
+          scenario.name === "cancelled" ? "/private/stale-session" : undefined,
+        );
+        assert.equal(merged.steps?.[0]?.status, scenario.expectedState);
+        assert.equal(merged.steps?.[0]?.startedAt, scenario.name === "pausing" ? undefined : 100);
+        assert.equal(
+          merged.steps?.[0]?.currentTool,
+          scenario.name === "pausing" ? "persisted-tool" : undefined,
+        );
+        assert.equal(
+          merged.steps?.[0]?.sessionFile,
+          scenario.name === "cancelled" ? "/private/stale-child" : undefined,
+        );
+        assert.equal(merged.lastActivityAt, undefined);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps persisted compaction state across stale source-generation merges", () => {
+    const root = tempRoot("pi-lifecycle-compaction-generation-");
+    try {
+      const persistedCompaction: AsyncStatus = {
+        runId: "run-compaction-generation",
+        mode: "single",
+        state: "running",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "running", compaction: { reason: "threshold" } }],
+        lifecycle: { generation: 2 },
+      };
+      const staleClear: AsyncStatus = {
+        ...persistedCompaction,
+        steps: [{ agent: "worker", status: "running", compaction: undefined }],
+        lifecycle: { generation: 1 },
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "stale-clear"), persistedCompaction);
+      const clearMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "stale-clear"),
+        staleClear,
+      );
+      assert.deepEqual(clearMerged.steps?.[0]?.compaction, { reason: "threshold" });
+      assert.deepEqual(readStatus(path.join(root, "stale-clear"))?.steps?.[0]?.compaction, {
+        reason: "threshold",
+      });
+
+      const persistedWithoutCompaction: AsyncStatus = {
+        ...persistedCompaction,
+        steps: [{ agent: "worker", status: "running" }],
+      };
+      const staleResurrection: AsyncStatus = {
+        ...persistedWithoutCompaction,
+        steps: [{ agent: "worker", status: "running", compaction: { reason: "manual" } }],
+        lifecycle: { generation: 1 },
+      };
+      writeNormalizedLifecycleStatus(
+        path.join(root, "stale-resurrection"),
+        persistedWithoutCompaction,
+      );
+      const resurrectionMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "stale-resurrection"),
+        staleResurrection,
+      );
+      assert.equal(resurrectionMerged.steps?.[0]?.compaction, undefined);
+
+      const matchingClear: AsyncStatus = {
+        ...persistedCompaction,
+        steps: [{ agent: "worker", status: "running", compaction: undefined }],
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "matching-clear"), persistedCompaction);
+      const matchingClearMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "matching-clear"),
+        matchingClear,
+      );
+      assert.equal(matchingClearMerged.steps?.[0]?.compaction, undefined);
+
+      const matchingStart: AsyncStatus = {
+        ...persistedWithoutCompaction,
+        steps: [{ agent: "worker", status: "running", compaction: { reason: "manual" } }],
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "matching-start"), persistedWithoutCompaction);
+      const matchingStartMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "matching-start"),
+        matchingStart,
+      );
+      assert.deepEqual(matchingStartMerged.steps?.[0]?.compaction, { reason: "manual" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("updates compaction for matching-generation terminal steps but not stale ones", () => {
+    const root = tempRoot("pi-lifecycle-terminal-compaction-generation-");
+    try {
+      const persistedWithCompaction: AsyncStatus = {
+        runId: "run-terminal-compaction-generation",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "complete", compaction: { reason: "threshold" } }],
+        lifecycle: { generation: 2 },
+      };
+      const matchingClear: AsyncStatus = {
+        ...persistedWithCompaction,
+        steps: [{ agent: "worker", status: "complete", compaction: undefined }],
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "matching-clear"), persistedWithCompaction);
+      const matchingClearMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "matching-clear"),
+        matchingClear,
+      );
+      assert.equal(matchingClearMerged.steps?.[0]?.compaction, undefined);
+
+      const persistedWithoutCompaction: AsyncStatus = {
+        ...persistedWithCompaction,
+        steps: [{ agent: "worker", status: "complete" }],
+      };
+      const matchingSet: AsyncStatus = {
+        ...persistedWithoutCompaction,
+        steps: [{ agent: "worker", status: "complete", compaction: { reason: "manual" } }],
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "matching-set"), persistedWithoutCompaction);
+      const matchingSetMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "matching-set"),
+        matchingSet,
+      );
+      assert.deepEqual(matchingSetMerged.steps?.[0]?.compaction, { reason: "manual" });
+
+      const staleClear: AsyncStatus = {
+        ...matchingClear,
+        lifecycle: { generation: 1 },
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "stale-clear"), persistedWithCompaction);
+      const staleClearMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "stale-clear"),
+        staleClear,
+      );
+      assert.deepEqual(staleClearMerged.steps?.[0]?.compaction, { reason: "threshold" });
+
+      const staleSet: AsyncStatus = {
+        ...matchingSet,
+        lifecycle: { generation: 1 },
+      };
+      writeNormalizedLifecycleStatus(path.join(root, "stale-set"), persistedWithoutCompaction);
+      const staleSetMerged = mergeAndWriteSourceRunnerStatus(
+        path.join(root, "stale-set"),
+        staleSet,
+      );
+      assert.equal(staleSetMerged.steps?.[0]?.compaction, undefined);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

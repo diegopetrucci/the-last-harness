@@ -267,27 +267,47 @@ export function consumeChildMessageRequestsFromDir(dir, fsImpl = fs) {
 export function consumeChildMessageRequests(asyncDir, fsImpl = fs) {
     return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
+function parseInterruptRequest(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const request = value;
+    return request.type === "interrupt" ? request : undefined;
+}
 export function readInterruptRequest(asyncDir, fsImpl = fs) {
-    const requestPath = interruptRequestPath(asyncDir);
     try {
-        return JSON.parse(fsImpl.readFileSync(requestPath, "utf-8"));
+        return parseInterruptRequest(JSON.parse(fsImpl.readFileSync(interruptRequestPath(asyncDir), "utf-8")));
     }
-    catch (error) {
-        if (error.code === "ENOENT")
-            return undefined;
-        throw error;
+    catch {
+        return undefined;
     }
 }
-export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
+function consumeInterruptRequestPayload(asyncDir, fsImpl = fs) {
     const requestPath = interruptRequestPath(asyncDir);
-    if (!fsImpl.existsSync(requestPath))
-        return false;
+    const claimedPath = `${requestPath}.claim-${randomUUID()}`;
     try {
-        fsImpl.rmSync(requestPath, { force: true, recursive: true });
+        fsImpl.renameSync(requestPath, claimedPath);
+    }
+    catch (error) {
+        if (error?.code === "ENOENT") {
+            return { present: false, claimed: false };
+        }
+        return { present: true, claimed: false };
+    }
+    let request;
+    try {
+        request = parseInterruptRequest(JSON.parse(fsImpl.readFileSync(claimedPath, "utf-8")));
     }
     catch {
     }
-    return true;
+    try {
+        fsImpl.rmSync(claimedPath, { force: true, recursive: true });
+    }
+    catch {
+    }
+    return { present: true, claimed: true, ...(request ? { request } : {}) };
+}
+export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
+    return consumeInterruptRequestPayload(asyncDir, fsImpl).claimed;
 }
 function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     const requestPath = timeoutRequestPath(asyncDir);
@@ -342,8 +362,9 @@ export function watchAsyncControlInbox(asyncDir, opts) {
         try {
             if (consumeTimeoutRequest(asyncDir, fsImpl))
                 opts.onTimeout?.();
-            if (consumeInterruptRequest(asyncDir, fsImpl))
-                opts.onInterrupt();
+            const interruptRequest = consumeInterruptRequestPayload(asyncDir, fsImpl);
+            if (interruptRequest.claimed)
+                opts.onInterrupt(interruptRequest.request);
             for (const request of consumeChildMessageRequests(asyncDir, fsImpl)) {
                 if (request.type === "resume")
                     opts.onResume?.(request);

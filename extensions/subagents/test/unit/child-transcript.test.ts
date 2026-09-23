@@ -27,7 +27,7 @@ describe("createChildTranscriptWriter", () => {
     const transcriptPath = path.join(dir, "out", "run-1_worker_transcript.jsonl");
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "run-1",
       agent: "worker",
       childIndex: 0,
@@ -41,7 +41,7 @@ describe("createChildTranscriptWriter", () => {
     const record = records[0]!;
     assert.equal(record.version, CHILD_TRANSCRIPT_ARTIFACT_VERSION);
     assert.equal(record.recordType, "message");
-    assert.equal(record.source, "foreground");
+    assert.equal(record.source, "async");
     assert.equal(record.runId, "run-1");
     assert.equal(record.agent, "worker");
     assert.equal(record.childIndex, 0);
@@ -137,7 +137,7 @@ describe("createChildTranscriptWriter", () => {
     const transcriptPath = path.join(dir, "transcript.jsonl");
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "run-4",
       agent: "worker",
       cwd: "/repo",
@@ -169,7 +169,7 @@ describe("createChildTranscriptWriter", () => {
     const transcriptPath = path.join(dir, "transcript.jsonl");
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "run-args-preview",
       agent: "worker",
       cwd: "/repo",
@@ -316,7 +316,7 @@ describe("createChildTranscriptWriter", () => {
     const transcriptPath = path.join(dir, "transcript.jsonl");
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "run-6",
       agent: "worker",
       cwd: "/repo",
@@ -341,7 +341,7 @@ describe("createChildTranscriptWriter", () => {
     const transcriptPath = path.join(dir, "transcript.jsonl");
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "r",
       agent: "a",
       cwd: "/repo",
@@ -371,7 +371,7 @@ describe("createChildTranscriptWriter", () => {
 
     const writer = createChildTranscriptWriter({
       transcriptPath,
-      source: "foreground",
+      source: "async",
       runId: "run-7",
       agent: "worker",
       cwd: "/repo",

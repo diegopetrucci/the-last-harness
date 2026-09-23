@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { requestInterruptAllRunningSubagentRuns } from "../runs/foreground/subagent-executor.ts";
+import { requestInterruptAllRunningSubagentRuns } from "./subagent-executor.ts";
 import type { SubagentState } from "../shared/types.ts";
 
 interface PauseAllShortcutResult {
@@ -7,9 +7,8 @@ interface PauseAllShortcutResult {
   message: string;
 }
 
-function formatRunCount(total: number, foreground: number, async: number): string {
+function formatRunCount(total: number, async: number): string {
   const parts: string[] = [];
-  if (foreground > 0) parts.push(`${foreground} foreground`);
   if (async > 0) parts.push(`${async} async`);
   return `Pause requested for ${total} subagent run${total === 1 ? "" : "s"}${parts.length > 0 ? ` (${parts.join(", ")})` : ""}.`;
 }
@@ -19,8 +18,8 @@ export function handlePauseAllShortcut(
   ctx: ExtensionContext,
 ): PauseAllShortcutResult {
   const summary = requestInterruptAllRunningSubagentRuns(state);
-  const interruptedTotal = summary.foregroundRunIds.length + summary.asyncRunIds.length;
-  const skippedTotal = summary.skippedForegroundRunIds.length + summary.skippedAsyncRunIds.length;
+  const interruptedTotal = summary.asyncRunIds.length;
+  const skippedTotal = summary.skippedAsyncRunIds.length;
   const failedTotal = summary.errors.length;
 
   let result: PauseAllShortcutResult;
@@ -40,7 +39,7 @@ export function handlePauseAllShortcut(
     if (failedTotal > 0) notes.push(`failed ${failedTotal}`);
     result = {
       level: notes.length > 0 ? "warning" : "info",
-      message: `${formatRunCount(interruptedTotal, summary.foregroundRunIds.length, summary.asyncRunIds.length)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
+      message: `${formatRunCount(interruptedTotal, summary.asyncRunIds.length)}${notes.length > 0 ? ` ${notes.join(" · ")}.` : ""}`,
     };
   }
 

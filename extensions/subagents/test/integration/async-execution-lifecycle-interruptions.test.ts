@@ -72,17 +72,14 @@ describe("async execution utilities", () => {
           {
             agent: "one",
             task: "Wait",
-            acceptance: { level: "checked", criteria: ["Complete one"] },
           },
           {
             agent: "two",
             task: "Wait",
-            acceptance: { level: "checked", criteria: ["Complete two"] },
           },
           {
             agent: "three",
             task: "Wait",
-            acceptance: { level: "checked", criteria: ["Complete three"] },
           },
         ],
         concurrency: 3,
@@ -118,10 +115,6 @@ describe("async execution utilities", () => {
       assert.equal(payload.state, "paused");
       assert.equal(payload.success, false);
       assert.deepEqual(
-        payload.results.map((result) => result.acceptance?.status),
-        ["skipped", "skipped", "skipped"],
-      );
-      assert.deepEqual(
         payload.results.map((result) => result.terminationReason),
         ["paused", "paused", "paused"],
       );
@@ -132,10 +125,6 @@ describe("async execution utilities", () => {
       assert.deepEqual(
         status.steps?.map((step) => step.terminationReason),
         ["paused", "paused", "paused"],
-      );
-      assert.deepEqual(
-        status.steps?.map((step) => step.acceptance?.status),
-        ["skipped", "skipped", "skipped"],
       );
       assert.match(eventLog, /"type":"subagent.step.paused"/);
       assert.doesNotMatch(eventLog, /"type":"subagent.parallel.completed"/);
@@ -168,12 +157,10 @@ describe("async execution utilities", () => {
             {
               agent: "alpha",
               task: "Wait",
-              acceptance: { level: "checked", criteria: ["Complete alpha"] },
             },
             {
               agent: "beta",
               task: "Wait",
-              acceptance: { level: "checked", criteria: ["Complete beta"] },
             },
           ],
           concurrency: 2,
@@ -208,14 +195,10 @@ describe("async execution utilities", () => {
         const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
         const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 
-        // Both children must be paused with skipped acceptance.
+        // Both children must be paused.
         assert.deepEqual(
           status.steps?.map((s) => s.status),
           ["paused", "paused"],
-        );
-        assert.deepEqual(
-          status.steps?.map((s) => s.acceptance?.status),
-          ["skipped", "skipped"],
         );
         assert.equal(payload.state, "paused");
 
@@ -273,12 +256,10 @@ describe("async execution utilities", () => {
             {
               agent: "alpha",
               task: "Wait",
-              acceptance: { level: "checked", criteria: ["Complete alpha"] },
             },
             {
               agent: "beta",
               task: "Wait",
-              acceptance: { level: "checked", criteria: ["Complete beta"] },
             },
           ],
           concurrency: 2,
@@ -331,12 +312,6 @@ describe("async execution utilities", () => {
           // F3(a): session context is present from the result artifact.
           assert.ok(resumeTarget.sessionFile, "session file must be present from result artifact");
           // F3(b): paused child correctly identified via interrupted flag.
-          // F3(c): continuationAcceptance applied with monotonic-merge contract.
-          assert.ok(
-            resumeTarget.continuationAcceptance,
-            "continuationAcceptance must be present from result artifact",
-          );
-          assert.equal(resumeTarget.continuationAcceptance.level, "checked");
         } finally {
           // Restore the async dir so afterEach cleanup does not leave orphans.
           try {
@@ -392,14 +367,16 @@ describe("async execution utilities", () => {
       const status = JSON.parse(
         fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
+      // A role ceiling marks only that child; the shared run deadline marker
+      // remains unset because the sibling completed within its own ceiling.
+      assert.equal(payload.timedOut, undefined);
+      assert.equal(status.timedOut, undefined);
       assert.equal(payload.results[0]?.timedOut, true);
       assert.equal(payload.results[0]?.error, "Subagent timed out after 100ms.");
       assert.equal(payload.results[1]?.timedOut, undefined);
       assert.equal(payload.results[1]?.output, "long ceiling completed");
       assert.equal(status.steps?.[0]?.timeoutMs, 100);
       assert.equal(status.steps?.[1]?.timeoutMs, 2_147_483_648);
-      assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) >= 100);
-      assert.ok((status.steps?.[1]?.activeRuntimeMs ?? 0) > 0);
       const firstStartedAt = status.steps?.[0]?.startedAt;
       const secondStartedAt = status.steps?.[1]?.startedAt;
       assert.ok(firstStartedAt !== undefined);
@@ -420,8 +397,9 @@ describe("async execution utilities", () => {
     },
   );
 
-  it("accumulates active runtime across async fallback attempts", async () => {
-    const firstAttemptDelayMs = 500;
+  it("gives a model fallback respawn a fresh role ceiling", async () => {
+    const roleTimeoutMs = scaleTestTimeout(1_000);
+    const firstAttemptDelayMs = scaleTestTimeout(700);
     mockPi.onCall({
       matchArgIncludes: "openai/gpt-5-mini",
       delay: firstAttemptDelayMs,
@@ -442,16 +420,17 @@ describe("async execution utilities", () => {
     });
     mockPi.onCall({
       matchArgIncludes: "anthropic/claude-sonnet-4",
+      delay: firstAttemptDelayMs,
       output: "Recovered on fallback",
     });
-    const id = `async-fallback-runtime-${Date.now().toString(36)}`;
+    const id = `async-fallback-fresh-deadline-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Retry this task after a temporary provider failure.",
       agentConfig: makeAgent("worker", {
         model: "openai/gpt-5-mini",
         fallbackModels: ["anthropic/claude-sonnet-4"],
-        maxExecutionTimeMs: 5_000,
+        maxExecutionTimeMs: roleTimeoutMs,
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
@@ -473,17 +452,18 @@ describe("async execution utilities", () => {
     assert.equal(result?.modelAttempts?.length, 2);
     assert.equal(result?.modelAttempts?.[0]?.success, false);
     assert.equal(result?.modelAttempts?.[1]?.success, true);
-    // A fallback must retain the first failed attempt's active segment rather
-    // than charging only the successful retry.
-    assert.ok(
-      (result?.activeRuntimeMs ?? 0) >= firstAttemptDelayMs - 50,
-      `expected fallback runtime to include the failed attempt, got ${result?.activeRuntimeMs}ms`,
-    );
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const step = status.steps?.[0];
+    assert.ok(step?.startedAt !== undefined);
+    assert.equal(step?.timeoutMs, roleTimeoutMs);
+    assert.equal(step?.deadlineAt, (step?.startedAt ?? 0) + roleTimeoutMs);
     assert.equal(mockPi.callCount(), 2);
   });
 
   it(
-    "freezes async step runtime before timeout cleanup",
+    "records the step deadline before timeout cleanup",
     {
       skip:
         process.platform === "win32"
@@ -496,10 +476,7 @@ describe("async execution utilities", () => {
       // loaded CI runners (where TLH_TEST_TIMEOUT_SCALE=3). The mock delay
       // stays well above stepCeilingMs at every scale so the child is still
       // alive when the step deadline fires and ignoreSigterm exercises the
-      // hard-kill path. The bound below is relative to the ceiling:
-      //   pass case:  runtimeMs ≈ stepCeilingMs  (logical clock frozen at deadline)
-      //   fail case:  runtimeMs ≈ stepCeilingMs + CHILD_PROTOCOL_HARD_KILL_GRACE_MS (3000)
-      // A margin of 1500 ms sits clearly between 0 and 3000 at both scale 1 and scale 3.
+      // hard-kill path.
       const stepCeilingMs = scaleTestTimeout(1_000);
       mockPi.onCall({ delay: scaleTestTimeout(10_000), ignoreSigterm: true, output: "too late" });
       const id = `async-step-timeout-runtime-${Date.now().toString(36)}`;
@@ -521,13 +498,14 @@ describe("async execution utilities", () => {
       await waitForMockPiCall(mockPi, 0);
 
       const payload = await readAsyncPayload(id);
-      const runtimeMs = payload.results[0]?.activeRuntimeMs ?? 0;
       assert.equal(payload.state, "failed");
       assert.equal(payload.results[0]?.timedOut, true);
-      assert.ok(
-        runtimeMs < stepCeilingMs + 1_500,
-        `timeout cleanup must not consume logical runtime; expected < ${stepCeilingMs + 1_500}ms (ceiling ${stepCeilingMs}ms + 1500ms margin), observed ${runtimeMs}ms`,
-      );
+      const status = JSON.parse(
+        fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const step = status.steps?.[0];
+      assert.ok(step?.startedAt !== undefined);
+      assert.equal(step?.deadlineAt, (step?.startedAt ?? 0) + stepCeilingMs);
     },
   );
 
@@ -727,145 +705,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  it("cancels async acceptance verification when the run times out", async () => {
-    mockPi.onCall({ output: "implementation complete" });
-    const id = `async-timeout-acceptance-${Date.now().toString(36)}`;
-    const timeoutMs = 1_000;
-    // Both the verify sleep and the verify command timeout are scaled so that
-    // the ratio invariant holds at any TLH_TEST_TIMEOUT_SCALE factor:
-    //   verifySleepMs (scale*30_000) >> timeoutMs (1_000) + scaleTestTimeout(4_000) (scale*4_000)
-    //   i.e. scale*30_000 > 1_000 + scale*4_000  ⟺  scale*26_000 > 1_000, true for all scale > 0.
-    // Without scaling both sides, a sufficiently large scale factor would let the
-    // bound exceed the sleep, making a non-cancelling runner appear to pass.
-    const verifySleepMs = scaleTestTimeout(30_000);
-    const verifyTimeoutMs = scaleTestTimeout(60_000);
-    const startedAt = Date.now();
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Implement with verified acceptance",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      timeoutMs,
-      acceptance: {
-        level: "verified",
-        verify: [
-          {
-            id: "slow",
-            command: `${process.execPath} -e "setTimeout(()=>process.exit(0), ${verifySleepMs})"`,
-            timeoutMs: verifyTimeoutMs,
-          },
-        ],
-      },
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const elapsedMs = Date.now() - startedAt;
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.state, "failed");
-    assert.equal(payload.timedOut, true);
-    assert.equal(payload.results[0]?.timedOut, true);
-    assert.equal(payload.results[0]?.acceptance, undefined);
-    assert.equal(status.steps?.[0]?.timedOut, true);
-    assert.ok(
-      // The 4_000ms slack is load-sensitive: on a slow CI machine shutdown
-      // overhead after the timeout fires can exceed a fixed constant.
-      // Scale it so the bound absorbs machine slowness. verifySleepMs
-      // is also scaled (see above) so the ratio invariant is maintained.
-      elapsedMs < timeoutMs + scaleTestTimeout(4_000),
-      `timeout should cancel acceptance verification well before the verify command completes, elapsed ${elapsedMs}ms`,
-    );
-  });
-
-  it(
-    "interrupts async acceptance verification and returns a paused result",
-    {
-      skip:
-        process.platform === "win32"
-          ? "cross-process interrupt delivery unreliable on Windows CI"
-          : undefined,
-    },
-    async () => {
-      mockPi.onCall({ output: "implementation complete" });
-      const id = `async-interrupt-acceptance-${Date.now().toString(36)}`;
-      // Ratio invariant: verifySleepMs sets a floor that proves interrupt aborted
-      // verification rather than waiting for it to complete. promptnessMs must
-      // remain strictly below verifySleepMs on every machine, and both must scale
-      // together so the invariant is preserved under TLH_TEST_TIMEOUT_SCALE.
-      // verifyTimeoutMs must remain safely above verifySleepMs so the step cannot
-      // time out on its own before the interrupt lands.
-      const verifySleepMs = scaleTestTimeout(5_000);
-      const promptnessMs = scaleTestTimeout(3_000);
-      const verifyTimeoutMs = verifySleepMs * 2;
-      const startedAt = Date.now();
-      executeAsyncSingle(id, {
-        agent: "worker",
-        task: "Implement with verified acceptance",
-        agentConfig: makeAgent("worker"),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-        acceptance: {
-          level: "verified",
-          verify: [
-            {
-              id: "slow",
-              command: `${process.execPath} -e "setTimeout(()=>process.exit(0), ${verifySleepMs})"`,
-              timeoutMs: verifyTimeoutMs,
-            },
-          ],
-        },
-      });
-
-      const asyncDir = path.join(ASYNC_DIR, id);
-      const statusPath = path.join(asyncDir, "status.json");
-      await waitForMockPiCall(mockPi, 0);
-      await waitForAsyncState(asyncDir, "running");
-      const statusBeforeInterrupt = JSON.parse(
-        fs.readFileSync(statusPath, "utf-8"),
-      ) as AsyncStatusPayload & {
-        pid?: number;
-      };
-      deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
-
-      const resultPath = await waitForAsyncResultFile(id);
-      await waitForAsyncState(asyncDir, "paused");
-      const elapsedMs = Date.now() - startedAt;
-      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.exitCode, 0);
-      assert.equal(payload.results[0]?.error, undefined);
-      assert.equal(payload.results[0]?.acceptance?.status, "skipped");
-      assert.equal(status.steps?.[0]?.status, "paused");
-      assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
-      assert.ok(
-        elapsedMs < promptnessMs,
-        `interrupt should abort async verification promptly, elapsed ${elapsedMs}ms (bound=${promptnessMs}ms, verifySleep=${verifySleepMs}ms)`,
-      );
-    },
-  );
-
   it("background forced drain after final assistant output is cleanup success", async () => {
     // Ratio invariant: keepaliveMs sets the mock's natural exit boundary.
     // elapsed < drainBoundMs proves the runner cleaned up the child proactively
@@ -969,9 +808,11 @@ describe("async execution utilities", () => {
       elapsed < drainBoundMsEmpty,
       `should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms (bound=${drainBoundMsEmpty}ms, keepalive=${keepaliveMsEmpty}ms)`,
     );
-    assert.equal(payload.success, true);
-    assert.equal(payload.exitCode, 0);
-    assert.equal(payload.results[0].success, true);
+    assert.equal(payload.success, false);
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.results[0].success, false);
+    assert.equal(payload.results[0].exitCode, 1);
+    assert.match(payload.results[0].error ?? "", /no output/i);
     assert.equal(payload.results[0].output, "");
   });
 
@@ -1028,60 +869,48 @@ describe("async execution utilities", () => {
     assert.equal(payload.results[0].error, "provider exploded");
   });
 
-  it(
-    "background interrupted runs still clean up owned process groups",
-    {
-      skip:
-        process.platform === "win32"
-          ? "owned process-group cleanup unsupported on win32"
-          : undefined,
-    },
-    async () => {
-      mockPi.onCall({ delay: 10_000 });
+  it("background interrupted runs still clean up owned process groups", async () => {
+    mockPi.onCall({ delay: 10_000 });
 
-      const id = `async-interrupt-cleanup-${Date.now().toString(36)}`;
-      const asyncDir = path.join(ASYNC_DIR, id);
-      executeAsyncSingle(id, {
-        agent: "worker",
-        task: "Do work",
-        agentConfig: makeAgent("worker"),
-        acceptance: { level: "checked", criteria: ["Complete the work"] },
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
-      });
+    const id = `async-interrupt-cleanup-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
 
-      await waitForMockPiCall(mockPi, 0);
-      await waitForAsyncState(asyncDir, "running");
-      requestAsyncInterrupt(asyncDir, { source: "async-execution-test" });
+    await waitForMockPiCall(mockPi, 0);
+    await waitForAsyncState(asyncDir, "running");
+    requestAsyncInterrupt(asyncDir, { source: "async-execution-test" });
 
-      const resultPath = await waitForAsyncResultFile(id);
-      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-      const status = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      const processCleanup = payload.results[0]?.processCleanup;
-      assert.equal(payload.success, false);
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.exitCode, 0);
-      assert.equal(payload.results[0]?.acceptance?.status, "skipped");
-      assert.equal(status.steps?.[0]?.status, "paused");
-      assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
-      assert.equal(payload.summary, "Paused after interrupt. Waiting for explicit next action.");
-      assert.ok(processCleanup, "expected background result to report process cleanup");
-      assert.equal(processCleanup?.attempted, true);
-      assert.equal(processCleanup?.terminated, true);
-      assert.equal(processCleanup?.skippedReason, undefined);
-      assert.equal(typeof processCleanup?.processGroupId, "number");
-    },
-  );
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const processCleanup = payload.results[0]?.processCleanup;
+    assert.equal(payload.success, false);
+    assert.equal(payload.state, "paused");
+    assert.equal(payload.exitCode, 0);
+    assert.equal(status.steps?.[0]?.status, "paused");
+    assert.equal(payload.summary, "Paused after interrupt. Waiting for explicit next action.");
+    assert.ok(processCleanup, "expected background result to report process cleanup");
+    assert.equal(processCleanup?.attempted, true);
+    assert.equal(processCleanup?.terminated, true);
+    assert.equal(processCleanup?.skippedReason, undefined);
+    assert.equal(typeof processCleanup?.processGroupId, "number");
+  });
 });

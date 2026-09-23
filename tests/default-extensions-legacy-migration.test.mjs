@@ -203,6 +203,86 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
   assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
 });
 
+test("retired subagent toolBudget settings are scrubbed by merge and defaults", () => {
+  const mergeFixture = tempFixture();
+  writeFileSync(
+    mergeFixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    mergeFixture.settings,
+    JSON.stringify(
+      {
+        subagents: {
+          agentOverrides: {
+            developer: { model: "openai-codex/gpt-5.4", toolBudget: { hard: 30 }, note: "keep" },
+            external: { toolBudget: { hard: 10 } },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  runNode(mergeScript, [
+    mergeFixture.defaults,
+    "--settings",
+    mergeFixture.settings,
+    "--default-extensions",
+    mergeFixture.extensions,
+    "--quiet",
+  ]);
+  assert.deepEqual(readJson(mergeFixture.settings).subagents.agentOverrides, {
+    developer: { model: "openai-codex/gpt-5.4", note: "keep" },
+    external: {},
+  });
+
+  const defaultsFixture = tempFixture();
+  writeFileSync(
+    defaultsFixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    defaultsFixture.settings,
+    JSON.stringify(
+      {
+        subagents: { agentOverrides: { librarian: { toolBudget: { hard: 60 }, note: "keep" } } },
+      },
+      null,
+      2,
+    ),
+  );
+  runNode(defaultsScript, [
+    "--settings",
+    defaultsFixture.settings,
+    "--defaults",
+    defaultsFixture.extensions,
+    "disable",
+    "helper",
+  ]);
+  assert.deepEqual(readJson(defaultsFixture.settings).subagents.agentOverrides, {
+    librarian: { note: "keep" },
+  });
+});
+
 test("merge no longer reorders quiet-tools around retired rtk packages", () => {
   const fixture = tempFixture();
   writeFileSync(

@@ -45,6 +45,7 @@ Use the `subagent` tool for minor agents:
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved implementation task at a time and run its ticket-local validation.
 - `test-runner`: execute the exact ordered shell/MCP steps listed on an approved final-validation ticket and report pass/fail without editing.
+- For any ticket-backed dispatch, pass the approved ticket ID through the subagent `ticket` parameter (top-level for single, per task for parallel) instead of embedding `tk show <id>` in task prose; the child receives the injected ticket body as its source of truth.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
@@ -119,8 +120,8 @@ For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
 2. Inspect the ticket type and route it to the matching worker:
-   - implementation tickets go to `developer`, who must run `tk show <id>` before making changes and perform the ticket-local validation;
-   - final-validation tickets go to `test-runner`, who must run `tk show <id>` first and execute only the exact ordered shell/MCP steps listed in the ticket.
+   - implementation tickets go to `developer`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then performs the ticket-local validation;
+   - final-validation tickets go to `test-runner`, who treats the injected ticket body as the source of truth and may run `tk show <id>` only to re-read it, then executes only the exact ordered shell/MCP steps listed in the ticket.
 3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
 4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
 5. Evaluate the worker report against the ticket and overall plan.
@@ -132,7 +133,7 @@ For each ready task:
 
 - Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Treat cumulative runtime budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
+- Treat each child spawn's role ceiling as a fresh wall-clock allowance, including fallback, retry, and resume child spawns. `maxRunTimeMs` is anchored at each direct run's start and covers that run's batch, queueing, fallback, and retries; status updates or steering do not reset it. Durable resume creates a new direct run with a new `maxRunTimeMs` deadline.
 
 ## Final review
 

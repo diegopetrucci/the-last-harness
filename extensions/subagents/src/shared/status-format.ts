@@ -37,7 +37,7 @@ export function formatActivityLabel(
 }
 
 function isCompletedStepStatus(status: AsyncJobStep["status"]): boolean {
-  return status === "complete" || status === "completed";
+  return status === "complete";
 }
 
 function formatAgentRunningLabel(count: number): string {

@@ -341,6 +341,7 @@ test("plain update enforces the subagent attention config after a successful ins
     JSON.stringify({
       control: {
         activeNoticeAfterMs: 1,
+        failedToolAttemptsBeforeAttention: 3,
         needsAttentionAfterMs: 2,
         notifyOn: ["active_long_running", "needs_attention"],
       },

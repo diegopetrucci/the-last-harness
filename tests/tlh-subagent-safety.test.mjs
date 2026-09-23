@@ -285,12 +285,12 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   // single
   const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
   assertAllowed(single, opts);
-  assert.equal(single.agentScope, "project");
+  assert.equal(single.agentScope, "user");
 
   // tasks (parallel batch)
   const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
   assertAllowed(tasks, opts);
-  assert.equal(tasks.agentScope, "project");
+  assert.equal(tasks.agentScope, "user");
 
   // mixed: bundled + embedded
   const mixed = {
@@ -300,15 +300,18 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
     ],
   };
   assertAllowed(mixed, opts);
-  assert.equal(mixed.agentScope, "project");
+  assert.equal(mixed.agentScope, "user");
 
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "user" }, opts),
-    /project scope is required/,
-  );
+  const explicitUser = { agent: "embedded.repo-helper", agentScope: "user" };
+  assertAllowed(explicitUser, opts);
+  assert.equal(explicitUser.agentScope, "user");
   assert.match(
     validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
-    /project scope is required/,
+    /may not use agentScope: "both"/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "project" }, opts),
+    /may not use agentScope: "project"/,
   );
 });
 

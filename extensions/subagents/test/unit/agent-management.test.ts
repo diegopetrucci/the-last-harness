@@ -28,12 +28,12 @@ function writeCustom(filename: string, name: string, extra = ""): void {
   );
 }
 
-function writeCanonicalRole(name: string): void {
+function writeCanonicalRole(name: string, extra = ""): void {
   const filePath = path.join(tempDir, "agent-home", "tlh", "agents", "subagents", `${name}.md`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(
     filePath,
-    `---\nname: ${name}\ndescription: Canonical ${name}\n---\n\nCanonical role.\n`,
+    `---\nname: ${name}\ndescription: Canonical ${name}\n${extra}---\n\nCanonical role.\n`,
     "utf-8",
   );
 }
@@ -104,7 +104,7 @@ describe("agent management config parsing", () => {
   });
 
   it("shows canonical roles for project scope without exposing project custom agents", () => {
-    writeCanonicalRole("developer");
+    writeCanonicalRole("developer", "completionGuard: true\n");
     trustProject();
     writeCustom("HELPER.md", "helper");
 
@@ -112,6 +112,7 @@ describe("agent management config parsing", () => {
     assert.equal(result.isError, false);
     const text = readText(result);
     assert.match(text, /- developer \(user\): Canonical developer/);
+    assert.doesNotMatch(text, /load warning|completionGuard/);
     assert.doesNotMatch(text, /embedded\.helper|HELPER\.md/);
   });
 
@@ -134,7 +135,7 @@ describe("agent management config parsing", () => {
 
   it("does not inspect malformed root custom definitions", () => {
     trustProject();
-    writeCustom("BROKEN.md", "broken", "acceptanceRole: observer\n");
+    writeCustom("BROKEN.md", "broken", "maxExecutionTimeMs: nope\n");
     writeCustom("VALID.md", "valid");
 
     const listed = handleManagementAction("list", {}, { cwd: tempDir });
@@ -145,7 +146,7 @@ describe("agent management config parsing", () => {
 
   it("keeps root custom warnings aligned with user and project list scopes", () => {
     trustProject();
-    writeCustom("PROJECT-BROKEN.md", "project-broken", "acceptanceRole: observer\n");
+    writeCustom("PROJECT-BROKEN.md", "project-broken", "maxExecutionTimeMs: nope\n");
     fs.mkdirSync(path.join(tempDir, "agent-home", "agents"), { recursive: true });
     fs.writeFileSync(
       path.join(tempDir, "agent-home", "agents", "user-broken.md"),

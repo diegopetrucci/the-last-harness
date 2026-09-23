@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import { TEMP_ROOT_DIR, type ForegroundResumeRun } from "../../src/shared/types.ts";
+import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { makeSubagentState } from "../support/helpers.ts";
 import { errno, textContent } from "../support/run-status-fixtures.ts";
 
@@ -26,6 +26,7 @@ describe("async run status inspection", () => {
             runId: "run-stale",
             mode: "single",
             state: "running",
+            awaited: true,
             pid: 12345,
             startedAt: 100,
             lastUpdate: 100,
@@ -54,7 +55,8 @@ describe("async run status inspection", () => {
       const text = textContent(result);
       assert.equal(result.isError, undefined);
       assert.match(text, /State: failed/);
-      assert.match(text, /Diagnosis: Async runner process 12345 exited or disappeared/);
+      assert.match(text, /Awaited: true/);
+      assert.match(text, /Diagnosis: Async runner process 12345 exited before writing a result/);
       assert.match(
         text,
         new RegExp(
@@ -63,7 +65,7 @@ describe("async run status inspection", () => {
       );
       assert.match(
         text,
-        /Step 1: scout failed, error: Async runner process 12345 exited or disappeared/,
+        /Step 1: scout failed, error: Async runner process 12345 exited before writing a result/,
       );
       assert.match(
         text,
@@ -215,46 +217,6 @@ describe("async run status inspection", () => {
         text,
         new RegExp(`Output: ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
       );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("preserves the bounded line tail for remembered foreground transcripts", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-foreground-transcript-"));
-    try {
-      const runId = "foreground-transcript-tail";
-      const run: ForegroundResumeRun = {
-        runId,
-        mode: "single",
-        cwd: root,
-        updatedAt: 250,
-        children: [
-          {
-            agent: "worker",
-            index: 0,
-            status: "completed",
-            finalOutput: ["first line", "second line", "third line", "fourth line"].join("\n"),
-          },
-        ],
-      };
-      const result = inspectSubagentStatus(
-        { id: runId, view: "transcript", lines: 2 },
-        {
-          asyncDirRoot: path.join(root, "runs"),
-          resultsDir: path.join(root, "results"),
-          state: makeSubagentState({ foregroundRuns: new Map([[runId, run]]) }),
-        },
-      );
-
-      const text = textContent(result);
-      assert.equal(result.isError, undefined);
-      assert.match(
-        text,
-        /Status transcript tail \(retained output\/session; not _transcript\.jsonl\):/,
-      );
-      assert.doesNotMatch(text, /first line|second line/);
-      assert.match(text, /  third line\n  fourth line/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -415,140 +377,50 @@ describe("async run status inspection", () => {
     }
   });
 
-  it("shows an active read-only fleet view with transcript commands", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-fleet-"));
+  it("lists only active async runs owned by the current session", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-session-list-scope-"));
     try {
       const asyncRoot = path.join(root, "runs");
-      const asyncDir = path.join(asyncRoot, "run-fleet");
-      fs.mkdirSync(asyncDir, { recursive: true });
-      fs.writeFileSync(path.join(asyncDir, "output-0.log"), "worker output", "utf-8");
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: "run-fleet",
-            mode: "parallel",
-            state: "running",
-            startedAt: 100,
-            lastUpdate: 200,
-            currentStep: 0,
-            steps: [
-              { agent: "worker", status: "running", startedAt: 100 },
-              { agent: "reviewer", status: "pending" },
-            ],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const state = makeSubagentState({
-        foregroundControls: new Map([
-          [
-            "fg-run",
+      const resultsDir = path.join(root, "results");
+      for (const [runId, sessionId] of [
+        ["run-current-session", "session-current"],
+        ["run-other-session", "session-other"],
+      ] as const) {
+        const asyncDir = path.join(asyncRoot, runId);
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(asyncDir, "status.json"),
+          JSON.stringify(
             {
-              runId: "fg-run",
+              runId,
+              sessionId,
               mode: "single",
+              state: "running",
               startedAt: 100,
-              updatedAt: 250,
-              currentAgent: "scout",
-              currentIndex: 0,
-              lastActivityAt: 240,
+              lastUpdate: 200,
+              currentStep: 0,
+              steps: [{ agent: "worker", status: "running", startedAt: 100 }],
             },
-          ],
-        ]),
-      });
-
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+      }
       const result = inspectSubagentStatus(
-        { view: "fleet" },
+        {},
         {
           asyncDirRoot: asyncRoot,
-          resultsDir: path.join(root, "results"),
-          state,
+          resultsDir,
+          state: makeSubagentState({ currentSessionId: "session-current" }),
           kill: () => true,
           now: () => 250,
         },
       );
-
       const text = textContent(result);
       assert.equal(result.isError, undefined);
-      assert.match(text, /Subagent fleet: 2 active/);
-      assert.match(text, /Foreground runs:/);
-      assert.match(text, /fg-run \| running \| scout/);
-      assert.match(text, /Async runs:/);
-      assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
-      assert.match(
-        text,
-        /status transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/,
-      );
-      assert.match(
-        text,
-        /status transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/,
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("scopes fleet active-run discovery to the current session", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-fleet-session-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const currentDir = path.join(asyncRoot, "run-current");
-      const otherDir = path.join(asyncRoot, "run-other");
-      fs.mkdirSync(currentDir, { recursive: true });
-      fs.mkdirSync(otherDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(currentDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: "run-current",
-            sessionId: "session-current",
-            mode: "single",
-            state: "running",
-            startedAt: 100,
-            lastUpdate: 200,
-            steps: [{ agent: "worker", status: "running", startedAt: 100 }],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      fs.writeFileSync(
-        path.join(otherDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: "run-other",
-            sessionId: "session-other",
-            mode: "single",
-            state: "running",
-            startedAt: 100,
-            lastUpdate: 200,
-            steps: [{ agent: "reviewer", status: "running", startedAt: 100 }],
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      const state = makeSubagentState({ currentSessionId: "session-current" });
-
-      const result = inspectSubagentStatus(
-        { view: "fleet" },
-        {
-          asyncDirRoot: asyncRoot,
-          resultsDir: path.join(root, "results"),
-          state,
-          kill: () => true,
-          now: () => 250,
-        },
-      );
-
-      const text = textContent(result);
-      assert.equal(result.isError, undefined);
-      assert.match(text, /run-current/);
-      assert.doesNotMatch(text, /run-other/);
+      assert.match(text, /run-current-session/);
+      assert.doesNotMatch(text, /run-other-session/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -858,7 +730,7 @@ describe("async run status inspection", () => {
       assert.match(text, /↳ reviewer \[nested-stale\] failed/);
       assert.match(
         text,
-        /1\. reviewer failed \| error: Async runner process 54321 exited or disappeared/,
+        /1\. reviewer failed \| error: Async runner process 54321 exited before writing a result/,
       );
       assert.ok(
         fs.existsSync(
@@ -1182,7 +1054,7 @@ describe("async run status inspection", () => {
     }
   });
 
-  it("treats a top-level completed result as one transcript child", () => {
+  it("allows a matching-session result artifact as one transcript child", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-transcript-"));
     try {
       const asyncRoot = path.join(root, "runs");
@@ -1199,8 +1071,9 @@ describe("async run status inspection", () => {
             agent: "worker",
             success: false,
             state: "failed",
+            sessionId: "session-current",
             sessionFile,
-            summary: "legacy result transcript",
+            summary: "matching result transcript",
           },
           null,
           2,
@@ -1213,13 +1086,105 @@ describe("async run status inspection", () => {
         {
           asyncDirRoot: asyncRoot,
           resultsDir,
+          state: makeSubagentState({ currentSessionId: "session-current" }),
         },
       );
 
       const text = textContent(result);
       assert.equal(result.isError, undefined);
       assert.match(text, /Child: 0 \(worker\)/);
-      assert.match(text, /legacy result transcript/);
+      assert.match(text, /matching result transcript/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a mismatched-session result artifact transcript", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-transcript-foreign-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      const resultPath = path.join(resultsDir, "run-result-transcript-foreign.json");
+      fs.mkdirSync(resultsDir, { recursive: true });
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          {
+            id: "run-result-transcript-foreign",
+            agent: "worker",
+            success: false,
+            state: "failed",
+            sessionId: "session-other",
+            summary: "FOREIGN_RESULT_TRANSCRIPT_SENTINEL",
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = inspectSubagentStatus(
+        { id: "run-result-transcript-foreign", view: "transcript" },
+        {
+          asyncDirRoot: asyncRoot,
+          resultsDir,
+          state: makeSubagentState({ currentSessionId: "session-current" }),
+        },
+      );
+
+      const text = textContent(result);
+      assert.equal(result.isError, true);
+      assert.equal(
+        text,
+        "Status transcript view is only available for async runs owned by the current session.",
+      );
+      assert.doesNotMatch(text, /FOREIGN_RESULT_TRANSCRIPT_SENTINEL/);
+      assert.doesNotMatch(text, /run-result-transcript-foreign\.json/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a result artifact transcript with no session ownership", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-result-transcript-missing-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const resultsDir = path.join(root, "results");
+      const resultPath = path.join(resultsDir, "run-result-transcript-missing.json");
+      fs.mkdirSync(resultsDir, { recursive: true });
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          {
+            id: "run-result-transcript-missing",
+            agent: "worker",
+            success: false,
+            state: "failed",
+            summary: "MISSING_RESULT_SESSION_SENTINEL",
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = inspectSubagentStatus(
+        { id: "run-result-transcript-missing", view: "transcript" },
+        {
+          asyncDirRoot: asyncRoot,
+          resultsDir,
+          state: makeSubagentState({ currentSessionId: "session-current" }),
+        },
+      );
+
+      const text = textContent(result);
+      assert.equal(result.isError, true);
+      assert.equal(
+        text,
+        "Status transcript view is only available for async runs owned by the current session.",
+      );
+      assert.doesNotMatch(text, /MISSING_RESULT_SESSION_SENTINEL/);
+      assert.doesNotMatch(text, /run-result-transcript-missing\.json/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1279,6 +1244,7 @@ describe("async run status inspection", () => {
             agent: "worker",
             success: false,
             state: "failed",
+            sessionId: "session-other",
             sessionFile,
             summary: "worker-a:\nfirst line\nsecond line\n\nworker-b:\nthird line",
           },
@@ -1293,6 +1259,7 @@ describe("async run status inspection", () => {
         {
           asyncDirRoot: asyncRoot,
           resultsDir,
+          state: makeSubagentState({ currentSessionId: "session-current" }),
         },
       );
 

@@ -601,6 +601,7 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
         activeNoticeAfterMs: 1,
         activeNoticeAfterTurns: 2,
         activeNoticeAfterTokens: 3,
+        failedToolAttemptsBeforeAttention: 4,
         needsAttentionAfterMs: 4,
         notifyOn: ["active_long_running", "needs_attention"],
       },

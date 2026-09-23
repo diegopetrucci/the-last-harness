@@ -30,7 +30,7 @@ export const INTERRUPT_SIGNAL: NodeJS.Signals =
 
 export type ControlChannelFs = Pick<
   typeof fs,
-  "mkdirSync" | "existsSync" | "rmSync" | "watch" | "readdirSync" | "readFileSync"
+  "mkdirSync" | "existsSync" | "rmSync" | "renameSync" | "watch" | "readdirSync" | "readFileSync"
 >;
 export type ControlChannelTimers = {
   setInterval: typeof setInterval;
@@ -473,35 +473,80 @@ export function consumeChildMessageRequests(
   return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 
-/**
- * Runner side: consume a pending interrupt request. Idempotent — removes the file
- * so each distinct request fires exactly once. Returns whether one was pending.
- */
+/** Parse a request without consuming it; used by read-only status inspection. */
+function parseInterruptRequest(value: unknown): InterruptRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const request = value as Partial<InterruptRequest>;
+  return request.type === "interrupt" ? (request as InterruptRequest) : undefined;
+}
+
 export function readInterruptRequest(
   asyncDir: string,
   fsImpl: Pick<typeof fs, "readFileSync"> = fs,
 ): InterruptRequest | undefined {
-  const requestPath = interruptRequestPath(asyncDir);
   try {
-    return JSON.parse(fsImpl.readFileSync(requestPath, "utf-8")) as InterruptRequest;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
+    return parseInterruptRequest(
+      JSON.parse(fsImpl.readFileSync(interruptRequestPath(asyncDir), "utf-8")),
+    );
+  } catch {
+    // A partially-written or corrupt interrupt is ignored by read-only status
+    // inspection. The consuming watcher still removes it below.
+    return undefined;
   }
+}
+
+type ConsumedInterruptRequest = {
+  /** A request path was present when the claim was attempted. */
+  present: boolean;
+  /** The path was atomically claimed and is therefore consumed exactly once. */
+  claimed: boolean;
+  request?: InterruptRequest;
+};
+
+/**
+ * Atomically claim one interrupt before reading it. A writer replacing the
+ * inbox path after the rename leaves a new request for the next poll rather
+ * than losing it between a read and remove.
+ */
+function consumeInterruptRequestPayload(
+  asyncDir: string,
+  fsImpl: Pick<typeof fs, "readFileSync" | "rmSync" | "renameSync"> = fs,
+): ConsumedInterruptRequest {
+  const requestPath = interruptRequestPath(asyncDir);
+  const claimedPath = `${requestPath}.claim-${randomUUID()}`;
+  try {
+    fsImpl.renameSync(requestPath, claimedPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return { present: false, claimed: false };
+    }
+    // A non-ENOENT failure leaves the inbox path untouched. Do not report a
+    // delivery: the next poll must be allowed to retry the claim.
+    return { present: true, claimed: false };
+  }
+
+  let request: InterruptRequest | undefined;
+  try {
+    request = parseInterruptRequest(JSON.parse(fsImpl.readFileSync(claimedPath, "utf-8")));
+  } catch {
+    // Corrupt or partially-written requests are still consumed. The caller
+    // receives an undefined payload but still records the one delivery.
+  }
+  try {
+    fsImpl.rmSync(claimedPath, { force: true, recursive: true });
+  } catch {
+    // The atomic claim is already private to this consumer, so cleanup failure
+    // cannot cause a duplicate delivery. Deliver the request rather than
+    // dropping a valid interrupt because its claim file could not be removed.
+  }
+  return { present: true, claimed: true, ...(request ? { request } : {}) };
 }
 
 export function consumeInterruptRequest(
   asyncDir: string,
-  fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
+  fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readFileSync" | "renameSync"> = fs,
 ): boolean {
-  const requestPath = interruptRequestPath(asyncDir);
-  if (!fsImpl.existsSync(requestPath)) return false;
-  try {
-    fsImpl.rmSync(requestPath, { force: true, recursive: true });
-  } catch {
-    // Already removed by a concurrent check — still counts as consumed.
-  }
-  return true;
+  return consumeInterruptRequestPayload(asyncDir, fsImpl).claimed;
 }
 
 function consumeTimeoutRequest(
@@ -580,7 +625,7 @@ export function deliverTimeoutRequest(input: {
 export function watchAsyncControlInbox(
   asyncDir: string,
   opts: {
-    onInterrupt: () => void;
+    onInterrupt: (request?: { reason?: string; source?: string }) => void;
     onTimeout?: () => void;
     onSteer?: (request: SteerRequest) => void;
     onResume?: (request: ResumeRequest) => void;
@@ -603,7 +648,11 @@ export function watchAsyncControlInbox(
     if (disposed) return;
     try {
       if (consumeTimeoutRequest(asyncDir, fsImpl)) opts.onTimeout?.();
-      if (consumeInterruptRequest(asyncDir, fsImpl)) opts.onInterrupt();
+      const interruptRequest = consumeInterruptRequestPayload(asyncDir, fsImpl);
+      // A claimed malformed/empty payload is still one interrupt delivery. The
+      // undefined request tells the runner to use its normal interrupt path,
+      // while an unclaimed rename failure remains retryable and is not fired.
+      if (interruptRequest.claimed) opts.onInterrupt(interruptRequest.request);
       for (const request of consumeChildMessageRequests(asyncDir, fsImpl)) {
         if (request.type === "resume") opts.onResume?.(request);
         else opts.onSteer?.(request);

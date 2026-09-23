@@ -4,12 +4,10 @@ import * as path from "node:path";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 import { mergeAgentsForScope } from "./agent-selection.js";
-import { mergeProjectAgentSnapshot, projectAgentSnapshotDiscoveryMetadata, ProjectAgentSnapshotCapabilityError, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
-import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
-import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-provenance.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { canonicalAgentMaxExecutionTimeMs, isPositiveSafeInteger } from "./execution-ceiling.js";
 function defaultSystemPromptMode(name) {
@@ -32,7 +30,6 @@ const KNOWN_FIELDS = new Set([
     "systemPromptMode",
     "inheritProjectContext",
     "inheritSkills",
-    "acceptanceRole",
     "skill",
     "skills",
     "extensions",
@@ -43,9 +40,7 @@ const KNOWN_FIELDS = new Set([
     "interactive",
     "maxSubagentDepth",
     "maxExecutionTimeMs",
-    "completionGuard",
     "supervisorBridge",
-    "toolBudget",
 ]);
 const EMPTY_SUBAGENT_SETTINGS = {
     overrides: Object.create(null),
@@ -89,7 +84,6 @@ function cloneOverrideBase(agent) {
         systemPromptMode: agent.systemPromptMode,
         inheritProjectContext: agent.inheritProjectContext,
         inheritSkills: agent.inheritSkills,
-        acceptanceRole: agent.acceptanceRole,
         disabled: agent.disabled,
         systemPrompt: agent.systemPrompt,
         skills: agent.skills ? [...agent.skills] : undefined,
@@ -97,9 +91,7 @@ function cloneOverrideBase(agent) {
         subagentOnlyExtensions: agent.subagentOnlyExtensions
             ? [...agent.subagentOnlyExtensions]
             : undefined,
-        completionGuard: agent.completionGuard,
         supervisorBridge: agent.supervisorBridge,
-        toolBudget: agent.toolBudget,
         maxExecutionTimeMs: agent.maxExecutionTimeMs,
     };
 }
@@ -216,16 +208,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritSkills'; expected a boolean.`);
         }
     }
-    if (Object.hasOwn(input, "acceptanceRole")) {
-        if (input.acceptanceRole === "read-only" ||
-            input.acceptanceRole === "writer" ||
-            input.acceptanceRole === false) {
-            override.acceptanceRole = input.acceptanceRole;
-        }
-        else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'acceptanceRole'; expected 'read-only', 'writer', or false.`);
-        }
-    }
     if (Object.hasOwn(input, "disabled")) {
         if (typeof input.disabled === "boolean") {
             override.disabled = input.disabled;
@@ -234,33 +216,12 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'disabled'; expected a boolean.`);
         }
     }
-    if (Object.hasOwn(input, "completionGuard")) {
-        if (typeof input.completionGuard === "boolean") {
-            override.completionGuard = input.completionGuard;
-        }
-        else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'completionGuard'; expected a boolean.`);
-        }
-    }
     if (Object.hasOwn(input, "supervisorBridge")) {
         if (typeof input.supervisorBridge === "boolean") {
             override.supervisorBridge = input.supervisorBridge;
         }
         else {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'supervisorBridge'; expected a boolean.`);
-        }
-    }
-    if (Object.hasOwn(input, "toolBudget")) {
-        if (input.toolBudget === false) {
-            override.toolBudget = false;
-        }
-        else if (input.toolBudget &&
-            typeof input.toolBudget === "object" &&
-            !Array.isArray(input.toolBudget)) {
-            override.toolBudget = input.toolBudget;
-        }
-        else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`);
         }
     }
     if (Object.hasOwn(input, "maxExecutionTimeMs")) {
@@ -321,6 +282,7 @@ function readSubagentSettings(filePath) {
     }
     const modelScope = parseModelScopeConfig(Object.hasOwn(subagentsObject, "modelScope") ? subagentsObject.modelScope : undefined, { filePath });
     const parsed = Object.create(null);
+    let obsoleteCompletionGuard = false;
     const agentOverrides = Object.hasOwn(subagentsObject, "agentOverrides")
         ? subagentsObject.agentOverrides
         : undefined;
@@ -328,9 +290,17 @@ function readSubagentSettings(filePath) {
         return { overrides: parsed, defaultModel, modelScope };
     }
     for (const [name, value] of Object.entries(agentOverrides)) {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+            obsoleteCompletionGuard ||= Object.hasOwn(value, "completionGuard");
+        }
         parsed[name] = parseBuiltinOverrideEntry(name, value, filePath);
     }
-    return { overrides: parsed, defaultModel, modelScope };
+    return {
+        overrides: parsed,
+        defaultModel,
+        modelScope,
+        ...(obsoleteCompletionGuard ? { obsoleteCompletionGuard: true } : {}),
+    };
 }
 function resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath) {
     if (projectSettingsPath && projectSettings.defaultModel !== undefined) {
@@ -403,11 +373,6 @@ function applyCustomAgentOverride(agent, override, meta) {
     if (override.inheritSkills !== undefined) {
         fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
     }
-    if (override.acceptanceRole !== undefined && isCanonicalPackagedMinorAgent(agent)) {
-        mutable().acceptanceRole =
-            override.acceptanceRole === false ? undefined : override.acceptanceRole;
-        anyFilled = true;
-    }
     if (override.disabled !== undefined && agent.disabled === undefined) {
         mutable().disabled = override.disabled;
         anyFilled = true;
@@ -424,14 +389,8 @@ function applyCustomAgentOverride(agent, override, meta) {
     if (override.subagentOnlyExtensions !== undefined) {
         fill("subagentOnlyExtensions", ["subagentOnlyExtensions"], override.subagentOnlyExtensions === false ? undefined : [...override.subagentOnlyExtensions]);
     }
-    if (override.completionGuard !== undefined) {
-        fill("completionGuard", ["completionGuard"], override.completionGuard);
-    }
     if (override.supervisorBridge !== undefined) {
         fill("supervisorBridge", ["supervisorBridge"], override.supervisorBridge);
-    }
-    if (override.toolBudget !== undefined) {
-        fill("toolBudget", ["toolBudget"], override.toolBudget === false ? undefined : override.toolBudget);
     }
     if (override.maxExecutionTimeMs !== undefined) {
         fill("maxExecutionTimeMs", ["maxExecutionTimeMs"], override.maxExecutionTimeMs === false ? undefined : override.maxExecutionTimeMs);
@@ -493,12 +452,115 @@ function isLegacyAgentSkillPath(rootDir, filePath) {
     }
     return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
+export function parseAgentDefinition(content, source, filePath) {
+    const { frontmatter, body } = parseFrontmatter(content);
+    if (Object.keys(frontmatter).length === 0)
+        return undefined;
+    const missingRequiredFields = ["name", "description"].filter((field) => !frontmatter[field]);
+    if (missingRequiredFields.length > 0) {
+        throw new AgentDefinitionValidationError(`Agent frontmatter is missing required fields: ${missingRequiredFields.join(", ")}.`);
+    }
+    const localName = frontmatter.name;
+    const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
+    if (parsedPackage.error)
+        throw new AgentDefinitionValidationError(parsedPackage.error);
+    const packageName = parsedPackage.packageName;
+    const runtimeName = buildRuntimeName(localName, packageName);
+    const hasDeclaredToolsField = "tools" in frontmatter;
+    const tools = frontmatter.tools
+        ?.split(",")
+        .map((t) => t.trim())
+        .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
+    const defaultReads = frontmatter.defaultReads
+        ?.split(",")
+        .map((f) => f.trim())
+        .filter(Boolean);
+    const skillStr = frontmatter.skill || frontmatter.skills;
+    const skills = skillStr
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const fallbackModels = frontmatter.fallbackModels
+        ?.split(",")
+        .map((model) => model.trim())
+        .filter(Boolean);
+    const systemPromptMode = frontmatter.systemPromptMode === "replace"
+        ? "replace"
+        : frontmatter.systemPromptMode === "append"
+            ? "append"
+            : defaultSystemPromptMode(localName);
+    const inheritProjectContext = frontmatter.inheritProjectContext === "true"
+        ? true
+        : frontmatter.inheritProjectContext === "false"
+            ? false
+            : defaultInheritProjectContext(localName);
+    const inheritSkills = frontmatter.inheritSkills === "true"
+        ? true
+        : frontmatter.inheritSkills === "false"
+            ? false
+            : defaultInheritSkills();
+    if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+        throw new AgentDefinitionValidationError(`Agent '${localName}' uses retired defaultContext; remove it because TLH always starts child sessions fresh.`);
+    }
+    let extensions;
+    if (frontmatter.extensions !== undefined) {
+        extensions = frontmatter.extensions
+            .split(",")
+            .map((e) => e.trim())
+            .filter(Boolean);
+    }
+    let subagentOnlyExtensions;
+    if (frontmatter.subagentOnlyExtensions !== undefined) {
+        subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
+            .split(",")
+            .map((e) => e.trim())
+            .filter(Boolean);
+    }
+    const extraFields = {};
+    for (const [key, value] of Object.entries(frontmatter)) {
+        if (!KNOWN_FIELDS.has(key))
+            extraFields[key] = value;
+    }
+    const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+    const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(frontmatter.maxExecutionTimeMs, "maxExecutionTimeMs", `Agent '${localName}'`);
+    const supervisorBridge = parseOptionalBooleanFrontmatter(frontmatter.supervisorBridge, "supervisorBridge", `Agent '${localName}'`);
+    const agent = {
+        name: runtimeName,
+        localName,
+        packageName,
+        description: frontmatter.description,
+        tools: hasDeclaredToolsField ? (tools.length > 0 ? tools : null) : undefined,
+        model: frontmatter.model,
+        fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
+        thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
+        systemPromptMode,
+        inheritProjectContext,
+        inheritSkills,
+        systemPrompt: body,
+        source,
+        filePath,
+        skills: skills && skills.length > 0 ? skills : undefined,
+        extensions,
+        subagentOnlyExtensions,
+        output: frontmatter.output,
+        defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
+        defaultProgress: frontmatter.defaultProgress === "true",
+        interactive: frontmatter.interactive === "true",
+        maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
+            ? parsedMaxSubagentDepth
+            : undefined,
+        supervisorBridge,
+        maxExecutionTimeMs,
+        extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+    };
+    agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
+    return agent;
+}
 function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
     const agents = [];
     for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
-        if (isLegacyAgentSkillPath(dir, filePath)) {
+        if (isLegacyAgentSkillPath(dir, filePath))
             continue;
-        }
         let content;
         try {
             content = fs.readFileSync(filePath, "utf-8");
@@ -507,149 +569,9 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
             continue;
         }
         try {
-            const { frontmatter, body } = parseFrontmatter(content);
-            if (Object.keys(frontmatter).length === 0)
-                continue;
-            const missingRequiredFields = ["name", "description"].filter((field) => !frontmatter[field]);
-            if (missingRequiredFields.length > 0) {
-                agentDiagnosticsOut?.push({
-                    source,
-                    filePath,
-                    error: `Agent frontmatter is missing required fields: ${missingRequiredFields.join(", ")}.`,
-                });
-                continue;
-            }
-            const localName = frontmatter.name;
-            const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
-            if (parsedPackage.error) {
-                throw new AgentDefinitionValidationError(parsedPackage.error);
-            }
-            const packageName = parsedPackage.packageName;
-            const runtimeName = buildRuntimeName(localName, packageName);
-            const hasDeclaredToolsField = "tools" in frontmatter;
-            const tools = frontmatter.tools
-                ?.split(",")
-                .map((t) => t.trim())
-                .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
-            const defaultReads = frontmatter.defaultReads
-                ?.split(",")
-                .map((f) => f.trim())
-                .filter(Boolean);
-            const skillStr = frontmatter.skill || frontmatter.skills;
-            const skills = skillStr
-                ?.split(",")
-                .map((s) => s.trim())
-                .filter(Boolean);
-            const fallbackModels = frontmatter.fallbackModels
-                ?.split(",")
-                .map((model) => model.trim())
-                .filter(Boolean);
-            const systemPromptMode = frontmatter.systemPromptMode === "replace"
-                ? "replace"
-                : frontmatter.systemPromptMode === "append"
-                    ? "append"
-                    : defaultSystemPromptMode(localName);
-            const inheritProjectContext = frontmatter.inheritProjectContext === "true"
-                ? true
-                : frontmatter.inheritProjectContext === "false"
-                    ? false
-                    : defaultInheritProjectContext(localName);
-            const inheritSkills = frontmatter.inheritSkills === "true"
-                ? true
-                : frontmatter.inheritSkills === "false"
-                    ? false
-                    : defaultInheritSkills();
-            if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
-                throw new AgentDefinitionValidationError(`Agent '${localName}' uses retired defaultContext; remove it because TLH always starts child sessions fresh.`);
-            }
-            let acceptanceRole;
-            if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
-                if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
-                    acceptanceRole = frontmatter.acceptanceRole;
-                else
-                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
-            }
-            let extensions;
-            if (frontmatter.extensions !== undefined) {
-                extensions = frontmatter.extensions
-                    .split(",")
-                    .map((e) => e.trim())
-                    .filter(Boolean);
-            }
-            let subagentOnlyExtensions;
-            if (frontmatter.subagentOnlyExtensions !== undefined) {
-                subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
-                    .split(",")
-                    .map((e) => e.trim())
-                    .filter(Boolean);
-            }
-            const extraFields = {};
-            for (const [key, value] of Object.entries(frontmatter)) {
-                if (!KNOWN_FIELDS.has(key))
-                    extraFields[key] = value;
-            }
-            const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
-            const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(frontmatter.maxExecutionTimeMs, "maxExecutionTimeMs", `Agent '${localName}'`);
-            let toolBudget;
-            if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
-                let parsed;
-                try {
-                    parsed = JSON.parse(frontmatter.toolBudget);
-                }
-                catch (error) {
-                    if (!(error instanceof SyntaxError))
-                        throw error;
-                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object: ${error.message}`);
-                }
-                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`);
-                }
-                const normalizedToolBudget = validateToolBudgetConfig(parsed);
-                if (normalizedToolBudget.error) {
-                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter: ${normalizedToolBudget.error}`);
-                }
-                toolBudget = normalizedToolBudget.budget;
-            }
-            const completionGuard = frontmatter.completionGuard === "false"
-                ? false
-                : frontmatter.completionGuard === "true"
-                    ? true
-                    : undefined;
-            const supervisorBridge = parseOptionalBooleanFrontmatter(frontmatter.supervisorBridge, "supervisorBridge", `Agent '${localName}'`);
-            const agent = {
-                name: runtimeName,
-                localName,
-                packageName,
-                description: frontmatter.description,
-                tools: hasDeclaredToolsField ? (tools.length > 0 ? tools : null) : undefined,
-                model: frontmatter.model,
-                fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
-                thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
-                systemPromptMode,
-                inheritProjectContext,
-                inheritSkills,
-                acceptanceRole,
-                systemPrompt: body,
-                source,
-                filePath,
-                skills: skills && skills.length > 0 ? skills : undefined,
-                extensions,
-                subagentOnlyExtensions,
-                output: frontmatter.output,
-                defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
-                defaultProgress: frontmatter.defaultProgress === "true",
-                interactive: frontmatter.interactive === "true",
-                maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
-                    ? parsedMaxSubagentDepth
-                    : undefined,
-                completionGuard,
-                supervisorBridge,
-                toolBudget,
-                maxExecutionTimeMs,
-                extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
-            };
-            agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
-            agents.push(agent);
+            const agent = parseAgentDefinition(content, source, filePath);
+            if (agent)
+                agents.push(agent);
         }
         catch (error) {
             if (!(error instanceof AgentDefinitionValidationError))
@@ -694,7 +616,7 @@ function loadCanonicalPackagedAgents(agentDiagnostics) {
         return next;
     });
 }
-export function discoverAgents(cwd, scope, _options = {}) {
+export function discoverAgents(cwd, scope) {
     const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
@@ -703,45 +625,29 @@ export function discoverAgents(cwd, scope, _options = {}) {
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
     const agentDiagnostics = [];
+    if (userSettings.obsoleteCompletionGuard) {
+        agentDiagnostics.push({
+            source: "user",
+            filePath: userSettingsPath,
+            error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+            kind: "notice",
+        });
+    }
+    if (projectSettings.obsoleteCompletionGuard && projectSettingsPath) {
+        agentDiagnostics.push({
+            source: "project",
+            filePath: projectSettingsPath,
+            error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+            kind: "notice",
+        });
+    }
     const canonicalAgents = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter((agent) => agent.disabled !== true);
-    return { agents, projectAgentsDir, modelScope, agentDiagnostics };
-}
-export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
-    const manifest = resolveProjectAgentSnapshot(capability, expected);
-    let canonicalCwd;
-    let canonicalProjectRoot;
-    try {
-        canonicalCwd = fs.realpathSync(cwd);
-        canonicalProjectRoot = fs.realpathSync(manifest.provenance.projectRoot);
-    }
-    catch {
-        throw new ProjectAgentSnapshotCapabilityError();
-    }
-    const relativeCwd = path.relative(canonicalProjectRoot, canonicalCwd);
-    if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
-        throw new ProjectAgentSnapshotCapabilityError();
-    }
-    const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
-    const userSettings = readSubagentSettings(getUserAgentSettingsPath());
-    for (const entry of manifest.entries) {
-        agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
-    }
-    const disabledNames = manifest.entries
-        .filter((entry) => Object.hasOwn(userSettings.overrides, entry.agent.name) &&
-        userSettings.overrides[entry.agent.name]?.disabled === true)
-        .map((entry) => entry.agent.name);
-    const disabledNameSet = new Set(disabledNames);
-    const activeEntries = manifest.entries.filter((entry) => !disabledNameSet.has(entry.agent.name));
-    const mergeOptions = {
-        entries: activeEntries,
-        tombstones: [...manifest.tombstones, ...disabledNames],
-    };
     return {
-        ...discovered,
-        agents: mergeProjectAgentSnapshot(discovered.agents, manifest, mergeOptions),
-        projectAgentsDir: null,
-        projectSnapshot: projectAgentSnapshotDiscoveryMetadata(manifest, disabledNames),
+        agents,
+        projectAgentsDir,
+        modelScope,
+        agentDiagnostics,
     };
 }
 export function discoverAgentsAll(cwd) {
@@ -755,6 +661,22 @@ export function discoverAgentsAll(cwd) {
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const builtin = [];
     const agentDiagnostics = [];
+    if (userSettings.obsoleteCompletionGuard) {
+        agentDiagnostics.push({
+            source: "user",
+            filePath: userSettingsPath,
+            error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+            kind: "notice",
+        });
+    }
+    if (projectSettings.obsoleteCompletionGuard && projectSettingsPath) {
+        agentDiagnostics.push({
+            source: "project",
+            filePath: projectSettingsPath,
+            error: "Obsolete settings key 'completionGuard' is ignored; remove it from agentOverrides.",
+            kind: "notice",
+        });
+    }
     const user = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const packageAgents = [];
     const project = [];

@@ -126,7 +126,6 @@ describe(
         for (const entry of details) {
           handleSubagentControlNotice({
             pi: noticePi,
-            state: createState() as never,
             visibleControlNotices: visible,
             details: entry,
             isIdle: () => false,

@@ -200,12 +200,6 @@ export function finalizeSingleOutput(params: {
   savedPath?: string;
   outputReference?: SavedOutputReference;
   saveError?: string;
-  /**
-   * Set only when an otherwise-successful run was rejected by a post-run
-   * acceptance gate. This keeps the saved deliverable reference visible while
-   * ordinary failures, timeouts, and interruptions stay unsaved.
-   */
-  acceptanceRejected?: boolean;
 }): {
   displayOutput: string;
   savedPath?: string;
@@ -214,7 +208,7 @@ export function finalizeSingleOutput(params: {
 } {
   let displayOutput = params.truncatedOutput || params.fullOutput;
   const savedPath = params.savedPath;
-  if (savedPath && (params.exitCode === 0 || params.acceptanceRejected)) {
+  if (savedPath && params.exitCode === 0) {
     const outputReference =
       params.outputReference ?? formatSavedOutputReference(savedPath, params.fullOutput);
     if (params.outputMode === "file-only") {

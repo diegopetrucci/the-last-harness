@@ -7,8 +7,6 @@ export function toModelInfo(model) {
         provider: model.provider,
         id: model.id,
         fullId: `${model.provider}/${model.id}`,
-        reasoning: model.reasoning,
-        thinkingLevelMap: model.thinkingLevelMap,
         contextWindow: model.contextWindow,
     };
 }
@@ -47,20 +45,45 @@ export function findModelInfo(model, availableModels, preferredProvider) {
     }
     return matches.length === 1 ? matches[0] : undefined;
 }
-export function getSupportedThinkingLevels(model) {
-    if (!model)
-        return THINKING_LEVELS.filter((level) => level !== "max");
-    if (model.reasoning === false)
-        return ["off"];
-    if (!model.thinkingLevelMap)
-        return THINKING_LEVELS.filter((level) => level !== "max");
-    const levels = THINKING_LEVELS.filter((level) => {
-        const mapped = model.thinkingLevelMap?.[level];
-        if (mapped === null)
-            return false;
-        if (level === "xhigh" || level === "max")
-            return mapped !== undefined;
-        return true;
-    });
-    return levels;
+const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
+function runtimeIdentityFromFullId(fullId, thinkingSuffix) {
+    const separator = fullId.indexOf("/");
+    if (separator <= 0 || separator === fullId.length - 1)
+        return undefined;
+    const provider = fullId.slice(0, separator);
+    const model = fullId.slice(separator + 1);
+    if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model))
+        return undefined;
+    return {
+        provider,
+        model,
+        ...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
+    };
+}
+export function resolveRuntimeModelContext(providerValue, modelValue, contextWindows) {
+    if (!contextWindows ||
+        (typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
+        typeof modelValue !== "string" ||
+        (providerValue !== undefined && typeof providerValue !== "string"))
+        return undefined;
+    const provider = typeof providerValue === "string" ? providerValue.trim() : "";
+    const model = modelValue.trim();
+    if (model === "")
+        return undefined;
+    if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider))
+        return undefined;
+    const parsed = splitKnownThinkingSuffix(model);
+    if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel))
+        return undefined;
+    const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
+    if (!Object.hasOwn(contextWindows, fullId))
+        return undefined;
+    const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
+    if (!identity)
+        return undefined;
+    const contextWindow = contextWindows[fullId];
+    if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
+        return undefined;
+    return { identity, contextWindow };
 }

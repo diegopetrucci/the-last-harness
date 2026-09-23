@@ -2,23 +2,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
-import {
-  createProjectAgentRunCapture,
-  getProjectAgentSnapshotProvenance,
-  registerProjectAgentSnapshot,
-  releaseProjectAgentRunReference,
-  revokeProjectAgentSnapshot,
-  resolveProjectAgentSnapshot,
-  type ProjectAgentRunCapture,
-  type ProjectAgentSnapshotCapability,
-} from "../../src/agents/project-agent-snapshot.ts";
-import {
-  createSubagentExecutor,
-  type ProjectAgentAccess,
-} from "../../src/runs/foreground/subagent-executor.ts";
+import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
+import { createSubagentExecutor } from "../../src/extension/subagent-executor.ts";
 import { writeAsyncArtifactJson as writeJson } from "./async-artifact-fixtures.ts";
 
-export type ProjectAgentRebind = NonNullable<ProjectAgentAccess["rebind"]>;
+export type ProjectAgentRebind = never;
 
 export function createProjectAgentControlEnvironment() {
   const originalHome = process.env.HOME;
@@ -32,6 +20,9 @@ export function createProjectAgentControlEnvironment() {
       process.env.HOME = testHome;
       process.env.USERPROFILE = testHome;
       delete process.env.PI_CODING_AGENT_DIR;
+      const settingsPath = path.join(testHome, ".pi", "agent", "settings.json");
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify({ subagents: {} }), "utf8");
     },
     teardown() {
       if (originalHome === undefined) delete process.env.HOME;
@@ -50,14 +41,9 @@ export function createState(): SubagentState {
     baseCwd: "",
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
@@ -92,29 +78,19 @@ export function makeAgent(
 
 export function createProjectGeneration(
   root: string,
-  sessionId: string,
-  generationId: string,
+  _sessionId: string,
+  _generationId: string,
   name = "embedded.worker",
-  prompt = "Captured project prompt",
-  digest = `digest-${generationId}`,
-): {
-  capability: ProjectAgentSnapshotCapability;
-  capture: ProjectAgentRunCapture;
-} {
-  const agent = makeAgent(root, name, prompt);
-  const capability = registerProjectAgentSnapshot({
-    projectRoot: root,
-    sessionId,
-    generationId,
-    entries: [{ agent: agent as never, digest, frontmatterFields: ["tools"] }],
-  });
-  const manifest = resolveProjectAgentSnapshot(
-    capability,
-    getProjectAgentSnapshotProvenance(capability),
-  );
+  _prompt = "Captured project prompt",
+  _digest = "digest",
+): { capability: unknown; capture: ProjectAgentIdentity } {
   return {
-    capability,
-    capture: createProjectAgentRunCapture(manifest, agent as never),
+    capability: Object.freeze({}),
+    capture: {
+      slug: name.replace(/^embedded\./, ""),
+      root,
+      cwd: root,
+    },
   };
 }
 
@@ -135,15 +111,9 @@ export function makeContext(root: string, sessionId = "session-project"): any {
 export function makeExecutor(
   root: string,
   state: SubagentState,
-  active: {
-    capability: ProjectAgentSnapshotCapability;
-    architect?: boolean;
-    reauthorize?: () => Promise<boolean>;
-    rebind?: ProjectAgentRebind;
-  },
+  active: { capability?: unknown; architect?: boolean; reauthorize?: () => Promise<boolean> } = {},
   options: {
     executeAsyncSingle?: (...args: any[]) => any;
-    runSync?: (...args: any[]) => any;
     discoverAgents?: (...args: any[]) => { agents: any[]; modelScope?: any };
     kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   } = {},
@@ -165,14 +135,12 @@ export function makeExecutor(
     expandTilde: (value) => value,
     discoverAgents: options.discoverAgents ?? (() => ({ agents: [] })),
     getProjectAgentAccess: () => ({
-      capability: active.capability,
-      expected: getProjectAgentSnapshotProvenance(active.capability),
       architect: active.architect ?? true,
-      reauthorize: active.reauthorize ?? (async () => true),
-      ...(active.rebind ? { rebind: active.rebind } : {}),
+      canInitiate: active.architect ?? true,
+      agentDir: root,
+      trustStore: { getEntry: () => ({ path: root, decision: true }) },
     }),
     executeAsyncSingle: options.executeAsyncSingle,
-    runSync: options.runSync,
     kill: options.kill ?? (() => true),
   });
 }
@@ -188,21 +156,16 @@ export function runAsyncDir(runId: string): string {
 export function cleanupRun(runId: string): void {
   fs.rmSync(runAsyncDir(runId), { recursive: true, force: true });
   fs.rmSync(path.join(RESULTS_DIR, `${runId}.json`), { force: true });
-  releaseProjectAgentRunReference(runId);
 }
 
-export function revokeIfRegistered(capability: ProjectAgentSnapshotCapability): void {
-  try {
-    revokeProjectAgentSnapshot(capability);
-  } catch {
-    // A prior run-reference release may already have collected this generation.
-  }
+export function revokeIfRegistered(_capability: unknown): void {
+  // Retained for fixtures that share cleanup paths with ordinary runs.
 }
 
 export function writeStatus(
   runId: string,
   root: string,
-  capture: ProjectAgentRunCapture,
+  identity: ProjectAgentIdentity,
   options: {
     state?: import("../../src/shared/types.ts").AsyncStatus["state"];
     steps?: any[];
@@ -219,7 +182,7 @@ export function writeStatus(
     mode: "single",
     state: options.state ?? "complete",
     pid: 12345,
-    sessionId: capture.provenance.sessionId,
+    sessionId: "session-project",
     cwd: options.cwd ?? root,
     startedAt: 100,
     endedAt: 200,
@@ -227,10 +190,10 @@ export function writeStatus(
     sessionFile,
     steps: options.steps ?? [
       {
-        agent: capture.provenance.agent,
+        agent: `embedded.${identity.slug}`,
         status: options.state === "running" ? "running" : "complete",
         sessionFile,
-        projectAgent: capture,
+        projectAgent: identity,
       },
     ],
   });

@@ -137,6 +137,7 @@ describe("async execution utilities", () => {
             lastUpdate: Date.now(),
           },
         });
+        await waitForAsyncState(asyncDir, "failed");
         const payload = await readAsyncPayload(id);
         const persistedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
@@ -166,7 +167,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "reconciles a post-checkpoint supervisor finalization lock failure to the paused awaiting-supervisor outcome",
+    "publishes a failed outcome after a post-checkpoint supervisor finalization lock failure",
     {
       skip:
         process.platform === "win32"
@@ -225,8 +226,11 @@ describe("async execution utilities", () => {
       ) as AsyncStatusPayload;
       assert.equal(lockedStatus.state, "pausing");
       const payload = await readAsyncPayload(id);
-      assert.equal(payload.state, "paused");
-      assert.equal(payload.pause?.kind, "awaiting_supervisor");
+      // The result artifact is private and can report the failed in-memory
+      // supervisor attempt, but the incomplete lock keeps canonical status
+      // untouched until an owner is proven dead.
+      assert.equal(payload.state, "failed");
+      assert.equal(lockedStatus.pause?.kind, "awaiting_supervisor");
       assert.equal(fs.readdirSync(RESULTS_DIR).filter((name) => name === `${id}.json`).length, 1);
       await waitForPidsToExit(
         [pausingStatus.pid as number | undefined, ...childPids],
@@ -237,14 +241,14 @@ describe("async execution utilities", () => {
         resultsDir: RESULTS_DIR,
         now: () => Date.now(),
       });
-      assert.equal(typeof repaired.repaired, "boolean");
-      assert.equal(repaired.status?.state, "paused");
-      assert.equal(repaired.status?.pause?.kind, "awaiting_supervisor");
+      assert.equal(repaired.repaired, true);
+      assert.equal(repaired.status?.state, "failed");
+      assert.equal(repaired.status?.lifecycle?.resumeBlockedReason, undefined);
       const reconciledStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      assert.equal(reconciledStatus.state, "paused");
-      assert.equal(reconciledStatus.pause?.kind, "awaiting_supervisor");
+      assert.equal(reconciledStatus.state, "failed");
+      assert.equal(reconciledStatus.pause, undefined);
     },
   );
 

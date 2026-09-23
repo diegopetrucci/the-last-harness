@@ -1,23 +1,30 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatToolCall } from "./formatters.js";
 import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, } from "./config-dir.js";
 import { getPiAgentDir } from "./profile.js";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
+import { waitSync } from "./atomic-json.js";
+import { MAX_ATTRIBUTION_STATUS_BYTES } from "./terminal-result.js";
+import { AsyncStatusReadError, formatUnreadableStatus, parsePersistedAsyncStatus, } from "../runs/background/async-status-boundary.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
+export { AsyncStatusReadError, formatUnreadableStatus };
 export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, };
 export function getAgentDir() {
     return getPiAgentDir();
 }
 const statusCache = new Map();
+const statusFailureCache = new Map();
+const MAX_STATUS_CACHE_ENTRIES = 50;
+const MAX_STATUS_FAILURE_CACHE_ENTRIES = 256;
+export const MAX_ASYNC_STATUS_BYTES = MAX_ATTRIBUTION_STATUS_BYTES;
+export const MAX_STATUS_CACHE_BYTES = 50 * 1024 * 1024;
+export const ASYNC_STATUS_RETRY_DELAY_MS = 10;
+let statusCacheBytes = 0;
 export function invalidateStatusCache(asyncDirOrStatusPath) {
     const statusPath = path.basename(asyncDirOrStatusPath) === "status.json"
         ? path.resolve(asyncDirOrStatusPath)
         : path.join(path.resolve(asyncDirOrStatusPath), "status.json");
-    statusCache.delete(statusPath);
-}
-function getErrorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
+    deleteStatusCacheEntry(statusPath);
+    statusFailureCache.delete(statusPath);
 }
 export function normalizeComparableCwd(cwd) {
     const resolved = path.resolve(cwd);
@@ -34,63 +41,163 @@ function isNotFoundError(error) {
         "code" in error &&
         error.code === "ENOENT");
 }
-export function readStatus(asyncDir) {
-    const statusPath = path.join(asyncDir, "status.json");
-    let stat;
-    try {
-        stat = fs.statSync(statusPath);
-    }
-    catch (error) {
-        if (isNotFoundError(error))
-            return null;
-        throw new Error(`Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
-    }
-    const cached = statusCache.get(statusPath);
-    if (cached &&
-        cached.mtime === stat.mtimeMs &&
-        cached.ctime === stat.ctimeMs &&
-        cached.size === stat.size &&
-        cached.ino === stat.ino) {
-        return cached.status;
-    }
-    let content;
-    try {
-        content = fs.readFileSync(statusPath, "utf-8");
-    }
-    catch (error) {
-        if (isNotFoundError(error))
-            return null;
-        throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
-    }
-    let status;
-    try {
-        status = normalizeAsyncLifecycleStatus(JSON.parse(content));
-    }
-    catch (error) {
-        throw createAsyncStatusJsonParseError({
-            asyncDir,
-            statusPath,
-            content,
-            cause: error,
-        });
-    }
-    statusCache.set(statusPath, {
+function statusMetadata(stat) {
+    return {
         mtime: stat.mtimeMs,
         ctime: stat.ctimeMs,
         size: stat.size,
         ino: stat.ino,
-        status,
-    });
-    if (statusCache.size > 50) {
+    };
+}
+function sameStatusMetadata(left, right) {
+    return (left.mtime === right.mtime &&
+        left.ctime === right.ctime &&
+        left.size === right.size &&
+        left.ino === right.ino);
+}
+function deleteStatusCacheEntry(statusPath) {
+    const cached = statusCache.get(statusPath);
+    if (!cached)
+        return;
+    statusCache.delete(statusPath);
+    statusCacheBytes -= cached.size;
+}
+function cacheStatus(statusPath, metadata, status) {
+    deleteStatusCacheEntry(statusPath);
+    if (metadata.size > MAX_STATUS_CACHE_BYTES)
+        return;
+    statusCache.set(statusPath, { ...metadata, status });
+    statusCacheBytes += metadata.size;
+    while (statusCache.size > MAX_STATUS_CACHE_ENTRIES || statusCacheBytes > MAX_STATUS_CACHE_BYTES) {
         const firstKey = statusCache.keys().next().value;
-        if (firstKey)
-            statusCache.delete(firstKey);
+        if (firstKey === undefined)
+            break;
+        deleteStatusCacheEntry(firstKey);
     }
-    return status;
+}
+function statusReadError(input) {
+    return new AsyncStatusReadError(input);
+}
+function statusReadFailure(asyncDir, statusPath, failure, message, cause) {
+    return statusReadError({ asyncDir, statusPath, failure, message, cause });
+}
+function isCacheableStatusFailure(error) {
+    return error.failure === "invalid" || error.failure === "oversize";
+}
+export function readStatus(asyncDir, options = {}) {
+    const statusPath = path.resolve(asyncDir, "status.json");
+    const statSync = options.statSync ?? fs.statSync;
+    const readFileSync = options.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
+    const sleep = options.sleep ?? waitSync;
+    const requestedRetryDelayMs = options.retryDelayMs;
+    const retryDelayMs = requestedRetryDelayMs !== undefined && Number.isFinite(requestedRetryDelayMs)
+        ? Math.min(ASYNC_STATUS_RETRY_DELAY_MS, Math.max(0, Math.floor(requestedRetryDelayMs)))
+        : ASYNC_STATUS_RETRY_DELAY_MS;
+    const useCache = options.cache !== false;
+    let lastFailure;
+    let lastMetadata;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        lastFailure = undefined;
+        let stat;
+        let metadata;
+        try {
+            stat = statSync(statusPath);
+            metadata = statusMetadata(stat);
+            lastMetadata = metadata;
+        }
+        catch (error) {
+            if (isNotFoundError(error)) {
+                if (useCache) {
+                    deleteStatusCacheEntry(statusPath);
+                    statusFailureCache.delete(statusPath);
+                }
+                return null;
+            }
+            lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", "status metadata could not be read.", error);
+        }
+        if (!lastFailure) {
+            if (useCache && metadata) {
+                const cachedFailure = statusFailureCache.get(statusPath);
+                if (cachedFailure) {
+                    if (sameStatusMetadata(cachedFailure, metadata))
+                        throw cachedFailure.error;
+                    statusFailureCache.delete(statusPath);
+                    deleteStatusCacheEntry(statusPath);
+                }
+            }
+            const cached = useCache ? statusCache.get(statusPath) : undefined;
+            if (cached && metadata && sameStatusMetadata(cached, metadata))
+                return cached.status;
+            if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
+                lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
+            }
+            else {
+                let content;
+                try {
+                    const raw = readFileSync(statusPath, "utf-8");
+                    content = typeof raw === "string" ? raw : raw.toString("utf-8");
+                }
+                catch (error) {
+                    if (isNotFoundError(error)) {
+                        if (useCache) {
+                            deleteStatusCacheEntry(statusPath);
+                            statusFailureCache.delete(statusPath);
+                        }
+                        return null;
+                    }
+                    lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", "status content could not be read.", error);
+                }
+                if (!lastFailure && content !== undefined) {
+                    if (Buffer.byteLength(content, "utf-8") > MAX_ASYNC_STATUS_BYTES) {
+                        lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
+                    }
+                    else {
+                        try {
+                            const parsed = JSON.parse(content);
+                            const narrowed = parsePersistedAsyncStatus(parsed, asyncDir, statusPath);
+                            const status = normalizeAsyncLifecycleStatus(narrowed);
+                            if (useCache && metadata) {
+                                statusFailureCache.delete(statusPath);
+                                cacheStatus(statusPath, metadata, status);
+                            }
+                            return status;
+                        }
+                        catch (error) {
+                            if (error instanceof AsyncStatusReadError)
+                                lastFailure = error;
+                            else {
+                                lastFailure = statusReadFailure(asyncDir, statusPath, "invalid", "status JSON could not be parsed.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (attempt === 0) {
+            try {
+                sleep(retryDelayMs);
+            }
+            catch (error) {
+                lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", "status retry delay could not be completed.", error);
+                break;
+            }
+        }
+    }
+    const failure = lastFailure ??
+        statusReadFailure(asyncDir, statusPath, "unreadable", "status could not be read safely.");
+    if (useCache) {
+        deleteStatusCacheEntry(statusPath);
+        statusFailureCache.delete(statusPath);
+        if (lastMetadata && isCacheableStatusFailure(failure)) {
+            statusFailureCache.set(statusPath, { ...lastMetadata, error: failure });
+            if (statusFailureCache.size > MAX_STATUS_FAILURE_CACHE_ENTRIES) {
+                const firstKey = statusFailureCache.keys().next().value;
+                if (firstKey)
+                    statusFailureCache.delete(firstKey);
+            }
+        }
+    }
+    throw failure;
 }
 export function findLatestSessionFile(sessionDir) {
     if (!fs.existsSync(sessionDir))
@@ -108,22 +215,7 @@ export function findLatestSessionFile(sessionDir) {
         .sort((a, b) => b.mtime - a.mtime);
     return files.length > 0 ? files[0].path : null;
 }
-function containsAcceptanceReport(text) {
-    if (/```acceptance-report\s*\n[\s\S]*?```/i.test(text))
-        return true;
-    if (/ACCEPTANCE_REPORT\s*:/i.test(text))
-        return true;
-    for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
-        const body = match[1] ?? "";
-        if (/"criteriaSatisfied"/.test(body) &&
-            /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
-            return true;
-        }
-    }
-    return false;
-}
 export function getFinalOutput(messages) {
-    const validTextParts = [];
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         if (msg.role !== "assistant")
@@ -136,26 +228,11 @@ export function getFinalOutput(messages) {
             continue;
         for (let j = msg.content.length - 1; j >= 0; j--) {
             const part = msg.content[j];
-            if (part.type !== "text" || part.text.trim().length === 0)
-                continue;
-            validTextParts.push(part.text);
-            if (containsAcceptanceReport(part.text)) {
-                const precedingParts = [];
-                for (let k = 0; k < j; k++) {
-                    const precedingPart = msg.content[k];
-                    if (precedingPart.type === "text" &&
-                        precedingPart.text.trim().length > 0 &&
-                        !containsAcceptanceReport(precedingPart.text)) {
-                        precedingParts.push(precedingPart.text);
-                    }
-                }
-                return precedingParts.length > 0
-                    ? `${precedingParts.join("\n\n")}\n\n${part.text}`
-                    : part.text;
-            }
+            if (part.type === "text" && part.text.trim().length > 0)
+                return part.text;
         }
     }
-    return validTextParts[0] ?? "";
+    return "";
 }
 export function getSingleResultOutput(result) {
     return result.finalOutput ?? getFinalOutput(result.messages ?? []);
@@ -194,60 +271,6 @@ export function getDisplayItems(messages) {
     }
     return items;
 }
-function compactCompletedProgress(progress) {
-    if (progress.status === "running")
-        return progress;
-    return {
-        index: progress.index,
-        agent: progress.agent,
-        status: progress.status,
-        activityState: progress.activityState,
-        idleEpisodeId: progress.idleEpisodeId,
-        durableAttentionReasons: progress.durableAttentionReasons
-            ? [...progress.durableAttentionReasons]
-            : undefined,
-        compaction: progress.compaction ? { ...progress.compaction } : undefined,
-        task: progress.task,
-        skills: progress.skills,
-        toolCount: progress.toolCount,
-        tokens: progress.tokens,
-        durationMs: progress.durationMs,
-        error: progress.error,
-        failedTool: progress.failedTool,
-        recentTools: [],
-        recentOutput: [],
-    };
-}
-function toolCallSummary(text, expandedText) {
-    return expandedText === text ? { text } : { text, expandedText };
-}
-function normalizeToolCallSummaries(toolCalls) {
-    return toolCalls.map((toolCall) => toolCall.expandedText !== undefined && toolCall.expandedText === toolCall.text
-        ? { text: toolCall.text }
-        : { ...toolCall });
-}
-function extractToolCallSummaries(messages) {
-    if (!messages?.length)
-        return [];
-    const summaries = [];
-    for (const msg of messages) {
-        if (msg.role !== "assistant")
-            continue;
-        for (const part of msg.content) {
-            if (part.type !== "toolCall")
-                continue;
-            const args = typeof part.arguments === "object" &&
-                part.arguments !== null &&
-                !Array.isArray(part.arguments)
-                ? part.arguments
-                : {};
-            const text = formatToolCall(part.name, args);
-            const expandedText = formatToolCall(part.name, args, true);
-            summaries.push(toolCallSummary(text, expandedText));
-        }
-    }
-    return summaries;
-}
 export function sumResultsUsage(results) {
     const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
     for (const result of results) {
@@ -282,26 +305,6 @@ export function sumResultsCost(results) {
         addNestedCost(total, result.children);
     }
     return total;
-}
-export function compactForegroundResult(result) {
-    if (result.progress?.status === "running")
-        return result;
-    const toolCalls = result.toolCalls?.length
-        ? normalizeToolCallSummaries(result.toolCalls)
-        : extractToolCallSummaries(result.messages);
-    return {
-        ...result,
-        messages: undefined,
-        progress: undefined,
-        toolCalls: toolCalls.length ? toolCalls : undefined,
-    };
-}
-export function compactForegroundDetails(details) {
-    return {
-        ...details,
-        results: details.results.map(compactForegroundResult),
-        progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
-    };
 }
 export function detectSubagentError(messages) {
     let lastAssistantTextIndex = -1;

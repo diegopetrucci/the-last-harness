@@ -74,7 +74,7 @@ function asDataModule(source) {
 }
 
 export function resolve(specifier, context, nextResolve) {
-  const isRenderSource = /\/render(?:-(?:foreground|primitives|widget))?\.ts$/.test(
+  const isRenderSource = /\/render(?:-(?:result|primitives|widget))?\.ts$/.test(
     context.parentURL ?? "",
   );
   if (isRenderSource) {

@@ -18,7 +18,7 @@ process.env.HOME = importHome;
 process.env.USERPROFILE = importHome;
 let executorMod: any;
 try {
-  executorMod = await tryImport<any>("./src/runs/foreground/subagent-executor.ts");
+  executorMod = await tryImport<any>("./src/extension/subagent-executor.ts");
 } finally {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
@@ -33,12 +33,9 @@ function makeState(cwd: string) {
     baseCwd: cwd,
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },

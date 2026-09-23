@@ -43,7 +43,7 @@ import { getAgentDir } from "../shared/utils.ts";
  * Statuses where the async-job-tracker retains completed jobs (~10 s).
  * A job is "genuinely live" only when its status is NOT in this set.
  */
-const ASYNC_TERMINAL_STATUSES = new Set(["complete", "failed", "paused", "cancelled", "continued"]);
+const ASYNC_TERMINAL_STATUSES = new Set(["complete", "failed", "paused", "cancelled"]);
 
 /** Count genuinely live async jobs (not in a terminal retention status). */
 export function countLiveAsyncRuns(asyncJobs: Map<string, AsyncJobState>): number {

@@ -262,38 +262,6 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(reviewer.override?.scope, "user");
   });
 
-  it("applies acceptance role precedence and false clearing to canonical roles", () => {
-    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-      subagents: {
-        agentOverrides: {
-          "code-reviewer": { acceptanceRole: "read-only" },
-          developer: { acceptanceRole: "read-only" },
-        },
-      },
-    });
-    fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
-    writeJson(path.join(tempProject, ".pi", "settings.json"), {
-      subagents: {
-        agentOverrides: {
-          "code-reviewer": { acceptanceRole: "writer" },
-          developer: { acceptanceRole: false },
-        },
-      },
-    });
-    writeCanonicalAgent(
-      "code-reviewer",
-      "---\nname: code-reviewer\ndescription: Review code\n---\n\nReview the code.\n",
-    );
-    writeCanonicalAgent(
-      "developer",
-      "---\nname: developer\ndescription: TLH developer\n---\n\nImplement the change.\n",
-    );
-
-    assert.equal(findAgent("code-reviewer").acceptanceRole, "writer");
-    assert.equal(findAgent("developer").acceptanceRole, undefined);
-    assert.equal(findAgent("developer").override?.scope, "project");
-  });
-
   it("does not apply project settings overrides when scope is user", () => {
     fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
@@ -373,11 +341,9 @@ describe("canonical packaged agent overrides", () => {
             systemPromptMode: "append",
             inheritProjectContext: true,
             inheritSkills: true,
-            acceptanceRole: "writer",
             tools: ["bash", "mcp:xcodebuild_list_sims"],
             skills: ["tdd"],
             subagentOnlyExtensions: ["./tools/child-review.ts"],
-            completionGuard: false,
             supervisorBridge: false,
           },
         },
@@ -396,14 +362,34 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.systemPromptMode, "append");
     assert.equal(developer.inheritProjectContext, true);
     assert.equal(developer.inheritSkills, true);
-    assert.equal(developer.acceptanceRole, "writer");
     assert.deepEqual(developer.tools, ["bash"]);
     assert.deepEqual(developer.skills, ["tdd"]);
     assert.deepEqual(developer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
-    assert.equal(developer.completionGuard, false);
     assert.equal(developer.supervisorBridge, false);
     assert.equal(developer.override?.scope, "project");
     assert.equal(developer.override?.path, path.join(tempProject, ".pi", "settings.json"));
+  });
+
+  it("ignores obsolete completionGuard overrides and reports a diagnostic", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    writeJson(settingsPath, {
+      subagents: { agentOverrides: { developer: { completionGuard: false } } },
+    });
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nImplement the change.\n",
+    );
+
+    const discovered = discoverAgents(tempProject, "both");
+    const developer = discovered.agents.find((agent) => agent.name === "developer");
+    assert.ok(developer);
+    assert.equal("completionGuard" in developer, false);
+    const diagnostic = discovered.agentDiagnostics?.find(
+      (entry) => entry.filePath === settingsPath,
+    );
+    assert.ok(diagnostic);
+    assert.equal(diagnostic.kind, "notice");
+    assert.match(diagnostic.error, /obsolete settings key 'completionGuard'/i);
   });
 
   it("fills in unset fields on a canonical role from user agentOverrides", () => {
@@ -453,7 +439,7 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.override?.scope, "project");
   });
 
-  it("keeps explicit canonical frontmatter fields except acceptanceRole over matching agentOverrides", () => {
+  it("keeps explicit canonical frontmatter fields over matching agentOverrides", () => {
     fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
     writeJson(path.join(tempProject, ".pi", "settings.json"), {
       subagents: {
@@ -464,8 +450,6 @@ describe("canonical packaged agent overrides", () => {
             tools: ["bash"],
             skills: ["override-skill"],
             inheritProjectContext: true,
-            acceptanceRole: "writer",
-            completionGuard: true,
             supervisorBridge: true,
           },
         },
@@ -473,7 +457,7 @@ describe("canonical packaged agent overrides", () => {
     });
     writeCanonicalAgent(
       "developer",
-      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
+      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
     );
 
     const developer = findAgent("developer");
@@ -482,11 +466,8 @@ describe("canonical packaged agent overrides", () => {
     assert.deepEqual(developer.tools, ["read"]);
     assert.deepEqual(developer.skills, ["agent-skill"]);
     assert.equal(developer.inheritProjectContext, false);
-    assert.equal(developer.acceptanceRole, "writer");
-    assert.equal(developer.completionGuard, false);
     assert.equal(developer.supervisorBridge, false);
-    assert.equal(developer.override?.scope, "project");
-    assert.equal(developer.override?.base.acceptanceRole, "read-only");
+    assert.equal(developer.override, undefined);
   });
 
   it("leaves a canonical role untouched when no agentOverrides entry matches its name", () => {
@@ -546,22 +527,6 @@ describe("canonical packaged agent overrides", () => {
     );
   });
 
-  it("surfaces malformed acceptance role override values", () => {
-    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-    writeJson(settingsPath, {
-      subagents: { agentOverrides: { reviewer: { acceptanceRole: "observer" } } },
-    });
-
-    assert.throws(
-      () => discoverAgents(tempProject, "both"),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes(settingsPath) &&
-        error.message.includes("reviewer") &&
-        error.message.includes("acceptanceRole"),
-    );
-  });
-
   it("surfaces malformed max execution time override values", () => {
     const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
     writeJson(settingsPath, {
@@ -579,22 +544,6 @@ describe("canonical packaged agent overrides", () => {
         error.message.includes(settingsPath) &&
         error.message.includes("reviewer") &&
         error.message.includes("maxExecutionTimeMs"),
-    );
-  });
-
-  it("surfaces malformed completion guard override values", () => {
-    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-    writeJson(settingsPath, {
-      subagents: { agentOverrides: { reviewer: { completionGuard: "false" } } },
-    });
-
-    assert.throws(
-      () => discoverAgents(tempProject, "both"),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes(settingsPath) &&
-        error.message.includes("reviewer") &&
-        error.message.includes("completionGuard"),
     );
   });
 

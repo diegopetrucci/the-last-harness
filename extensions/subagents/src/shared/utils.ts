@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { formatToolCall } from "./formatters.ts";
 import {
   getConfigDirName,
   getProjectConfigDir,
@@ -14,18 +13,25 @@ import {
 } from "./config-dir.ts";
 import { getPiAgentDir } from "./profile.ts";
 import type {
-  AgentProgress,
   AsyncStatus,
   Details,
   DisplayItem,
   ErrorInfo,
   NestedRunSummary,
   SingleResult,
-  ToolCallSummary,
   Usage,
 } from "./types.ts";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.ts";
+import { waitSync } from "./atomic-json.ts";
+import { MAX_ATTRIBUTION_STATUS_BYTES } from "./terminal-result.ts";
+import {
+  AsyncStatusReadError,
+  formatUnreadableStatus,
+  parsePersistedAsyncStatus,
+  type AsyncStatusReadErrorInput,
+} from "../runs/background/async-status-boundary.ts";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.ts";
+
+export { AsyncStatusReadError, formatUnreadableStatus };
 
 // ============================================================================
 // File System Utilities
@@ -42,21 +48,46 @@ export function getAgentDir(): string {
   return getPiAgentDir();
 }
 
-const statusCache = new Map<
-  string,
-  { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }
->();
+interface StatusMetadata {
+  mtime: number;
+  ctime: number;
+  size: number;
+  ino: number;
+}
+
+const statusCache = new Map<string, StatusMetadata & { status: AsyncStatus }>();
+const statusFailureCache = new Map<string, StatusMetadata & { error: AsyncStatusReadError }>();
+const MAX_STATUS_CACHE_ENTRIES = 50;
+const MAX_STATUS_FAILURE_CACHE_ENTRIES = 256;
+
+/** Ordinary status reads use the same envelope as workspace attribution scans. */
+export const MAX_ASYNC_STATUS_BYTES = MAX_ATTRIBUTION_STATUS_BYTES;
+/** Fixed 50 MiB source-byte cap, independent of the per-file read limit. */
+export const MAX_STATUS_CACHE_BYTES = 50 * 1024 * 1024;
+export const ASYNC_STATUS_RETRY_DELAY_MS = 10;
+
+let statusCacheBytes = 0;
+
+export interface AsyncStatusReadOptions {
+  /** Test seam for status-file metadata reads. */
+  statSync?: (statusPath: string) => fs.Stats;
+  /** Test seam for status-file content reads. */
+  readFileSync?: (statusPath: string, encoding: BufferEncoding) => string | Buffer;
+  /** Test seam for the bounded retry delay. */
+  sleep?: (delayMs: number) => void;
+  /** Test seam for the retry duration; production values are clamped. */
+  retryDelayMs?: number;
+  /** Reconciliation bypasses success and deterministic-failure caches. */
+  cache?: boolean;
+}
 
 export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
   const statusPath =
     path.basename(asyncDirOrStatusPath) === "status.json"
       ? path.resolve(asyncDirOrStatusPath)
       : path.join(path.resolve(asyncDirOrStatusPath), "status.json");
-  statusCache.delete(statusPath);
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  deleteStatusCacheEntry(statusPath);
+  statusFailureCache.delete(statusPath);
 }
 
 /**
@@ -82,70 +113,217 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
-/**
- * Read async job status from disk (with mtime-based caching)
- */
-export function readStatus(asyncDir: string): AsyncStatus | null {
-  const statusPath = path.join(asyncDir, "status.json");
-
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(statusPath);
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw new Error(
-      `Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`,
-      {
-        cause: error,
-      },
-    );
-  }
-
-  const cached = statusCache.get(statusPath);
-  if (
-    cached &&
-    cached.mtime === stat.mtimeMs &&
-    cached.ctime === stat.ctimeMs &&
-    cached.size === stat.size &&
-    cached.ino === stat.ino
-  ) {
-    return cached.status;
-  }
-
-  let content: string;
-  try {
-    content = fs.readFileSync(statusPath, "utf-8");
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-      cause: error,
-    });
-  }
-
-  let status: AsyncStatus;
-  try {
-    status = normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
-  } catch (error) {
-    throw createAsyncStatusJsonParseError({
-      asyncDir,
-      statusPath,
-      content,
-      cause: error,
-    });
-  }
-
-  statusCache.set(statusPath, {
+function statusMetadata(stat: fs.Stats): StatusMetadata {
+  return {
     mtime: stat.mtimeMs,
     ctime: stat.ctimeMs,
     size: stat.size,
     ino: stat.ino,
-    status,
-  });
-  if (statusCache.size > 50) {
+  };
+}
+
+function sameStatusMetadata(left: StatusMetadata, right: StatusMetadata): boolean {
+  return (
+    left.mtime === right.mtime &&
+    left.ctime === right.ctime &&
+    left.size === right.size &&
+    left.ino === right.ino
+  );
+}
+
+function deleteStatusCacheEntry(statusPath: string): void {
+  const cached = statusCache.get(statusPath);
+  if (!cached) return;
+  statusCache.delete(statusPath);
+  statusCacheBytes -= cached.size;
+}
+
+function cacheStatus(statusPath: string, metadata: StatusMetadata, status: AsyncStatus): void {
+  deleteStatusCacheEntry(statusPath);
+  if (metadata.size > MAX_STATUS_CACHE_BYTES) return;
+
+  statusCache.set(statusPath, { ...metadata, status });
+  statusCacheBytes += metadata.size;
+  while (statusCache.size > MAX_STATUS_CACHE_ENTRIES || statusCacheBytes > MAX_STATUS_CACHE_BYTES) {
     const firstKey = statusCache.keys().next().value;
-    if (firstKey) statusCache.delete(firstKey);
+    if (firstKey === undefined) break;
+    deleteStatusCacheEntry(firstKey);
   }
-  return status;
+}
+
+function statusReadError(input: AsyncStatusReadErrorInput): AsyncStatusReadError {
+  return new AsyncStatusReadError(input);
+}
+
+function statusReadFailure(
+  asyncDir: string,
+  statusPath: string,
+  failure: AsyncStatusReadErrorInput["failure"],
+  message: string,
+  cause?: unknown,
+): AsyncStatusReadError {
+  return statusReadError({ asyncDir, statusPath, failure, message, cause });
+}
+
+function isCacheableStatusFailure(error: AsyncStatusReadError): boolean {
+  return error.failure === "invalid" || error.failure === "oversize";
+}
+
+/**
+ * Read async job status from disk with one bounded retry. The JSON value is
+ * unknown until the boundary parser validates and narrows it. Invalid or
+ * unreadable status files are never repaired by this function.
+ */
+export function readStatus(
+  asyncDir: string,
+  options: AsyncStatusReadOptions = {},
+): AsyncStatus | null {
+  const statusPath = path.resolve(asyncDir, "status.json");
+  const statSync = options.statSync ?? fs.statSync;
+  const readFileSync =
+    options.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
+  const sleep = options.sleep ?? waitSync;
+  const requestedRetryDelayMs = options.retryDelayMs;
+  const retryDelayMs =
+    requestedRetryDelayMs !== undefined && Number.isFinite(requestedRetryDelayMs)
+      ? Math.min(ASYNC_STATUS_RETRY_DELAY_MS, Math.max(0, Math.floor(requestedRetryDelayMs)))
+      : ASYNC_STATUS_RETRY_DELAY_MS;
+  const useCache = options.cache !== false;
+  let lastFailure: AsyncStatusReadError | undefined;
+  let lastMetadata: StatusMetadata | undefined;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    lastFailure = undefined;
+    let stat: fs.Stats;
+    let metadata: StatusMetadata | undefined;
+    try {
+      stat = statSync(statusPath);
+      metadata = statusMetadata(stat);
+      lastMetadata = metadata;
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        if (useCache) {
+          deleteStatusCacheEntry(statusPath);
+          statusFailureCache.delete(statusPath);
+        }
+        return null;
+      }
+      lastFailure = statusReadFailure(
+        asyncDir,
+        statusPath,
+        "unreadable",
+        "status metadata could not be read.",
+        error,
+      );
+    }
+
+    if (!lastFailure) {
+      if (useCache && metadata) {
+        const cachedFailure = statusFailureCache.get(statusPath);
+        if (cachedFailure) {
+          if (sameStatusMetadata(cachedFailure, metadata)) throw cachedFailure.error;
+          statusFailureCache.delete(statusPath);
+          deleteStatusCacheEntry(statusPath);
+        }
+      }
+      const cached = useCache ? statusCache.get(statusPath) : undefined;
+      if (cached && metadata && sameStatusMetadata(cached, metadata)) return cached.status;
+      if (!Number.isFinite(stat!.size) || stat!.size < 0 || stat!.size > MAX_ASYNC_STATUS_BYTES) {
+        lastFailure = statusReadFailure(
+          asyncDir,
+          statusPath,
+          "oversize",
+          `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+        );
+      } else {
+        let content: string | undefined;
+        try {
+          const raw = readFileSync(statusPath, "utf-8");
+          content = typeof raw === "string" ? raw : raw.toString("utf-8");
+        } catch (error) {
+          if (isNotFoundError(error)) {
+            if (useCache) {
+              deleteStatusCacheEntry(statusPath);
+              statusFailureCache.delete(statusPath);
+            }
+            return null;
+          }
+          lastFailure = statusReadFailure(
+            asyncDir,
+            statusPath,
+            "unreadable",
+            "status content could not be read.",
+            error,
+          );
+        }
+        if (!lastFailure && content !== undefined) {
+          if (Buffer.byteLength(content, "utf-8") > MAX_ASYNC_STATUS_BYTES) {
+            lastFailure = statusReadFailure(
+              asyncDir,
+              statusPath,
+              "oversize",
+              `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+            );
+          } else {
+            try {
+              const parsed: unknown = JSON.parse(content);
+              const narrowed = parsePersistedAsyncStatus(parsed, asyncDir, statusPath);
+              const status = normalizeAsyncLifecycleStatus(narrowed);
+              if (useCache && metadata) {
+                statusFailureCache.delete(statusPath);
+                cacheStatus(statusPath, metadata, status);
+              }
+              return status;
+            } catch (error) {
+              if (error instanceof AsyncStatusReadError) lastFailure = error;
+              else {
+                lastFailure = statusReadFailure(
+                  asyncDir,
+                  statusPath,
+                  "invalid",
+                  "status JSON could not be parsed.",
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (attempt === 0) {
+      try {
+        sleep(retryDelayMs);
+      } catch (error) {
+        lastFailure = statusReadFailure(
+          asyncDir,
+          statusPath,
+          "unreadable",
+          "status retry delay could not be completed.",
+          error,
+        );
+        break;
+      }
+    }
+  }
+
+  const failure =
+    lastFailure ??
+    statusReadFailure(asyncDir, statusPath, "unreadable", "status could not be read safely.");
+  if (useCache) {
+    // A read failure must never leave an older successful or deterministic
+    // failure result available for a later call. Only the final deterministic
+    // failure is eligible to be memoized below.
+    deleteStatusCacheEntry(statusPath);
+    statusFailureCache.delete(statusPath);
+    if (lastMetadata && isCacheableStatusFailure(failure)) {
+      statusFailureCache.set(statusPath, { ...lastMetadata, error: failure });
+      if (statusFailureCache.size > MAX_STATUS_FAILURE_CACHE_ENTRIES) {
+        const firstKey = statusFailureCache.keys().next().value;
+        if (firstKey) statusFailureCache.delete(firstKey);
+      }
+    }
+  }
+  throw failure;
 }
 
 /**
@@ -171,29 +349,13 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 // Message Parsing Utilities
 // ============================================================================
 
-/** True when a text part carries a structured acceptance report in any accepted form. */
-function containsAcceptanceReport(text: string): boolean {
-  if (/```acceptance-report\s*\n[\s\S]*?```/i.test(text)) return true;
-  if (/ACCEPTANCE_REPORT\s*:/i.test(text)) return true;
-  for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
-    const body = match[1] ?? "";
-    if (
-      /"criteriaSatisfied"/.test(body) &&
-      /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(
-        body,
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
- * Get the final text output from a list of messages
+ * Get the final text output from a list of messages.
+ *
+ * Fenced blocks are ordinary child output; no report-shaped text is parsed or
+ * removed here so historical transcripts remain visible and safe to render.
  */
 export function getFinalOutput(messages: Message[]): string {
-  const validTextParts: string[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role !== "assistant") continue;
@@ -205,32 +367,10 @@ export function getFinalOutput(messages: Message[]): string {
     if (hasAssistantError) continue;
     for (let j = msg.content.length - 1; j >= 0; j--) {
       const part = msg.content[j];
-      if (part.type !== "text" || part.text.trim().length === 0) continue;
-      validTextParts.push(part.text);
-      if (containsAcceptanceReport(part.text)) {
-        // Iteration is reverse, so text parts before this one were never visited.
-        // Collect them in document order; otherwise prose written in an earlier
-        // part is silently dropped and only the block-bearing part survives.
-        // Scoped to this message on purpose: walking back further risks pulling
-        // in unrelated intermediate chatter.
-        const precedingParts: string[] = [];
-        for (let k = 0; k < j; k++) {
-          const precedingPart = msg.content[k];
-          if (
-            precedingPart.type === "text" &&
-            precedingPart.text.trim().length > 0 &&
-            !containsAcceptanceReport(precedingPart.text)
-          ) {
-            precedingParts.push(precedingPart.text);
-          }
-        }
-        return precedingParts.length > 0
-          ? `${precedingParts.join("\n\n")}\n\n${part.text}`
-          : part.text;
-      }
+      if (part.type === "text" && part.text.trim().length > 0) return part.text;
     }
   }
-  return validTextParts[0] ?? "";
+  return "";
 }
 
 export function getSingleResultOutput(
@@ -282,63 +422,6 @@ export function getDisplayItems(messages: Message[] | undefined): DisplayItem[] 
   return items;
 }
 
-function compactCompletedProgress(progress: AgentProgress): AgentProgress {
-  if (progress.status === "running") return progress;
-  return {
-    index: progress.index,
-    agent: progress.agent,
-    status: progress.status,
-    activityState: progress.activityState,
-    idleEpisodeId: progress.idleEpisodeId,
-    durableAttentionReasons: progress.durableAttentionReasons
-      ? [...progress.durableAttentionReasons]
-      : undefined,
-    compaction: progress.compaction ? { ...progress.compaction } : undefined,
-    task: progress.task,
-    skills: progress.skills,
-    toolCount: progress.toolCount,
-    tokens: progress.tokens,
-    durationMs: progress.durationMs,
-    error: progress.error,
-    failedTool: progress.failedTool,
-    recentTools: [],
-    recentOutput: [],
-  };
-}
-
-function toolCallSummary(text: string, expandedText: string): ToolCallSummary {
-  return expandedText === text ? { text } : { text, expandedText };
-}
-
-function normalizeToolCallSummaries(toolCalls: ToolCallSummary[]): ToolCallSummary[] {
-  return toolCalls.map((toolCall) =>
-    toolCall.expandedText !== undefined && toolCall.expandedText === toolCall.text
-      ? { text: toolCall.text }
-      : { ...toolCall },
-  );
-}
-
-function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSummary[] {
-  if (!messages?.length) return [];
-  const summaries: ToolCallSummary[] = [];
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    for (const part of msg.content) {
-      if (part.type !== "toolCall") continue;
-      const args =
-        typeof part.arguments === "object" &&
-        part.arguments !== null &&
-        !Array.isArray(part.arguments)
-          ? part.arguments
-          : {};
-      const text = formatToolCall(part.name, args);
-      const expandedText = formatToolCall(part.name, args, true);
-      summaries.push(toolCallSummary(text, expandedText));
-    }
-  }
-  return summaries;
-}
-
 export function sumResultsUsage(results: SingleResult[]): Usage {
   const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
   for (const result of results) {
@@ -378,27 +461,6 @@ export function sumResultsCost(results: SingleResult[]): NonNullable<Details["to
     addNestedCost(total, result.children);
   }
   return total;
-}
-
-export function compactForegroundResult(result: SingleResult): SingleResult {
-  if (result.progress?.status === "running") return result;
-  const toolCalls = result.toolCalls?.length
-    ? normalizeToolCallSummaries(result.toolCalls)
-    : extractToolCallSummaries(result.messages);
-  return {
-    ...result,
-    messages: undefined,
-    progress: undefined,
-    toolCalls: toolCalls.length ? toolCalls : undefined,
-  };
-}
-
-export function compactForegroundDetails(details: Details): Details {
-  return {
-    ...details,
-    results: details.results.map(compactForegroundResult),
-    progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
-  };
 }
 
 /**

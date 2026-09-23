@@ -81,7 +81,7 @@ describe("async permission forwarding session identity", () => {
     assert.equal(staticWorker.thinking, "high");
   });
 
-  it("gates thinking levels on merged agent fallback candidates", () => {
+  it("forwards thinking levels to merged agent fallback candidates", () => {
     const built = buildAsyncRunnerPlan("run-abc", {
       tasks: [{ agent: "worker", task: "Do work" }],
       agents: [
@@ -103,14 +103,11 @@ describe("async permission forwarding session identity", () => {
           provider: "openai",
           id: "gpt-5",
           fullId: "openai/gpt-5",
-          reasoning: true,
-          thinkingLevelMap: { high: "high" },
         },
         {
           provider: "anthropic",
           id: "claude-haiku-4-5",
           fullId: "anthropic/claude-haiku-4-5",
-          reasoning: false,
         },
       ],
       maxSubagentDepth: 1,
@@ -120,10 +117,11 @@ describe("async permission forwarding session identity", () => {
     const step = built.plan.tasks[0];
     assert.ok(step && !("parallel" in step));
     assert.equal(step.model, "openai/gpt-5:high");
-    assert.deepEqual(step.modelCandidates, ["openai/gpt-5:high", "anthropic/claude-haiku-4-5"]);
-    assert.deepEqual(step.attemptNotes, [
-      'Notice: Thinking level "high" was dropped for model "anthropic/claude-haiku-4-5" because the model registry does not advertise support.',
+    assert.deepEqual(step.modelCandidates, [
+      "openai/gpt-5:high",
+      "anthropic/claude-haiku-4-5:high",
     ]);
+    assert.deepEqual(step.attemptNotes ?? [], []);
   });
 
   it("applies agent thinking to async fallback candidates", () => {

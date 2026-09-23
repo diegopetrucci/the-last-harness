@@ -5,9 +5,9 @@ import { RESULTS_DIR, TEMP_ROOT_DIR, normalizeSubagentRunMode, } from "../../sha
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
+import { normalizeProjectAgentIdentity, } from "../../agents/project-agent-loader.js";
+import { canonicalLifecycleState, canonicalLifecycleStepState, } from "../background/async-status-boundary.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs } from "./lifecycle-state.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
 const REGISTRY_FILE = "registry.json";
@@ -176,7 +176,7 @@ function projectAgentProjection(value) {
     }
     const raw = value;
     const hasCapture = Object.hasOwn(raw, "projectAgent");
-    const capture = hasCapture ? normalizeProjectAgentRunCapture(raw.projectAgent) : undefined;
+    const capture = hasCapture ? normalizeProjectAgentIdentity(raw.projectAgent) : undefined;
     return {
         ...(capture ? { capture } : {}),
         malformed: Object.hasOwn(raw, "projectAgentMarker") || (hasCapture && !capture),
@@ -189,17 +189,15 @@ function sanitizeStep(input, depth) {
     const agent = stringValue(raw.agent, 128);
     if (!agent)
         return undefined;
-    const status = raw.status === "pending" ||
-        raw.status === "running" ||
-        raw.status === "complete" ||
-        raw.status === "completed" ||
-        raw.status === "failed" ||
-        raw.status === "paused"
-        ? raw.status
-        : "pending";
+    const status = raw.status === "complete" || raw.status === "completed"
+        ? "complete"
+        : raw.status === "pending" ||
+            raw.status === "running" ||
+            raw.status === "failed" ||
+            raw.status === "paused"
+            ? raw.status
+            : "pending";
     const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
-    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     const activityState = sanitizeActivityState(raw.activityState);
     return {
@@ -228,8 +226,6 @@ function sanitizeStep(input, depth) {
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
-        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
         ...(parseContextUsageDiagnostics(raw.contextUsage)
@@ -270,8 +266,6 @@ export function sanitizeSummary(input, depth = 0) {
         : undefined;
     const totalTokens = sanitizeTokenUsage(raw.totalTokens);
     const totalCost = sanitizeCost(raw.totalCost);
-    const activeRuntimeMs = normalizeActiveRuntimeMs(raw.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(raw.activeRuntimeCheckpointAt);
     const projectAgent = projectAgentProjection(raw);
     const activityState = sanitizeActivityState(raw.activityState);
     return {
@@ -346,8 +340,6 @@ export function sanitizeSummary(input, depth = 0) {
         ...(clampNumber(raw.lastUpdate) !== undefined
             ? { lastUpdate: clampNumber(raw.lastUpdate) }
             : {}),
-        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
         ...(clampNumber(raw.deadlineAt) !== undefined
             ? { deadlineAt: clampNumber(raw.deadlineAt) }
@@ -425,14 +417,13 @@ function terminal(state) {
     return state === "complete" || state === "failed" || state === "paused";
 }
 function nestedStateFromAsyncState(state) {
-    switch (state) {
+    switch (canonicalLifecycleState(state)) {
         case "queued":
             return "queued";
         case "running":
         case "pausing":
             return "running";
         case "complete":
-        case "continued":
             return "complete";
         case "failed":
         case "cancelled":
@@ -442,17 +433,14 @@ function nestedStateFromAsyncState(state) {
     }
 }
 function nestedStepStatusFromAsyncStepStatus(status) {
-    switch (status) {
+    switch (canonicalLifecycleStepState(status)) {
         case "pending":
             return "pending";
         case "running":
         case "pausing":
             return "running";
         case "complete":
-        case "continued":
             return "complete";
-        case "completed":
-            return "completed";
         case "failed":
         case "cancelled":
             return "failed";
@@ -786,12 +774,6 @@ export function updateAsyncJobNestedProjection(job) {
     job.nestedChildren = registry.children;
     attachRootChildrenToSteps(job.asyncId, job.steps, registry.children);
 }
-export function updateForegroundNestedProjection(control) {
-    if (!control.nestedRoute)
-        return;
-    const registry = projectNestedEvents(control.nestedRoute);
-    control.nestedChildren = registry.children;
-}
 export function hasLiveNestedDescendants(children) {
     if (!children?.length)
         return false;
@@ -816,7 +798,7 @@ function projectAgentProjectionFromAsyncStatus(status) {
         }
         else {
             for (const candidate of projectAgents) {
-                const normalized = normalizeProjectAgentRunCapture(candidate);
+                const normalized = normalizeProjectAgentIdentity(candidate);
                 if (normalized)
                     capture ??= normalized;
                 else
@@ -867,10 +849,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
         ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
         ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
-        ...(status.activeRuntimeMs !== undefined ? { activeRuntimeMs: status.activeRuntimeMs } : {}),
-        ...(status.activeRuntimeCheckpointAt !== undefined
-            ? { activeRuntimeCheckpointAt: status.activeRuntimeCheckpointAt }
-            : {}),
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
@@ -908,12 +886,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                         ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
                         ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
                         ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
-                        ...(step.activeRuntimeMs !== undefined
-                            ? { activeRuntimeMs: step.activeRuntimeMs }
-                            : {}),
-                        ...(step.activeRuntimeCheckpointAt !== undefined
-                            ? { activeRuntimeCheckpointAt: step.activeRuntimeCheckpointAt }
-                            : {}),
                         ...(step.error ? { error: step.error } : {}),
                         ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                         ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),

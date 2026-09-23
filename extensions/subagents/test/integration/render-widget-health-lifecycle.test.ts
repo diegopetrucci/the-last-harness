@@ -65,7 +65,7 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /\/private\/|54321|cleanup failed/);
   });
 
-  it("projects continued lifecycles as healthy across single, parallel, and compact layouts", () => {
+  it("projects continued lifecycles as canonical complete across single, parallel, and compact layouts", () => {
     const staleStep = {
       index: 0,
       agent: "worker",
@@ -82,7 +82,8 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-single",
           asyncDir: "/tmp/continued-single",
-          status: "continued",
+          status: "complete",
+          lifecycle: { continuation: { phase: "continued", continuationRunId: "revived-single" } },
           mode: "single",
           agents: ["worker"],
           interruptRequestedAt: 20_000,
@@ -94,7 +95,7 @@ describe("subagent async widget rendering", () => {
       theme,
       180,
     ).join("\n");
-    assert.match(singleText, /✓ worker · continued/);
+    assert.match(singleText, /✓ worker · complete/);
     assert.doesNotMatch(singleText, /✗|pausing|stale-(?:job-)?tool|stale\/path/);
 
     const parallelText = buildWidgetLines(
@@ -102,7 +103,13 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-parallel",
           asyncDir: "/tmp/continued-parallel",
-          status: "continued",
+          status: "complete",
+          lifecycle: {
+            continuationsByIndex: {
+              "0": { phase: "continued", continuationRunId: "revived-worker" },
+              "1": { phase: "continued", continuationRunId: "revived-reviewer" },
+            },
+          },
           mode: "parallel",
           agents: ["worker", "reviewer"],
           stepsTotal: 2,
@@ -116,8 +123,8 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
     assert.match(parallelText, /✓ 2\/2 done/);
-    assert.match(parallelText, /Agent 1\/2: worker · continued/);
-    assert.match(parallelText, /Agent 2\/2: reviewer · continued/);
+    assert.match(parallelText, /Agent 1\/2: worker · complete/);
+    assert.match(parallelText, /Agent 2\/2: reviewer · complete/);
     assert.doesNotMatch(parallelText, /✗|pausing|stale-tool|stale\/path/);
 
     const pendingParallelText = buildWidgetLines(
@@ -125,7 +132,13 @@ describe("subagent async widget rendering", () => {
         {
           asyncId: "continued-parallel-pending-tail",
           asyncDir: "/tmp/continued-parallel-pending-tail",
-          status: "continued",
+          status: "complete",
+          lifecycle: {
+            continuationsByIndex: {
+              "0": { phase: "continued", continuationRunId: "revived-worker" },
+              "1": { phase: "continued", continuationRunId: "revived-reviewer" },
+            },
+          },
           mode: "parallel",
           agents: ["worker", "reviewer", "tail"],
           stepsTotal: 3,
@@ -143,10 +156,22 @@ describe("subagent async widget rendering", () => {
     assert.match(pendingParallelText, /Agent 3\/3: tail · pending/);
     assert.doesNotMatch(pendingParallelText, /Agent 3\/3: tail · continued/);
 
-    const buildCompactParallelJob = (status: "continued" | "running"): AsyncJobState => ({
+    const buildCompactParallelJob = (status: "complete" | "running"): AsyncJobState => ({
       asyncId: `compact-${status}-parallel`,
       asyncDir: `/tmp/compact-${status}-parallel`,
       status,
+      ...(status === "complete"
+        ? {
+            lifecycle: {
+              continuationsByIndex: Object.fromEntries(
+                Array.from({ length: 8 }, (_, index) => [
+                  String(index),
+                  { phase: "continued", continuationRunId: `revived-${index}` },
+                ]),
+              ),
+            },
+          }
+        : {}),
       mode: "parallel",
       agents: Array.from({ length: 9 }, (_, index) => `worker-${index + 1}`),
       stepsTotal: 9,
@@ -167,11 +192,12 @@ describe("subagent async widget rendering", () => {
     resetWidgetLayout();
     withStdoutSize(40, 160, () => {
       const continuedUi = createUiContext();
-      renderWidget(continuedUi.ctx as never, [buildCompactParallelJob("continued")]);
+      renderWidget(continuedUi.ctx as never, [buildCompactParallelJob("complete")]);
       const continuedText = renderWidgetLines(continuedUi.widgets.at(-1), 160).join("\n");
       assert.match(continuedText, /✓/);
-      assert.match(continuedText, /continued/);
-      assert.doesNotMatch(continuedText, /✗|pausing|stale-(?:job-)?tool|stale\/path|live detail/);
+      assert.match(continuedText, /complete/);
+      assert.match(continuedText, /worker-9 · pausing/);
+      assert.doesNotMatch(continuedText, /✗|stale-(?:job-)?tool|stale\/path/);
 
       const runningUi = createUiContext();
       renderWidget(runningUi.ctx as never, [buildCompactParallelJob("running")]);
@@ -990,7 +1016,7 @@ describe("subagent async widget rendering", () => {
     // not flavour text like whimsicalThinkingPhrase. It must survive the compact
     // single-job render in BOTH branches of the single-job detail builders:
     //   - with steps    -> singleWidgetAgentDetails `if (step)` /
-    //                      foregroundStyleWidgetDetails steps loop (needs jobHealthWarningLines)
+    //                      awaitedStyleWidgetDetails steps loop (needs jobHealthWarningLines)
     //   - without steps -> those builders' no-steps branch (already calls
     //                      widgetActivityDetailLines(job, ...))
     const now = 200_000;

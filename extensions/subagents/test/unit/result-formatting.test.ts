@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
   attachNestedChildrenToResultChildren,
-  formatForegroundNativeSubagentResult,
+  formatAwaitedNativeSubagentResult,
   resolveSubagentResultStatus,
 } from "../../src/shared/result-formatting.ts";
 import type { SubagentResultChild } from "../../src/shared/types.ts";
@@ -56,8 +56,8 @@ describe("result formatter", () => {
     assert.equal(Object.hasOwn(grandchild ?? {}, "capabilityToken"), false);
   });
 
-  it("formats native foreground results with bounded failed-first previews and explicit omissions", () => {
-    const grouped = formatForegroundNativeSubagentResult({
+  it("formats native awaited results with bounded failed-first previews and explicit omissions", () => {
+    const grouped = formatAwaitedNativeSubagentResult({
       runId: "run-native",
       mode: "parallel",
       children: [
@@ -105,8 +105,8 @@ describe("result formatter", () => {
     assert.ok(grouped.text.length <= 8_000);
   });
 
-  it("bounds native foreground errors, child summaries, and nested previews", () => {
-    const grouped = formatForegroundNativeSubagentResult({
+  it("bounds native awaited errors, child summaries, and nested previews", () => {
+    const grouped = formatAwaitedNativeSubagentResult({
       runId: "run-native-error",
       mode: "parallel",
       statusOverride: "failed",
@@ -169,12 +169,12 @@ describe("result formatter", () => {
     assert.ok(grouped.text.length <= 8_000);
   });
 
-  it("summary truncation is surrogate-safe in formatForegroundNativeSubagentResult", () => {
+  it("summary truncation is surrogate-safe in formatAwaitedNativeSubagentResult", () => {
     // MEASURE the cut point by passing a long pure-ASCII summary and counting
     // how many content characters survive. This avoids hard-coding an offset
     // that might drift when constants or markers change.
     const ascii = "A".repeat(5_000);
-    const measured = formatForegroundNativeSubagentResult({
+    const measured = formatAwaitedNativeSubagentResult({
       runId: "run-surr-measure",
       mode: "parallel",
       children: [{ agent: "a", status: "completed", summary: ascii, index: 0 }],
@@ -191,7 +191,7 @@ describe("result formatter", () => {
     // keeps the high surrogate but drops the low surrogate → ill-formed.
     const emoji = "\u{1F30D}"; // 🌍 — two UTF-16 code units
     const surrogateAtCut = "B".repeat(cutPoint - 1) + emoji + "C".repeat(5_000);
-    const result = formatForegroundNativeSubagentResult({
+    const result = formatAwaitedNativeSubagentResult({
       runId: "run-surr-safe",
       mode: "parallel",
       children: [{ agent: "a", status: "completed", summary: surrogateAtCut, index: 0 }],
@@ -211,24 +211,24 @@ describe("result formatter", () => {
 });
 
 // =========================================================================
-// formatForegroundNativeSubagentText ceiling-contract sweep.
+// formatAwaitedNativeSubagentText ceiling-contract sweep.
 //
 // Derived from measured behaviour on this file. Do NOT import notify.ts
 // fixtures — the caps, scaffolding, and structure differ.
 //
 // Five properties are checked per combination:
-//   1. Output never exceeds MAX_NATIVE_FOREGROUND_CHARS (8 000).
+//   1. Output never exceeds MAX_NATIVE_AWAITED_CHARS (8 000).
 //   2. Every displayed child retains BOTH recovery pointers (artifact + session).
 //   3. A 'Nested subagents:' heading is never emitted without content beneath it.
 //   4. No mangled truncation-marker fragments (e.g. '… [su').
 //   5. Output is always well-formed UTF-16.
 // =========================================================================
-describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
+describe("formatAwaitedNativeSubagentText ceiling-contract sweep", () => {
   const ART_PATH =
     "/home/user/.the-last-harness/agent/runs/run-12345678-abcd-efgh-ijkl/artifacts/subagent-output.md";
   const SESS_PATH =
     "/home/user/.the-last-harness/agent/runs/run-12345678-abcd-efgh-ijkl/run-0/session.jsonl";
-  const LONG_SUMMARY = "S".repeat(2_000); // well above MAX_NATIVE_FOREGROUND_SUMMARY_CHARS (1 200)
+  const LONG_SUMMARY = "S".repeat(2_000); // well above MAX_NATIVE_AWAITED_SUMMARY_CHARS (1 200)
   const MAX_CHARS = 8_000;
 
   // Every marker this module emits has the shape '… [<text>]'. A bare '…' that is not
@@ -311,7 +311,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
     );
 
     // Real formatter output must pass the same guard.
-    const result = formatForegroundNativeSubagentResult({
+    const result = formatAwaitedNativeSubagentResult({
       runId: "run-x",
       mode: "parallel",
       children: [
@@ -356,13 +356,13 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
         index: i,
       }));
 
-      const { text } = formatForegroundNativeSubagentResult({
+      const { text } = formatAwaitedNativeSubagentResult({
         runId: `run-sweep-${n}`,
         mode: "parallel",
         children,
       });
 
-      const displayedN = Math.min(n, 8); // MAX_NATIVE_FOREGROUND_CHILDREN
+      const displayedN = Math.min(n, 8); // MAX_NATIVE_AWAITED_CHILDREN
 
       // 1. Must not exceed the ceiling.
       assert.ok(
@@ -413,7 +413,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       children: i % 2 === 0 ? [makeNestedEntry(`n${i}`)] : undefined,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-nested-sweep",
       mode: "parallel",
       children,
@@ -446,7 +446,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-long-refs",
       mode: "parallel",
       children,
@@ -488,7 +488,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "", // empty runId gives outerCost=85
       mode: "parallel",
       children,
@@ -512,7 +512,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       sessionPath: sessPath,
       index: i,
     }));
-    const { text: textPlus } = formatForegroundNativeSubagentResult({
+    const { text: textPlus } = formatAwaitedNativeSubagentResult({
       runId: "",
       mode: "parallel",
       children: childrenPlus,
@@ -531,7 +531,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
   // Bare-heading guard: orphaned 'Summary:' heading when per-child summary budget is exhausted.
   //
   // When the per-child summary budget is smaller than any well-formed truncation
-  // marker, boundedNativeForegroundSummary returns "", and the caller must NOT
+  // marker, boundedNativeAwaitedSummary returns "", and the caller must NOT
   // emit the 'Summary:' heading at all — an orphaned heading is worse than none.
   //
   // Measured shape: 8 children, 7 with 500-char artifact and session paths
@@ -560,7 +560,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-finding-a-regression",
       mode: "parallel",
       children,
@@ -628,7 +628,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       index: i,
     }));
 
-    const { text } = formatForegroundNativeSubagentResult({
+    const { text } = formatAwaitedNativeSubagentResult({
       runId: "run-finding-b-regression",
       mode: "parallel",
       children,

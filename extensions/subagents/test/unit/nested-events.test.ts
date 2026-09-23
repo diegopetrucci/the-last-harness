@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import type { AsyncJobState, NestedRunSummary, SubagentState } from "../../src/shared/types.ts";
+import type { AsyncJobState, NestedRunSummary } from "../../src/shared/types.ts";
 import {
   buildNestedRouteIndex,
   createNestedRoute,
@@ -13,7 +13,6 @@ import {
   resolveNestedRouteFromEnv,
   sanitizeSummary,
   updateAsyncJobNestedProjection,
-  updateForegroundNestedProjection,
   nestedSummaryFromAsyncStatus,
   writeNestedEvent,
 } from "../../src/runs/shared/nested-events.ts";
@@ -154,7 +153,7 @@ describe("nested event route validation", () => {
 });
 
 describe("nested event parsing and projection", () => {
-  it("projects started, updated, and completed records into async and foreground parent state", () => {
+  it("projects started, updated, and completed records into async parent state", () => {
     const route = trackRoute();
     writeNestedEvent(route, {
       type: "subagent.nested.started",
@@ -197,16 +196,6 @@ describe("nested event parsing and projection", () => {
     updateAsyncJobNestedProjection(job);
     assert.equal(job.nestedChildren?.[0]?.id, "nested-a");
     assert.equal(job.steps?.[1]?.children?.[0]?.id, "nested-a");
-
-    const control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never = {
-      runId: "root-run",
-      mode: "single",
-      startedAt: 1,
-      updatedAt: 1,
-      nestedRoute: route,
-    };
-    updateForegroundNestedProjection(control);
-    assert.equal(control.nestedChildren?.[0]?.id, "nested-a");
   });
 
   it("attaches root children to visible step slices by original step index", () => {

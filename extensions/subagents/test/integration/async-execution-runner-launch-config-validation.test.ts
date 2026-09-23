@@ -22,9 +22,9 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-  SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
+import { TICKET_LOOKUP_MAX_OUTPUT_BYTES } from "../../src/runs/shared/ticket-context.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
@@ -36,7 +36,6 @@ import {
   executeAsyncParallel,
   executeAsyncSingle,
   isAsyncAvailable,
-  readAsyncPayload,
   readMockPiArgs,
   readStatus,
   waitForAsyncResultFile,
@@ -75,24 +74,6 @@ function readEventTypes(asyncDir: string): string[] {
   });
 }
 
-function inferredAcceptanceRejectionOutput(output: string): string {
-  return [
-    output,
-    "```acceptance-report",
-    JSON.stringify({
-      criteriaSatisfied: [],
-      changedFiles: [],
-      testsAddedOrUpdated: ["test/report.test.ts"],
-      commandsRun: [
-        { command: "true", result: "passed", summary: "Intentional rejection fixture." },
-      ],
-      residualRisks: [],
-      noStagedFiles: true,
-    }),
-    "```",
-  ].join("\n");
-}
-
 describe("async execution runner launch and configuration validation", () => {
   let tempDir: string;
   let previousAgentDir: string | undefined;
@@ -118,24 +99,6 @@ describe("async execution runner launch and configuration validation", () => {
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     removeTempDir(tempDir);
   });
-
-  function makeAsyncExecutor(agents = [makeAgent("worker")]) {
-    return createSubagentExecutor!({
-      pi: { events: createEventBus(), getSessionName: () => undefined },
-      state: {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      config: {},
-      tempArtifactsDir: tempDir,
-      getSubagentSessionRoot: () => tempDir,
-      expandTilde: (p: string) => p,
-      discoverAgents: () => ({ agents }),
-    });
-  }
 
   it("reports the required async runner as available", () => {
     assert.equal(isAsyncAvailable(), true);
@@ -365,126 +328,18 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(args.includes("--no-tools"), false);
   });
 
-  it("assigns fresh tickets through async single and two-child parallel launches", async () => {
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
-    const agentDir = path.join(tempDir, "profile");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
-    const canonicalAgent = makeAgent("developer", {
-      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
-    });
-    try {
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const singleId = `async-packaged-identity-${Date.now().toString(36)}`;
-      const commonParams = {
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-      };
-      const single = executeAsyncSingle(singleId, {
-        agent: "developer",
-        task: "Before editing, run `tk show async-single-ticket`.",
-        agentConfig: canonicalAgent,
-        ...commonParams,
-      });
-      assert.equal(single.isError, undefined);
-      const singlePayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(singleId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(singlePayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: "async-single-ticket",
-      });
-
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const parallelId = `async-packaged-identities-${Date.now().toString(36)}`;
-      const parallel = executeAsyncParallel(parallelId, {
-        tasks: [
-          { agent: "developer", task: "Before editing, run `tk show async-first-ticket`." },
-          { agent: "developer", task: "Before editing, run `tk show async-second-ticket`." },
-        ],
-        agents: [canonicalAgent],
-        ...commonParams,
-      });
-      assert.equal(parallel.isError, undefined);
-      const parallelPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(parallelId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(
-        parallelPayload.results.map((child) => JSON.parse(child.output)),
-        [
-          {
-            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-            [SUBAGENT_TK_TICKET_ID_ENV]: "async-first-ticket",
-          },
-          {
-            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-            [SUBAGENT_TK_TICKET_ID_ENV]: "async-second-ticket",
-          },
-        ],
-      );
-    } finally {
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousGuidanceMarker === undefined)
-        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
-    }
-  });
-
   it("preserves canonical code-reviewer guidance without a ticket in async launch", async () => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
     const agentDir = path.join(tempDir, "profile");
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
     const canonicalCodeReviewer = makeAgent("code-reviewer", {
       filePath: path.join(agentDir, "tlh", "agents", "subagents", "code-reviewer.md"),
     });
     try {
       mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
       });
       const id = `async-canonical-reviewer-${Date.now().toString(36)}`;
       const run = executeAsyncParallel(id, {
@@ -511,7 +366,6 @@ describe("async execution runner launch and configuration validation", () => {
       assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
         [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
         [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: null,
       });
     } finally {
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -519,63 +373,6 @@ describe("async execution runner launch and configuration validation", () => {
       if (previousGuidanceMarker === undefined)
         delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
       else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
-    }
-  });
-
-  it("isolates same-name custom async agents from ticket assignment", async () => {
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
-    const agentDir = path.join(tempDir, "profile");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "inherited-ticket";
-    try {
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const id = `async-custom-collision-${Date.now().toString(36)}`;
-      const run = executeAsyncSingle(id, {
-        agent: "developer",
-        task: "Before editing, run `tk show custom-ticket`.",
-        agentConfig: makeAgent("developer", {
-          filePath: path.join(tempDir, "custom", "developer.md"),
-        }),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-      });
-      assert.equal(run.isError, undefined);
-      const payload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
-        [SUBAGENT_TK_TICKET_ID_ENV]: null,
-      });
-    } finally {
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousGuidanceMarker === undefined)
-        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
     }
   });
 
@@ -636,42 +433,6 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(parallelPayload.agent, "parallel:worker+reviewer");
   });
 
-  it("applies agent acceptance roles to inferred async acceptance", async () => {
-    mockPi.onCall({ output: "writer-role complete" });
-    const executor = makeAsyncExecutor([makeAgent("reviewer", { acceptanceRole: "writer" })]);
-
-    const result = await executor.execute(
-      "async-agent-acceptance-role",
-      { agent: "reviewer", task: "Handle the authentication flow", async: true },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const payload = await readAsyncPayload(asyncId);
-    assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
-  });
-
-  it("applies agent acceptance roles to inferred async parallel acceptance", async () => {
-    mockPi.onCall({ output: "parallel exploration complete" });
-    const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
-
-    const result = await executor.execute(
-      "async-parallel-agent-acceptance-role",
-      { tasks: [{ agent: "worker", task: "Explore the authentication flow" }], async: true },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const payload = await readAsyncPayload(asyncId);
-    assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
-  });
-
   it("top-level async parallel conversion preserves output, reads, and progress", async () => {
     mockPi.onCall({ output: "Async top-level report" });
     const executor = createSubagentExecutor!({
@@ -680,8 +441,6 @@ describe("async execution runner launch and configuration validation", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,
@@ -737,9 +496,7 @@ describe("async execution runner launch and configuration validation", () => {
     const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
     assert.equal(payload.mode, "parallel");
     assert.equal(payload.sessionId, parentSessionFile);
-    assert.equal(payload.results[0]?.acceptance?.status, "checked");
     assert.equal(status.sessionId, parentSessionFile);
-    assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
     const outputPath = path.join(
       tempDir,
       "parent-session",
@@ -777,70 +534,6 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
   });
 
-  it("async inferred acceptance rejection preserves a saved-output reference", async () => {
-    const outputPath = path.join(tempDir, "async-inferred-acceptance-rejected.md");
-    const savedContent = "saved async deliverable without a report";
-    mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
-    const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
-
-    const result = await executor.execute(
-      "async-inferred-acceptance-rejected",
-      {
-        agent: "worker",
-        task: "Implement the approved async change",
-        output: outputPath,
-        async: true,
-      },
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(tempDir),
-    );
-    const asyncId = result.details?.asyncId;
-    assert.ok(asyncId, "expected asyncId");
-    const resultPath = await waitForAsyncResultFile(asyncId);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const child = payload.results[0];
-
-    assert.equal(payload.success, true);
-    assert.equal(child?.exitCode, 0);
-    assert.equal(child?.acceptance?.explicit, false);
-    assert.equal(child?.acceptance?.status, "rejected");
-    assert.match(child?.output ?? "", /Output saved to:/);
-    assert.equal(fs.readFileSync(outputPath, "utf-8"), savedContent);
-  });
-
-  it("async single rejects explicit reviewed acceptance before spawning a child", async () => {
-    mockPi.onCall({ output: "should not run" });
-    const artifactConfig = {
-      enabled: false,
-      includeInput: false,
-      includeOutput: false,
-      includeJsonl: false,
-      includeMetadata: false,
-      cleanupDays: 7,
-    };
-    const id = `async-acceptance-${Date.now().toString(36)}`;
-    const result = executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Implement acceptance-covered fix",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance" },
-      artifactConfig,
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      acceptance: { level: "reviewed", criteria: ["Patch bug"], review: false },
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /reviewed/);
-    assert.match(result.content[0]?.text ?? "", /verified/);
-    assert.match(result.content[0]?.text ?? "", /verify commands/);
-    assert.match(result.content[0]?.text ?? "", /checked/);
-    assert.equal(mockPi.callCount(), 0);
-    assert.equal(fs.existsSync(path.join(ASYNC_DIR, id)), false);
-    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
-  });
-
   it("top-level async single suppresses progress for review-only tasks", async () => {
     mockPi.onCall({ output: "Async review" });
     const executor = createSubagentExecutor!({
@@ -849,8 +542,6 @@ describe("async execution runner launch and configuration validation", () => {
         baseCwd: tempDir,
         currentSessionId: null,
         asyncJobs: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
       },
       config: {},
       tempArtifactsDir: tempDir,
@@ -906,23 +597,23 @@ describe("async execution runner launch and configuration validation", () => {
       assert.ok(cached);
       assert.strictEqual(readStatus(dir), cached);
 
-      writeAtomicJson(statusPath, { ...statusData, state: "stopped" });
+      writeAtomicJson(statusPath, { ...statusData, state: "unknown-state" });
       fs.utimesSync(statusPath, fixedTimestamp, fixedTimestamp);
       assert.equal(fs.statSync(statusPath).mtimeMs, fixedTimestamp.getTime());
       const replaced = readStatus(dir);
       assert.ok(replaced);
-      assert.equal(replaced.state, "stopped");
+      assert.equal(replaced.state, "failed");
       assert.notStrictEqual(replaced, cached);
     } finally {
       removeTempDir(dir);
     }
   });
 
-  it("readStatus throws for malformed status files", () => {
+  it("readStatus retries then throws for malformed status files", () => {
     const dir = createTempDir();
     try {
       fs.writeFileSync(path.join(dir, "status.json"), "{bad-json", "utf-8");
-      assert.throws(() => readStatus(dir), /Failed to parse async status file/);
+      assert.throws(() => readStatus(dir), /status JSON could not be parsed/);
     } finally {
       removeTempDir(dir);
     }
@@ -1097,6 +788,76 @@ describe("async execution runner launch and configuration validation", () => {
         "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.",
         testCase.label,
       );
+    }
+  });
+
+  it("rejects malformed persisted ticket bodies before launching a child", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const validTask = {
+      agent: "worker",
+      task: "This child must not launch.",
+      ticketId: "tlhm-valid",
+      ticketBody: "# Valid ticket body\n",
+      inheritProjectContext: false,
+      inheritSkills: false,
+    } satisfies RunnerSubagentStep;
+    const cases: Array<{ label: string; task: unknown }> = [
+      { label: "missing-id", task: { ...validTask, ticketId: undefined } },
+      { label: "empty-body", task: { ...validTask, ticketBody: " \n" } },
+      { label: "non-string-body", task: { ...validTask, ticketBody: 42 } },
+      {
+        label: "oversized-body",
+        task: { ...validTask, ticketBody: "x".repeat(TICKET_LOOKUP_MAX_OUTPUT_BYTES + 1) },
+      },
+      { label: "unsafe-id", task: { ...validTask, ticketId: "bad/id" } },
+      { label: "non-string-id", task: { ...validTask, ticketId: 42 } },
+    ];
+
+    for (const testCase of cases) {
+      const id = `async-invalid-ticket-${testCase.label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          id,
+          plan: { kind: "single", task: testCase.task },
+          resultPath,
+          cwd: tempDir,
+          asyncDir,
+          sessionId: `session-${id}`,
+        }),
+        "utf-8",
+      );
+
+      const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        env: { ...process.env },
+      });
+
+      assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
+      assert.match(runner.stderr, /valid direct plan/);
+      assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
+      assert.equal(
+        fs.existsSync(configPath),
+        false,
+        `${testCase.label}: config should be consumed`,
+      );
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      assert.equal(payload.state, "failed", testCase.label);
+      assert.equal(payload.success, false, testCase.label);
+      assert.equal(payload.error, "Async runner config must include a valid direct plan.");
+      assert.equal(payload.results.length, 0, testCase.label);
+      assert.equal(status.state, "failed", testCase.label);
+      assert.equal(status.steps?.length, 0, testCase.label);
     }
   });
 
@@ -1382,12 +1143,10 @@ describe("async execution runner launch and configuration validation", () => {
       task: "Inspect the task",
       model,
       modelCandidates: [model],
-      modelFallbackFilterNotice: persistedNotice,
+      modelFallbackNotice: persistedNotice,
       inheritProjectContext: false,
       inheritSkills: false,
-    } satisfies RunnerSubagentStep & {
-      modelFallbackFilterNotice: string;
-    };
+    } satisfies RunnerSubagentStep;
     const config: SubagentRunConfig = {
       id,
       plan: {

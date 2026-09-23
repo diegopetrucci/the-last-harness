@@ -5,7 +5,10 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import registerSubagentNotify from "../../src/runs/background/notify.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
-import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
+import {
+  registerAwaitedRun,
+  unregisterAwaitedRun,
+} from "../../src/runs/background/awaited-run-registry.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
@@ -14,12 +17,9 @@ function createState(sessionId: string): SubagentState {
     baseCwd: "/repo",
     currentSessionId: sessionId,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -40,58 +40,13 @@ async function waitUntil(
   }
 }
 
-function createNotifyHarness(): {
-  pi: {
-    events: {
-      on: (event: string, handler: (payload: unknown) => void) => () => void;
-      emit: (event: string, data: unknown) => void;
-    };
-    on: (_event: string, _handler: (...args: unknown[]) => void) => void;
-    sendMessage: (message: { content?: string }) => void;
-    sendUserMessage: (content: string, options?: { deliverAs?: string }) => void;
-  };
-  sent: string[];
-  sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }>;
-} {
+function createHarness(sessionId = "session-owner") {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
-  const sent: string[] = [];
-  const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
-  return {
-    pi: {
-      events: {
-        on(event: string, handler: (payload: unknown) => void) {
-          const handlers = listeners.get(event) ?? new Set();
-          handlers.add(handler);
-          listeners.set(event, handlers);
-          return () => handlers.delete(handler);
-        },
-        emit(event: string, data: unknown) {
-          for (const handler of listeners.get(event) ?? []) handler(data);
-        },
-      },
-      on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { content?: string }) {
-        sent.push(message.content ?? "");
-      },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
-      },
-    },
-    sent,
-    sentUserMessages,
-  };
-}
-
-describe("result watcher to native notify", () => {
-  it("does not register or emit the retired result event while notifying the exact owner", async () => {
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-notify-"));
-    const listeners = new Map<string, Set<(payload: unknown) => void>>();
-    const emitted: Array<{ event: string; data: unknown }> = [];
-    const sent: Array<{
-      message: { customType?: string; content?: string; display?: boolean };
-    }> = [];
-    const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
-    const events = {
+  const emitted: Array<{ event: string; data: unknown }> = [];
+  const sent: Array<{ content: string; details?: unknown }> = [];
+  const nudges: string[] = [];
+  const pi = {
+    events: {
       on(event: string, handler: (payload: unknown) => void) {
         const handlers = listeners.get(event) ?? new Set();
         handlers.add(handler);
@@ -102,807 +57,941 @@ describe("result watcher to native notify", () => {
         emitted.push({ event, data });
         for (const handler of listeners.get(event) ?? []) handler(data);
       },
-    };
-    const pi = {
-      events,
-      on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { customType?: string; content?: string; display?: boolean }) {
-        sent.push({ message });
-      },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
-      },
-    };
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
-    const writeResult = (name: string, data: Record<string, unknown>) => {
-      fs.writeFileSync(path.join(resultsDir, name), JSON.stringify(data), "utf-8");
-    };
+    },
+    on(_event: string, _handler: (...args: unknown[]) => void) {},
+    sendMessage(message: { content?: string; details?: unknown }) {
+      sent.push({ content: message.content ?? "", details: message.details });
+    },
+    sendUserMessage(content: string) {
+      nudges.push(content);
+    },
+  };
+  const state = createState(sessionId);
+  registerSubagentNotify(pi as never, state);
+  return { pi, state, sent, nudges, emitted };
+}
 
-    const singleSession = path.join(resultsDir, "single-session.jsonl");
-    const childSession = path.join(resultsDir, "child-9-session.jsonl");
-    const pausedChildSession = path.join(resultsDir, "paused-child-session.jsonl");
-    fs.writeFileSync(singleSession, "session\n", "utf-8");
-    fs.writeFileSync(childSession, "session\n", "utf-8");
-    fs.writeFileSync(pausedChildSession, "session\n", "utf-8");
-    try {
-      writeResult("01-completed.json", {
-        id: "completed-event",
-        runId: "completed-run",
-        agent: "single-worker",
-        success: true,
-        state: "complete",
-        summary: "single done",
-        sessionFile: singleSession,
-        shareUrl: "https://share/completed-run",
-        results: [{ agent: "single-worker", output: "single done", success: true }],
-        sessionId: "session-owner",
-        intercomTarget: "stale-owner-target",
-      });
-      writeResult("02-mixed-failed.json", {
-        id: "mixed-failed-event",
-        runId: "mixed-failed-run",
-        agent: "parallel:a+b",
-        success: true,
-        state: "complete",
-        summary: "mixed outer summary",
-        results: [
-          ...Array.from({ length: 8 }, (_, index) => ({
-            agent: `ok-${index}`,
-            output: `ok-${index} done`,
-            success: true,
-          })),
-          {
-            agent: "late-failure",
-            output: "late failure output",
-            error: "late failure",
-            success: false,
-            sessionFile: childSession,
-          },
-        ],
-        sessionId: "session-owner",
-        intercomTarget: "stale-owner-target",
-      });
-      writeResult("03-paused.json", {
-        id: "paused",
-        agent: "parallel:a+b",
-        success: false,
-        state: "paused",
-        summary: "Paused after interrupt.",
-        results: [
-          { agent: "a", output: "a done", success: true, exitCode: 0 },
-          { agent: "b", output: "b done", success: true, exitCode: 0 },
-          { agent: "c", output: "c done", success: true, exitCode: 0 },
-          { agent: "d", output: "d done", success: true, exitCode: 0 },
-          {
-            agent: "e",
-            output: "Paused after interrupt.",
-            success: false,
-            exitCode: 0,
-            interrupted: true,
-            sessionFile: pausedChildSession,
-          },
-        ],
-        sessionId: "session-owner",
-        intercomTarget: "stale-owner-target",
-      });
-      writeResult("04-missing-session.json", {
-        id: "missing-session-event",
-        runId: "missing-session-run",
-        agent: "missing-session-worker",
-        success: true,
-        summary: "missing session done",
-        sessionFile: path.join(resultsDir, "missing-session.jsonl"),
-        sessionId: "session-owner",
-      });
-      writeResult("05-foreign.json", {
-        id: "foreign",
-        agent: "foreign-worker",
-        success: true,
-        summary: "must not deliver",
-        sessionId: "session-other",
-      });
+function writeResult(resultsDir: string, file: string, data: Record<string, unknown>): string {
+  const resultPath = path.join(resultsDir, file);
+  fs.writeFileSync(resultPath, JSON.stringify(data), "utf8");
+  return resultPath;
+}
 
-      watcher.primeExistingResults();
-      await waitUntil(() => sent.length === 4);
-    } finally {
-      watcher.stopResultWatcher();
-    }
+type PausedFixture = {
+  root: string;
+  resultsDir: string;
+  asyncDir: string;
+  resultPath: string;
+  sessionPath: string;
+  pausedResult: Record<string, unknown>;
+};
 
-    assert.equal(sent.length, 4);
-    // E′ protocol: sendMessage is called without options (no triggerTurn); nudge comes via sendUserMessage
-    assert.equal(
-      sent.every(
-        (entry) => entry.message.customType === "subagent-notify" && entry.message.display === true,
-      ),
-      true,
-    );
-    // Four sendUserMessage nudges (one per completion, all on idle path with batching disabled)
-    assert.equal(sentUserMessages.length, 4);
-    assert.ok(
-      sentUserMessages.every(
-        (entry) =>
-          entry.content === "[tlh] Background subagent completed — see notification above." &&
-          entry.options?.deliverAs === "followUp",
-      ),
-      "every nudge must use the E\u2032 wake-up text and deliverAs:followUp",
-    );
-    const contents = sent.map((entry) => entry.message.content ?? "");
-    assert.equal(
-      contents.some(
-        (content) =>
-          content.startsWith("Background task completed: **single-worker**") &&
-          /Async id: completed-event/.test(content) &&
-          /Revive: subagent\({ action: "resume", id: "completed-event", message: "\.\.\." }\)/.test(
-            content,
-          ) &&
-          content.endsWith("Session: https://share/completed-run"),
-      ),
-      true,
-    );
-    assert.equal(
-      contents.some(
-        (content) =>
-          content.startsWith("Background task failed: **parallel:a+b**") &&
-          /Children: 8 completed, 1 failed/.test(content) &&
-          /9\/9\. late-failure — failed/.test(content) &&
-          /Revive child: subagent\({ action: "resume", id: "mixed-failed-event", index: 8, message: "\.\.\." }\)/.test(
-            content,
-          ),
-      ),
-      true,
-    );
-    assert.equal(
-      contents.some(
-        (content) =>
-          content.startsWith("Background task paused: **parallel:a+b**") &&
-          /Async id: paused/.test(content) &&
-          /Revive child: subagent\({ action: "resume", id: "paused", index: 4, message: "\.\.\." }\)/.test(
-            content,
-          ),
-      ),
-      true,
-    );
-    assert.equal(
-      contents.some(
-        (content) =>
-          content.startsWith("Background task completed: **missing-session-worker**") &&
-          /Async id: missing-session-event/.test(content) &&
-          !/subagent\({ action: "resume"/.test(content),
-      ),
-      true,
-    );
-    assert.equal(
-      contents.some((content) => content.includes("must not deliver")),
-      false,
-    );
-    assert.equal(
-      contents.some((content) => content.includes("stale-owner-target")),
-      false,
-    );
-    assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 4);
-    assert.equal(
-      emitted.some(
-        (entry) =>
-          entry.event === "subagent:async-complete" &&
-          typeof entry.data === "object" &&
-          entry.data !== null &&
-          "id" in entry.data &&
-          "runId" in entry.data &&
-          (entry.data as { id?: unknown }).id === "completed-event" &&
-          (entry.data as { runId?: unknown }).runId === "completed-run" &&
-          (entry.data as { shareUrl?: unknown }).shareUrl === "https://share/completed-run",
-      ),
-      true,
-    );
-    assert.equal(listeners.has("subagent:result-intercom"), false);
-    assert.equal(
-      emitted.some((entry) => entry.event === "subagent:result-intercom"),
-      false,
-    );
-    assert.equal(fs.existsSync(path.join(resultsDir, "05-foreign.json")), true);
-    fs.rmSync(resultsDir, { recursive: true, force: true });
-  });
-
-  it("notifies an awaiting_supervisor paused result exactly once across repeated scans", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-paused-once-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "paused-awaiting-supervisor");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const listeners = new Map<string, Set<(payload: unknown) => void>>();
-    const emitted: Array<{ event: string; data: unknown }> = [];
-    const sent: Array<{ message: { content?: string } }> = [];
-    const pi = {
-      events: {
-        on(event: string, handler: (payload: unknown) => void) {
-          const handlers = listeners.get(event) ?? new Set();
-          handlers.add(handler);
-          listeners.set(event, handlers);
-          return () => handlers.delete(handler);
-        },
-        emit(event: string, data: unknown) {
-          emitted.push({ event, data });
-          for (const handler of listeners.get(event) ?? []) handler(data);
-        },
-      },
-      on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { content?: string }) {
-        sent.push({ message });
-      },
-      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
-    };
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
-    const pausedSession = path.join(resultsDir, "paused-session.jsonl");
-    fs.writeFileSync(pausedSession, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "paused-awaiting-supervisor",
-          mode: "single",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "worker",
-              status: "paused",
-              sessionFile: pausedSession,
-              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-            },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const pausedResult = {
-      lifecycleArtifactVersion: 1,
-      id: "paused-awaiting-supervisor",
-      runId: "paused-awaiting-supervisor",
-      agent: "worker",
-      success: false,
+function createPausedFixture(runId: string, parallel = false): PausedFixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `tlh-${runId}-`));
+  const resultsDir = path.join(root, "results");
+  const asyncDir = path.join(root, "async");
+  fs.mkdirSync(resultsDir, { recursive: true });
+  fs.mkdirSync(asyncDir, { recursive: true });
+  const sessionPath = path.join(resultsDir, `${runId}-session.jsonl`);
+  fs.writeFileSync(sessionPath, "session\n", "utf8");
+  const steps = parallel
+    ? [
+        { agent: "a", status: "paused" },
+        { agent: "b", status: "paused" },
+      ]
+    : [{ agent: "worker", status: "paused", sessionFile: sessionPath }];
+  fs.writeFileSync(
+    path.join(asyncDir, "status.json"),
+    JSON.stringify({
+      runId,
+      mode: parallel ? "parallel" : "single",
       state: "paused",
-      summary: "Paused awaiting supervisor.",
-      pause: { kind: "awaiting_supervisor" },
-      results: [
+      startedAt: 100,
+      sessionId: "session-owner",
+      steps,
+      pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+    }),
+    "utf8",
+  );
+  const results = parallel
+    ? [
+        {
+          agent: "a",
+          success: false,
+          interrupted: true,
+          output: "Paused awaiting supervisor.",
+          sessionFile: sessionPath,
+        },
+        {
+          agent: "b",
+          success: false,
+          interrupted: true,
+          output: "Still paused.",
+        },
+      ]
+    : [
         {
           agent: "worker",
           success: false,
           interrupted: true,
           output: "Paused awaiting supervisor.",
-          sessionFile: pausedSession,
+          sessionFile: sessionPath,
         },
-      ],
+      ];
+  const pausedResult = {
+    lifecycleArtifactVersion: 1,
+    id: runId,
+    runId,
+    agent: parallel ? "parallel:a+b" : "worker",
+    success: false,
+    state: "paused",
+    summary: "Paused awaiting supervisor.",
+    pause: { kind: "awaiting_supervisor" },
+    results,
+    sessionId: "session-owner",
+    asyncDir,
+  };
+  return {
+    root,
+    resultsDir,
+    asyncDir,
+    resultPath: path.join(resultsDir, `${runId}.json`),
+    sessionPath,
+    pausedResult,
+  };
+}
+
+function writePausedLifecycle(
+  fixture: PausedFixture,
+  state: string,
+  steps: Array<Record<string, unknown>>,
+  lifecycle?: Record<string, unknown>,
+): void {
+  fs.writeFileSync(
+    path.join(fixture.asyncDir, "status.json"),
+    JSON.stringify({
+      runId: fixture.pausedResult.runId,
+      mode: steps.length > 1 ? "parallel" : "single",
+      state,
+      startedAt: 100,
       sessionId: "session-owner",
-      asyncDir,
-    };
+      steps,
+      ...(state === "paused" ? { pause: { kind: "awaiting_supervisor", pausedAt: 200 } } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
+    }),
+    "utf8",
+  );
+}
+
+describe("result watcher to native notify", () => {
+  it("delivers two siblings finishing ten milliseconds apart as two notifications", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-two-siblings-"));
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    const watcher = createResultWatcher(pi, state, resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "paused-awaiting-supervisor.json");
-      fs.writeFileSync(resultPath, JSON.stringify(pausedResult), "utf-8");
+      writeResult(resultsDir, "01-alpha.json", {
+        id: "alpha-run",
+        runId: "alpha-run",
+        agent: "alpha",
+        success: true,
+        state: "complete",
+        summary: "alpha done",
+        sessionId: "session-owner",
+      });
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0]!.message.content ?? "", /^Background task paused:/);
-      assert.match(sent[0]!.message.content ?? "", /No child process is running\./);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      writeResult(resultsDir, "02-beta.json", {
+        id: "beta-run",
+        runId: "beta-run",
+        agent: "beta",
+        success: true,
+        state: "complete",
+        summary: "beta done",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 2);
+
+      assert.match(sent[0]!.content, /^Background task completed: \*\*alpha\*\*/);
+      assert.match(sent[1]!.content, /^Background task completed: \*\*beta\*\*/);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
+      assert.equal(nudges.length, 2);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the watcher as the sole detached delivery owner", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-owner-"));
+    const { pi, state, sent, emitted } = createHarness();
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    const resultPath = writeResult(resultsDir, "owned.json", {
+      id: "owned-run",
+      runId: "owned-run",
+      agent: "worker",
+      success: false,
+      state: "failed",
+      summary: "failure summary",
+      body: "raw body must not leak",
+      status: "private status must not leak",
+      sessionId: "session-owner",
+    });
+    try {
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+      assert.equal(sent.length, 1, "notify must project the watcher event exactly once");
+      assert.match(sent[0]!.content, /Summary:\n  failure summary/);
+      assert.doesNotMatch(sent[0]!.content, /raw body|private status/);
+      assert.equal(fs.existsSync(resultPath), false);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a bounded session share error in the fixed completion shape", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-share-error-"));
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    const shareError = `share failed: ${"private-share-detail-".repeat(200)}share-tail`;
+    try {
+      const resultPath = writeResult(resultsDir, "share-error.json", {
+        id: "share-error",
+        runId: "share-error",
+        agent: "worker",
+        success: false,
+        state: "failed",
+        summary: "share failed after completion",
+        shareError,
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.match(sent[0]!.content, /Summary:\n  share failed after completion/);
+      assert.match(sent[0]!.content, /Session share error: share failed:/);
+      assert.doesNotMatch(sent[0]!.content, /share-tail/);
+      assert.equal(fs.existsSync(resultPath), false);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the original failed child index in revive guidance", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-revive-child-"));
+    const sessionPath = path.join(resultsDir, "failed-child-session.jsonl");
+    fs.writeFileSync(sessionPath, "session\n", "utf8");
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      writeResult(resultsDir, "revive-child.json", {
+        id: "revive-child",
+        runId: "revive-child",
+        agent: "parallel:alpha+beta",
+        success: true,
+        state: "complete",
+        summary: "parallel finished with one failed child",
+        results: [
+          { agent: "alpha", output: "alpha done", success: true },
+          {
+            agent: "beta",
+            output: "beta output",
+            error: "beta failed",
+            success: false,
+            sessionFile: sessionPath,
+          },
+        ],
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
       assert.match(
-        sent[0]!.message.content ?? "",
-        /Resume unchanged: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor" \}\)/,
+        sent[0]!.content,
+        /Revive child: subagent\(\{ action: "resume", id: "revive-child", index: 1, message: "\.\.\." \}\)/,
       );
-      assert.match(
-        sent[0]!.message.content ?? "",
-        /Resume with guidance: subagent\(\{ action: "resume", id: "paused-awaiting-supervisor", message: "Supervisor replied: \.\.\." \}\)/,
+      assert.doesNotMatch(sent[0]!.content, /index: 0, message/);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("consumes awaited results privately without emitting detached completion notifications", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-"));
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    const runId = "awaited-run";
+    registerAwaitedRun(runId, () => true, 1);
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      const resultPath = writeResult(resultsDir, "awaited.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: true,
+        state: "complete",
+        generation: 1,
+        awaited: true,
+        summary: "private awaited result",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => !fs.existsSync(resultPath));
+      assert.deepEqual(sent, []);
+      assert.deepEqual(nudges, []);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
+    } finally {
+      watcher.stopResultWatcher();
+      unregisterAwaitedRun(runId, 1);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("delivers persisted-awaited recovery after the live owner is gone", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-recovery-"));
+    const runId = "awaited-recovery";
+    registerAwaitedRun(runId, () => true, 4);
+    unregisterAwaitedRun(runId, 4);
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      const resultPath = writeResult(resultsDir, "awaited-recovery.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: true,
+        state: "complete",
+        generation: 4,
+        awaited: true,
+        summary: "recovered awaited result",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.match(sent[0]!.content, /recovered awaited result/);
+      assert.equal(nudges.length, 1);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+      assert.equal(fs.existsSync(resultPath), false);
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(sent.length, 1);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a watcher-first owner consume later-generation timeout, abort, and pause artifacts once", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-generations-"));
+    const cases = [
+      {
+        id: "awaited-timeout-generation",
+        state: "failed",
+        summary: "timed out",
+        extra: { timedOut: true },
+      },
+      {
+        id: "awaited-abort-generation",
+        state: "cancelled",
+        summary: "cancelled",
+        extra: { error: "Cancelled by parent abort." },
+      },
+      {
+        id: "awaited-pause-generation",
+        state: "paused",
+        summary: "Paused awaiting supervisor.",
+        extra: { lifecycleArtifactVersion: 1 },
+      },
+    ] as const;
+    const deliveries: unknown[] = [];
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    for (const testCase of cases) {
+      registerAwaitedRun(
+        testCase.id,
+        (data) => {
+          deliveries.push(data);
+          return true;
+        },
+        0,
+        undefined,
+        (data) => (data as { generation?: unknown }).generation === 1,
       );
-      assert.match(
-        sent[0]!.message.content ?? "",
-        /Cancel: subagent\(\{ action: "interrupt", id: "paused-awaiting-supervisor" \}\)/,
+    }
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      for (const testCase of cases) {
+        const asyncDir = path.join(resultsDir, `${testCase.id}-async`);
+        const sessionPath = path.join(asyncDir, "worker.jsonl");
+        if (testCase.state === "paused") {
+          fs.mkdirSync(asyncDir, { recursive: true });
+          fs.writeFileSync(sessionPath, "session\n", "utf8");
+          fs.writeFileSync(
+            path.join(asyncDir, "status.json"),
+            JSON.stringify({
+              runId: testCase.id,
+              mode: "single",
+              state: "paused",
+              startedAt: 100,
+              sessionId: "session-owner",
+              lifecycle: { generation: 1 },
+              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+              steps: [{ agent: "worker", status: "paused", sessionFile: sessionPath }],
+            }),
+            "utf8",
+          );
+        }
+        writeResult(resultsDir, `${testCase.id}.json`, {
+          lifecycleArtifactVersion: 1,
+          id: testCase.id,
+          runId: testCase.id,
+          agent: "worker",
+          success: false,
+          state: testCase.state,
+          generation: 1,
+          awaited: true,
+          summary: testCase.summary,
+          asyncDir,
+          sessionId: "session-owner",
+          ...(testCase.state === "paused"
+            ? {
+                pause: { kind: "awaiting_supervisor" },
+                results: [
+                  {
+                    agent: "worker",
+                    success: false,
+                    interrupted: true,
+                    output: testCase.summary,
+                    sessionFile: sessionPath,
+                  },
+                ],
+              }
+            : {}),
+          ...testCase.extra,
+        });
+        watcher.primeExistingResults();
+      }
+
+      await waitUntil(() => deliveries.length === cases.length);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      assert.equal(deliveries.length, cases.length);
+      assert.deepEqual(
+        (deliveries as Array<{ state?: string; generation?: number }>).map((data) => ({
+          state: data.state,
+          generation: data.generation,
+        })),
+        cases.map((testCase) => ({ state: testCase.state, generation: 1 })),
       );
-      assert.doesNotMatch(
-        sent[0]!.message.content ?? "",
-        new RegExp(pausedSession.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      assert.deepEqual(sent, []);
+      assert.deepEqual(nudges, []);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
+      for (const testCase of cases)
+        assert.equal(fs.existsSync(path.join(resultsDir, `${testCase.id}.json`)), false);
+    } finally {
+      watcher.stopResultWatcher();
+      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not privately consume generationless result artifacts", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-generationless-"));
+    const runId = "awaited-generationless-artifact";
+    const deliveries: unknown[] = [];
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    registerAwaitedRun(
+      runId,
+      (data) => {
+        deliveries.push(data);
+        return true;
+      },
+      0,
+      undefined,
+      () => true,
+    );
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      const resultPath = writeResult(resultsDir, "generationless.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: false,
+        state: "failed",
+        awaited: true,
+        summary: "generationless stale result",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.deepEqual(deliveries, []);
+      assert.equal(nudges.length, 1);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+      assert.equal(fs.existsSync(resultPath), false);
+    } finally {
+      watcher.stopResultWatcher();
+      unregisterAwaitedRun(runId, 0);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("arbitrates malformed child arrays after safe watcher normalization", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-malformed-children-"));
+    const runId = "awaited-malformed-child-array";
+    const deliveries: unknown[] = [];
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    registerAwaitedRun(
+      runId,
+      (data) => {
+        deliveries.push(data);
+        return true;
+      },
+      1,
+    );
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      const resultPath = writeResult(resultsDir, "malformed-children.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: false,
+        state: "failed",
+        generation: 1,
+        awaited: true,
+        summary: "malformed child array",
+        results: [null],
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => deliveries.length === 1);
+      assert.equal(sent.length, 0);
+      assert.equal(nudges.length, 0);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
+      assert.equal(fs.existsSync(resultPath), false);
+      const child = (deliveries[0] as { results?: Array<Record<string, unknown>> }).results?.[0];
+      assert.equal(child?.agent, "worker");
+      assert.equal(child?.status, "failed");
+      assert.equal(child?.summary, "malformed child array");
+      assert.equal(child?.index, 0);
+    } finally {
+      watcher.stopResultWatcher();
+      unregisterAwaitedRun(runId, 1);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not suppress stale artifacts or a replacement owner's generation", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-awaited-replacement-"));
+    const runId = "awaited-replacement-generation";
+    const delivered: number[] = [];
+    const { pi, state, sent, nudges, emitted } = createHarness();
+    registerAwaitedRun(
+      runId,
+      (data) => {
+        const generation = (data as { generation?: unknown }).generation;
+        if (generation !== 2) return false;
+        delivered.push(2);
+        return true;
+      },
+      2,
+    );
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      writeResult(resultsDir, "stale.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: true,
+        state: "complete",
+        generation: 1,
+        summary: "stale generation",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+
+      unregisterAwaitedRun(runId, 2);
+      registerAwaitedRun(
+        runId,
+        (data) => {
+          const generation = (data as { generation?: unknown }).generation;
+          if (generation !== 3) return false;
+          delivered.push(3);
+          return true;
+        },
+        3,
       );
+      writeResult(resultsDir, "replacement-stale.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: true,
+        state: "complete",
+        generation: 2,
+        summary: "replacement owner's stale generation",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 2);
+
+      writeResult(resultsDir, "replacement-current.json", {
+        id: runId,
+        runId,
+        agent: "worker",
+        success: true,
+        state: "complete",
+        generation: 3,
+        summary: "replacement generation",
+        sessionId: "session-owner",
+      });
+      watcher.primeExistingResults();
+      await waitUntil(() => delivered.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      assert.deepEqual(delivered, [3]);
+      assert.equal(sent.length, 2);
+      assert.equal(nudges.length, 2);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 2);
+    } finally {
+      watcher.stopResultWatcher();
+      unregisterAwaitedRun(runId, 3);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("routes generation-stamped repair artifacts to a live owner and recovers after owner loss", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-watcher-generation-repair-"));
+    const sessionId = "session-owner";
+    const cases = [
+      {
+        label: "reconciler",
+        id: "reconciler-repair-generation",
+        artifact: {
+          id: "reconciler-repair-generation",
+          runId: "reconciler-repair-generation",
+          agent: "worker",
+          mode: "single",
+          success: false,
+          state: "failed",
+          generation: 0,
+          summary: "stale runner repaired",
+          results: [
+            {
+              agent: "worker",
+              output: "stale runner repaired",
+              error: "process exited",
+              success: false,
+            },
+          ],
+          exitCode: 1,
+          timestamp: 100,
+          durationMs: 0,
+          asyncDir: path.join(resultsDir, "reconciler-async"),
+          sessionId,
+        },
+      },
+      {
+        label: "missing-plan",
+        id: "missing-plan-generation",
+        artifact: {
+          lifecycleArtifactVersion: 1,
+          id: "missing-plan-generation",
+          agent: "subagent",
+          mode: "single",
+          success: false,
+          state: "failed",
+          generation: 0,
+          summary: "Async runner plan was missing.",
+          error: "Async runner plan was missing.",
+          results: [],
+          exitCode: 1,
+          timestamp: 101,
+          durationMs: 0,
+          asyncDir: path.join(resultsDir, "missing-plan-async"),
+          sessionId,
+        },
+      },
+    ] as const;
+    const { pi, state, sent, nudges, emitted } = createHarness(sessionId);
+    const ownerDeliveries: unknown[] = [];
+    for (const testCase of cases)
+      registerAwaitedRun(
+        testCase.id,
+        (data) => {
+          ownerDeliveries.push(data);
+          return true;
+        },
+        0,
+      );
+    const watcher = createResultWatcher(pi, state, resultsDir);
+    try {
+      for (const testCase of cases) {
+        writeResult(resultsDir, `${testCase.label}.json`, testCase.artifact);
+        watcher.primeExistingResults();
+      }
+      await waitUntil(() => ownerDeliveries.length === cases.length);
+      assert.equal(sent.length, 0);
+      assert.equal(nudges.length, 0);
+      assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 0);
+
+      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
+      for (const testCase of cases) {
+        writeResult(resultsDir, `${testCase.label}-recovery.json`, testCase.artifact);
+        watcher.primeExistingResults();
+      }
+      await waitUntil(() => sent.length === cases.length);
+      assert.equal(
+        emitted.filter((entry) => entry.event === "subagent:async-complete").length,
+        cases.length,
+      );
+      assert.equal(nudges.length, cases.length);
+      assert.match(sent[0]!.content, /stale runner repaired/);
+      assert.match(sent[1]!.content, /Async runner plan was missing/);
+    } finally {
+      watcher.stopResultWatcher();
+      for (const testCase of cases) unregisterAwaitedRun(testCase.id, 0);
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("delivers failure and attention-worthy status without a completion delay", () => {
+    const { pi, state, sent, nudges } = createHarness();
+    pi.events.emit("subagent:async-complete", {
+      id: "failed-immediate",
+      agent: "worker",
+      success: false,
+      state: "failed",
+      summary: "failed immediately",
+      exitCode: 1,
+      sessionId: state.currentSessionId,
+    });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!.content, /^Background task failed:/);
+    assert.equal(nudges.length, 1);
+  });
+
+  it("notifies an awaiting_supervisor paused result exactly once across repeated scans", async () => {
+    const fixture = createPausedFixture("paused-awaiting-supervisor");
+    const { pi, state, sent, emitted } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
+    try {
+      writeResult(fixture.resultsDir, "paused-awaiting-supervisor.json", fixture.pausedResult);
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.match(sent[0]!.content, /^Background task paused:/);
+      assert.match(sent[0]!.content, /No child process is running\./);
+      assert.match(sent[0]!.content, /Resume unchanged:/);
+      assert.match(sent[0]!.content, /Resume with guidance:/);
+      assert.match(sent[0]!.content, /Cancel:/);
+      assert.doesNotMatch(sent[0]!.content, /Output artifact:|Session:/);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
 
-      fs.writeFileSync(resultPath, JSON.stringify(pausedResult), "utf-8");
       watcher.primeExistingResults();
       watcher.primeExistingResults();
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(sent.length, 1);
       assert.equal(emitted.filter((entry) => entry.event === "subagent:async-complete").length, 1);
+      assert.equal(fs.existsSync(`${fixture.resultPath}.claim`), false);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("discards stale paused artifacts when resume wins before the watcher decision", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-resume-first-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "resume-first");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "resume-first-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "resume-first",
-          mode: "parallel",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            { agent: "a", status: "continued", sessionFile: sessionPath },
-            { agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-          lifecycle: {
-            generation: 3,
-            continuationsByIndex: {
-              "0": {
-                phase: "continued",
-                claimToken: "claim-1",
-                continuationRunId: "resume-first-child",
-              },
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const fixture = createPausedFixture("resume-first", true);
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "resume-first.json");
-      fs.writeFileSync(
-        resultPath,
-        JSON.stringify({
-          lifecycleArtifactVersion: 1,
-          id: "resume-first",
-          runId: "resume-first",
-          agent: "parallel:a+b",
-          success: false,
-          state: "paused",
-          summary: "Paused awaiting supervisor.",
-          results: [
-            {
-              agent: "a",
-              success: false,
-              interrupted: true,
-              output: "Paused awaiting supervisor.",
-              sessionFile: sessionPath,
-            },
-            { agent: "b", success: false, interrupted: true, output: "Still paused." },
-          ],
-          sessionId: "session-owner",
-          asyncDir,
-        }),
-        "utf-8",
+      writePausedLifecycle(
+        fixture,
+        "paused",
+        [
+          { agent: "a", status: "continued", sessionFile: fixture.sessionPath },
+          { agent: "b", status: "paused" },
+        ],
+        {
+          generation: 3,
+          continuationsByIndex: { "0": { phase: "continued" } },
+        },
       );
+      writeResult(fixture.resultsDir, "resume-first.json", fixture.pausedResult);
       watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(resultPath));
+      await waitUntil(() => !fs.existsSync(fixture.resultPath));
       assert.deepEqual(sent, []);
+      assert.equal(fs.existsSync(`${fixture.resultPath}.claim`), false);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("notifies once when the watcher wins before resume continues the paused child", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-resume-second-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "resume-second");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "resume-second-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "resume-second",
-          mode: "single",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "worker",
-              status: "paused",
-              sessionFile: sessionPath,
-              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-            },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const fixture = createPausedFixture("resume-second");
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "resume-second.json");
-      fs.writeFileSync(
-        resultPath,
-        JSON.stringify({
-          lifecycleArtifactVersion: 1,
-          id: "resume-second",
-          runId: "resume-second",
-          agent: "worker",
-          success: false,
-          state: "paused",
-          summary: "Paused awaiting supervisor.",
-          results: [
-            {
-              agent: "worker",
-              success: false,
-              interrupted: true,
-              output: "Paused awaiting supervisor.",
-              sessionFile: sessionPath,
-            },
-          ],
-          sessionId: "session-owner",
-          asyncDir,
-        }),
-        "utf-8",
-      );
+      writeResult(fixture.resultsDir, "resume-second.json", fixture.pausedResult);
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0] ?? "", /^Background task paused:/);
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: "resume-second",
-            mode: "single",
-            state: "continued",
-            startedAt: 100,
-            sessionId: "session-owner",
-            steps: [{ agent: "worker", status: "continued", sessionFile: sessionPath }],
-            lifecycle: {
-              generation: 1,
-              continuation: {
-                phase: "continued",
-                claimToken: "claim-2",
-                continuationRunId: "resume-second-child",
-              },
-            },
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
+      assert.match(sent[0]!.content, /^Background task paused:/);
+      writePausedLifecycle(fixture, "complete", [{ agent: "worker", status: "complete" }], {
+        generation: 1,
+        continuation: { phase: "continued", continuationRunId: "resume-second-child" },
+      });
       watcher.primeExistingResults();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(sent.length, 1);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("discards stale paused artifacts when cancel wins before the watcher decision", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-cancel-first-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "cancel-first");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "cancel-first-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "cancel-first",
-          mode: "parallel",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "a",
-              status: "cancelled",
-              sessionFile: sessionPath,
-              cancel: { summary: "Cancelled", cancelledAt: 250 },
-            },
-            { agent: "b", status: "paused", pause: { kind: "awaiting_supervisor", pausedAt: 200 } },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-          lifecycle: { generation: 2 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const fixture = createPausedFixture("cancel-first", true);
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "cancel-first.json");
-      fs.writeFileSync(
-        resultPath,
-        JSON.stringify({
-          lifecycleArtifactVersion: 1,
-          id: "cancel-first",
-          runId: "cancel-first",
-          agent: "parallel:a+b",
-          success: false,
-          state: "paused",
-          summary: "Paused awaiting supervisor.",
-          results: [
-            {
-              agent: "a",
-              success: false,
-              interrupted: true,
-              output: "Paused awaiting supervisor.",
-              sessionFile: sessionPath,
-            },
-            { agent: "b", success: false, interrupted: true, output: "Still paused." },
-          ],
-          sessionId: "session-owner",
-          asyncDir,
-        }),
-        "utf-8",
+      writePausedLifecycle(
+        fixture,
+        "paused",
+        [
+          {
+            agent: "a",
+            status: "cancelled",
+            sessionFile: fixture.sessionPath,
+            cancel: { summary: "Cancelled", cancelledAt: 250 },
+          },
+          { agent: "b", status: "paused" },
+        ],
+        { generation: 2 },
       );
+      writeResult(fixture.resultsDir, "cancel-first.json", fixture.pausedResult);
       watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(resultPath));
+      await waitUntil(() => !fs.existsSync(fixture.resultPath));
       assert.deepEqual(sent, []);
+      assert.equal(fs.existsSync(`${fixture.resultPath}.claim`), false);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("notifies once when the watcher wins before cancel removes the paused child", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-cancel-second-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "cancel-second");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "cancel-second-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "cancel-second",
-          mode: "single",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "worker",
-              status: "paused",
-              sessionFile: sessionPath,
-              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-            },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const fixture = createPausedFixture("cancel-second");
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "cancel-second.json");
-      fs.writeFileSync(
-        resultPath,
-        JSON.stringify({
-          lifecycleArtifactVersion: 1,
-          id: "cancel-second",
-          runId: "cancel-second",
-          agent: "worker",
-          success: false,
-          state: "paused",
-          summary: "Paused awaiting supervisor.",
-          results: [
-            {
-              agent: "worker",
-              success: false,
-              interrupted: true,
-              output: "Paused awaiting supervisor.",
-              sessionFile: sessionPath,
-            },
-          ],
-          sessionId: "session-owner",
-          asyncDir,
-        }),
-        "utf-8",
-      );
+      writeResult(fixture.resultsDir, "cancel-second.json", fixture.pausedResult);
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.match(sent[0] ?? "", /^Background task paused:/);
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
+      assert.match(sent[0]!.content, /^Background task paused:/);
+      writePausedLifecycle(
+        fixture,
+        "cancelled",
+        [
           {
-            runId: "cancel-second",
-            mode: "single",
-            state: "cancelled",
-            startedAt: 100,
-            sessionId: "session-owner",
-            steps: [
-              {
-                agent: "worker",
-                status: "cancelled",
-                sessionFile: sessionPath,
-                cancel: { summary: "Cancelled", cancelledAt: 250 },
-              },
-            ],
+            agent: "worker",
+            status: "cancelled",
+            sessionFile: fixture.sessionPath,
             cancel: { summary: "Cancelled", cancelledAt: 250 },
-            lifecycle: { generation: 1 },
           },
-          null,
-          2,
-        ),
-        "utf-8",
+        ],
+        { generation: 1 },
       );
       watcher.primeExistingResults();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(sent.length, 1);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("retries paused artifacts while canonical state is still uncertain", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-pausing-retry-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "pausing-retry");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "pausing-retry-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "pausing-retry",
-          mode: "single",
-          state: "pausing",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "worker",
-              status: "pausing",
-              sessionFile: sessionPath,
-              pause: { kind: "awaiting_supervisor", requestedAt: 150 },
-            },
-          ],
-          pause: { kind: "awaiting_supervisor", requestedAt: 150 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const fixture = createPausedFixture("pausing-retry");
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir);
     try {
-      const resultPath = path.join(resultsDir, "pausing-retry.json");
-      const pausedResult = {
-        lifecycleArtifactVersion: 1,
-        id: "pausing-retry",
-        runId: "pausing-retry",
-        agent: "worker",
-        success: false,
-        state: "paused",
-        summary: "Paused awaiting supervisor.",
-        results: [
-          {
-            agent: "worker",
-            success: false,
-            interrupted: true,
-            output: "Paused awaiting supervisor.",
-            sessionFile: sessionPath,
-          },
-        ],
-        sessionId: "session-owner",
-        asyncDir,
-      };
-      fs.writeFileSync(resultPath, JSON.stringify(pausedResult), "utf-8");
+      writePausedLifecycle(fixture, "pausing", [{ agent: "worker", status: "pausing" }]);
+      writeResult(fixture.resultsDir, "pausing-retry.json", fixture.pausedResult);
       watcher.primeExistingResults();
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.equal(sent.length, 0);
-      assert.equal(fs.existsSync(resultPath), true);
-      fs.writeFileSync(
-        path.join(asyncDir, "status.json"),
-        JSON.stringify(
-          {
-            runId: "pausing-retry",
-            mode: "single",
-            state: "paused",
-            startedAt: 100,
-            sessionId: "session-owner",
-            steps: [
-              {
-                agent: "worker",
-                status: "paused",
-                sessionFile: sessionPath,
-                pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-              },
-            ],
-            pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
+      assert.equal(fs.existsSync(fixture.resultPath), true);
+      writePausedLifecycle(fixture, "paused", [
+        { agent: "worker", status: "paused", sessionFile: fixture.sessionPath },
+      ]);
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("diagnoses an injected claim failure and retries without losing delivery", async () => {
+    const fixture = createPausedFixture("claim-retry");
+    let claimFailures = 1;
+    const fsProxy = {
+      existsSync: fs.existsSync.bind(fs),
+      openSync(filePath: fs.PathLike, flags: string | number, mode?: string | number | null) {
+        if (String(filePath) === `${fixture.resultPath}.claim` && claimFailures > 0) {
+          claimFailures--;
+          const error = new Error("simulated claim permission failure") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return fs.openSync(filePath, flags, mode);
+      },
+      closeSync: fs.closeSync.bind(fs),
+      readFileSync: fs.readFileSync.bind(fs),
+      unlinkSync: fs.unlinkSync.bind(fs),
+      readdirSync: fs.readdirSync.bind(fs),
+      mkdirSync: fs.mkdirSync.bind(fs),
+      realpathSync: fs.realpathSync.bind(fs),
+      watch: fs.watch.bind(fs),
+    };
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir, { fs: fsProxy });
+    try {
+      const result = {
+        id: "claim-retry",
+        runId: "claim-retry",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        summary: "retried delivery",
+        sessionId: "session-owner",
+      };
+      writeResult(fixture.resultsDir, "claim-retry.json", result);
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length === 1);
+      assert.equal(claimFailures, 0);
+      assert.match(sent[0]!.content, /retried delivery/);
+      assert.equal(fs.existsSync(fixture.resultPath), false);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
   it("retries paused artifact consumption after a post-notify unlink failure without duplicating the notification", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-unlink-retry-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "unlink-retry");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const sessionPath = path.join(resultsDir, "unlink-retry-session.jsonl");
-    fs.writeFileSync(sessionPath, "session\n", "utf-8");
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "unlink-retry",
-          mode: "single",
-          state: "paused",
-          startedAt: 100,
-          sessionId: "session-owner",
-          steps: [
-            {
-              agent: "worker",
-              status: "paused",
-              sessionFile: sessionPath,
-              pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-            },
-          ],
-          pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    let firstUnlinkFailure = true;
+    const fixture = createPausedFixture("unlink-retry");
+    let unlinkFailures = 2;
     const fsProxy = {
       existsSync: fs.existsSync.bind(fs),
+      openSync: fs.openSync.bind(fs),
+      closeSync: fs.closeSync.bind(fs),
       readFileSync: fs.readFileSync.bind(fs),
       unlinkSync(filePath: fs.PathLike) {
-        if (firstUnlinkFailure && String(filePath).endsWith("unlink-retry.json")) {
-          firstUnlinkFailure = false;
+        if (String(filePath) === fixture.resultPath && unlinkFailures > 0) {
+          unlinkFailures--;
           throw new Error("simulated unlink failure");
         }
         return fs.unlinkSync(filePath);
@@ -912,172 +1001,21 @@ describe("result watcher to native notify", () => {
       realpathSync: fs.realpathSync.bind(fs),
       watch: fs.watch.bind(fs),
     };
-    const { pi, sent } = createNotifyHarness();
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000, { fs: fsProxy });
+    const { pi, state, sent } = createHarness();
+    const watcher = createResultWatcher(pi, state, fixture.resultsDir, { fs: fsProxy });
     try {
-      const resultPath = path.join(resultsDir, "unlink-retry.json");
-      fs.writeFileSync(
-        resultPath,
-        JSON.stringify({
-          lifecycleArtifactVersion: 1,
-          id: "unlink-retry",
-          runId: "unlink-retry",
-          agent: "worker",
-          success: false,
-          state: "paused",
-          summary: "Paused awaiting supervisor.",
-          results: [
-            {
-              agent: "worker",
-              success: false,
-              interrupted: true,
-              output: "Paused awaiting supervisor.",
-              sessionFile: sessionPath,
-            },
-          ],
-          sessionId: "session-owner",
-          asyncDir,
-        }),
-        "utf-8",
-      );
+      writeResult(fixture.resultsDir, "unlink-retry.json", fixture.pausedResult);
       watcher.primeExistingResults();
       await waitUntil(() => sent.length === 1);
-      assert.equal(fs.existsSync(resultPath), true);
+      assert.equal(fs.existsSync(fixture.resultPath), true);
+      assert.equal(fs.existsSync(`${fixture.resultPath}.claim`), true);
       watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(resultPath));
+      await waitUntil(() => !fs.existsSync(fixture.resultPath));
       assert.equal(sent.length, 1);
+      assert.equal(fs.existsSync(`${fixture.resultPath}.claim`), false);
     } finally {
       watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("delivers an exact all-completed-child stale repair immediately while success remains batchable", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-stale-notify-"));
-    const resultsDir = path.join(root, "results");
-    const asyncDir = path.join(root, "async", "stale-completed-children");
-    fs.mkdirSync(resultsDir, { recursive: true });
-    fs.mkdirSync(asyncDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(asyncDir, "status.json"),
-      JSON.stringify(
-        {
-          runId: "stale-completed-children",
-          sessionId: "session-owner",
-          mode: "parallel",
-          state: "running",
-          pid: 424242,
-          startedAt: 1_000,
-          lastUpdate: 1_500,
-          steps: [
-            { agent: "alpha", status: "complete", startedAt: 1_000, endedAt: 1_200, exitCode: 0 },
-            { agent: "beta", status: "complete", startedAt: 1_000, endedAt: 1_300, exitCode: 0 },
-          ],
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-
-    const listeners = new Map<string, Set<(payload: unknown) => void>>();
-    const sent: Array<{ message: { content?: string } }> = [];
-    const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
-    const pi = {
-      events: {
-        on(event: string, handler: (payload: unknown) => void) {
-          const handlers = listeners.get(event) ?? new Set();
-          handlers.add(handler);
-          listeners.set(event, handlers);
-          return () => handlers.delete(handler);
-        },
-        emit(event: string, data: unknown) {
-          for (const handler of listeners.get(event) ?? []) handler(data);
-        },
-      },
-      on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { content?: string }) {
-        sent.push({ message });
-      },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
-      },
-    };
-    const state = createState("session-owner");
-    registerSubagentNotify(pi as never, state, {
-      batchConfig: {
-        enabled: true,
-        debounceMs: 1_000,
-        maxWaitMs: 2_000,
-        stragglerDebounceMs: 1_000,
-        stragglerMaxWaitMs: 2_000,
-        stragglerWindowMs: 2_000,
-      },
-    });
-    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
-
-    try {
-      const successPath = path.join(resultsDir, "01-batched-success.json");
-      fs.writeFileSync(
-        successPath,
-        JSON.stringify({
-          id: "batched-success",
-          agent: "ordinary-worker",
-          success: true,
-          state: "complete",
-          summary: "ordinary success",
-          sessionId: "session-owner",
-        }),
-        "utf-8",
-      );
-      watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(successPath));
-      assert.equal(sent.length, 0, "the successful completion should still be held by batching");
-
-      const repaired = reconcileAsyncRun(asyncDir, {
-        resultsDir,
-        kill: () => {
-          const error = new Error("missing") as NodeJS.ErrnoException;
-          error.code = "ESRCH";
-          throw error;
-        },
-        now: () => 2_000,
-      });
-      assert.equal(repaired.repaired, true);
-      const repairedPath = path.join(resultsDir, "stale-completed-children.json");
-      const repairedResult = JSON.parse(fs.readFileSync(repairedPath, "utf-8"));
-      assert.deepEqual(
-        repairedResult.results.map((child: { success?: boolean }) => child.success),
-        [true, true],
-      );
-      assert.equal(repairedResult.success, false);
-      assert.equal(repairedResult.state, "failed");
-      assert.equal(
-        repairedResult.summary,
-        "Async runner process 424242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.",
-      );
-
-      watcher.primeExistingResults();
-      await waitUntil(() => sent.length === 2);
-      assert.match(
-        sent[0]!.message.content ?? "",
-        /^Background task completed: \*\*ordinary-worker\*\*/,
-      );
-      const failure = sent[1]!.message.content ?? "";
-      assert.match(failure, /^Background task failed: \*\*alpha\*\*/);
-      assert.ok(failure.indexOf(repairedResult.summary) < failure.indexOf("Children: 2 completed"));
-      // E′ protocol: no triggerTurn on sendMessage; the failure flushes the
-      // held success in the same synchronous burst, so exactly one nudge.
-      assert.equal(sentUserMessages.length, 1);
-      assert.deepEqual(sentUserMessages[0], {
-        content: "[tlh] Background subagent completed — see notification above.",
-        options: { deliverAs: "followUp" },
-      });
-    } finally {
-      watcher.stopResultWatcher();
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 });
