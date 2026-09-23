@@ -970,7 +970,7 @@ test(
         diagnostics,
       );
       assert.equal(
-        sessionRoles.some(
+        promptLogs.some(
           (entry) =>
             entry.role === "developer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt),
         ),
@@ -978,7 +978,7 @@ test(
         diagnostics,
       );
       assert.equal(
-        sessionRoles.some(
+        promptLogs.some(
           (entry) =>
             entry.role === "code-reviewer" &&
             /TLH Child Subagent Defaults/.test(entry.systemPrompt),

@@ -15,13 +15,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type {
-  Api,
-  AssistantMessage,
-  AssistantMessageEvent,
-  Context,
-  Model,
-  StreamOptions,
+import {
+  normalizeContext,
+  type Api,
+  type AssistantMessage,
+  type AssistantMessageEvent,
+  type Model,
+  type StreamOptions,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { type ResolvedHeartbeatConfig } from "./heartbeat-config.ts";
@@ -131,7 +132,7 @@ export interface HeartbeatControllerDeps {
    */
   streamProvider?: (
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions,
   ) => AsyncIterable<AssistantMessageEvent>;
   /**
@@ -513,17 +514,13 @@ export function createHeartbeatController(
       let stream: AsyncIterable<AssistantMessageEvent>;
 
       if (deps.streamProvider) {
-        stream = deps.streamProvider(
-          model,
-          { messages: [] },
-          {
-            onPayload: () => currentCapture.payload,
-            signal: abortCtrl.signal,
-            maxRetries: 0,
-            timeoutMs: BEAT_TIMEOUT_MS,
-            ...(sessionId ? { sessionId } : {}),
-          },
-        );
+        stream = deps.streamProvider(model, normalizeContext({ messages: [] }), {
+          onPayload: () => currentCapture.payload,
+          signal: abortCtrl.signal,
+          maxRetries: 0,
+          timeoutMs: BEAT_TIMEOUT_MS,
+          ...(sessionId ? { sessionId } : {}),
+        });
       } else {
         const registry = deps.getModelRegistry?.();
         if (!registry) throw new Error("heartbeat: no modelRegistry or streamProvider available");
@@ -569,7 +566,7 @@ export function createHeartbeatController(
         // Cast to StreamOptions & Record<string, unknown> to satisfy ApiStreamOptions<Api>
         stream = provider.stream(
           streamModel,
-          { messages: [] },
+          normalizeContext({ messages: [] }),
           options as StreamOptions & Record<string, unknown>,
         );
       }

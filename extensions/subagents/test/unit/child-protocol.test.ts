@@ -66,6 +66,23 @@ describe("child protocol validation", () => {
     );
   });
 
+  it("keeps Pi 0.87.1 system-role message_end envelopes diagnostic and unknown", () => {
+    const systemMessageEnd = {
+      type: "message_end",
+      message: {
+        role: "system",
+        content: [{ type: "text", text: "system diagnostic" }],
+        timestamp: 1,
+      },
+    };
+
+    assert.equal(isChildProtocolEvent(systemMessageEnd), false);
+    const parsed = parseChildProtocolInput(JSON.stringify(systemMessageEnd));
+    assert.equal(parsed.kind, "unknown");
+    assert.ok(parsed.kind === "unknown");
+    assert.deepEqual(parsed.value, systemMessageEnd);
+  });
+
   it("accepts pinned compaction lifecycle events and retains unconsumed fields", () => {
     const reasons = [
       "manual",

@@ -119,6 +119,7 @@ export function buildTokensReportHtml(
       ? options.primaryAgentLabel.trim()
       : "Primary assistant";
   const coverage = analysis.primaryAssistant.usageCoverage;
+  const primaryUsage = getPrimaryUsageBreakdown(analysis);
   const combinedCacheTotal =
     analysis.totals.combined.cacheReadTokens + analysis.totals.combined.cacheWriteTokens;
   const cacheTurns = analysis.primaryAssistant.timeline.filter(
@@ -158,12 +159,12 @@ export function buildTokensReportHtml(
         renderMetricCard(
           "Combined total",
           formatInteger(analysis.totals.combined.totalTokens),
-          `${formatCurrency(analysis.totals.combined.costUsd)} • ${formatInteger(analysis.totals.combined.turns)} turns`,
+          `${formatCurrency(analysis.totals.combined.costUsd)} • ${formatInteger(analysis.totals.combined.turns)} assistant turns`,
         ),
         renderMetricCard(
           primaryLabel,
           formatInteger(analysis.totals.primary.totalTokens),
-          `${formatCurrency(analysis.totals.primary.costUsd)} • ${formatCoverage(coverage)}`,
+          `${formatCurrency(analysis.totals.primary.costUsd)} • ${formatCoverage(coverage)}${formatCacheWarmCardDetail(primaryUsage)}`,
         ),
 
         renderMetricCard(
@@ -187,6 +188,7 @@ export function buildTokensReportHtml(
             "Cache tokens",
             `${formatInteger(combinedCacheTotal)} total • ${formatCacheShare(combinedCacheTotal, analysis.totals.combined.totalTokens)}`,
           ],
+          ["Pi cache_warm spend", formatCacheWarmSummary(primaryUsage)],
         ]),
         renderUsageTotalsTable(analysis, primaryLabel),
       ].join(""),
@@ -236,7 +238,7 @@ export function buildTokensReportHtml(
     renderSection(
       "Agents/subagents",
       [
-        `<p class="section-note">${escapeHtml("Primary totals are exact where the provider reported usage. Subagent totals are discoverable-only and may undercount hidden work.")}</p>`,
+        `<p class="section-note">${escapeHtml("Primary totals are exact where the provider reported usage and include Pi-native cache_warm spend; cache_warm requests have no assistant turn or message. Subagent totals are discoverable-only and may undercount hidden work.")}</p>`,
         renderModelUsageTable(`${primaryLabel} models`, analysis.primaryAssistant.models),
         renderModelUsageTable("Discovered subagent models", analysis.subagents.models),
         renderSubagentRunsTable(analysis),
@@ -245,7 +247,7 @@ export function buildTokensReportHtml(
     renderSection(
       "Cache",
       [
-        `<p class="section-note">${escapeHtml("Cache totals combine provider-reported cache read/write usage across primary assistant turns and any discovered subagent usage.")}</p>`,
+        `<p class="section-note">${escapeHtml("Cache totals include provider-reported cache read/write usage from primary assistant turns, Pi-native cache_warm requests, and any discovered subagent usage. The timeline below lists assistant turns only.")}</p>`,
         renderCacheTotalsTable(analysis, primaryLabel),
         renderCacheTimelineTable(cacheTurns),
       ].join(""),
@@ -296,6 +298,7 @@ function renderUsageTotalsTable(
   primaryLabel = "Primary assistant",
 ): string {
   const em = "\u2014";
+  const primaryUsage = getPrimaryUsageBreakdown(analysis);
   const usageRow = (label: string, provider: string, usage: TlhUsageTotals): string[] => [
     label,
     provider,
@@ -306,31 +309,43 @@ function renderUsageTotalsTable(
     formatInteger(usage.totalTokens),
     formatCurrency(usage.costUsd),
     formatInteger(usage.turns),
+    formatInteger(usage.assistantMessages),
   ];
   const subAgentRows: string[][] = analysis.subagents.byAgent.map((entry: TlhAgentProviderUsage) =>
     usageRow(entry.agent ?? "unknown", entry.provider ?? em, entry.usage),
   );
+  const primaryBreakdownRows = hasCacheWarmUsage(primaryUsage)
+    ? [
+        usageRow("Assistant-turn usage", em, primaryUsage.assistantTurnUsage),
+        usageRow("Pi-native cache_warm (non-turn)", em, primaryUsage.cacheWarmUsage),
+      ]
+    : [];
   const rows: string[][] = [
     usageRow(primaryLabel, em, analysis.totals.primary),
+    ...primaryBreakdownRows,
     ...subAgentRows,
     usageRow("Subagents (all)", em, analysis.totals.subagents),
     usageRow("Combined", em, analysis.totals.combined),
   ];
-  return renderTable(
-    [
-      "Bucket",
-      "Provider",
-      "Input",
-      "Output",
-      "Cache read",
-      "Cache write",
-      "Total",
-      "Cost",
-      "Turns",
-    ],
-    rows,
-    "No usage totals recorded.",
-  );
+  return [
+    `<p class="section-note">${escapeHtml("The primary row is a total: it includes assistant-message usage plus Pi-native cache_warm spend. The cache_warm component is provider cost/tokens, not an assistant turn or message; its zero counts keep the primary total reconcilable.")}</p>`,
+    renderTable(
+      [
+        "Bucket",
+        "Provider",
+        "Input",
+        "Output",
+        "Cache read",
+        "Cache write",
+        "Total",
+        "Cost",
+        "Assistant turns",
+        "Assistant messages",
+      ],
+      rows,
+      "No usage totals recorded.",
+    ),
+  ].join("");
 }
 
 function renderTimelineTable(timeline: TlhUsageTimelineTurn[]): string {
@@ -355,7 +370,7 @@ function renderModelUsageTable(title: string, models: TlhModelUsage[]): string {
   return [
     `<h3>${escapeHtml(title)}</h3>`,
     renderTable(
-      ["Model", "Provider", "Tokens", "Cost", "Turns", "Assistant messages"],
+      ["Model", "Provider", "Tokens", "Cost", "Assistant turns", "Assistant messages"],
       models.map((model) => [
         model.modelId,
         model.provider ?? "—",
@@ -449,11 +464,15 @@ function renderCacheTotalsTable(
   analysis: TlhSessionUsageAnalysis,
   primaryLabel = "Primary assistant",
 ): string {
-  const rows: Array<[string, TlhUsageTotals]> = [
-    [primaryLabel, analysis.totals.primary],
-    ["Subagents", analysis.totals.subagents],
-    ["Combined", analysis.totals.combined],
-  ];
+  const primaryUsage = getPrimaryUsageBreakdown(analysis);
+  const rows: Array<[string, TlhUsageTotals]> = [[primaryLabel, analysis.totals.primary]];
+  if (hasCacheWarmUsage(primaryUsage)) {
+    rows.push(
+      ["Assistant-turn usage", primaryUsage.assistantTurnUsage],
+      ["Pi-native cache_warm (non-turn)", primaryUsage.cacheWarmUsage],
+    );
+  }
+  rows.push(["Subagents", analysis.totals.subagents], ["Combined", analysis.totals.combined]);
   return renderTable(
     ["Bucket", "Cache read", "Cache write", "Cache total", "Share of bucket total"],
     rows.map(([label, usage]) => {
@@ -493,7 +512,7 @@ function renderCacheTimelineTable(turns: TlhUsageTimelineTurn[]): string {
 
 function renderCacheMissesSection(analysis: TlhSessionUsageAnalysis): string {
   const { cacheMisses } = analysis;
-  const explanatoryNote = `<p class="section-note">${escapeHtml("A cache miss is prompt content that was sent on an earlier turn but had to be re-sent and re-billed at full price instead of being served from the provider's prompt cache. Misses commonly happen after an idle gap longer than the cache TTL (~5 min), when the model is switched mid-session, or after a context reset (compaction). Only misses above a small noise floor are counted.")}</p>`;
+  const explanatoryNote = `<p class="section-note">${escapeHtml("A cache miss is prompt content that was sent on an earlier provider request but had to be re-sent and re-billed at full price instead of being served from the provider's prompt cache. The comparison baseline is the most recent provider request, which may be an assistant turn or a Pi-native cache_warm refresh. Misses commonly happen after an idle gap longer than the cache TTL (~5 min), when the model is switched mid-session, or after a context reset (compaction). Only misses above a small noise floor are counted.")}</p>`;
 
   if (cacheMisses.missCount === 0) {
     return renderSection(
@@ -681,13 +700,86 @@ function formatCurrency(value: number): string {
   return USD_FORMATTER.format(value);
 }
 
+type PrimaryUsageBreakdown = {
+  assistantTurnUsage: TlhUsageTotals;
+  cacheWarmUsage: TlhUsageTotals;
+  cacheWarmRequestCount: number;
+};
+
+function getPrimaryUsageBreakdown(analysis: TlhSessionUsageAnalysis): PrimaryUsageBreakdown {
+  const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createEmptyUsageTotals();
+  const assistantTurnUsage =
+    analysis.primaryAssistant.assistantTurnUsage ??
+    subtractUsageTotals(analysis.totals.primary, cacheWarmUsage);
+  const cacheWarmRequestCount =
+    analysis.primaryAssistant.cacheWarmRequestCount ?? (hasUsage(cacheWarmUsage) ? 1 : 0);
+  return { assistantTurnUsage, cacheWarmUsage, cacheWarmRequestCount };
+}
+
+function createEmptyUsageTotals(): TlhUsageTotals {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    turns: 0,
+    assistantMessages: 0,
+  };
+}
+
+function subtractUsageTotals(total: TlhUsageTotals, subtract: TlhUsageTotals): TlhUsageTotals {
+  return {
+    inputTokens: total.inputTokens - subtract.inputTokens,
+    outputTokens: total.outputTokens - subtract.outputTokens,
+    cacheReadTokens: total.cacheReadTokens - subtract.cacheReadTokens,
+    cacheWriteTokens: total.cacheWriteTokens - subtract.cacheWriteTokens,
+    totalTokens: total.totalTokens - subtract.totalTokens,
+    costUsd: total.costUsd - subtract.costUsd,
+    turns: total.turns - subtract.turns,
+    assistantMessages: total.assistantMessages - subtract.assistantMessages,
+  };
+}
+
+function hasUsage(usage: TlhUsageTotals): boolean {
+  return (
+    usage.inputTokens !== 0 ||
+    usage.outputTokens !== 0 ||
+    usage.cacheReadTokens !== 0 ||
+    usage.cacheWriteTokens !== 0 ||
+    usage.totalTokens !== 0 ||
+    usage.costUsd !== 0
+  );
+}
+
+function hasCacheWarmUsage(usage: PrimaryUsageBreakdown): boolean {
+  return usage.cacheWarmRequestCount > 0 || hasUsage(usage.cacheWarmUsage);
+}
+
+function formatCacheWarmCardDetail(usage: PrimaryUsageBreakdown): string {
+  if (!hasCacheWarmUsage(usage)) {
+    return "";
+  }
+  const requestLabel = usage.cacheWarmRequestCount === 1 ? "request" : "requests";
+  return ` • includes ${formatCurrency(usage.cacheWarmUsage.costUsd)} Pi-native cache_warm (${formatInteger(usage.cacheWarmUsage.totalTokens)} tokens; ${formatInteger(usage.cacheWarmRequestCount)} non-turn ${requestLabel})`;
+}
+
+function formatCacheWarmSummary(usage: PrimaryUsageBreakdown): string {
+  if (!hasCacheWarmUsage(usage)) {
+    return "none recorded";
+  }
+  const requestLabel = usage.cacheWarmRequestCount === 1 ? "request" : "requests";
+  return `${formatInteger(usage.cacheWarmUsage.totalTokens)} tokens • ${formatCurrency(usage.cacheWarmUsage.costUsd)} • ${formatInteger(usage.cacheWarmRequestCount)} non-turn ${requestLabel}`;
+}
+
 function formatCoverage(
   coverage: TlhSessionUsageAnalysis["primaryAssistant"]["usageCoverage"],
 ): string {
   if (coverage.assistantMessages === 0) {
-    return "0 of 0 turns reported usage";
+    return "0 of 0 assistant turns reported usage";
   }
-  return `${formatInteger(coverage.withUsage)} of ${formatInteger(coverage.assistantMessages)} turns reported usage`;
+  return `${formatInteger(coverage.withUsage)} of ${formatInteger(coverage.assistantMessages)} assistant turns reported usage`;
 }
 
 function formatCacheUsage(usage: TlhUsageTotals): string {

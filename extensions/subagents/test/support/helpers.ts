@@ -99,7 +99,7 @@ export type TestEventResult = object | void | Promise<object | void>;
 export type TestEventHandler = (payload: TestEventPayload) => TestEventResult;
 
 export interface TestEventRegistration {
-  on(event: TestEventName, handler: TestEventHandler): void;
+  on(event: TestEventName, handler: TestEventHandler): () => void;
 }
 
 export type ExtensionAPIOverrides = Partial<Omit<ExtensionAPI, "on">> & {
@@ -450,10 +450,10 @@ function getTestExtensionContext(): ExtensionContext {
  */
 export function makeExtensionAPI(overrides: ExtensionAPIOverrides = {}): ExtensionAPI {
   const { on: testOn, events: overrideEvents, ...extensionOverrides } = overrides;
-  const on: ExtensionAPI["on"] = (event: string, handler: unknown): void => {
-    if (!testOn || !isTestEventName(event)) return;
-    if (!isRegisteredExtensionHandler(handler)) return;
-    testOn(event, (payload) => handler(payload, getTestExtensionContext()));
+  const on: ExtensionAPI["on"] = (event: string, handler: unknown): (() => void) => {
+    if (!testOn || !isTestEventName(event)) return () => {};
+    if (!isRegisteredExtensionHandler(handler)) return () => {};
+    return testOn(event, (payload) => handler(payload, getTestExtensionContext()));
   };
   return {
     ...defaultExtensionAPI,

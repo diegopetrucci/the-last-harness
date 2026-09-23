@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`; an absent value keeps Pi's default `streaming` behavior. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
+- Documented the separate ownership and overlap rules for Pi-native warming and TLH's default-off async-parent heartbeat: an idle parent overlaps its heartbeat with Pi warming only in `idle` mode, while active child sessions may independently stream-warm during the parent heartbeat; the requests have no shared budget.
+
 ### Removed
 
 - The bundled `pi-quiet-tools` default extension is removed.

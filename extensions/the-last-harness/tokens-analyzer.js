@@ -48,6 +48,9 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     const activeBranchIds = collectActiveBranchIds(activeLeafId, byId);
     const toolCatalogByName = new Map(toolCatalog.map((tool) => [tool.name, tool]));
     const primaryTotals = createUsageTotals();
+    const primaryAssistantUsage = createUsageTotals();
+    const primaryCacheWarmUsage = createUsageTotals();
+    let primaryCacheWarmRequestCount = 0;
     const primaryCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
     const subagentTotals = createUsageTotals();
     const modelUsage = new Map();
@@ -86,6 +89,24 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             });
             continue;
         }
+        if (entry.type === "usage" && entry.kind === "cache_warm") {
+            const usage = normalizeUsage(entry.usage);
+            if (usage) {
+                addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+                addUsage(primaryCacheWarmUsage, usage, { turns: 0, assistantMessages: 0 });
+                primaryCacheWarmRequestCount += 1;
+                addModelUsage(modelUsage, {
+                    provider: entry.provider,
+                    modelId: entry.model,
+                    source: "primary",
+                    usage,
+                    countAsTurn: 0,
+                    countAsAssistantMessage: 0,
+                });
+            }
+            cacheMissAnalyzer.recordCacheWarm({ usage: entry.usage, provider: entry.provider, model: entry.model }, entry.timestamp);
+            continue;
+        }
         if (entry.type !== "message") {
             continue;
         }
@@ -97,11 +118,14 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             if (usage) {
                 primaryCoverage.withUsage += 1;
                 addUsage(primaryTotals, usage, { turns: 1, assistantMessages: 1 });
+                addUsage(primaryAssistantUsage, usage, { turns: 1, assistantMessages: 1 });
             }
             else {
                 primaryCoverage.withoutUsage += 1;
                 primaryTotals.turns += 1;
                 primaryTotals.assistantMessages += 1;
+                primaryAssistantUsage.turns += 1;
+                primaryAssistantUsage.assistantMessages += 1;
             }
             cacheMissAnalyzer.record(message, entry.timestamp);
             const activeBranch = activeBranchIds.has(entry.id);
@@ -286,6 +310,9 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
         },
         primaryAssistant: {
             usage: primaryTotals,
+            assistantTurnUsage: primaryAssistantUsage,
+            cacheWarmUsage: primaryCacheWarmUsage,
+            cacheWarmRequestCount: primaryCacheWarmRequestCount,
             usageCoverage: primaryCoverage,
             models: sortModelUsage([...modelUsage.values()].filter((model) => model.source === "primary")),
             timeline: renderedTimeline,
@@ -330,7 +357,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             intercomTargets: [...intercomTargets].sort((left, right) => left.localeCompare(right)),
         },
         caveats: [
-            "Primary assistant token and cost totals use provider-reported assistant usage exactly where the session recorded it.",
+            "Primary assistant token and cost totals use provider-reported assistant usage plus Pi-native cache_warm spend; cache_warm requests are not assistant messages or turns.",
             "Tool, MCP, and source attribution are estimates derived from tool names and the current tool catalog.",
             "Tool I/O token counts are estimated from payload size (~4 chars/token), are not provider-reported, and reflect model-visible tool arguments and result content rather than turn-level token attribution.",
             "Subagent usage appears only when structured session data exposed it; missing discoveries do not prove zero subagent spend.",
@@ -377,6 +404,30 @@ function createCacheMissAnalyzer(priceSource) {
         events: [],
         totalMissedTokens: 0,
         totalMissedCost: 0,
+    };
+    const updatePreviousFromUsage = (message, timestamp, reportedCache) => {
+        const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
+        const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
+        const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ??
+            rawMsgUsage?.cacheReadTokens ??
+            rawMsgUsage?.cache_read_input_tokens ??
+            rawMsgUsage?.cacheReadInputTokens) ?? 0;
+        const cmCacheWrite = numberFromUnknown(rawMsgUsage?.cacheWrite ??
+            rawMsgUsage?.cacheWriteTokens ??
+            rawMsgUsage?.cache_creation_input_tokens ??
+            rawMsgUsage?.cacheWriteInputTokens) ?? 0;
+        const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
+        if (cmPromptTokens <= 0)
+            return;
+        const cmProvider = typeof message.provider === "string" ? message.provider : "";
+        const cmModel = typeof message.model === "string" ? message.model : "";
+        const cmTimestampMs = Date.parse(timestamp);
+        state.previous = {
+            promptTokens: cmPromptTokens,
+            timestamp: Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0,
+            modelKey: `${cmProvider}/${cmModel}`,
+            reportedCache: reportedCache || cmCacheRead + cmCacheWrite > 0,
+        };
     };
     return {
         reset() {
@@ -428,15 +479,11 @@ function createCacheMissAnalyzer(priceSource) {
                     state.totalMissedCost += missedCost;
                 }
             }
-            if (cmPromptTokens > 0) {
-                state.previous = {
-                    promptTokens: cmPromptTokens,
-                    timestamp: cmTimestamp,
-                    modelKey: cmModelKey,
-                    reportedCache: (previous?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
-                };
-            }
+            updatePreviousFromUsage(message, timestamp, previous?.reportedCache ?? false);
             state.assistantTurnIndex += 1;
+        },
+        recordCacheWarm(message, timestamp) {
+            updatePreviousFromUsage(message, timestamp, true);
         },
         summarize() {
             const worstMisses = [...state.events]

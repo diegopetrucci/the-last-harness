@@ -4,9 +4,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AssistantMessage,
-  type Context,
   type FauxContentBlock,
+  type TranscriptContext,
   type FauxResponseFactory,
+  getCurrentTools,
+  type JsonObject,
   fauxAssistantMessage,
   fauxText,
   fauxToolCall,
@@ -28,7 +30,7 @@ const CHILD_CLI_PATH = fileURLToPath(new URL("./real-session-child-cli.mjs", imp
 
 export type FauxReply = string | FauxContentBlock | FauxContentBlock[] | AssistantMessage;
 export type FauxResponder = (
-  context: Context,
+  context: TranscriptContext,
   state: { callCount: number },
 ) => FauxReply | Promise<FauxReply>;
 
@@ -48,16 +50,16 @@ export interface RealSessionRun {
   dispose: () => Promise<void>;
 }
 
-export function subagentCall(args: Record<string, unknown>, id = "call-subagent-e2e"): ToolCall {
+export function subagentCall(args: JsonObject, id = "call-subagent-e2e"): ToolCall {
   return fauxToolCall("subagent", args, { id });
 }
 
 export function routeParentThroughSubagent(input: {
   childMarker: string;
-  subagentArgs: Record<string, unknown>;
+  subagentArgs: JsonObject;
 }): FauxResponder {
   return (context) => {
-    const isParent = (context.tools ?? []).some((tool) => tool.name === "subagent");
+    const isParent = getCurrentTools(context.messages).some((tool) => tool.name === "subagent");
     if (!isParent) return "Unexpected non-parent model call.";
     const resultText = latestSubagentToolResultText(
       context.messages as Array<{ role?: string; toolName?: string; content?: unknown }>,
