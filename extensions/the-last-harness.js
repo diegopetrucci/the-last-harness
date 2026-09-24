@@ -45,10 +45,10 @@ function setTlhTerminalTitle(ctx) {
     try {
         if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.setTitle !== "function")
             return;
-        const cwdBasename = basename(ctx.cwd);
-        if (!cwdBasename)
+        const cwdLabel = basename(ctx.cwd) || ctx.cwd;
+        if (!cwdLabel)
             return;
-        ctx.ui.setTitle(`tlh - ${cwdBasename}`);
+        ctx.ui.setTitle(`tlh - ${cwdLabel}`);
     }
     catch {
     }

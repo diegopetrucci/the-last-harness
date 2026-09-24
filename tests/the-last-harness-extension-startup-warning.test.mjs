@@ -270,6 +270,7 @@ async function createExtensionHarness({
       reason,
       mode = "tui",
       hasUI = true,
+      cwd: sessionCwd = cwd,
       projectTrusted,
       model,
       systemPrompt,
@@ -280,7 +281,7 @@ async function createExtensionHarness({
       let footerFactory;
       let requestRenderCalls = 0;
       const ctx = createCtx({
-        cwd,
+        cwd: sessionCwd,
         notifications,
         mode,
         hasUI,
@@ -406,6 +407,18 @@ test("interactive startup brands the terminal title without touching headless co
     installState: LATEST_STABLE_INSTALL_STATE,
   });
   assert.equal(interactive.title, "tlh - workspace");
+
+  const rootHarness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+  try {
+    const root = await rootHarness.startSession({ reason: "restore", cwd: "/" });
+    assert.equal(root.title, "tlh - /");
+  } finally {
+    rootHarness.cleanup();
+  }
 
   const headless = await runSessionStart({
     reason: "restore",
