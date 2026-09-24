@@ -1370,26 +1370,27 @@ describe("async execution utilities", () => {
     },
     async () => {
       const existingPids = new Set(startedMockPiPids(mockPi));
+      const existingCalls = mockPi.callCount();
       const cohortId = `async-supervisor-parallel-cohort-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, cohortId);
+      const supervisorRequestGate = path.join(tempDir, `${cohortId}-supervisor-request`);
+      const siblingHoldGate = path.join(tempDir, `${cohortId}-sibling-hold`);
       let runnerPid: number | undefined;
+      let childPids: number[] = [];
       mockPi.onCall({
         matchArgIncludes: "ask supervisor",
-        steps: [
-          {
-            delay: 200,
-            jsonl: [
-              events.toolStart("contact_supervisor", {
-                reason: "need_decision",
-                message: "Need direction",
-              }),
-            ],
-          },
+        waitForMarker: supervisorRequestGate,
+        jsonl: [
+          events.toolStart("contact_supervisor", {
+            reason: "need_decision",
+            message: "Need direction",
+          }),
         ],
         keepAliveAfterFinalMessageMs: 5_000,
       });
       mockPi.onCall({
         matchArgIncludes: "work in parallel",
-        delay: 2_000,
+        waitForMarker: siblingHoldGate,
         jsonl: [events.assistantMessage("parallel sibling should be interrupted")],
       });
       const started = executeAsyncParallel!(cohortId, {
@@ -1430,31 +1431,60 @@ describe("async execution utilities", () => {
         maxSubagentDepth: 2,
       });
       assert.equal(started.isError, undefined);
-      const asyncDir = path.join(ASYNC_DIR, cohortId);
-      assert.ok(runnerPid, "expected async runner pid from started event");
-      await waitForMockPiCall(mockPi, 1);
-      const childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
-      assert.equal(childPids.length, 2);
-      await waitForAsyncState(asyncDir, "paused");
-      const status = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as any;
-      assert.deepEqual(
-        status.steps?.map((step: any) => step.status),
-        ["paused", "paused"],
-      );
-      const requesterIndex =
-        status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
-      assert.ok(requesterIndex >= 0);
-      const siblingIndex =
-        status.steps?.findIndex(
-          (step: any, index: number) =>
-            index !== requesterIndex && step.pause?.kind === "cohort_pause",
-        ) ?? -1;
-      assert.ok(siblingIndex >= 0);
-      assert.equal(status.pid, undefined);
-      await readAsyncPayload(cohortId);
-      await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);
+      const resultPromise = readAsyncPayload(cohortId);
+      const resultDrain = resultPromise.catch(() => undefined);
+      try {
+        assert.ok(runnerPid, "expected async runner pid from started event");
+        await waitForMockPiCall(mockPi, existingCalls + 1);
+        childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
+        assert.equal(mockPi.callCount() - existingCalls, 2);
+        assert.equal(childPids.length, 2);
+        fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+
+        await waitForAsyncState(asyncDir, "paused");
+        const status = JSON.parse(
+          fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+        ) as any;
+        assert.deepEqual(
+          status.steps?.map((step: any) => step.status),
+          ["paused", "paused"],
+        );
+        const requesterIndex =
+          status.steps?.findIndex((step: any) => step.pause?.kind === "awaiting_supervisor") ?? -1;
+        assert.ok(requesterIndex >= 0);
+        const siblingIndex =
+          status.steps?.findIndex(
+            (step: any, index: number) =>
+              index !== requesterIndex && step.pause?.kind === "cohort_pause",
+          ) ?? -1;
+        assert.ok(siblingIndex >= 0);
+        assert.equal(status.pid, undefined);
+        await resultPromise;
+        await waitForPidsToExit([runnerPid, ...childPids], `paused async cohort ${cohortId}`);
+      } finally {
+        fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+        fs.writeFileSync(siblingHoldGate, "", "utf-8");
+        if (runnerPid === undefined) {
+          try {
+            const status = JSON.parse(
+              fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+            ) as { pid?: number };
+            runnerPid = status.pid;
+          } catch {
+            // The runner may have failed before writing its status file.
+          }
+        }
+        childPids = [
+          ...new Set([
+            ...childPids,
+            ...startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid)),
+          ]),
+        ];
+        await Promise.allSettled([
+          resultDrain,
+          waitForPidsToExit([runnerPid, ...childPids], `draining async cohort ${cohortId}`),
+        ]);
+      }
     },
   );
 });
