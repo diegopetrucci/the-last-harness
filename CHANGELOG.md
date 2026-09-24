@@ -104,7 +104,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
-- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status" })` for per-run status; `/subagents-doctor` remains available for read-only diagnostics.
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
 - Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
 
 ### Fixed

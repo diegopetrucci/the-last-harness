@@ -202,7 +202,7 @@ function formatChildTkTicketGuidance(ticketId: string): string {
   return [
     "Developer ticket assignment:",
     `Ticket ID: ${ticketId}`,
-    `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+    `Before making any changes, treat the injected \`## Ticket ${ticketId}\` body as the source of truth. You may run \`tk show ${ticketId}\` only to re-read it.`,
   ].join("\n");
 }
 

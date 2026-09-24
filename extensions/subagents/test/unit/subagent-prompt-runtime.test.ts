@@ -1005,8 +1005,15 @@ describe("subagent prompt runtime", () => {
         const prompt = renderPrompt(event);
         assert.match(prompt, /Developer ticket assignment:/);
         assert.match(prompt, /Ticket ID: tlhm-o1qg/);
-        assert.match(prompt, /tk show tlhm-o1qg/);
-        assert.equal((prompt.match(/tlhm-o1qg/g) ?? []).length, 2);
+        assert.match(
+          prompt,
+          /Before making any changes, treat the injected `## Ticket tlhm-o1qg` body as the source of truth\. You may run `tk show tlhm-o1qg` only to re-read it\./,
+        );
+        assert.doesNotMatch(
+          prompt,
+          /run `tk show tlhm-o1qg` and treat that ticket as the source of truth/,
+        );
+        assert.equal((prompt.match(/tlhm-o1qg/g) ?? []).length, 3);
         assert.ok(prompt.includes(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
       },
       { tkTicketId: "tlhm-o1qg" },
