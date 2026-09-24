@@ -83,19 +83,6 @@ interface ProjectAgentAccessRequest {
   targetNames: readonly string[];
 }
 
-/** Session-level heartbeat totals surfaced in the doctor output. */
-interface HeartbeatSessionSummary {
-  enabled: boolean;
-  totalBeats: number;
-  totalCacheReadTokens: number;
-  totalBeatCostUsd: number;
-  gapsSaved: number;
-  gapsWasted: number;
-  gapsLost: number;
-  gapsUnneeded: number;
-  breakerDisabled: boolean;
-}
-
 export interface ExecutorDeps {
   pi: ExtensionAPI;
   state: SubagentState;
@@ -119,6 +106,4 @@ export interface ExecutorDeps {
   /** Narrow functional seam for exercising continuation authorization without spawning a child. */
   executeAsyncSingle?: typeof import("../background/async-execution.ts").executeAsyncSingle;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-  /** Optional: retrieve current-session heartbeat totals for the doctor action. */
-  getHeartbeatSummary?: () => HeartbeatSessionSummary;
 }

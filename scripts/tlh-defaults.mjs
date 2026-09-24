@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const __filename = fileURLToPath(import.meta.url);
@@ -74,19 +74,6 @@ function isPlainObject(value) {
 }
 function cloneJsonObject(value) {
     return JSON.parse(JSON.stringify(value));
-}
-function packageEntryDisablesExtensions(entry) {
-    if (!isPlainObject(entry))
-        return false;
-    if (!Array.isArray(entry.extensions))
-        return false;
-    if (entry.extensions.length === 0)
-        return true;
-    const disablingPatterns = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
-    return entry.extensions
-        .filter((value) => typeof value === "string")
-        .map((value) => value.trim())
-        .some((value) => disablingPatterns.has(value));
 }
 function validateSettings(settings) {
     if (!isPlainObject(settings)) {
@@ -169,12 +156,7 @@ function isDefaultSourceDeferred(settings, extension) {
 function isDefaultDisabled(settings, extension, defaultExtensions) {
     if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id))
         return true;
-    if (extension.critical === true)
-        return false;
-    const index = findPackageIndex(settings, extension.source);
-    if (index === -1)
-        return false;
-    return packageEntryDisablesExtensions(settingsPackages(settings)[index]);
+    return defaultExtensionPackageFilterDisables(settings, extension);
 }
 function disablePackage(settings, extension) {
     for (const source of [extension.source, ...extension.replaces]) {
@@ -182,17 +164,59 @@ function disablePackage(settings, extension) {
     }
 }
 function enablePackage(settings, extension) {
+    const packages = settingsPackages(settings);
+    const canonicalIdentity = packageIdentity(extension.source);
+    const replacementIdentities = new Set(extension.replaces
+        .map(packageIdentity)
+        .filter((identity) => Boolean(identity && identity !== canonicalIdentity)));
+    const identities = new Set([canonicalIdentity, ...replacementIdentities].filter((identity) => Boolean(identity)));
+    // Any configured canonical identity owns its source pin, whether it is a
+    // string or an object. Only replacement objects move to the bundled source;
+    // canonical objects retain their metadata while losing the enable filter.
+    const canonicalEntry = packages.find((entry) => packageIdentity(entry) === canonicalIdentity);
+    const replacementObjectEntry = packages.find((entry) => {
+        const identity = packageIdentity(entry);
+        return isPlainObject(entry) && identity !== undefined && replacementIdentities.has(identity);
+    });
+    const retainedEntry = canonicalEntry ?? replacementObjectEntry;
+    if (retainedEntry !== undefined) {
+        const retainedCanonical = packageIdentity(retainedEntry) === canonicalIdentity;
+        let nextEntry = retainedEntry;
+        if (isPlainObject(retainedEntry)) {
+            const next = {
+                ...cloneJsonObject(retainedEntry),
+                ...(retainedCanonical ? {} : { source: extension.source }),
+            };
+            delete next.extensions;
+            nextEntry = next;
+        }
+        const nextPackages = [];
+        let keptEntry = false;
+        for (const entry of packages) {
+            const identity = packageIdentity(entry);
+            if (entry === retainedEntry && !keptEntry) {
+                nextPackages.push(nextEntry);
+                keptEntry = true;
+                continue;
+            }
+            if (identity !== undefined && identities.has(identity))
+                continue;
+            nextPackages.push(entry);
+        }
+        packages.splice(0, packages.length, ...nextPackages);
+        return;
+    }
     for (const oldSource of extension.replaces) {
         removePackage(settings, oldSource);
     }
     const identity = packageIdentity(extension.source);
     const index = findPackageIndex(settings, extension.source);
     if (index === -1) {
-        settingsPackages(settings).push(extension.source);
+        packages.push(extension.source);
         return;
     }
     removeDuplicatePackagesAfterIndex(settings, identity, index);
-    const current = settingsPackages(settings)[index];
+    const current = packages[index];
     if (!isPlainObject(current)) {
         return;
     }
@@ -202,10 +226,10 @@ function enablePackage(settings, extension) {
     };
     delete next.extensions;
     if (Object.keys(next).length === 1 && typeof next.source === "string") {
-        settingsPackages(settings)[index] = next.source;
+        packages[index] = next.source;
     }
     else {
-        settingsPackages(settings)[index] = next;
+        packages[index] = next;
     }
 }
 function defaultStatus(settings, extension, defaultExtensions) {
@@ -215,7 +239,7 @@ function defaultStatus(settings, extension, defaultExtensions) {
     const configuredSource = entry ? packageSourceOf(entry) : undefined;
     if (markerDisabled)
         return { enabled: false, reason: "disabled" };
-    if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry))
+    if (defaultExtensionPackageFilterDisables(settings, extension))
         return { enabled: false, reason: "disabled by package filter" };
     if (entry && configuredSource && configuredSource !== extension.source) {
         return { enabled: true, reason: `enabled with configured package (${configuredSource})` };

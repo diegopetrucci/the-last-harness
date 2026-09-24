@@ -1027,7 +1027,7 @@ export interface SubagentEventBus {
 
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
-/** Internal lifecycle hook for heartbeat bookkeeping of owner-consumed runs. */
+/** Internal lifecycle event emitted when an awaited run owner settles. */
 export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 
@@ -1040,7 +1040,6 @@ export interface ExtensionConfig {
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
-  heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
   artifacts?: ExtensionArtifactConfig;
   /** External execution settings remain unknown until the policy boundary validates them. */
   execution?: unknown;

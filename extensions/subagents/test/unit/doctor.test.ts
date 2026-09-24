@@ -12,7 +12,6 @@ import {
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { SOURCE_PRIORITY, type SkillSource } from "../../src/agents/skills.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
-import type { HeartbeatSessionSummary } from "../../src/extension/heartbeat-wiring.ts";
 
 function makeState(cwd: string): SubagentState {
   return {
@@ -442,12 +441,8 @@ describe("buildDoctorReport", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Heartbeat section
-// ---------------------------------------------------------------------------
-
-describe("buildDoctorReport — heartbeat section", () => {
-  const minimalDeps = {
+describe("legacy heartbeat notice", () => {
+  const deps = {
     isAsyncAvailable: () => false,
     discoverAgentsAll: () => ({
       builtin: [],
@@ -462,222 +457,43 @@ describe("buildDoctorReport — heartbeat section", () => {
     discoverAvailableSkills: () => [],
   };
 
-  function makeMinimalState(): SubagentState {
-    return {
-      baseCwd: "/tmp",
-      currentSessionId: "session-hb",
-      asyncJobs: new Map(),
-      cleanupTimers: new Map(),
-      lastUiContext: null,
-      poller: null,
-      watcher: null,
-      watcherRestartTimer: null,
-      resultFileCoalescer: { schedule: () => false, clear: () => {} },
-    };
-  }
-
-  it("includes 'Heartbeat' section header in report", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-"));
+  it("reports a legacy heartbeat key without treating it as active", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-legacy-heartbeat-"));
     try {
       const report = buildDoctorReport({
         cwd: root,
-        config: {},
-        state: makeMinimalState(),
+        config: { heartbeat: { intervalMs: 30 } },
+        state: makeState(root),
         paths: {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
         },
-        deps: minimalDeps,
+        deps,
       });
-      assert.match(report, /Heartbeat/, "report must contain a Heartbeat section");
+      assert.match(report, /Notices/);
+      assert.match(report, /heartbeat key.*no longer used and can be removed/);
+      assert.match(report, /cacheWarming/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("shows 'disabled' when no heartbeat summary provided", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-dis-"));
+  it("does not report a legacy notice when the key is absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-no-legacy-heartbeat-"));
     try {
       const report = buildDoctorReport({
         cwd: root,
         config: {},
-        state: makeMinimalState(),
+        state: makeState(root),
         paths: {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
         },
-        deps: minimalDeps,
+        deps,
       });
-      assert.match(report, /heartbeat: not available|heartbeat: disabled/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("shows 'disabled' when heartbeat.enabled is false", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-dis2-"));
-    try {
-      const summary: HeartbeatSessionSummary = {
-        enabled: false,
-        totalBeats: 0,
-        totalCacheReadTokens: 0,
-        totalBeatCostUsd: 0,
-        gapsSaved: 0,
-        gapsWasted: 0,
-        gapsLost: 0,
-        gapsUnneeded: 0,
-        breakerDisabled: false,
-      };
-      const report = buildDoctorReport({
-        cwd: root,
-        config: {},
-        state: makeMinimalState(),
-        heartbeat: summary,
-        paths: {
-          tempRootDir: root,
-          asyncDir: path.join(root, "async"),
-          resultsDir: path.join(root, "results"),
-        },
-        deps: minimalDeps,
-      });
-      assert.match(report, /heartbeat: disabled/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("shows enabled heartbeat totals when enabled", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-en-"));
-    try {
-      const summary: HeartbeatSessionSummary = {
-        enabled: true,
-        totalBeats: 5,
-        totalCacheReadTokens: 25000,
-        totalBeatCostUsd: 0.00075,
-        gapsSaved: 2,
-        gapsWasted: 1,
-        gapsLost: 0,
-        gapsUnneeded: 0,
-        breakerDisabled: false,
-      };
-      const report = buildDoctorReport({
-        cwd: root,
-        config: {},
-        state: makeMinimalState(),
-        heartbeat: summary,
-        paths: {
-          tempRootDir: root,
-          asyncDir: path.join(root, "async"),
-          resultsDir: path.join(root, "results"),
-        },
-        deps: minimalDeps,
-      });
-      assert.match(report, /heartbeat: enabled/);
-      assert.match(report, /beats this session: 5/);
-      assert.match(report, /cache-read tokens: 25000/);
-      assert.match(report, /gaps:.*saved.*wasted/);
-      assert.match(report, /circuit breaker: closed/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("shows read-time active-gap totals without inventing a gap verdict", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-active-"));
-    try {
-      const summary: HeartbeatSessionSummary = {
-        enabled: true,
-        totalBeats: 1,
-        totalCacheReadTokens: 5000,
-        totalBeatCostUsd: 0.001575,
-        gapsSaved: 0,
-        gapsWasted: 0,
-        gapsLost: 0,
-        gapsUnneeded: 0,
-        breakerDisabled: false,
-      };
-      const report = buildDoctorReport({
-        cwd: root,
-        config: {},
-        state: makeMinimalState(),
-        heartbeat: summary,
-        paths: {
-          tempRootDir: root,
-          asyncDir: path.join(root, "async"),
-          resultsDir: path.join(root, "results"),
-        },
-        deps: minimalDeps,
-      });
-      assert.match(report, /beats this session: 1/);
-      assert.match(report, /cache-read tokens: 5000/);
-      assert.match(report, /total beat cost/);
-      assert.match(report, /- gaps: none yet/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("shows circuit breaker open when disabled", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-brk-"));
-    try {
-      const summary: HeartbeatSessionSummary = {
-        enabled: true,
-        totalBeats: 3,
-        totalCacheReadTokens: 0,
-        totalBeatCostUsd: 0,
-        gapsSaved: 0,
-        gapsWasted: 1,
-        gapsLost: 0,
-        gapsUnneeded: 0,
-        breakerDisabled: true,
-      };
-      const report = buildDoctorReport({
-        cwd: root,
-        config: {},
-        state: makeMinimalState(),
-        heartbeat: summary,
-        paths: {
-          tempRootDir: root,
-          asyncDir: path.join(root, "async"),
-          resultsDir: path.join(root, "results"),
-        },
-        deps: minimalDeps,
-      });
-      assert.match(report, /circuit breaker: open \(disabled after failures\)/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("shows unneeded gap count in gaps line", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-unneeded-"));
-    try {
-      const summary: HeartbeatSessionSummary = {
-        enabled: true,
-        totalBeats: 3,
-        totalCacheReadTokens: 15000,
-        totalBeatCostUsd: 0.00009,
-        gapsSaved: 1,
-        gapsWasted: 0,
-        gapsLost: 0,
-        gapsUnneeded: 12,
-        breakerDisabled: false,
-      };
-      const report = buildDoctorReport({
-        cwd: root,
-        config: {},
-        state: makeMinimalState(),
-        heartbeat: summary,
-        paths: {
-          tempRootDir: root,
-          asyncDir: path.join(root, "async"),
-          resultsDir: path.join(root, "results"),
-        },
-        deps: minimalDeps,
-      });
-      assert.match(report, /gaps:.*1 saved.*12 unneeded/);
+      assert.doesNotMatch(report, /Notices/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

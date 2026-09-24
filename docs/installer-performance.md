@@ -126,12 +126,12 @@ partition all wall time. Remove only the benchmark-owned `$AB_ROOT` after
 preserving any JSON needed for an audit.
 
 Comparing the bundled default-extension manifests for `v0.40.0` and the
-current `main` package identifies exactly these five npm pin changes. This table
-is derived from that manifest comparison, not from recorded benchmark
+recorded benchmark revision identifies exactly these five npm pin changes. This
+table is derived from that manifest comparison, not from recorded benchmark
 `pinChange` metadata. The cold checkout A/B produced no upgrade/`pinChange`
 metadata.
 
-| Package | v0.40.0 | main |
+| Package | v0.40.0 | `f7d00ec78dfee5ccbe9a085ec7c22041699e069f` |
 | --- | ---: | ---: |
 | `@diegopetrucci/pi-fast` | `0.1.0` | `0.1.2` |
 | `@diegopetrucci/pi-inline-bash` | `0.1.9` | `0.1.11` |
@@ -139,13 +139,16 @@ metadata.
 | `@diegopetrucci/pi-quiet-tools` | `0.1.10` | `0.1.12` |
 | `@diegopetrucci/pi-dirty-repo-guard` | `0.1.9` | `0.1.11` |
 
-Separately, the bundled `pi-transcribe` source moves from Git commit
-`e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1` to
-`f673cad478885c81fdaa5c7977eb4d291fd87816`. Git pins are ignored by benchmark
-`pinChange` and are recorded only in this document for provenance. The
-changed-pin scenario and counter track only npm sources, so the `pi-transcribe`
-Git pin is not a benchmark input and is not counted as one of the five npm
-changes.
+Separately, the bundled `pi-transcribe` source moves from the `v0.40.0` Git
+commit `e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1` to the recorded benchmark
+revision's Git commit `f673cad478885c81fdaa5c7977eb4d291fd87816`. Git pins are
+excluded from the benchmark's `pinChange` count because that counter tracks npm
+sources only; they are recorded here for provenance, not as benchmark inputs.
+
+The current manifest now bundles [Pi Voice](https://github.com/earendil-works/pi-voice)
+from npm `@earendil-works/pi-voice@0.1.0` and migrates legacy `pi-transcribe` Git and
+npm identities. This later migration is not part of the recorded benchmark or its
+`pinChange` count.
 
 ## Measurement scope
 

@@ -16,7 +16,6 @@ async function doctorReportForContext(
   state: SubagentState,
   config: ExtensionConfig,
   ctx: ExtensionContext,
-  getHeartbeatSummary?: () => import("../extension/heartbeat-wiring.ts").HeartbeatSessionSummary,
   getProjectAgentTrustOptions?: (cwd: string) => ProjectAgentTrustOptions,
 ): Promise<string> {
   let currentSessionFile: string | null = null;
@@ -41,7 +40,6 @@ async function doctorReportForContext(
     currentSessionId,
     sessionError,
     projectAgentTrust,
-    ...(getHeartbeatSummary ? { heartbeat: getHeartbeatSummary() } : {}),
   });
 }
 
@@ -49,7 +47,6 @@ export function registerSlashCommands(
   pi: ExtensionAPI,
   state: SubagentState,
   config: ExtensionConfig,
-  getHeartbeatSummary?: () => import("../extension/heartbeat-wiring.ts").HeartbeatSessionSummary,
   getProjectAgentTrustOptions?: (cwd: string) => ProjectAgentTrustOptions,
 ): void {
   pi.registerCommand("subagents-doctor", {
@@ -57,14 +54,7 @@ export function registerSlashCommands(
     handler: async (_args, ctx) => {
       sendSlashText(
         pi,
-        await doctorReportForContext(
-          pi,
-          state,
-          config,
-          ctx,
-          getHeartbeatSummary,
-          getProjectAgentTrustOptions,
-        ),
+        await doctorReportForContext(pi, state, config, ctx, getProjectAgentTrustOptions),
       );
     },
   });

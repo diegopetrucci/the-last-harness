@@ -7,6 +7,7 @@ import process from "node:process";
 
 import {
   criticalDefaultExtensionOptOutIds,
+  defaultExtensionPackageFilterDisables,
   defaultExtensionPackageIdentities,
   disabledDefaultExtensionIds,
   FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES,
@@ -220,6 +221,49 @@ function shouldEnsureDefaultExtensionSource(
   );
 }
 
+function objectPackageIdentities(packages: readonly unknown[]): Set<string> {
+  return new Set(
+    packages
+      .filter((entry) => isPlainObject(entry))
+      .map(packageIdentity)
+      .filter((identity): identity is string => Boolean(identity)),
+  );
+}
+
+function isUnpersistedPackageFilter(
+  settings: unknown,
+  extension: DefaultExtensionEntry,
+  disabledIds: ReadonlySet<string>,
+): boolean {
+  return (
+    !disabledIds.has(extension.id) && defaultExtensionPackageFilterDisables(settings, extension)
+  );
+}
+
+function hasCanonicalEntryWithReplacementObject(
+  settings: JsonObject,
+  extension: DefaultExtensionEntry,
+): boolean {
+  if (!Array.isArray(settings.packages)) return false;
+  const canonicalIdentity = packageIdentity(extension.source);
+  if (!canonicalIdentity) return false;
+  const replacementIdentities = new Set(
+    extension.replaces
+      .map(packageIdentity)
+      .filter((identity): identity is string =>
+        Boolean(identity && identity !== canonicalIdentity),
+      ),
+  );
+  if (replacementIdentities.size === 0) return false;
+  return (
+    settings.packages.some((entry) => packageIdentity(entry) === canonicalIdentity) &&
+    settings.packages.some((entry) => {
+      const identity = packageIdentity(entry);
+      return isPlainObject(entry) && identity !== undefined && replacementIdentities.has(identity);
+    })
+  );
+}
+
 function prepareDefaults(
   defaults: JsonObject,
   packageSource: string | undefined,
@@ -249,10 +293,18 @@ function prepareDefaults(
     isPlainObject(existingSettings) && Array.isArray(existingSettings.packages)
       ? existingSettings.packages
       : [];
+  const objectIdentities = objectPackageIdentities(existingPackages);
   const ensuredPackages = [
     ensuredSource,
     ...defaultExtensions
       .filter((extension) => !disabledIds.has(extension.id))
+      .filter((extension) => !isUnpersistedPackageFilter(existingSettings, extension, disabledIds))
+      .filter(
+        (extension) =>
+          !defaultExtensionPackageIdentities(extension).some((identity) =>
+            objectIdentities.has(identity),
+          ),
+      )
       .filter((extension) =>
         shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }),
       )
@@ -274,12 +326,21 @@ function prepareDefaults(
       .filter((extension) => disabledIds.has(extension.id))
       .flatMap(defaultExtensionPackageIdentities),
   );
+  const preservedPackageFilterIdentities = new Set(
+    defaultExtensions
+      .filter((extension) => isUnpersistedPackageFilter(existingSettings, extension, disabledIds))
+      .flatMap(defaultExtensionPackageIdentities),
+  );
   const packages = Array.isArray(next.packages) ? next.packages : [];
   next.packages = [
     ...ensuredPackages,
     ...packages.filter((entry) => {
       const identity = packageIdentity(entry);
-      return !ensuredIdentities.has(identity || "") && !disabledIdentities.has(identity || "");
+      return (
+        !ensuredIdentities.has(identity || "") &&
+        !disabledIdentities.has(identity || "") &&
+        !preservedPackageFilterIdentities.has(identity || "")
+      );
     }),
   ];
   return next;
@@ -410,22 +471,97 @@ function applyReplacedDefaultExtensions(
   changes: string[],
   { force }: { force: boolean },
 ): void {
-  if (!Array.isArray(settings.packages)) return;
+  const initialPackages = settings.packages;
+  if (!Array.isArray(initialPackages)) return;
+  let packages: unknown[] = initialPackages;
 
   for (const extension of defaultExtensions) {
     if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
     if (disabledIds.has(extension.id)) continue;
+
     const newIdentity = packageIdentity(extension.source);
-    for (const oldSource of extension.replaces) {
-      const oldIdentity = packageIdentity(oldSource);
-      if (!oldIdentity || oldIdentity === newIdentity) continue;
-      let removedSource: string | undefined;
-      while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
-        changes.push(
-          `remove replaced default extension package: ${removedSource} -> ${extension.source}`,
-        );
-      }
+    const oldIdentities = new Set(
+      extension.replaces
+        .map(packageIdentity)
+        .filter((identity): identity is string => Boolean(identity && identity !== newIdentity)),
+    );
+    if (!newIdentity || oldIdentities.size === 0) continue;
+    if (!packages.some((entry: unknown) => oldIdentities.has(packageIdentity(entry) || ""))) {
+      continue;
     }
+
+    // Any existing canonical identity is authoritative, including a plain
+    // string pin. Only replacement identities may be removed; a canonical
+    // object may carry a different pin and user-owned metadata.
+    const canonicalEntry = packages.find(
+      (entry: unknown) => packageIdentity(entry) === newIdentity,
+    );
+    const replacementObjectEntry = packages.find((entry: unknown): entry is JsonObject => {
+      const identity = packageIdentity(entry);
+      return isPlainObject(entry) && identity !== undefined && oldIdentities.has(identity);
+    });
+    const retainedEntry = canonicalEntry ?? replacementObjectEntry;
+
+    if (retainedEntry === undefined) {
+      for (const oldIdentity of oldIdentities) {
+        let removedSource: string | undefined;
+        while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
+          changes.push(
+            `remove replaced default extension package: ${removedSource} -> ${extension.source}`,
+          );
+        }
+      }
+      continue;
+    }
+
+    const retainedCanonical = packageIdentity(retainedEntry) === newIdentity;
+    const objectSource = packageSourceOf(retainedEntry);
+    let migratedEntry: unknown = retainedEntry;
+    let removesCriticalExtensionFilter = false;
+    if (isPlainObject(retainedEntry)) {
+      const next: JsonObject = {
+        ...clone(retainedEntry),
+        ...(retainedCanonical ? {} : { source: extension.source }),
+      };
+      removesCriticalExtensionFilter =
+        extension.critical === true && Object.hasOwn(next, "extensions");
+      if (removesCriticalExtensionFilter) delete next.extensions;
+      migratedEntry = next;
+    }
+
+    const nextPackages: unknown[] = [];
+    let keptEntry = false;
+    for (const entry of packages) {
+      const identity = packageIdentity(entry);
+      if (entry === retainedEntry && !keptEntry) {
+        nextPackages.push(migratedEntry);
+        keptEntry = true;
+        if (!retainedCanonical && objectSource !== extension.source) {
+          changes.push(
+            `update replaced default extension package source: ${objectSource} -> ${extension.source}`,
+          );
+        }
+        if (removesCriticalExtensionFilter) {
+          changes.push(`remove critical default extension package filter: ${extension.id}`);
+        }
+        continue;
+      }
+      if (identity === newIdentity) {
+        changes.push(
+          `remove duplicate default extension package: ${packageSourceOf(entry) || identity} (same identity as ${extension.source})`,
+        );
+        continue;
+      }
+      if (identity !== undefined && oldIdentities.has(identity)) {
+        changes.push(
+          `remove replaced default extension package: ${packageSourceOf(entry) || identity} -> ${extension.source}`,
+        );
+        continue;
+      }
+      nextPackages.push(entry);
+    }
+    settings.packages = nextPackages;
+    packages = nextPackages;
   }
 }
 
@@ -449,6 +585,7 @@ function applyDefaultExtensionPackageDedupes(
     )
       continue;
     if (disabledIds.has(extension.id)) continue;
+    if (isUnpersistedPackageFilter(settings, extension, disabledIds)) continue;
     const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
     for (const removedSource of removedSources) {
       changes.push(
@@ -473,6 +610,8 @@ function applyDefaultExtensionSourceUpdates(
 
   for (const extension of defaultExtensions) {
     if (disabledIds.has(extension.id)) continue;
+    if (isUnpersistedPackageFilter(settings, extension, disabledIds)) continue;
+    if (hasCanonicalEntryWithReplacementObject(settings, extension)) continue;
     const identity = packageIdentity(extension.source);
     if (!identity) continue;
     const index = settings.packages.findIndex(
@@ -750,10 +889,16 @@ function syncDefaultExtensionProvenance(
     tlh && Object.hasOwn(tlh, "defaultExtensionProvenance")
       ? JSON.stringify(tlh.defaultExtensionProvenance)
       : undefined;
+  const effectiveDisabledIds = new Set(disabledIds);
+  for (const extension of defaultExtensions) {
+    if (isUnpersistedPackageFilter(settings, extension, disabledIds)) {
+      effectiveDisabledIds.add(extension.id);
+    }
+  }
   const nextManagedIdentities = managedDefaultExtensionPackageIdentities(
     settings,
     defaultExtensions,
-    disabledIds,
+    effectiveDisabledIds,
   );
   if (!setDefaultExtensionProvenance(settings, nextManagedIdentities)) return;
   const nextTlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;

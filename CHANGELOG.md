@@ -22,11 +22,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 - The bundled `librarian`, `repo-scout`, and `web-scout` subagents now default to Anthropic Claude Sonnet 4.6 at medium effort instead of Claude Haiku 4.5 at high effort. `diff-summarizer` and `test-runner` continue to use Claude Haiku 4.5 at their existing effort levels. Non-Anthropic provider defaults, including the OpenRouter high-effort entries, are unchanged.
 - The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort instead of high; its Anthropic, xAI, and OpenRouter defaults are unchanged, and `contrarian` still uses OpenAI Codex GPT-5.6 Sol at high effort.
-- Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`; an absent value keeps Pi's default `streaming` behavior. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
-- Documented the separate ownership and overlap rules for Pi-native warming and TLH's default-off async-parent heartbeat: an idle parent overlaps its heartbeat with Pi warming only in `idle` mode, while active child sessions may independently stream-warm during the parent heartbeat; the requests have no shared budget.
+- Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
+- TLH now ships `cacheWarming: "idle"` as a packaged default (append-if-missing merge). An existing user value is preserved. To revert to Pi's native `streaming` mode or to disable warming, set `cacheWarming` to `streaming` or `off` in `/settings`.
+- TLH registers a `cache_warming_decision` hook in the subagent extension. While async children are live, the hook substitutes P=1 for Pi's idle prior of 0.15 and returns `warm` when missCost − warmCost ≥ $0.05; otherwise it abstains and lets Pi decide.
+- Replaced the bundled `pi-transcribe` Git source with npm `@earendil-works/pi-voice@0.1.0` under the canonical default-extension ID `pi-voice`; install/update replaces legacy `pi-transcribe` string entries, including manual pins, with the canonical pin, while migrating replacement objects in place and preserving package filters and metadata; existing `tlh.disabledDefaultExtensions` opt-outs and manual canonical pins remain respected.
+- Interactive TLH sessions now brand the terminal title as `tlh - <cwd basename>`. Herdr activity retains `agent: "pi"` for lifecycle ownership while publishing retryable display metadata with `display_agent: "tlh"`.
 
 ### Removed
 
+- **TLH async-parent prompt-cache heartbeat retired.** The heartbeat code is removed. A `heartbeat` key in the subagent extension config (`~/.the-last-harness/agent/extensions/subagent/config.json`) is now silently ignored; `heartbeat.jsonl`, if present, is left in place.
 - The bundled `pi-quiet-tools` default extension is removed.
 - Project-local `.tlh/defaults.json` model/thinking defaults are no longer loaded; embedded agents re-resolve and re-trust the fixed `.tlh/agents/custom/<UPPERCASE-SLUG>.md` file on dispatch, resume, steer, and interrupt instead of using session snapshots; mixed embedded/ordinary dispatch no longer forces project `agentScope`, so the requested scope applies to ordinary targets.
 - Removed capability filtering from subagent model-argument dispatch. The defaults layer and runtime now forward recognized effort suffixes unchanged, while Pi remains responsible for rejecting unsupported model arguments as non-transient failures.
@@ -36,6 +40,12 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed completion batching, grouped-notification sizing, and layered completion TTL dedupe. The result watcher now owns detached delivery through one persisted artifact claim.
 - Removed aggregate active-run rendering and its status view; inspect each run with `subagent({ action: "status", id: "..." })` instead.
 - Retired `toolBudget` frontmatter/settings and runtime soft-nudge/hard-block behavior, including the `tool_budget_blocked` termination reason. Install/update, `tlh doctor --repair`, and mutating `tlh defaults enable|disable` commands scrub the exact obsolete `subagents.agentOverrides.*.toolBudget` keys while preserving unrelated settings; read-only defaults commands do not write settings.
+
+### Accepted regressions
+
+- **No warming for OpenAI/Codex models.** Pi's `promptCache` lifetime metadata is declared only for Anthropic models. OpenAI/Codex and other models have no prompt-cache lifetime declarations and are never eligible for Pi-native cache warming. The retired heartbeat had no such restriction.
+- **Anthropic child waits longer than ~30 minutes are uncovered.** Pi's idle warmer tracks each session from its most recent real provider request. Children idle for longer than the `short`-tier TTL ceiling (~30 minutes) go cold; the `cache_warming_decision` hook cannot prevent that.
+- **Users with `heartbeat.enabled: true` must remove the key.** The `heartbeat` config block is silently ignored at runtime. `/subagents-doctor` reports a notice when the key is present; remove it manually — TLH never edits user config.
 
 ## [0.42.1] - 2026-09-16
 

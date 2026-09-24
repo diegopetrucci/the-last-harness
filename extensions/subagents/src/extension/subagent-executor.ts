@@ -638,7 +638,6 @@ async function executeDoctorAction(
           sessionError,
           expandTilde: deps.expandTilde,
           projectAgentTrust,
-          ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
         }),
       },
     ],

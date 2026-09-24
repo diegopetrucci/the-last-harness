@@ -107,7 +107,9 @@ ${name} content
 function createCtx({
   cwd,
   notifications,
+  mode = "tui",
   hasUI = true,
+  onSetTitle,
   onSetHeader,
   onSetFooter,
   projectTrusted,
@@ -115,6 +117,7 @@ function createCtx({
   systemPrompt = "",
 }) {
   return {
+    mode,
     hasUI,
     cwd,
     model,
@@ -133,6 +136,9 @@ function createCtx({
     getContextUsage: () => undefined,
     getSystemPrompt: () => systemPrompt,
     ui: {
+      setTitle(title) {
+        onSetTitle?.(title);
+      },
       addAutocompleteProvider() {},
       setFooter(factory) {
         onSetFooter?.(factory);
@@ -203,6 +209,8 @@ async function createExtensionHarness({
   setupWorkspace,
   startupResourceCollector,
   deferredStartupTaskScheduler,
+  terminalTitleScheduler,
+  afterSessionStartHandler,
 }) {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
   const agentDir = join(tempDir, "agent");
@@ -229,12 +237,18 @@ async function createExtensionHarness({
   __testing.setDeferredStartupTaskSchedulerForTests((task) => {
     scheduleDeferredTask(() => withProcessPath(emptyBinDir, task));
   });
+  if (terminalTitleScheduler) {
+    __testing.setTerminalTitleSchedulerForTests(terminalTitleScheduler);
+  }
   if (startupResourceCollector) {
     __testing.setStartupResourceCollectorForTests(startupResourceCollector);
   }
 
   const pi = createPi();
   withProcessPath(emptyBinDir, () => theLastHarness(pi));
+  if (afterSessionStartHandler) {
+    pi.on("session_start", afterSessionStartHandler);
+  }
   const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
   const sessionShutdownHandlers = pi.handlers.get("session_shutdown") ?? [];
   assert.ok(
@@ -252,15 +266,28 @@ async function createExtensionHarness({
         await handler({}, ctx);
       }
     },
-    async startSession({ reason, hasUI = true, projectTrusted, model, systemPrompt } = {}) {
+    async startSession({
+      reason,
+      mode = "tui",
+      hasUI = true,
+      cwd: sessionCwd = cwd,
+      projectTrusted,
+      model,
+      systemPrompt,
+    } = {}) {
       const notifications = [];
+      let title;
       let headerFactory;
       let footerFactory;
       let requestRenderCalls = 0;
       const ctx = createCtx({
-        cwd,
+        cwd: sessionCwd,
         notifications,
+        mode,
         hasUI,
+        onSetTitle(value) {
+          title = value;
+        },
         projectTrusted,
         model,
         systemPrompt,
@@ -277,6 +304,8 @@ async function createExtensionHarness({
       return {
         ctx,
         notifications,
+        title,
+        getTitle: () => title,
         headerFactory,
         footerFactory,
         buildHeader() {
@@ -299,6 +328,9 @@ async function createExtensionHarness({
         requestRenderCalls: () => requestRenderCalls,
       };
     },
+    emit(event, payload, ctx) {
+      return Promise.all((pi.handlers.get(event) ?? []).map((handler) => handler(payload, ctx)));
+    },
     cleanup() {
       __testing.reset();
       restoreEnv(previousEnv);
@@ -310,11 +342,13 @@ async function createExtensionHarness({
 async function runSessionStart({
   reason,
   installState,
+  mode = "tui",
   hasUI = true,
   projectTrusted,
   setupWorkspace,
   startupResourceCollector,
   deferredStartupTaskScheduler,
+  terminalTitleScheduler,
   model,
   systemPrompt,
 }) {
@@ -323,11 +357,13 @@ async function runSessionStart({
     setupWorkspace,
     startupResourceCollector,
     deferredStartupTaskScheduler,
+    terminalTitleScheduler,
   });
 
   try {
     const session = await harness.startSession({
       reason,
+      mode,
       hasUI,
       projectTrusted,
       model,
@@ -341,6 +377,7 @@ async function runSessionStart({
     footer?.dispose?.();
     return {
       notifications: session.notifications,
+      title: session.title,
       header,
       headerLines,
       footer,
@@ -363,6 +400,171 @@ function createDeferred() {
   });
   return { promise, resolve, reject };
 }
+
+test("interactive startup brands the terminal title without touching headless contexts", async () => {
+  const interactive = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+  });
+  assert.equal(interactive.title, "tlh - workspace");
+
+  const rootHarness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+  try {
+    const root = await rootHarness.startSession({ reason: "restore", cwd: "/" });
+    assert.equal(root.title, "tlh - /");
+  } finally {
+    rootHarness.cleanup();
+  }
+
+  const headless = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    hasUI: false,
+  });
+  assert.equal(headless.title, undefined);
+
+  const rpc = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    mode: "rpc",
+  });
+  assert.equal(rpc.title, undefined);
+});
+
+test("spaced bounded title reassertion heals yielding startup work and interaction events", async () => {
+  const deferredTitles = [];
+  const lateHandlerStarted = createDeferred();
+  const releaseLateHandler = createDeferred();
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler(task, delayMs) {
+      deferredTitles.push({ task, delayMs });
+    },
+    afterSessionStartHandler: async () => {
+      lateHandlerStarted.resolve();
+      await releaseLateHandler.promise;
+    },
+  });
+
+  const startPromise = harness.startSession({ reason: "restore" });
+  let lateHandlerReleased = false;
+  try {
+    // A later startup handler is still yielding when the first bounded
+    // callback runs. It must reassert safely and schedule another pass.
+    await lateHandlerStarted.promise;
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [0],
+      "the immediate startup pass should be scheduled first",
+    );
+    deferredTitles.shift().task();
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [250],
+      "the next pass should be spaced beyond another check phase",
+    );
+
+    releaseLateHandler.resolve();
+    lateHandlerReleased = true;
+    const session = await startPromise;
+    assert.equal(session.getTitle(), "tlh - workspace");
+
+    // Pi's rebindCurrentSession writes its title after all session_start
+    // handlers have returned; the later delayed pass restores TLH branding.
+    session.ctx.ui.setTitle("Pi - workspace");
+    assert.equal(session.getTitle(), "Pi - workspace");
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [250],
+    );
+    deferredTitles.shift().task();
+    assert.equal(session.getTitle(), "tlh - workspace");
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [1000],
+    );
+
+    // The finite schedule is bounded even when the title is already correct.
+    deferredTitles.shift().task();
+    assert.equal(session.getTitle(), "tlh - workspace");
+    assert.equal(deferredTitles.length, 0);
+
+    // Each supported post-start interaction event can heal a later Pi title
+    // write without relying on the delayed startup schedule.
+    for (const eventName of ["session_info_changed", "turn_start", "turn_end"]) {
+      session.ctx.ui.setTitle(`Pi - ${eventName}`);
+      await harness.emit(eventName, { type: eventName }, session.ctx);
+      assert.equal(session.getTitle(), "tlh - workspace");
+    }
+  } finally {
+    if (!lateHandlerReleased) releaseLateHandler.resolve();
+    await startPromise.catch(() => undefined);
+    harness.cleanup();
+  }
+});
+
+test("queued title reassertions stop after session replacement and shutdown", async () => {
+  const scheduledTitles = [];
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler(task, delayMs) {
+      scheduledTitles.push({ task, delayMs });
+    },
+  });
+
+  try {
+    const firstSession = await harness.startSession({ reason: "restore" });
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [0],
+      "expected the first reassertion pass to be queued",
+    );
+    scheduledTitles.shift().task();
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250],
+    );
+    const staleReplacementPass = scheduledTitles[0];
+
+    const replacementSession = await harness.startSession({ reason: "restore" });
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 0],
+      "expected the replacement session to queue its own first pass",
+    );
+    firstSession.ctx.ui.setTitle("Pi - replaced");
+    staleReplacementPass.task();
+    assert.equal(firstSession.getTitle(), "Pi - replaced");
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 0],
+      "an invalidated replacement callback must not schedule another pass",
+    );
+
+    scheduledTitles.pop().task();
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 250],
+    );
+    await harness.shutdownSession(replacementSession.ctx);
+    replacementSession.ctx.ui.setTitle("Pi - shutdown");
+    for (const queuedPass of scheduledTitles) queuedPass.task();
+    assert.equal(replacementSession.getTitle(), "Pi - shutdown");
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 250],
+      "an invalidated shutdown callback must not schedule another pass",
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
 
 test("interactive startup omits the non-latest track warning from the TLH header", async () => {
   const { notifications, headerLines } = await runSessionStart({

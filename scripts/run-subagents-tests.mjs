@@ -27,8 +27,9 @@ export const suiteConfigs = {
     // behavior suite while retaining the surviving status and privacy coverage.
     // F1 removes project-agent snapshot/defaults/control-state tests and keeps
     // the fixed-file loader coverage. G1 retires health-transition assertions;
-    // the current surviving floor is 99 files.
-    minimumFiles: 99,
+    // heartbeat retirement removes eight additional unit files; the current
+    // surviving floor is 93 files.
+    minimumFiles: 93,
     // E1 removes batching/dedupe assertions and ports the surviving fixed-shape
     // delivery, ownership, and bounded-reference coverage. The correction pass
     // restores the exact current suite floor after its additional coverage.
@@ -38,9 +39,11 @@ export const suiteConfigs = {
     // E3 removes the budget-only suite and assertions; E4 removes six
     // quarantine-only tests and adds direct unreadable-status, cleanup, cache,
     // and boundary coverage. F1 removes retired project-agent behavior tests;
-    // G1 retires health-transition assertions; the current surviving floor is
-    // 1221 tests.
-    minimumTests: 1221,
+    // G1 retires health-transition assertions. Heartbeat retirement removes
+    // 167 standalone tests plus 5 net doctor tests (7 heartbeat tests replaced
+    // by 2 legacy-key tests); cache-warming/live-async additions add 16. The
+    // current surviving floor remains 1070 tests.
+    minimumTests: 1070,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),

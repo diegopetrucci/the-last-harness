@@ -168,29 +168,14 @@ function formatProjectAgentTrust(value) {
             return "- project-agent trust: unavailable";
     }
 }
-function formatHeartbeatSection(summary) {
-    if (!summary)
-        return [`- heartbeat: not available`];
-    if (!summary.enabled)
-        return [`- heartbeat: disabled (enabled: false in config)`];
-    const costStr = summary.totalBeatCostUsd > 0
-        ? `$${summary.totalBeatCostUsd.toFixed(5)} total beat cost`
-        : "$0 beat cost";
-    const gapsStr = [
-        summary.gapsSaved > 0 ? `${summary.gapsSaved} saved` : null,
-        summary.gapsWasted > 0 ? `${summary.gapsWasted} wasted` : null,
-        summary.gapsLost > 0 ? `${summary.gapsLost} lost` : null,
-        summary.gapsUnneeded > 0 ? `${summary.gapsUnneeded} unneeded` : null,
-    ]
-        .filter(Boolean)
-        .join(", ");
+function formatLegacyHeartbeatNotice(config) {
+    if (!("heartbeat" in config))
+        return [];
     return [
-        `- heartbeat: enabled`,
-        `- beats this session: ${summary.totalBeats}`,
-        `- cache-read tokens: ${summary.totalCacheReadTokens}`,
-        `- ${costStr}`,
-        `- gaps: ${gapsStr || "none yet"}`,
-        `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after failures)" : "closed"}`,
+        "",
+        "Notices",
+        "- heartbeat key: the 'heartbeat' config key is no longer used and can be removed.",
+        "  Prompt-cache warming is now Pi-native (see the cacheWarming setting; docs/subagents.md).",
     ];
 }
 function formatPermissionSystemSection() {
@@ -236,9 +221,7 @@ export function buildDoctorReport(input) {
         "",
         "Permission system",
         ...formatPermissionSystemSection(),
-        "",
-        "Heartbeat",
-        ...formatHeartbeatSection(input.heartbeat),
+        ...formatLegacyHeartbeatNotice(input.config),
     ];
     return lines.join("\n");
 }
