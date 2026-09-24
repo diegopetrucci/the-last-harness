@@ -4,6 +4,8 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
+const HERDR_METADATA_SOURCE = "user:tlh-display";
+const HERDR_DISPLAY_AGENT = "tlh";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
@@ -267,6 +269,8 @@ export function createHerdrActivityReporter(options = {}) {
     let heartbeatTimer;
     let heartbeatStopped = false;
     let heartbeatStarted = false;
+    let displayMetadataPending = false;
+    let displayMetadataInFlight = false;
     let outboundChain = Promise.resolve();
     const nextReportSeq = () => {
         reportSeq += 1;
@@ -290,6 +294,31 @@ export function createHerdrActivityReporter(options = {}) {
             }, sessionRef),
         });
     };
+    const sendDisplayMetadata = async () => {
+        try {
+            await sendRequest({
+                id: `${HERDR_METADATA_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
+                method: "pane.report_metadata",
+                params: {
+                    pane_id: paneId,
+                    source: HERDR_METADATA_SOURCE,
+                    agent: HERDR_AGENT,
+                    applies_to_source: HERDR_SOURCE,
+                    display_agent: HERDR_DISPLAY_AGENT,
+                },
+            });
+        }
+        catch {
+        }
+    };
+    const retryDisplayMetadata = () => {
+        if (!displayMetadataPending || displayMetadataInFlight || !rootSession || disposed)
+            return;
+        displayMetadataInFlight = true;
+        void sendDisplayMetadata().finally(() => {
+            displayMetadataInFlight = false;
+        });
+    };
     const stopHeartbeat = () => {
         heartbeatStopped = true;
         if (heartbeatTimer) {
@@ -308,10 +337,11 @@ export function createHerdrActivityReporter(options = {}) {
                 if (heartbeatStopped || !rootSession || disposed)
                     return;
                 const state = desiredState ?? lastReportedState;
-                if (state === undefined)
-                    return;
-                await sendStateCore(state);
-                lastReportedState = state;
+                if (state !== undefined) {
+                    await sendStateCore(state);
+                    lastReportedState = state;
+                }
+                retryDisplayMetadata();
             });
             void heartbeatDelivery
                 .catch(() => undefined)
@@ -348,23 +378,26 @@ export function createHerdrActivityReporter(options = {}) {
         handleSessionStart(ctx) {
             if (disposed || ctx.mode !== "tui") {
                 rootSession = false;
+                displayMetadataPending = false;
                 return;
             }
             rootSession = true;
             sessionRef = readSessionRef(ctx);
-            if (!sessionRef.agentSessionId && !sessionRef.agentSessionPath)
-                return;
             const startedSessionRef = sessionRef;
-            void sendRequest({
-                id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
-                method: "pane.report_agent_session",
-                params: withSessionRef({
-                    pane_id: paneId,
-                    source: HERDR_SOURCE,
-                    agent: HERDR_AGENT,
-                    seq: nextReportSeq(),
-                }, startedSessionRef),
-            }).catch(() => undefined);
+            if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
+                void sendRequest({
+                    id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
+                    method: "pane.report_agent_session",
+                    params: withSessionRef({
+                        pane_id: paneId,
+                        source: HERDR_SOURCE,
+                        agent: HERDR_AGENT,
+                        seq: nextReportSeq(),
+                    }, startedSessionRef),
+                }).catch(() => undefined);
+            }
+            displayMetadataPending = true;
+            retryDisplayMetadata();
         },
         handleSnapshot(snapshot) {
             if (!rootSession || disposed)
@@ -375,12 +408,14 @@ export function createHerdrActivityReporter(options = {}) {
             if (!rootSession)
                 return;
             rootSession = false;
+            displayMetadataPending = false;
             stopHeartbeat();
             queuedReporter.handleSessionShutdown();
         },
         dispose() {
             disposed = true;
             rootSession = false;
+            displayMetadataPending = false;
             stopHeartbeat();
             queuedReporter.dispose();
         },

@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { AgentSession as TlhPiAgentSession, getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
@@ -40,6 +41,18 @@ function getActiveProjectTrustDecision(ctx) {
     const projectTrusted = ctx.isProjectTrusted?.();
     return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
 }
+function setTlhTerminalTitle(ctx) {
+    try {
+        if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.setTitle !== "function")
+            return;
+        const cwdLabel = basename(ctx.cwd) || ctx.cwd;
+        if (!cwdLabel)
+            return;
+        ctx.ui.setTitle(`tlh - ${cwdLabel}`);
+    }
+    catch {
+    }
+}
 function createRetryableLazyImport(loader) {
     let modulePromise;
     return () => {
@@ -60,10 +73,15 @@ const EMPTY_STARTUP_RESOURCES = {
     themes: [],
     projectGuidance: [],
 };
+const TERMINAL_TITLE_REASSERTION_DELAYS_MS = [0, 250, 1000];
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
 };
 let startupResourceCollector = collectStartupResourceSnapshot;
+let scheduleTerminalTitleReapplication = (task, delayMs) => {
+    const handle = setTimeout(task, delayMs);
+    handle.unref();
+};
 export const __testing = {
     setDeferredStartupTaskSchedulerForTests(scheduler) {
         scheduleDeferredStartupTask = scheduler;
@@ -71,11 +89,18 @@ export const __testing = {
     setStartupResourceCollectorForTests(collector) {
         startupResourceCollector = collector;
     },
+    setTerminalTitleSchedulerForTests(scheduler) {
+        scheduleTerminalTitleReapplication = scheduler;
+    },
     reset() {
         scheduleDeferredStartupTask = (task) => {
             setImmediate(task);
         };
         startupResourceCollector = collectStartupResourceSnapshot;
+        scheduleTerminalTitleReapplication = (task, delayMs) => {
+            const handle = setTimeout(task, delayMs);
+            handle.unref();
+        };
     },
 };
 export default function theLastHarness(pi) {
@@ -88,6 +113,20 @@ export default function theLastHarness(pi) {
         activeTlhHeader = undefined;
         activeTlhHeaderComponentId = 0;
         return activeTlhHeaderSessionToken;
+    };
+    const scheduleTlhTerminalTitleReassertions = (ctx, sessionToken) => {
+        const reassert = (passIndex) => {
+            if (activeTlhHeaderSessionToken !== sessionToken)
+                return;
+            setTlhTerminalTitle(ctx);
+            const nextPassIndex = passIndex + 1;
+            if (nextPassIndex >= TERMINAL_TITLE_REASSERTION_DELAYS_MS.length ||
+                activeTlhHeaderSessionToken !== sessionToken) {
+                return;
+            }
+            scheduleTerminalTitleReapplication(() => reassert(nextPassIndex), TERMINAL_TITLE_REASSERTION_DELAYS_MS[nextPassIndex]);
+        };
+        scheduleTerminalTitleReapplication(() => reassert(0), TERMINAL_TITLE_REASSERTION_DELAYS_MS[0]);
     };
     let activeProviderAuthHealthStore;
     let activeProviderAuthHealthUnsubscribe;
@@ -228,8 +267,15 @@ export default function theLastHarness(pi) {
     pi.on("model_select", (_event, ctx) => {
         refreshSubscriptionUsage(ctx);
     });
+    pi.on("turn_start", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
+    });
     pi.on("turn_end", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
         refreshSubscriptionUsage(ctx);
+    });
+    pi.on("session_info_changed", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
     });
     pi.on("session_start", async (event, ctx) => {
         const sessionToken = invalidateActiveTlhHeaderSession();
@@ -238,6 +284,8 @@ export default function theLastHarness(pi) {
         if (!ctx.hasUI) {
             return;
         }
+        setTlhTerminalTitle(ctx);
+        scheduleTlhTerminalTitleReassertions(ctx, sessionToken);
         if (event.reason === "startup") {
             try {
                 scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
