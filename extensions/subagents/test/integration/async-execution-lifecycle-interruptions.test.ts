@@ -399,10 +399,11 @@ describe("async execution utilities", () => {
 
   it("gives a model fallback respawn a fresh role ceiling", async () => {
     const roleTimeoutMs = scaleTestTimeout(2_000);
-    const firstAttemptDelayMs = scaleTestTimeout(1_200);
+    const firstAttemptGate = path.join(tempDir, "first-attempt-release");
+    const fallbackAttemptGate = path.join(tempDir, "fallback-attempt-release");
     mockPi.onCall({
       matchArgIncludes: "openai/gpt-5-mini",
-      delay: firstAttemptDelayMs,
+      waitForMarker: firstAttemptGate,
       jsonl: [
         {
           type: "message_end",
@@ -420,7 +421,7 @@ describe("async execution utilities", () => {
     });
     mockPi.onCall({
       matchArgIncludes: "anthropic/claude-sonnet-4",
-      delay: firstAttemptDelayMs,
+      waitForMarker: fallbackAttemptGate,
       output: "Recovered on fallback",
     });
     const id = `async-fallback-fresh-deadline-${Date.now().toString(36)}`;
@@ -445,6 +446,31 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     });
 
+    await waitForMockPiCall(mockPi, 0);
+    const statusPath = path.join(ASYNC_DIR, id, "status.json");
+    const firstStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+    const firstStep = firstStatus.steps?.[0];
+    assert.ok(firstStep?.startedAt !== undefined);
+    assert.equal(firstStep?.timeoutMs, roleTimeoutMs);
+    assert.equal(firstStep?.deadlineAt, (firstStep?.startedAt ?? 0) + roleTimeoutMs);
+    const firstStartedAt = firstStep.startedAt;
+    const firstDeadlineAt = firstStep.deadlineAt;
+    assert.ok(firstDeadlineAt !== undefined);
+
+    while (Date.now() <= firstStartedAt) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    fs.writeFileSync(firstAttemptGate, "", "utf-8");
+    await waitForMockPiCall(mockPi, 1);
+    const fallbackStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+    const fallbackStep = fallbackStatus.steps?.[0];
+    assert.ok(fallbackStep?.startedAt !== undefined);
+    assert.equal(fallbackStep?.timeoutMs, roleTimeoutMs);
+    assert.equal(fallbackStep?.deadlineAt, (fallbackStep?.startedAt ?? 0) + roleTimeoutMs);
+    assert.ok(fallbackStep.startedAt > firstStartedAt);
+    assert.ok((fallbackStep.deadlineAt ?? 0) > firstDeadlineAt);
+
+    fs.writeFileSync(fallbackAttemptGate, "", "utf-8");
     const payload = await readAsyncPayload(id);
     const result = payload.results[0];
     assert.equal(payload.state, "complete");

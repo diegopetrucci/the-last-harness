@@ -495,6 +495,7 @@ describe(
           usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
         },
       };
+      const supervisorRequestGate = path.join(tempDir, "supervisor-request-gate");
       mockPi.onCall({
         matchArgIncludes: "finish",
         jsonl: [events.assistantMessage("completed sibling")],
@@ -503,7 +504,7 @@ describe(
         matchArgIncludes: "ask supervisor",
         steps: [
           {
-            delay: 200,
+            waitForMarker: supervisorRequestGate,
             jsonl: [
               events.toolStart("contact_supervisor", {
                 reason: "need_decision",
@@ -548,7 +549,7 @@ describe(
         makeModel("claude-sonnet-4", { provider: "anthropic", contextWindow: 1000 }),
         makeModel("gpt-5-mini", { provider: "openai", contextWindow: 1000 }),
       ];
-      const original = await first.executor.execute(
+      const originalPromise = first.executor.execute(
         "awaited-parallel-pause-original",
         {
           tasks: [
@@ -563,12 +564,14 @@ describe(
         undefined,
         cohortContext,
       );
-      const runId = original.details?.runId;
-      assert.ok(runId, "expected awaited run id");
       await waitForMockPiCall(3);
       assert.equal(mockPi.callCount(), 4);
       const spawnedPids = startedMockPiPids();
       assert.equal(spawnedPids.length, 4);
+      fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+      const original = await originalPromise;
+      const runId = original.details?.runId;
+      assert.ok(runId, "expected awaited run id");
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
       await waitForAsyncState(runId, "paused");
       const pausedStatus = readAsyncStatusJson<{
