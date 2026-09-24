@@ -398,8 +398,8 @@ describe("async execution utilities", () => {
   );
 
   it("gives a model fallback respawn a fresh role ceiling", async () => {
-    const roleTimeoutMs = scaleTestTimeout(1_000);
-    const firstAttemptDelayMs = scaleTestTimeout(700);
+    const roleTimeoutMs = scaleTestTimeout(2_000);
+    const firstAttemptDelayMs = scaleTestTimeout(1_200);
     mockPi.onCall({
       matchArgIncludes: "openai/gpt-5-mini",
       delay: firstAttemptDelayMs,

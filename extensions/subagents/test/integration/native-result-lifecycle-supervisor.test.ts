@@ -565,8 +565,8 @@ describe(
       );
       const runId = original.details?.runId;
       assert.ok(runId, "expected awaited run id");
+      await waitForMockPiCall(3);
       assert.equal(mockPi.callCount(), 4);
-      await waitForMockPiCall(0);
       const spawnedPids = startedMockPiPids();
       assert.equal(spawnedPids.length, 4);
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
