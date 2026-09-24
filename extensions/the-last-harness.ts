@@ -63,6 +63,53 @@ const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION =
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
   "Open a native annotation window for the latest assistant message";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
+// Provenance: npm:@earendil-works/pi-voice@0.1.0 emits this exact notice.
+// Fail open for changed text/order or unavailable UI; undo by removing this filter.
+const PI_VOICE_SETUP_NOTICE_PATTERN =
+  /^Pi Voice installed · press Ctrl\+(?:Alt|Option)\+Z or run \/voice-settings to set up$/;
+const wrappedPiVoiceNoticeUis = new WeakSet<object>();
+
+function isPiVoiceSetupNotice(message: unknown, type: unknown): boolean {
+  return (
+    type === "info" && typeof message === "string" && PI_VOICE_SETUP_NOTICE_PATTERN.test(message)
+  );
+}
+
+function installPiVoiceSetupNoticeFilter(ctx: ExtensionContext): void {
+  let ui: ExtensionContext["ui"];
+  try {
+    if (ctx.hasUI === false) return;
+    ui = ctx.ui;
+  } catch {
+    return;
+  }
+
+  if (typeof ui !== "object" || ui === null || wrappedPiVoiceNoticeUis.has(ui)) return;
+
+  let originalNotify: ExtensionContext["ui"]["notify"];
+  try {
+    originalNotify = ui.notify;
+  } catch {
+    return;
+  }
+  if (typeof originalNotify !== "function") return;
+
+  const filteredNotify = function (
+    this: unknown,
+    ...args: Parameters<typeof originalNotify>
+  ): ReturnType<typeof originalNotify> {
+    const [message, type] = args;
+    if (isPiVoiceSetupNotice(message, type)) return;
+    return originalNotify.apply(this, args);
+  };
+
+  try {
+    ui.notify = filteredNotify;
+    wrappedPiVoiceNoticeUis.add(ui);
+  } catch {
+    // A non-writable or otherwise unusual UI surface should remain untouched.
+  }
+}
 
 function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {
   const projectTrusted = ctx.isProjectTrusted?.();
@@ -117,6 +164,12 @@ export const __testing = {
 };
 
 export default function theLastHarness(pi: ExtensionAPI) {
+  // TLH is loaded before Pi Voice. Install this first so Pi Voice's later
+  // session_start handler uses the filtered shared notifier.
+  pi.on("session_start", (_event, ctx) => {
+    installPiVoiceSetupNoticeFilter(ctx);
+  });
+
   let activeTlhHeader: ReturnType<typeof createTlhHeader> | undefined;
   let activeTlhHeaderSessionToken = 0;
   let activeTlhHeaderComponentId = 0;
