@@ -39,10 +39,12 @@ export const suiteConfigs = {
     // E3 removes the budget-only suite and assertions; E4 removes six
     // quarantine-only tests and adds direct unreadable-status, cleanup, cache,
     // and boundary coverage. F1 removes retired project-agent behavior tests;
-    // G1 retires health-transition assertions. Heartbeat retirement removes
-    // 167 standalone tests plus 5 net doctor tests (7 heartbeat tests replaced
-    // by 2 legacy-key tests); cache-warming/live-async additions add 16. The
-    // current surviving floor remains 1070 tests.
+    // G1 retires health-transition assertions. From the 1221-test pre-heartbeat
+    // floor, the full heartbeat/doctor/cache-warming arithmetic is 1221 - 167
+    // standalone heartbeat removals - 5 net doctor removals (7 heartbeat tests
+    // replaced by 2 legacy-key tests) + 16 cache-warming/live-async additions
+    // = 1065. minimumTests intentionally remains five tests stricter at 1070
+    // to preserve the conservative deletion guard.
     minimumTests: 1070,
   },
   integration: {
