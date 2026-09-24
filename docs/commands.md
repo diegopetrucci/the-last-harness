@@ -393,7 +393,7 @@ tlh defaults disable <id>  # disable a separately managed default extension (e.g
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`. Updates replace legacy `pi-transcribe` string entries, including manual pins, with the canonical Pi Voice package; replacement objects migrate in place while retaining their extension filters and other metadata, and explicit `tlh.disabledDefaultExtensions` opt-outs plus existing manual canonical pins remain respected.
 
 ### Configuring the notify extension
 

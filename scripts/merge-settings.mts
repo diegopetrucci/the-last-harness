@@ -477,11 +477,7 @@ function applyReplacedDefaultExtensions(
 
   for (const extension of defaultExtensions) {
     if (!shouldMigrateDefaultExtensionReplacements(extension, { force })) continue;
-    if (
-      disabledIds.has(extension.id) ||
-      isUnpersistedPackageFilter(settings, extension, disabledIds)
-    )
-      continue;
+    if (disabledIds.has(extension.id)) continue;
 
     const newIdentity = packageIdentity(extension.source);
     const oldIdentities = new Set(
@@ -905,43 +901,6 @@ function syncDefaultExtensionProvenance(
   }
 }
 
-function disabledIdsFromPackageFilters(
-  settings: JsonObject,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-): Set<string> {
-  return new Set(
-    defaultExtensions
-      .filter((extension) => defaultExtensionPackageFilterDisables(settings, extension))
-      .map((extension) => extension.id),
-  );
-}
-
-function persistPackageFilterOptOuts(
-  settings: JsonObject,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  changes: string[],
-): Set<string> {
-  const disabledIds = disabledDefaultExtensionIds(settings, defaultExtensions);
-  const packageFilterDisabledIds = disabledIdsFromPackageFilters(settings, defaultExtensions);
-  if (packageFilterDisabledIds.size === 0) return disabledIds;
-
-  if (settings.tlh === undefined) settings.tlh = {};
-  if (!isPlainObject(settings.tlh)) return disabledIds;
-
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (values !== undefined && !Array.isArray(values)) return disabledIds;
-
-  const nextValues = values ? [...values] : [];
-  for (const extension of defaultExtensions) {
-    if (packageFilterDisabledIds.has(extension.id) && !nextValues.includes(extension.id)) {
-      nextValues.push(extension.id);
-      changes.push(`persist package-filter opt-out: ${extension.id} (durable canonical opt-out)`);
-    }
-  }
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  return disabledDefaultExtensionIds(settings, defaultExtensions);
-}
-
 function mergeSettings(
   existing: unknown,
   defaults: unknown,
@@ -1143,8 +1102,7 @@ function main(): void {
   const existing = readJsonFile<JsonObject>(settingsPath, { missingValue: {} });
   const rawDefaults = readJsonFile<JsonObject>(defaultsPath);
   const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
-  const changes: string[] = [];
-  const disabledIds = persistPackageFilterOptOuts(existing, defaultExtensions, changes);
+  const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
   const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
   const defaults = prepareDefaults(
     rawDefaults,
@@ -1156,8 +1114,7 @@ function main(): void {
       force: args.force,
     },
   );
-  const { next, changes: mergeChanges } = mergeSettings(existing, defaults, { force: args.force });
-  changes.push(...mergeChanges);
+  const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
   applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
   // An omitted source uses the default for ordinary merge behavior, but does
   // not authorize destructive local-registration cleanup (for example, doctor).
