@@ -125,6 +125,17 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     "npm:@diegopetrucci/pi-compact-bash",
 ]);
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [];
+const WHOLE_EXTENSION_DISABLING_FILTERS = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
+export function packageEntryDisablesExtensions(entry) {
+    if (!isPlainObject(entry) || !Array.isArray(entry.extensions))
+        return false;
+    if (entry.extensions.length === 0)
+        return true;
+    return entry.extensions
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim())
+        .some((value) => WHOLE_EXTENSION_DISABLING_FILTERS.has(value));
+}
 export function packageSourceOf(entry) {
     if (typeof entry === "string")
         return entry;
@@ -244,6 +255,30 @@ export function defaultExtensionPackageIdentities(extension) {
     return [extension.source, ...extension.replaces]
         .map(packageIdentity)
         .filter((value) => Boolean(value));
+}
+export function defaultExtensionPackageFilterDisables(settings, extension) {
+    if (extension.critical === true ||
+        !isPlainObject(settings) ||
+        !Array.isArray(settings.packages)) {
+        return false;
+    }
+    const canonicalIdentity = packageIdentity(extension.source);
+    if (!canonicalIdentity)
+        return false;
+    const canonicalEntries = settings.packages.filter((entry) => packageIdentity(entry) === canonicalIdentity);
+    if (canonicalEntries.some(packageEntryDisablesExtensions))
+        return true;
+    if (canonicalEntries.length > 0)
+        return false;
+    const replacementIdentities = new Set(extension.replaces
+        .map(packageIdentity)
+        .filter((identity) => Boolean(identity && identity !== canonicalIdentity)));
+    return settings.packages.some((entry) => {
+        const identity = packageIdentity(entry);
+        return (identity !== undefined &&
+            replacementIdentities.has(identity) &&
+            packageEntryDisablesExtensions(entry));
+    });
 }
 export function readDefaultExtensionProvenance(settings) {
     const { exists, value } = rawDefaultExtensionProvenance(settings);
