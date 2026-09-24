@@ -10,5 +10,6 @@
   "warnings": {
     "anthropicExtraUsage": false
   },
-  "showCacheMissNotices": true
+  "showCacheMissNotices": true,
+  "cacheWarming": "idle"
 }

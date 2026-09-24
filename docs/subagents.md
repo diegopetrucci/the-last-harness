@@ -72,7 +72,7 @@ A direct single run has one shared run deadline. A parallel batch has one shared
 
 The cumulative active-runtime ledger belongs to an unfinished logical child/job and its role ceiling. The same job accumulates active time across foreground, async, fallback, retry, pause, and resume continuations. Durable paused/offline wall time, when no child process is running, is excluded. Only successful completion resets the ledger; every other resumable outcome carries its consumed time forward, and an exhausted continuation fails before launching a child. Detached runners persist checkpoints at roughly 30-second intervals, so hard-kill recovery can conservatively undercount active time by up to one interval. The shared `maxRunTimeMs` setting remains the current direct-batch deadline; it is distinct from this cumulative per-role ledger.
 
-This policy covers execution ownership only. Do not migrate unrelated timeout fields into it: provider/network timeouts, control and supervisor limits, heartbeat `maxDurationMs`, acceptance-command fields such as `verify[].timeoutMs`, and timeout metadata used by status, artifacts, or historical readers remain separate. Historical files are readable as-is and are not rewritten.
+This policy covers execution ownership only. Do not migrate unrelated timeout fields into it: provider/network timeouts, control and supervisor limits, acceptance-command fields such as `verify[].timeoutMs`, and timeout metadata used by status, artifacts, or historical readers remain separate. Historical files are readable as-is and are not rewritten.
 
 ### Migration and rollback
 
@@ -268,7 +268,7 @@ The runtime distinguishes these controls:
 - `interrupt` is a soft, resumable interruption for active work. Applied to an already durable paused child, it cancels that continuation.
 - A blocking supervisor decision pauses durably. No child process remains alive while paused; persisted lifecycle/session data is used when the parent later chooses unchanged resume, guided resume, or cancellation.
 
-Only `needs_attention` is emitted as a current health/control state. The retired `active_long_running` marker was non-waking/dead bookkeeping: it persisted status/UI state but had no delivery path, so it never woke the parent and did not affect prompt-cache heartbeat. Historical records may still contain it and remain readable. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. Both async completion notifications and actionable async `needs_attention` notifications can synthetically wake an idle parent: the completion nudge is `[tlh] Background subagent completed — see notification above.`, while the control-notice nudge is `[tlh] Subagent run needs attention — see notice above.`. The resulting parent turn can end or disarm an active prompt-cache heartbeat gap. This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
+Only `needs_attention` is emitted as a current health/control state. The retired `active_long_running` marker was non-waking/dead bookkeeping: it persisted status/UI state but had no delivery path, so it never woke the parent. Historical records may still contain it and remain readable. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. Both async completion notifications and actionable async `needs_attention` notifications can synthetically wake an idle parent: the completion nudge is `[tlh] Background subagent completed — see notification above.`, while the control-notice nudge is `[tlh] Subagent run needs attention — see notice above.`. This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
 
 **Current health versus history.** An idle `needs_attention` projection describes the child’s current health and is cleared by validated activity; that recovery rearms idle detection for a later, distinct episode. Compaction and in-flight tools are active operations, not idle recovery notices. Durable causes such as context pressure, tool failures, or a completion guard retain their own notification policy and are not erased when idle health recovers. Historical control notices remain historical records. Older status records without episode or durable-reason metadata are kept compatible, but their timestamps do not invent a new legacy reason.
 
@@ -326,154 +326,33 @@ Parts are ordered broad to narrow: the working directory first, then the reposit
 
 **Known limitation:** the snapshot is written to the status step when a step starts. A queued run, or a task still waiting behind a concurrency limit, shows no location line until the step actually begins.
 
-## Prompt-cache heartbeat
+## Prompt-cache warming
 
-When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
+Pi-native prompt-cache warming sends a one-token provider refresh when Pi estimates at least $0.05 in avoided cache-miss cost. Refresh usage is recorded as `cache_warm` entries and counted toward session totals; it does not enter model context. `/session` shows Pi's current warm mode and next decision.
 
-### Why default-off
+TLH ships `cacheWarming: "idle"` as a packaged default in `config/settings.defaults.json`. Install and update apply this value using an append-if-missing merge: when `cacheWarming` is absent from the isolated profile's `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active) or to disable warming, set `cacheWarming` to `streaming` or `off` in `/settings` or directly in `~/.the-last-harness/agent/settings.json`. The packaged default does **not** re-apply after you set your own value.
 
-Heartbeat sends real provider requests that spend tokens even when the parent's next turn never benefits from them. During the current trial phase the default is `enabled: false`; you opt in knowing that beats cost money and the break-even depends on your gap length and context size.
+TLH also registers a `cache_warming_decision` hook in the subagent extension. While async children are live, the hook substitutes P=1 for Pi's idle prior of 0.15, returning `warm` when missCost − warmCost ≥ $0.05; otherwise it abstains and lets Pi's own decision stand. A prior extension returning a stop decision can be overridden by this warm response; a later extension that returns a stop decision will still win. The hook does not generate new provider requests — it returns an action during Pi's existing cache-warming gate.
 
-### How to enable
+### Limits and accepted regressions
 
-Add a `heartbeat` block to the subagent extension config in the isolated profile:
+- **Anthropic models only**: Pi's `promptCache` lifetime metadata is declared only for Anthropic models. OpenAI/Codex and other models lack prompt-cache lifetime declarations and are never eligible for cache warming; there is no warming path for those models.
+- **Adaptive-thinking models only**: When reasoning is enabled, Claude models using budget-based (non-adaptive) thinking are not replayable for cache warming and are skipped. Claude models with `forceAdaptiveThinking` (adaptive thinking) are replayable and remain eligible.
+- **30-minute idle ceiling**: Pi's idle warmer tracks each session's most recent real provider request. A child session idle for longer than ~30 minutes (the `short`-tier TTL ceiling) goes cold; approximately 6 refreshes at ~4.5-minute intervals are achievable within that window. Children idle longer than that are uncovered.
+- **`PI_CACHE_RETENTION=long` sessions**: When the `long` retention tier is active, Pi's idle warmer fires its first refresh at ~54 minutes. The idle ceiling is the same, so those sessions receive no idle refresh and remain at risk of a cold cache on the next real turn.
+- **Per-refresh gate, not cumulative**: Pi's $0.05 expected-savings gate is evaluated independently on each potential refresh decision, not accumulated across refreshes.
 
-File: `~/.the-last-harness/agent/extensions/subagent/config.json`
+### Observable evidence
 
-```json
-{
-  "heartbeat": {
-    "enabled": true,
-    "intervalMs": 255000,
-    "maxDurationMs": 3600000,
-    "maxBeatsPerGap": 11
-  }
-}
-```
+- `/session` shows the current warming mode and Pi's next economic decision.
+- `Cache warmed ...` transcript notices appear by default (`showCacheMissNotices: true` in TLH unless disabled).
+- `cache_warm` entries appear in `/tokens` usage.
 
-Only `enabled: true` is required; the other three knobs default to the values shown. Their meanings:
+### Legacy heartbeat key
 
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `false` | Master switch. Must be set to `true` to activate. |
-| `intervalMs` | `255000` | Beat interval in ms (~4m15s). |
-| `maxDurationMs` | `3600000` | Hard ceiling per gap (1h). |
-| `maxBeatsPerGap` | `11` | Maximum beats per gap (~break-even limit). |
+TLH's async-parent prompt-cache heartbeat has been retired and its code removed. A `heartbeat` key in `~/.the-last-harness/agent/extensions/subagent/config.json` is silently ignored at runtime. The file `~/.the-last-harness/agent/subagents/heartbeat.jsonl`, if present, is left in place as a historical record and is not deleted.
 
-Install and update do **not** provision `heartbeat` keys. A `heartbeat` block added manually is preserved untouched on subsequent installs and updates.
-
-### Cost model
-
-Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and recorded as `generation_cutoff`, not `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded generation cutoffs can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
-
-Block-start content is not a stable generation signal because the provider exposes `partial` as a mutable, shared response-so-far object. At a text, thinking, or tool-call block start, `cacheRead > 0` is therefore classified from cache evidence even when that partial already contains text, redacted thinking, or tool-call arguments; the partial content itself is not used as the generation boundary. A zero-cache start, or a provider whose first usable evidence arrives with a delta, end, or generated `done` event, remains `generation_cutoff` unless cache-write mismatch takes precedence, because later usage is not awaited.
-
-A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
-
-### How to read `heartbeat.jsonl`
-
-The heartbeat log is at:
-
-```
-~/.the-last-harness/agent/subagents/heartbeat.jsonl
-```
-
-Each line is a JSON record. There are two record shapes:
-
-**Per-beat records** (one per ghost request or loggable skip):
-
-| Field | Description |
-|---|---|
-| `ts` | Unix timestamp (ms) when the beat started. |
-| `sessionId` | Parent session ID. |
-| `gapId` | Identifier for the current gap (one gap = one continuous stretch of live async runs). |
-| `beatIndex` | Zero-based beat count within the gap. |
-| `model` | Model ID used for the ghost request. |
-| `provider` | Provider name. |
-| `outcome` | See outcome table below. |
-| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present when usage was reported; omitted when no usage arrived before a cutoff or error. |
-| `estCostUsd` | Estimated USD cost — present when usage and model cost rates are available. |
-| `latencyMs` | Round-trip latency for the ghost stream request. |
-
-Outcome values:
-
-| Outcome | Meaning |
-|---|---|
-| `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
-| `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
-| `error` | Genuine stream or auth/provider failure. Three consecutive `error` or `generation_cutoff` outcomes disable heartbeat for the session. |
-| `generation_cutoff` | Generation began before usable cache-usage evidence was observed, so the beat was aborted without waiting for later usage. It is distinct from a genuine provider/stream error but counts toward the same three-failure session breaker. |
-| `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
-| `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
-| `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |
-
-**Per-gap summary records** (one per closed gap, identified by `"type": "gap_summary"`):
-
-| Field | Description |
-|---|---|
-| `type` | Always `"gap_summary"`. |
-| `ts` | Unix timestamp when the gap closed. |
-| `sessionId`, `gapId` | Same as per-beat records. |
-| `beats` | Total ghost-stream requests sent in this gap. |
-| `beatCostUsd` | Total estimated USD spent on beats. |
-| `avoidedCostUsd` | Estimated USD avoided on cache miss, computed from cache-read tokens × (input rate − cache-read rate). |
-| `verdict` | `saved`, `wasted`, `lost`, or `unneeded` — see below. |
-
-Verdict meanings:
-
-| Verdict | Meaning |
-|---|---|
-| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the live prompt-cache TTL. |
-| `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
-| `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
-| `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
-
-### Circuit breakers
-
-Two automatic circuit breakers limit runaway spending:
-
-1. **Failure breaker**: Three consecutive `error` or `generation_cutoff` outcomes permanently disable heartbeat for the session (`disabled` state). The failure count resets on any successful `cache_read`. Once disabled, later async starts and idle rearms do not open new gaps or write zero-beat summaries; `/subagents-doctor` continues to report the enabled trial and `breakerDisabled` state.
-2. **Mismatch breaker**: A single `cache_write_mismatch` outcome (more than 256 cache-write tokens) closes the current gap to avoid further beat spend when the replay is causing a cache rewrite rather than the expected cache read. The session continues and the next gap (if one opens) starts fresh; this is the safeguard for the trial's unverified aborted-request TTL-refresh assumption.
-
-### Doctor output
-
-`/subagents-doctor` includes a heartbeat section. When enabled:
-
-```text
-- heartbeat: enabled
-- beats this session: 7
-- cache-read tokens: 84000
-- $0.00012 total beat cost
-- gaps: 3 saved, 1 wasted, 12 unneeded
-- circuit breaker: closed
-```
-
-When disabled:
-
-```text
-- heartbeat: disabled (enabled: false in config)
-```
-
-### How to undo
-
-Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
-
-To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
-
-### Relationship to Pi-native cache warming
-
-Pi `0.87.1` has a separate native `cacheWarming` setting. It is global to the active isolated profile, defaults to `streaming` when absent, and accepts `off`, `streaming`, or `idle`. The canonical TLH parent and child processes normally share `PI_CODING_AGENT_DIR`, so the same user-owned global value applies to both; it is not a per-child heartbeat switch. Pi's warmer follows each session's most recent real provider request, sends a one-token refresh only when its cache economics allow it, appends a `cache_warm` usage entry, and runs the normal `before_provider_request` payload hook. It is provider work and may cost money.
-
-The two mechanisms have different owners and targets:
-
-| Mechanism | Owner and target | Default | Observable evidence |
-|---|---|---|---|
-| Pi native warming | Pi session; warms that session's latest prompt-cache entry | `cacheWarming: "streaming"` when absent | `/session`, `cache_warm` usage records, and `Cache warmed ...` transcript notices by default (`showCacheMissNotices: true` in TLH unless disabled) |
-| TLH heartbeat | TLH parent; replays a captured parent payload during an idle gap with live async children | `heartbeat.enabled: false` | `subagents/heartbeat.jsonl`, `/subagents-doctor`, and gap summaries |
-
-If both are enabled, an idle parent overlaps its heartbeat with Pi-native warming only when the parent's `cacheWarming` mode is `idle`; Pi's default `streaming` mode stops on parent settlement. Concurrent active child sessions may independently stream-warm while the idle parent heartbeat runs because warming is per session. There is no shared budget or deduplication. Heartbeat does not warm child sessions, and enabling one mechanism does not enable the other.
-
-**Kill switch and rollback:** set global `cacheWarming` to `off` in `/settings` (or the isolated profile's `settings.json`) to stop Pi-native warming; remove the key or select `streaming` to restore Pi's default. Set the separate `heartbeat.enabled` key to `false` or remove the heartbeat block to stop TLH heartbeat requests, then restart/reload as documented above. Preserve a settings/config backup and unrelated keys. To stop all background cache-refresh traffic, disable both switches. Install, update, and `tlh doctor --repair` preserve the user-owned `cacheWarming` value and heartbeat block.
+`/subagents-doctor` prints a Notices section when a legacy `heartbeat` key is present in the isolated config. The key is silently ignored at runtime and can be removed manually; TLH never edits it.
 
 ## Acceptance and artifacts
 
@@ -509,7 +388,7 @@ For a failure that requires the diagnostic child transcript or surrounding child
 }
 ```
 
-Merge this block into the existing config; do not replace the file or remove existing `control`, `heartbeat`, or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update preserve this human-owned value and other unrelated config keys while enforcing the managed attention policy documented below.
+Merge this block into the existing config; do not replace the file or remove existing `control` or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update preserve this human-owned value and other unrelated config keys while enforcing the managed attention policy documented below.
 
 After editing `<agent-dir>/extensions/subagent/config.json`, reload the extension with `/reload` or stop and restart the `tlh` process before starting a new run. A run already underway retains its resolved policy. To undo the opt-in, remove the `artifacts` block (compact is the absent-key default) or set `"mode": "compact"`, then reload or restart. Existing files are not deleted by this change; inspect them first and remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
 
@@ -523,7 +402,7 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The installer-managed attention policy in this file sets `control.needsAttentionAfterMs` to exactly `180000` ms (3 minutes), removes the retired `control.activeNoticeAfterMs`, `control.activeNoticeAfterTurns`, and `control.activeNoticeAfterTokens` keys, and scrubs `active_long_running` entries from `control.notifyOn`, even when customized. Specifically, `control.notifyOn: ["active_long_running"]` becomes `control.notifyOn: []`, preserving its effective disabled-notification behavior; when other entries are present, only the retired entry is removed. It applies only to persistent isolated-profile configuration; per-dispatch runtime overrides remain available. A changed valid existing config is backed up to `config.json.backup-*` before writing; a missing config and an already-converged config create no backup. These backups (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed; inspect them and remove only matching files in `<agent-dir>/extensions/subagent/`, not the active `config.json` or the whole profile. `--dry-run` reports the planned migration without writing or backing up. `tlh doctor` is read-only, while `tlh doctor --repair` applies the same guarded migration and backs up changed configs. Malformed, unreadable, non-object, or structurally unsafe config is preserved with an actionable warning. Unrelated top-level/control keys and human-owned `execution.maxRunTimeMs`, `artifacts.mode`, and heartbeat settings are preserved. To roll back, inspect a chosen backup in `<agent-dir>/extensions/subagent/`, copy it over only that directory's `config.json`, and reload/restart; this is temporary because a later install or update re-enforces `180000` and removes retired keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The installer-managed attention policy in this file sets `control.needsAttentionAfterMs` to exactly `180000` ms (3 minutes), removes the retired `control.activeNoticeAfterMs`, `control.activeNoticeAfterTurns`, and `control.activeNoticeAfterTokens` keys, and scrubs `active_long_running` entries from `control.notifyOn`, even when customized. Specifically, `control.notifyOn: ["active_long_running"]` becomes `control.notifyOn: []`, preserving its effective disabled-notification behavior; when other entries are present, only the retired entry is removed. It applies only to persistent isolated-profile configuration; per-dispatch runtime overrides remain available. A changed valid existing config is backed up to `config.json.backup-*` before writing; a missing config and an already-converged config create no backup. These backups (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed; inspect them and remove only matching files in `<agent-dir>/extensions/subagent/`, not the active `config.json` or the whole profile. `--dry-run` reports the planned migration without writing or backing up. `tlh doctor` is read-only, while `tlh doctor --repair` applies the same guarded migration and backs up changed configs. Malformed, unreadable, non-object, or structurally unsafe config is preserved with an actionable warning. Unrelated top-level/control keys and human-owned `execution.maxRunTimeMs` and `artifacts.mode` are preserved. To roll back, inspect a chosen backup in `<agent-dir>/extensions/subagent/`, copy it over only that directory's `config.json`, and reload/restart; this is temporary because a later install or update re-enforces `180000` and removes retired keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
 Parallel limits are configured here: `parallel.maxTasks` caps tasks per call (default `8`), and `parallel.concurrency` caps simultaneously running children (default `4`).
 

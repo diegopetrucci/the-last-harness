@@ -1350,7 +1350,6 @@ export interface ExtensionConfig {
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
-  heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
   artifacts?: ExtensionArtifactConfig;
   /** External execution settings remain unknown until the policy boundary validates them. */
   execution?: unknown;
