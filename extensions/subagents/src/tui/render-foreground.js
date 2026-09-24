@@ -9,7 +9,7 @@ import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-text.js";
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, fitCompactToolStatus, formatCurrentToolLines, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, progressRunningSeed, runningGlyph, runningSeed, snapshotNowForProgress, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
 const TK_TICKET_WIDGET_PREFIX = "ticket: ";
-const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
+const WIDGET_ACTIVITY_PREFIX = "       ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function clearLegacyResultAnimationTimer(context) {
     const timer = context.state.subagentResultAnimationTimer;
@@ -168,7 +168,7 @@ function resultGlyph(result, output, theme, running = result.progress?.status ==
         return theme.fg("warning", "✓");
     return theme.fg("success", "✓");
 }
-const FOREGROUND_ACTIVITY_PREFIX = "  ⎿  ";
+const FOREGROUND_ACTIVITY_PREFIX = "     ";
 const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = "     ";
 function compactProgressActivityLines(progress, width, firstPrefix, continuationPrefix) {
     const snapshotNow = snapshotNowForProgress(progress);
@@ -292,7 +292,7 @@ function renderSingleCompact(d, r, theme, frame) {
         return collapsedForegroundComponent(lines, theme);
     }
     const preview = compactOutputPreview(rawOutput);
-    lines.push(theme.fg("dim", `  ⎿  ${resultStatusLine(r, preview)}`));
+    lines.push(theme.fg("dim", `     ${resultStatusLine(r, preview)}`));
     if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
         lines.push(theme.fg("dim", `     ${preview}`));
     }
@@ -377,7 +377,7 @@ function renderMultiCompact(d, entries, theme, frame) {
         }
         else if (!rPending &&
             (rFailed || rPaused || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
-            lines.push(theme.fg(rFailed ? "error" : "dim", `    ⎿  ${resultStatusLine(r, rawOutput)}`));
+            lines.push(theme.fg(rFailed ? "error" : "dim", `       ${resultStatusLine(r, rawOutput)}`));
         }
     }
     if (d.artifacts)

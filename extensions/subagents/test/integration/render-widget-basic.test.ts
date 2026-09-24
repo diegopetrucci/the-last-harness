@@ -29,6 +29,7 @@ const useDefaultKeybindings = widgetTestIsolation.useDefaultKeybindings;
 
 describe("subagent async widget rendering", () => {
   it("orders running jobs before queued summaries and completions", () => {
+    const now = Date.now();
     const lines = buildWidgetLines(
       [
         {
@@ -54,10 +55,10 @@ describe("subagent async widget rendering", () => {
           agents: ["scout"],
           currentStep: 0,
           stepsTotal: 2,
-          startedAt: Date.now() - 1000,
-          updatedAt: Date.now(),
+          startedAt: now - 1000,
+          updatedAt: now,
           currentTool: "read",
-          currentToolStartedAt: Date.now() - 500,
+          currentToolStartedAt: now - 500,
         },
       ],
       theme,
@@ -75,7 +76,9 @@ describe("subagent async widget rendering", () => {
       text.indexOf("queued") < text.indexOf("reviewer"),
       "queued summary should precede completions",
     );
-    assert.match(text, /⎿  read/);
+    assert.match(text, /^│ {8}read 500ms\s*$/m);
+    assert.match(text, /^ {9}Done\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
   });
 
   it("keeps simultaneous single-job summaries free of step terminology", () => {
@@ -120,11 +123,11 @@ describe("subagent async widget rendering", () => {
     assert.match(text, /second/);
     assert.match(
       text,
-      new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(5))}\\n[^\\n]*active now`),
+      new RegExp(`^│ {8}${escapeRegExp(whimsicalThinkingPhrase(5))}$\\n^│ {8}active now$`, "m"),
     );
     assert.match(
       text,
-      new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(6))}\\n[^\\n]*active 2s ago`),
+      new RegExp(`^ {9}${escapeRegExp(whimsicalThinkingPhrase(6))}$\\n^ {9}active 2s ago$`, "m"),
     );
     assert.doesNotMatch(
       text,
@@ -164,8 +167,14 @@ describe("subagent async widget rendering", () => {
         text.indexOf("Press Ctrl+Shift+D for live detail"),
       "ticket line should appear before the live-detail hint",
     );
+    const ticketRowIndex = lines.findIndex((line) =>
+      /^ {4}ticket: Show active tk title\s*$/.test(line),
+    );
+    const activityRowIndex = lines.findIndex((line) => /^ {7}read\s*$/.test(line));
+    assert.ok(ticketRowIndex >= 0, "ticket row should be present");
+    assert.ok(activityRowIndex >= 0, "activity row should be present");
     assert.ok(
-      text.indexOf("ticket: Show active tk title") < text.indexOf("⎿  read"),
+      ticketRowIndex < activityRowIndex,
       "ticket line should appear before the activity line",
     );
     assert.equal(
@@ -210,7 +219,7 @@ describe("subagent async widget rendering", () => {
   });
 
   it("shows tk ticket titles once in active multi-job rows before live detail", () => {
-    const text = buildWidgetLines(
+    const lines = buildWidgetLines(
       [
         {
           asyncId: "run-ticket",
@@ -234,11 +243,21 @@ describe("subagent async widget rendering", () => {
       ],
       theme,
       180,
-    ).join("\n");
+    );
+    const text = lines.join("\n");
 
     assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
     assert.doesNotMatch(text, /plain[\s\S]*ticket:/);
-    assert.ok(text.indexOf("ticket: Show active tk title") < text.indexOf("⎿  read"));
+    const ticketRowIndex = lines.findIndex((line) =>
+      /^│ {5}ticket: Show active tk title\s*$/.test(line),
+    );
+    const activityRowIndex = lines.findIndex((line) => /^│ {8}read\s*$/.test(line));
+    assert.ok(ticketRowIndex >= 0, "ticket row should be present");
+    assert.ok(activityRowIndex >= 0, "activity row should be present");
+    assert.ok(
+      ticketRowIndex < activityRowIndex,
+      "ticket line should appear before the activity line",
+    );
   });
 
   it("uses spinner and done wording for async parallel jobs", () => {
@@ -262,7 +281,7 @@ describe("subagent async widget rendering", () => {
     const text = lines.join("\n");
     assert.match(text, /0\/3 done/);
     assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
-    assert.match(text, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
+    assert.match(text, new RegExp(`^ {5}${escapeRegExp(whimsicalThinkingPhrase(0))}$`, "m"));
     assert.doesNotMatch(text, /parallel · scout, reviewer, worker/);
     assert.doesNotMatch(text, /step 1\/3/);
   });
@@ -388,10 +407,15 @@ describe("subagent async widget rendering", () => {
     assert.match(
       text,
       new RegExp(
-        `Agent 1/3: reviewer\\n\\s+⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}\\n\\s+active now`,
+        `Agent 1/3: reviewer\\n^ {7}${escapeRegExp(whimsicalThinkingPhrase(0))}$\\n^ {7}active now$`,
+        "m",
       ),
     );
-    assert.match(text, /Agent 2\/3: reviewer[\s\S]*⎿  read \| 2\.0s/);
+    assert.match(
+      text,
+      /Agent 2\/3: reviewer[\s\S]*^ {7}read \| 2\.0s\s*$/m,
+      "widget step activity must keep the exact 7-space column",
+    );
     assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
     assert.match(text, /Agent 3\/3: reviewer · complete/);
     assert.doesNotMatch(text, /2 tool uses|1\.5k token/);
@@ -504,7 +528,7 @@ describe("subagent async widget rendering", () => {
     const collapsed = buildWidgetLines([job], theme, 180).join("\n");
     assert.match(
       collapsed,
-      new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(5))}\\n\\s+active now`),
+      new RegExp(`^ {7}${escapeRegExp(whimsicalThinkingPhrase(5))}$\\n^ {7}active now$`, "m"),
     );
     assert.doesNotMatch(collapsed, /5 turns|18 tool uses|44k token|7\.0s/);
 
@@ -597,7 +621,12 @@ describe("subagent async widget rendering", () => {
 
     const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
     assert.doesNotMatch(expandedText, /Press Configured\+Expand\+Key for live detail/);
-    assert.match(expandedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
+    assert.match(
+      expandedText,
+      /^ {7}read: src\/tui\/render\.ts \| 2\.0s$/m,
+      "widget step activity must keep the exact 7-space column",
+    );
+    assert.doesNotMatch(expandedText, /⎿/);
     assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
     assert.match(expandedText, /grep: async widget/);
     assert.match(expandedText, /found renderWidget/);
@@ -640,7 +669,8 @@ describe("subagent async widget rendering", () => {
       new RegExp(`${runningGlyphPattern} developer \\(gpt-5\\.5 · thinking high\\)`),
     );
     assert.doesNotMatch(collapsedText, /2 turns|3 tool uses|12k token|4\.0s/);
-    assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
+    assert.match(collapsedText, /^ {7}read: src\/tui\/render\.ts \| 2\.0s$/m);
+    assert.doesNotMatch(collapsedText, /⎿/);
     assert.match(collapsedText, /Press Ctrl\+Shift\+D for live detail/);
     assert.doesNotMatch(collapsedText, /(?:Agent|Step) 1\/1/);
     assert.doesNotMatch(collapsedText, outputPathPattern("/tmp/single-run/output-0.log"));
@@ -773,7 +803,8 @@ describe("subagent async widget rendering", () => {
       const expandedText = buildWidgetLines([{ ...job, status }], theme, 180, true).join("\n");
       assert.match(expandedText, /2 turns · 3 tool uses · 12k token/);
       assert.match(expandedText, /retained-child · complete/);
-      assert.doesNotMatch(expandedText, /output-0\.log|stale detail|stale live output|⎿  read/);
+      assert.doesNotMatch(expandedText, /output-0\.log|stale detail|stale live output/);
+      assert.doesNotMatch(expandedText, /^ {7}read\b/m);
     }
   });
 
@@ -805,7 +836,8 @@ describe("subagent async widget rendering", () => {
     assert.match(text, new RegExp(`${runningGlyphPattern} worker`));
     assert.doesNotMatch(text, /· running\b/);
     assert.doesNotMatch(text, /2 tool uses|5\.0k token|3\.0s/);
-    assert.match(text, /⎿  read 1\.0s/);
+    assert.match(text, /^ {5}read 1\.0s\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
     assert.doesNotMatch(text, /\bsteps?\b|\bchain\b/i);
     assert.doesNotMatch(text, /Press Configured\+Expand\+Key for live detail/);
   });

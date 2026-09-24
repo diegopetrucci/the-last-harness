@@ -1529,7 +1529,8 @@ describe("subagent async widget rendering", () => {
       assert.ok(nextStepStart > commandStart);
       const commandPreview = lines.slice(commandStart, nextStepStart);
       assert.equal(commandPreview.length, 3);
-      assert.match(commandPreview[0] ?? "", /^    ⎿  bash:/);
+      assert.match(commandPreview[0] ?? "", /^       bash:/);
+      assert.doesNotMatch(commandPreview.join("\n"), /⎿/);
       assert.match(commandPreview.at(-1) ?? "", /…/);
       assert.ok(commandPreview.every((line) => visibleWidth(line) <= width - 2));
       const continuationPrefix = commandPreview[1]?.match(/^\s*/)?.[0] ?? "";

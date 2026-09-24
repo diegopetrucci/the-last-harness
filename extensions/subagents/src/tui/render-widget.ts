@@ -44,7 +44,7 @@ import {
   wrapDisplayLines,
 } from "./render-primitives.ts";
 
-const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
+const WIDGET_ACTIVITY_PREFIX = "       ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 
 export function widgetRenderKey(job: AsyncJobState): string {
@@ -247,7 +247,7 @@ function widgetActivity(job: AsyncJobState, expanded = false): string {
 
 function widgetActivityDetailLines(job: AsyncJobState, theme: Theme, expanded = false): string[] {
   return widgetActivityLines(job, expanded).map(
-    (activity, index) => `  ${theme.fg("dim", index === 0 ? `⎿  ${activity}` : `   ${activity}`)}`,
+    (activity) => `  ${theme.fg("dim", `   ${activity}`)}`,
   );
 }
 
@@ -1002,7 +1002,7 @@ function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
     { activityState: job.activityState, lastActivityAt: job.lastActivityAt },
     job.updatedAt,
   );
-  return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
+  return warning ? [`  ${theme.fg("dim", `   ${warning}`)}`] : [];
 }
 
 // Health warning for single-agent (job.mode === 'single') jobs with steps. Emits
@@ -1050,7 +1050,7 @@ function singleModeHealthWarningLines(
     );
     if (stepActivityLines.includes(warning)) return [];
   }
-  return [`    ${theme.fg("dim", `⎿  ${warning}`)}`];
+  return [`    ${theme.fg("dim", `   ${warning}`)}`];
 }
 
 function buildSingleWidgetLines(

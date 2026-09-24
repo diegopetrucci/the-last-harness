@@ -365,7 +365,7 @@ export default function registerSubagentExtension(pi) {
             ? trimmedPreview.split("\n").filter((line) => line.trim())
             : [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
         for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-            text += `\n  ${theme.fg("dim", `⎿  ${line}`)}`;
+            text += `\n  ${theme.fg("dim", `   ${line}`)}`;
         }
         if (options.expanded) {
             for (const line of referenceLines) {
