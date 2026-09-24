@@ -39,6 +39,7 @@ import {
   cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl,
   backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl,
   reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl,
+  pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache,
 } from "./lib/tlh-install-profile-cleanup.mjs";
 import type { ProfileCleanupConfig, ProfileCleanupIo } from "./lib/tlh-install-profile-cleanup.mjs";
 import {
@@ -123,7 +124,6 @@ const RUNTIME_OWNED_TOPLEVEL = new Set([
   RUNTIME_MARKER_FILENAME,
 ]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
-
 type RuntimeMarkerOrigin = "created" | "migrated";
 type UpdateTrack = (typeof VALID_UPDATE_TRACKS)[number];
 type CommandArgs = readonly string[];
@@ -223,10 +223,10 @@ interface PreferBinDirOptions {
   addMessage: string;
   prependMessage: string;
 }
-
 interface PiInstallResult {
   installed: boolean;
   piCmd: string;
+  runtimePrefix: string;
 }
 
 function spawnErrorCode(error: unknown): string | number | undefined {
@@ -1122,8 +1122,8 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
       // Ensure/refresh the ownership marker on reuse so existing users gain it
       // on their next run (marker was introduced after initial deployments).
       writeRuntimeMarker(config, prefix, origin);
-      if (config.dryRun) return { installed: false, piCmd: "" };
-      return { installed: false, piCmd: piBin };
+      if (config.dryRun) return { installed: false, piCmd: "", runtimePrefix: prefix };
+      return { installed: false, piCmd: piBin, runtimePrefix: prefix };
     }
   } else {
     log(config, `Pinning local Pi runtime to ${PINNED_PI_VERSION}...`);
@@ -1143,7 +1143,7 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
   if (config.dryRun) {
     // Log marker intent in dry-run; the prefix may not exist yet.
     writeRuntimeMarker(config, prefix, origin);
-    return { installed: true, piCmd: "" };
+    return { installed: true, piCmd: "", runtimePrefix: prefix };
   }
   if (!existsSync(piBin)) {
     throw new Error(`Pi install completed, but ${piBin} does not exist`);
@@ -1163,9 +1163,8 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
   });
   // Write the ownership marker after full successful install+validation.
   writeRuntimeMarker(config, prefix, origin);
-  return { installed: true, piCmd: piBin };
+  return { installed: true, piCmd: piBin, runtimePrefix: prefix };
 }
-
 function profileCleanupIo(
   config: ProfileCleanupConfig,
   runtimeConfig?: InstallConfig,
@@ -1178,6 +1177,8 @@ function profileCleanupIo(
     runPiRemove: (commandArgs) => {
       if (runtimeConfig) spawnCaptureIsolatedPi(runtimeConfig, commandArgs);
     },
+    runCommand: (commandArgs, options) =>
+      runtimeConfig ? runCommand(runtimeConfig, commandArgs, options) : undefined,
   };
 }
 export function cleanupRetiredProfileDirectories(config: ProfileCleanupConfig): void {
@@ -1889,7 +1890,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   await preflightRuntimeSupportFiles(config, supportFileIo(config));
 
   const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
-  const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);
+  const { installed: piInstalledByTlh, piCmd, runtimePrefix } = installPiIfNeeded(config);
   // A runtime installed by this run is always TLH-owned, even if an update passed through a
   // stale false/absent value from an older install-state. Otherwise preserve the explicit
   // override or previously recorded ownership state when present, and fall back to false only
@@ -1927,6 +1928,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);
+  pruneRuntimeCache(config, profileCleanupIo(config, config), runtimePrefix);
   printSummary(config);
 }
 

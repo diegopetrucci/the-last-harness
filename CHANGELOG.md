@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 - In Herdr/Cmux/other terminals TLH will show up, in most cases, as `tlh` instead of `pi`.
 - The bundled `librarian`, `repo-scout`, and `web-scout` subagents now default to Anthropic Claude Sonnet 4.6 at medium effort.
 - The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort.
+- Install/update now prune only recognized Node/Bun compile-cache version-key directories inside a verified TLH-owned private runtime, preserve unexpected entries with warnings, refuse symlinked cache paths, and pre-warm the current cache with the pinned private `pi --version`; interactive wrapper launch behavior and `NODE_COMPILE_CACHE` remain unchanged.
 
 ### Removed
 
