@@ -1989,4 +1989,3 @@ test("merge prune for subagents.disableBuiltins is idempotent on second run", ()
     "settings unchanged on second run",
   );
 });
-
