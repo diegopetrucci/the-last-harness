@@ -15,7 +15,6 @@ function doctorReportForContext(
   state: SubagentState,
   config: ExtensionConfig,
   ctx: ExtensionContext,
-  getHeartbeatSummary?: () => import("../extension/heartbeat-wiring.ts").HeartbeatSessionSummary,
 ): string {
   let currentSessionFile: string | null = null;
   let currentSessionId = state.currentSessionId;
@@ -34,7 +33,6 @@ function doctorReportForContext(
     currentSessionFile,
     currentSessionId,
     sessionError,
-    ...(getHeartbeatSummary ? { heartbeat: getHeartbeatSummary() } : {}),
   });
 }
 
@@ -42,12 +40,11 @@ export function registerSlashCommands(
   pi: ExtensionAPI,
   state: SubagentState,
   config: ExtensionConfig,
-  getHeartbeatSummary?: () => import("../extension/heartbeat-wiring.ts").HeartbeatSessionSummary,
 ): void {
   pi.registerCommand("subagents-doctor", {
     description: "Show subagent diagnostics",
     handler: async (_args, ctx) => {
-      sendSlashText(pi, doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary));
+      sendSlashText(pi, doctorReportForContext(pi, state, config, ctx));
     },
   });
 }

@@ -11,7 +11,6 @@ import {
   type SubagentState,
 } from "../shared/types.ts";
 import { inspectRuntimeDirs } from "./runtime-cleanup.ts";
-import type { HeartbeatSessionSummary } from "./heartbeat-wiring.ts";
 
 interface DoctorPaths {
   tempRootDir: string;
@@ -36,8 +35,6 @@ interface DoctorReportInput {
   expandTilde?: (value: string) => string;
   paths?: DoctorPaths;
   deps?: Partial<DoctorDeps>;
-  /** Current-session heartbeat totals. Omitted when heartbeat is not wired. */
-  heartbeat?: HeartbeatSessionSummary;
 }
 
 const DEFAULT_PATHS: DoctorPaths = {
@@ -158,28 +155,13 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
   ];
 }
 
-function formatHeartbeatSection(summary: HeartbeatSessionSummary | undefined): string[] {
-  if (!summary) return [`- heartbeat: not available`];
-  if (!summary.enabled) return [`- heartbeat: disabled (enabled: false in config)`];
-  const costStr =
-    summary.totalBeatCostUsd > 0
-      ? `$${summary.totalBeatCostUsd.toFixed(5)} total beat cost`
-      : "$0 beat cost";
-  const gapsStr = [
-    summary.gapsSaved > 0 ? `${summary.gapsSaved} saved` : null,
-    summary.gapsWasted > 0 ? `${summary.gapsWasted} wasted` : null,
-    summary.gapsLost > 0 ? `${summary.gapsLost} lost` : null,
-    summary.gapsUnneeded > 0 ? `${summary.gapsUnneeded} unneeded` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
+function formatLegacyHeartbeatNotice(config: ExtensionConfig): string[] {
+  if (!("heartbeat" in config)) return [];
   return [
-    `- heartbeat: enabled`,
-    `- beats this session: ${summary.totalBeats}`,
-    `- cache-read tokens: ${summary.totalCacheReadTokens}`,
-    `- ${costStr}`,
-    `- gaps: ${gapsStr || "none yet"}`,
-    `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after failures)" : "closed"}`,
+    "",
+    "Notices",
+    "- heartbeat key: the 'heartbeat' config key is no longer used and can be removed.",
+    "  Prompt-cache warming is now Pi-native (see the cacheWarming setting; docs/subagents.md).",
   ];
 }
 
@@ -227,9 +209,7 @@ export function buildDoctorReport(input: DoctorReportInput): string {
     "",
     "Permission system",
     ...formatPermissionSystemSection(),
-    "",
-    "Heartbeat",
-    ...formatHeartbeatSection(input.heartbeat),
+    ...formatLegacyHeartbeatNotice(input.config),
   ];
   return lines.join("\n");
 }

@@ -381,7 +381,6 @@ function executeDoctorAction(params, requestCwd, ctx, deps) {
                     currentSessionId,
                     sessionError,
                     expandTilde: deps.expandTilde,
-                    ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
                 }),
             },
         ],

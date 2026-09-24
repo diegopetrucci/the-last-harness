@@ -14,8 +14,6 @@ import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
-import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.js";
-import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.js";
 import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
@@ -30,13 +28,8 @@ import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
+import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
 export { loadConfig } from "./config.js";
-function isCurrentHeartbeatEvent(data, currentSessionId) {
-    if (!data || typeof data !== "object" || Array.isArray(data))
-        return false;
-    return (typeof currentSessionId !== "string" ||
-        ("sessionId" in data && data.sessionId === currentSessionId));
-}
 export function createSubagentToolResultBridge() {
     const failedResults = new Map();
     return {
@@ -225,11 +218,6 @@ export default function registerSubagentExtension(pi) {
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);
     const executionPolicy = resolveExecutionPolicy(config.execution);
-    const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
-    let heartbeatSessionCtx = null;
-    const hbWiring = createHeartbeatWiring(pi, config, {
-        getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
-    });
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(artifactConfig.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
@@ -287,8 +275,6 @@ export default function registerSubagentExtension(pi) {
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
-        hbWiring.disarm();
-        hbWiring.destroy();
         removeLiveDetailTerminalInput();
         liveDetailController.clearToolRows();
         toolResultBridge.clear();
@@ -312,7 +298,6 @@ export default function registerSubagentExtension(pi) {
         getSubagentSessionRoot,
         expandTilde,
         discoverAgents,
-        getHeartbeatSummary: () => hbWiring.getSessionSummary(),
         getProjectAgentAccess: (request) => normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
     });
     pi.registerMessageRenderer(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -459,28 +444,8 @@ export default function registerSubagentExtension(pi) {
             handlePauseAllShortcut(state, ctx);
         },
     });
-    registerSlashCommands(pi, state, config, () => hbWiring.getSessionSummary());
-    if (resolvedHbConfig.enabled) {
-        pi.on("before_provider_request", (event, ctx) => {
-            if (ctx.model) {
-                hbWiring.onProviderRequest(event.payload, ctx.model);
-            }
-        });
-        pi.on("before_agent_start", () => {
-            hbWiring.onIdle(false);
-            hbWiring.disarm();
-        });
-        pi.on("agent_settled", () => {
-            hbWiring.onIdle(true);
-            hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-        });
-        pi.on("model_select", () => {
-            hbWiring.disarm();
-        });
-        pi.on("thinking_level_select", () => {
-            hbWiring.disarm();
-        });
-    }
+    registerSlashCommands(pi, state, config);
+    registerCacheWarmingDecision(pi, state);
     const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
     const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
     const previousEventUnsubscribes = globalStore[eventUnsubscribeStoreKey];
@@ -495,27 +460,6 @@ export default function registerSubagentExtension(pi) {
             }
         }
     }
-    const hbCompleteHandler = (data) => {
-        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
-            return;
-        const id = data.id;
-        if (typeof id !== "string" || id.length === 0)
-            return;
-        hbWiring.notifyAsyncComplete(id, state.asyncJobs);
-    };
-    const hbStartedHandler = (data) => {
-        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
-            return;
-        const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
-        hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
-    };
-    const noop = () => { };
-    const hbCompleteUnsub = resolvedHbConfig.enabled
-        ? pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, hbCompleteHandler)
-        : noop;
-    const hbStartedUnsub = resolvedHbConfig.enabled
-        ? pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, hbStartedHandler)
-        : noop;
     registerSubagentNotify(pi, state, {});
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set
@@ -534,8 +478,6 @@ export default function registerSubagentExtension(pi) {
         });
     };
     const eventUnsubscribes = [
-        hbCompleteUnsub,
-        hbStartedUnsub,
         pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
         pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
         pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
@@ -583,38 +525,19 @@ export default function registerSubagentExtension(pi) {
         primeExistingResults();
     };
     pi.on("session_start", (_event, ctx) => {
-        if (resolvedHbConfig.enabled) {
-            hbWiring.resetSession();
-            heartbeatSessionCtx = ctx;
-            hbWiring.onIdle(ctx.isIdle?.() ?? true);
-        }
         controlNoticeSessionContext = ctx;
         removeLiveDetailTerminalInput();
         resetSessionState(ctx);
-        if (resolvedHbConfig.enabled) {
-            hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-        }
         installLiveDetailTerminalInput(ctx);
         supervisorChannel.start();
     });
-    if (resolvedHbConfig.enabled) {
-        pi.on("session_before_switch", () => {
-            hbWiring.disarm();
-        });
-        pi.on("session_before_fork", () => {
-            hbWiring.disarm();
-        });
-    }
     pi.on("session_tree", () => {
-        hbWiring.disarm();
         liveDetailController.clearToolRows();
     });
     pi.on("session_compact", () => {
-        hbWiring.disarm();
         liveDetailController.clearToolRows();
     });
     pi.on("session_shutdown", () => {
-        hbWiring.destroy();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();
         delete process.env[SUBAGENT_PARENT_SESSION_ENV];
