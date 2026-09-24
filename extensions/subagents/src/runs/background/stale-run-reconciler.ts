@@ -253,7 +253,7 @@ export function reconcileNestedAsyncDescendants(
       ...options,
       resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
     });
-    if (!result.status || (!result.repaired && isTerminalLifecycleState(result.status.state)))
+    if (!result.status || (!result.repaired && !isTerminalLifecycleState(result.status.state)))
       continue;
 
     const ts = options.now?.() ?? Date.now();

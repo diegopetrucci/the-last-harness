@@ -7,8 +7,15 @@ import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume
 import {
   checkPidLiveness,
   reconcileAsyncRun,
+  reconcileNestedAsyncDescendants,
 } from "../../src/runs/background/stale-run-reconciler.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
+import {
+  createNestedRoute,
+  projectNestedEvents,
+  writeNestedEvent,
+} from "../../src/runs/shared/nested-events.ts";
+import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 
 const STALE_LIVE_PID_MS = 24 * 60 * 60 * 1000;
@@ -26,6 +33,48 @@ function errno(code: string): NodeJS.ErrnoException {
   const error = new Error(code) as NodeJS.ErrnoException;
   error.code = code;
   return error;
+}
+
+function nestedFixture(rootRunId: string, runId: string) {
+  const route = createNestedRoute(rootRunId);
+  const asyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId, runId);
+  fs.mkdirSync(asyncDir, { recursive: true });
+  writeNestedEvent(route, {
+    type: "subagent.nested.started",
+    ts: 100,
+    parentRunId: rootRunId,
+    parentStepIndex: 0,
+    child: {
+      id: runId,
+      parentRunId: rootRunId,
+      parentStepIndex: 0,
+      depth: 1,
+      path: [{ runId: rootRunId, stepIndex: 0 }],
+      asyncDir,
+      mode: "single",
+      state: "running",
+      agent: "worker",
+      startedAt: 100,
+      lastUpdate: 100,
+    },
+  });
+  return { route, asyncDir };
+}
+
+function nestedEventTypes(route: ReturnType<typeof createNestedRoute>): string[] {
+  return fs
+    .readdirSync(route.eventSink)
+    .filter((entry) => entry.endsWith(".json"))
+    .sort()
+    .map((entry) => JSON.parse(fs.readFileSync(path.join(route.eventSink, entry), "utf-8")).type);
+}
+
+function removeNestedFixture(route: ReturnType<typeof createNestedRoute>): void {
+  fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+  fs.rmSync(path.join(TEMP_ROOT_DIR, "nested-subagent-runs", route.rootRunId), {
+    recursive: true,
+    force: true,
+  });
 }
 
 describe("async stale-run reconciliation", () => {
@@ -99,6 +148,108 @@ describe("async stale-run reconciliation", () => {
       assert.equal(fs.existsSync(path.join(resultsDir, "run-cache-bypass.json")), false);
       assert.deepEqual(fs.readFileSync(statusPath), before);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not grow the nested projection for an unchanged running descendant", () => {
+    const root = tempRoot("pi-stale-nested-running-");
+    const rootRunId = "nested-running-root";
+    const runId = "nested-running-child";
+    const { route, asyncDir } = nestedFixture(rootRunId, runId);
+    try {
+      writeStatus(asyncDir, {
+        runId,
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 100,
+        lastUpdate: 100,
+        steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+      });
+      const options = {
+        resultsDir: path.join(root, "results"),
+        kill: () => true,
+        now: () => 200,
+        staleAlivePidMs: 1_000,
+      };
+
+      reconcileNestedAsyncDescendants(route, options);
+      reconcileNestedAsyncDescendants(route, options);
+
+      assert.deepEqual(nestedEventTypes(route), ["subagent.nested.started"]);
+      assert.equal(projectNestedEvents(route).children[0]?.state, "running");
+    } finally {
+      removeNestedFixture(route);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates a terminal nested status found on disk", () => {
+    const root = tempRoot("pi-stale-nested-terminal-");
+    const rootRunId = "nested-terminal-root";
+    const runId = "nested-terminal-child";
+    const { route, asyncDir } = nestedFixture(rootRunId, runId);
+    try {
+      writeStatus(asyncDir, {
+        runId,
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        steps: [{ agent: "worker", status: "complete", startedAt: 100, endedAt: 200 }],
+      });
+      const options = { resultsDir: path.join(root, "results"), now: () => 200 };
+
+      reconcileNestedAsyncDescendants(route, options);
+
+      assert.deepEqual(nestedEventTypes(route), [
+        "subagent.nested.started",
+        "subagent.nested.completed",
+      ]);
+      assert.equal(projectNestedEvents(route).children[0]?.state, "complete");
+    } finally {
+      removeNestedFixture(route);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates a repaired terminal nested status", () => {
+    const root = tempRoot("pi-stale-nested-repaired-");
+    const rootRunId = "nested-repaired-root";
+    const runId = "nested-repaired-child";
+    const { route, asyncDir } = nestedFixture(rootRunId, runId);
+    try {
+      writeStatus(asyncDir, {
+        runId,
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 100,
+        lastUpdate: 100,
+        lifecycle: { generation: 4 },
+        steps: [{ agent: "worker", status: "running", startedAt: 100 }],
+      });
+
+      reconcileNestedAsyncDescendants(route, {
+        resultsDir: path.join(root, "results"),
+        kill: () => {
+          throw errno("ESRCH");
+        },
+        now: () => 200,
+      });
+
+      assert.deepEqual(nestedEventTypes(route), [
+        "subagent.nested.started",
+        "subagent.nested.completed",
+      ]);
+      assert.equal(projectNestedEvents(route).children[0]?.state, "failed");
+      const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+      assert.equal(status.state, "failed");
+      assert.equal(status.lifecycle.generation, 5);
+    } finally {
+      removeNestedFixture(route);
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
