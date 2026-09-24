@@ -4,6 +4,80 @@ import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIR
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, isSymlink, validateProfileRelativePath, } from "./tlh-install-paths.mjs";
 import { backupPathWithTimestamp, isTlhOwnedBackupFilename, selectExpiredBackups, } from "./tlh-install-utils.mjs";
+const RUNTIME_COMPILE_CACHE_DIRNAME = "node-compile-cache";
+const RUNTIME_COMPILE_CACHE_KEY_PATTERN = /^v\d+\.\d+\.\d+-[A-Za-z0-9_]+-[0-9a-f]+-\d+$/;
+/** Run after the caller has successfully validated the exact TLH runtime prefix. */
+export function pruneAndPrewarmRuntimeCompileCache(config, io, runtimePrefix) {
+    if (isSymlink(runtimePrefix)) {
+        io.warn(`refusing to prune runtime compile cache through symlinked runtime directory: ${runtimePrefix}`);
+        return;
+    }
+    const cacheDir = join(runtimePrefix, RUNTIME_COMPILE_CACHE_DIRNAME);
+    if (isSymlink(cacheDir)) {
+        io.warn(`refusing to traverse symlinked runtime compile-cache path: ${cacheDir}; remove the symlink (not its target) and rerun the installer/update`);
+        return;
+    }
+    if (!existsSync(cacheDir)) {
+        io.detailLog(`${config.dryRun ? "Would prepare" : "No existing"} runtime compile-cache directory: ${cacheDir}`);
+    }
+    else {
+        let entries;
+        try {
+            entries = readdirSync(cacheDir, { withFileTypes: true });
+        }
+        catch (error) {
+            io.warn(`could not inspect runtime compile-cache directory ${cacheDir}; leaving it untouched: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        const recognizedSymlink = entries.find((entry) => entry.isSymbolicLink() && RUNTIME_COMPILE_CACHE_KEY_PATTERN.test(entry.name));
+        if (recognizedSymlink) {
+            io.warn(`refusing to prune runtime compile-cache because recognized key entry is a symlink: ${join(cacheDir, recognizedSymlink.name)}; remove the symlink and rerun the installer/update`);
+            return;
+        }
+        for (const entry of entries) {
+            const entryPath = join(cacheDir, entry.name);
+            const recognized = RUNTIME_COMPILE_CACHE_KEY_PATTERN.test(entry.name);
+            const symlinked = entry.isSymbolicLink();
+            if (!recognized || symlinked || !entry.isDirectory()) {
+                io.warn(`preserving unexpected runtime compile-cache entry: ${entryPath}; only recognized Node/Bun version-key directories are pruned. Inspect it and remove it manually if it is not needed`);
+                continue;
+            }
+            if (config.dryRun) {
+                io.detailLog(`Would remove runtime compile-cache key directory: ${entryPath}`);
+                continue;
+            }
+            try {
+                rmSync(entryPath, { recursive: true, force: false });
+                io.detailLog(`Removed runtime compile-cache key directory: ${entryPath}`);
+            }
+            catch (error) {
+                io.warn(`could not remove runtime compile-cache key directory ${entryPath}; leaving it in place: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+    }
+    const piCommand = io.absolutePiCmd();
+    const cacheDirForWarm = join(runtimePrefix, RUNTIME_COMPILE_CACHE_DIRNAME);
+    io.detailLog(`Pre-warming runtime compile cache with ${piCommand} --version`);
+    try {
+        io.runCommand([piCommand, "--version"], {
+            cwd: config.agentDir,
+            env: {
+                PI_CODING_AGENT_DIR: config.agentDir,
+                NODE_COMPILE_CACHE: cacheDirForWarm,
+            },
+            displayArgs: [
+                "env",
+                `PI_CODING_AGENT_DIR=${config.agentDir}`,
+                `NODE_COMPILE_CACHE=${cacheDirForWarm}`,
+                piCommand,
+                "--version",
+            ],
+        });
+    }
+    catch (error) {
+        throw new Error(`runtime compile-cache pre-warming failed after primary install/update work completed; rerun the installer/update: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
 function isMissingCleanupMetadataError(error) {
     return (typeof error === "object" &&
         error !== null &&
