@@ -5,7 +5,7 @@ tools: read, grep, find, ls, bash, contact_supervisor
 tlhModelDefaults:
   - provider: openai-codex
     models: [gpt-5.6-sol]
-    effort: high
+    effort: medium
   - provider: anthropic
     models: [claude-opus-5]
     effort: max
