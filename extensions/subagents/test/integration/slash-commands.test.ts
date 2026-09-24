@@ -33,7 +33,6 @@ interface RegisterSlashCommandsModule {
       cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
       lastUiContext: unknown;
       poller: NodeJS.Timeout | null;
-      completionSeen: Map<string, number>;
       watcher: unknown;
       watcherRestartTimer: ReturnType<typeof setTimeout> | null;
       resultFileCoalescer: { schedule(file: string, delayMs?: number): boolean; clear(): void };
@@ -80,7 +79,6 @@ function createState(cwd: string) {
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -159,7 +157,6 @@ describe(
         const { commands } = registerCommands(process.cwd());
         assert.deepEqual([...commands.keys()], ["subagents-doctor"]);
         assert.equal(commands.has("subagent-cost"), false);
-        assert.equal(commands.has("subagents-fleet"), false);
       });
     });
 

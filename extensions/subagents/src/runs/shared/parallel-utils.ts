@@ -3,19 +3,19 @@ import type {
   ResolvedArtifactConfig,
   NestedRouteInfo,
   ResolvedControlConfig,
-  ResolvedToolBudget,
-  TkTicketMetadata,
 } from "../../shared/types.ts";
-import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
+import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
 
 export interface RunnerSubagentStep {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
   /** Exact approved project-agent config/provenance; never includes a capability. */
-  projectAgent?: ProjectAgentRunCapture;
-  /** Validated per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
+  projectAgent?: ProjectAgentIdentity;
+  /** Normalized explicit ticket ID, when assigned. */
+  ticketId?: string;
+  /** Exact ticket body used only to construct the initial child prompt. */
+  ticketBody?: string;
   agent: string;
   /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
@@ -31,23 +31,15 @@ export interface RunnerSubagentStep {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   /** Notes collected while preparing this dispatch, surfaced with attempt notes. */
   attemptNotes?: string[];
-  /**
-   * Model references whose configured thinking level dispatch preparation
-   * dropped as unsupported. Authoritative per-candidate metadata that survives
-   * cross-step deduplication of duplicate human-facing attempt notes.
-   */
-  thinkingDroppedModels?: string[];
+  /** Ordered effective model argv strings sent to Pi after suffix application and deduplication. */
   modelCandidates?: string[];
   /** Effective context windows keyed by provider-qualified base model ids, without thinking suffixes. */
   contextWindows?: Record<string, number>;
-  /** Notice generated when registry evidence filtered fallback attempts. */
-  modelFallbackFilterNotice?: string;
   modelFallbackNotice?: string;
   /** Explicit child tool policy; see AgentConfig.tools for its null-vs-undefined semantics. */
   tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
-  completionGuard?: boolean;
   /** Explicit agent capability controlling generic supervisor bridge support. */
   supervisorBridge?: boolean;
   systemPrompt?: string | null;
@@ -55,22 +47,17 @@ export interface RunnerSubagentStep {
   inheritProjectContext: boolean;
   inheritSkills: boolean;
   skills?: string[];
+  skillsWarning?: string;
   outputPath?: string;
   outputMode?: "inline" | "file-only";
   sessionFile?: string;
   maxSubagentDepth?: number;
-  effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
-  acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
-  acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
-  toolBudget?: import("../../shared/types.ts").ResolvedToolBudget;
-  /** Remaining active execution allowance for this child segment. */
+  /** Trusted per-spawn execution ceiling for this child. */
   timeoutMs?: number;
   /** Trusted internal owner of a folded async-single deadline. */
   timeoutOwner?: "role" | "run";
-  /** Active child runtime accumulated before this segment. */
-  activeRuntimeMs?: number;
-  /** Timestamp of the latest authoritative runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
+  /** Persisted terminal facts from an earlier fallback/resume segment. */
+  terminalResult?: import("../../shared/types.ts").SubagentTerminalResult;
   /**
    * Dispatch-time snapshot of child location facts. Present only when the
    * child cwd differs from the parent cwd; absent for same-cwd dispatches.
@@ -96,6 +83,8 @@ export type SubagentRunPlan =
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
+  /** Internal-only opt-in: the parent owns terminal settlement and awaits it. */
+  awaited?: boolean;
   /** Canonical direct single/parallel execution plan. */
   plan: SubagentRunPlan;
   resultPath: string;
@@ -114,7 +103,7 @@ export interface SubagentRunConfig {
     runId: string;
     index: number;
     claimToken: string;
-    projectAgent?: ProjectAgentRunCapture;
+    projectAgent?: ProjectAgentIdentity;
   };
   sessionId?: string | null;
   piPackageRoot?: string;
@@ -127,11 +116,9 @@ export interface SubagentRunConfig {
     depth: number;
     path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
   };
-  tkTicket?: TkTicketMetadata;
   /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgents?: ProjectAgentIdentity[];
   deadlineAt?: number;
-  toolBudget?: ResolvedToolBudget;
 }
 
 export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;

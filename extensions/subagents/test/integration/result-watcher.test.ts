@@ -4,37 +4,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS } from "../../src/runs/background/result-artifact-consumer.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import {
-  createProjectAgentRunCapture,
-  getProjectAgentSnapshotProvenance,
-  lookupProjectAgentRunReference,
-  registerProjectAgentSnapshot,
-  releaseProjectAgentRunReference,
-  revokeProjectAgentSnapshot,
-  resolveProjectAgentSnapshot,
-  retainProjectAgentRunReference,
-  retainProjectAgentSnapshotReference,
-  releaseProjectAgentSnapshotReference,
-} from "../../src/agents/project-agent-snapshot.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
-
-function writeJson(filePath: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
-}
 
 function createState(): SubagentState {
   return {
     baseCwd: "/repo",
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -45,266 +26,6 @@ function createState(): SubagentState {
 }
 
 describe("result watcher", () => {
-  it("keeps a project generation while a continued child still has a paused sibling", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-project-")),
-    );
-    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-project-results-"));
-    const asyncDir = path.join(root, "async-run");
-    const runId = `project-watcher-${Date.now().toString(36)}`;
-    const agent = {
-      name: "embedded.worker",
-      packageName: "embedded",
-      description: "Project worker",
-      systemPrompt: "Project worker prompt",
-      systemPromptMode: "replace" as const,
-      inheritProjectContext: false,
-      inheritSkills: false,
-      source: "project" as const,
-      filePath: path.join(root, ".tlh", "agents", "worker.md"),
-    };
-    const capability = registerProjectAgentSnapshot({
-      projectRoot: root,
-      sessionId: "watcher-session",
-      generationId: "watcher-generation",
-      entries: [{ agent, digest: "watcher-digest", frontmatterFields: [] }],
-    });
-    const capture = createProjectAgentRunCapture(
-      resolveProjectAgentSnapshot(capability, getProjectAgentSnapshotProvenance(capability)),
-      agent,
-    );
-    retainProjectAgentRunReference(capability, runId, [capture]);
-    fs.mkdirSync(asyncDir, { recursive: true });
-    const siblingSession = path.join(asyncDir, "sibling.jsonl");
-    fs.writeFileSync(siblingSession, "", "utf8");
-    writeJson(path.join(asyncDir, "status.json"), {
-      runId,
-      mode: "parallel",
-      state: "paused",
-      sessionId: "watcher-session",
-      cwd: root,
-      steps: [
-        { agent: capture.provenance.agent, status: "continued", projectAgent: capture },
-        { agent: "ordinary", status: "paused", sessionFile: siblingSession },
-      ],
-    });
-    const emitted: unknown[] = [];
-    const watcher = createResultWatcher(
-      {
-        events: {
-          on: () => () => {},
-          emit: (_event, data) => emitted.push(data),
-        },
-      },
-      Object.assign(createState(), { currentSessionId: "watcher-session" }),
-      resultsDir,
-      60_000,
-    );
-    const resultPath = path.join(resultsDir, `${runId}.json`);
-    fs.writeFileSync(
-      resultPath,
-      JSON.stringify({
-        id: runId,
-        runId,
-        state: "continued",
-        success: false,
-        summary: "continued child",
-        asyncDir,
-        sessionId: "watcher-session",
-        results: [{ agent: capture.provenance.agent, output: "continued", success: false }],
-      }),
-      "utf8",
-    );
-    try {
-      watcher.primeExistingResults();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      assert.equal(emitted.length, 1);
-      assert.equal(lookupProjectAgentRunReference(runId).status, "found");
-
-      writeJson(path.join(asyncDir, "status.json"), {
-        runId,
-        mode: "parallel",
-        state: "continued",
-        sessionId: "watcher-session",
-        cwd: root,
-        steps: [
-          { agent: capture.provenance.agent, status: "continued", projectAgent: capture },
-          { agent: "ordinary", status: "continued", sessionFile: siblingSession },
-        ],
-      });
-      const finalResultPath = path.join(resultsDir, "final.json");
-      fs.writeFileSync(
-        finalResultPath,
-        JSON.stringify({
-          id: `${runId}-final`,
-          runId,
-          state: "continued",
-          success: false,
-          summary: "all children continued",
-          asyncDir,
-          sessionId: "watcher-session",
-          results: [{ agent: capture.provenance.agent, output: "continued", success: false }],
-        }),
-        "utf8",
-      );
-      watcher.primeExistingResults();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
-    } finally {
-      watcher.stopResultWatcher();
-      releaseProjectAgentRunReference(runId);
-      try {
-        revokeProjectAgentSnapshot(capability);
-      } catch {
-        // Releasing the run may already collect the unreferenced generation.
-      }
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("retains continued/cancelled results for terminal project siblings with usable sessions", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-terminal-sibling-")),
-    );
-    const resultsDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "pi-result-watcher-terminal-results-"),
-    );
-    const firstAgent = {
-      name: "embedded.worker",
-      packageName: "embedded",
-      description: "Selected project worker",
-      systemPrompt: "Selected project prompt",
-      systemPromptMode: "replace" as const,
-      inheritProjectContext: false,
-      inheritSkills: false,
-      source: "project" as const,
-      filePath: path.join(root, ".tlh", "agents", "worker.md"),
-    };
-    const siblingAgent = {
-      ...firstAgent,
-      name: "embedded.reviewer",
-      description: "Terminal project reviewer",
-      systemPrompt: "Terminal reviewer prompt",
-      filePath: path.join(root, ".tlh", "agents", "reviewer.md"),
-    };
-    const capability = registerProjectAgentSnapshot({
-      projectRoot: root,
-      sessionId: "watcher-terminal-session",
-      generationId: "watcher-terminal-generation",
-      entries: [
-        { agent: firstAgent, digest: "watcher-worker-digest", frontmatterFields: [] },
-        { agent: siblingAgent, digest: "watcher-reviewer-digest", frontmatterFields: [] },
-      ],
-    });
-    const manifest = resolveProjectAgentSnapshot(
-      capability,
-      getProjectAgentSnapshotProvenance(capability),
-    );
-    const captures = [
-      createProjectAgentRunCapture(manifest, firstAgent),
-      createProjectAgentRunCapture(manifest, siblingAgent),
-    ];
-    retainProjectAgentSnapshotReference(capability, "watcher-terminal-sibling-owner");
-    const state = Object.assign(createState(), {
-      currentSessionId: "watcher-terminal-session",
-    });
-    const emitted: unknown[] = [];
-    const watcher = createResultWatcher(
-      {
-        events: {
-          on: () => () => {},
-          emit: (_event, data) => emitted.push(data),
-        },
-      },
-      state,
-      resultsDir,
-      60_000,
-      { projectAgentTerminalRetentionMs: 100 },
-    );
-    const runIds: string[] = [];
-    try {
-      for (const terminalState of ["continued", "cancelled"] as const) {
-        for (const siblingState of ["complete", "failed"] as const) {
-          const runId = `watcher-terminal-sibling-${terminalState}-${siblingState}-${Date.now().toString(36)}`;
-          runIds.push(runId);
-          const asyncDir = path.join(root, runId);
-          const selectedSession = path.join(asyncDir, "worker.jsonl");
-          const siblingSession = path.join(asyncDir, "reviewer.jsonl");
-          fs.mkdirSync(asyncDir, { recursive: true });
-          fs.writeFileSync(selectedSession, "", "utf8");
-          fs.writeFileSync(siblingSession, "", "utf8");
-          writeJson(path.join(asyncDir, "status.json"), {
-            runId,
-            mode: "parallel",
-            state: terminalState,
-            sessionId: "watcher-terminal-session",
-            cwd: root,
-            startedAt: Date.now(),
-            lastUpdate: Date.now(),
-            steps: [
-              {
-                agent: captures[0].provenance.agent,
-                status: terminalState,
-                sessionFile: selectedSession,
-                projectAgent: captures[0],
-              },
-              {
-                agent: captures[1].provenance.agent,
-                status: siblingState,
-                sessionFile: siblingSession,
-                projectAgent: captures[1],
-              },
-            ],
-          });
-          retainProjectAgentRunReference(capability, runId, captures);
-          fs.writeFileSync(
-            path.join(resultsDir, `${runId}.json`),
-            JSON.stringify({
-              id: runId,
-              runId,
-              state: terminalState,
-              success: false,
-              summary: `${terminalState} selected child`,
-              asyncDir,
-              sessionId: "watcher-terminal-session",
-              cwd: root,
-              results: [
-                {
-                  agent: captures[0].provenance.agent,
-                  output: `${terminalState} selected child`,
-                  success: false,
-                },
-              ],
-            }),
-            "utf8",
-          );
-          watcher.primeExistingResults();
-          for (let attempt = 0; attempt < 30; attempt++) {
-            if (emitted.length >= runIds.length) break;
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          }
-          assert.equal(emitted.length, runIds.length);
-          await new Promise((resolve) => setTimeout(resolve, 25));
-          assert.equal(lookupProjectAgentRunReference(runId).status, "found");
-          await new Promise((resolve) => setTimeout(resolve, 110));
-          assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
-        }
-      }
-    } finally {
-      watcher.stopResultWatcher();
-      for (const runId of runIds) releaseProjectAgentRunReference(runId);
-      releaseProjectAgentSnapshotReference("watcher-terminal-sibling-owner");
-      try {
-        revokeProjectAgentSnapshot(capability);
-      } catch {
-        // Releasing the owner may already collect the unreferenced generation.
-      }
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(resultsDir, { recursive: true, force: true });
-    }
-  });
-
   it("processes deferred session-scoped results after session identity is restored", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-session-"));
     try {
@@ -330,7 +51,7 @@ describe("result watcher", () => {
         "utf-8",
       );
 
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       try {
         watcher.primeExistingResults();
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -375,7 +96,7 @@ describe("result watcher", () => {
         "utf-8",
       );
 
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       try {
         watcher.primeExistingResults();
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -422,8 +143,8 @@ describe("result watcher", () => {
       ownerState.currentSessionId = "session-owner";
       const otherState = createState();
       otherState.currentSessionId = "session-other";
-      const ownerWatcher = createResultWatcher(owner.pi, ownerState, resultsDir, 60_000);
-      const otherWatcher = createResultWatcher(other.pi, otherState, resultsDir, 60_000);
+      const ownerWatcher = createResultWatcher(owner.pi, ownerState, resultsDir);
+      const otherWatcher = createResultWatcher(other.pi, otherState, resultsDir);
       const ownerResultPath = path.join(resultsDir, "owner-run.json");
       const sessionlessResultPath = path.join(resultsDir, "sessionless-run.json");
       try {
@@ -482,6 +203,395 @@ describe("result watcher", () => {
     }
   });
 
+  it("atomically claims one artifact when two watchers race for the same result", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-result-watcher-claim-"));
+    const createPi = () => {
+      const emitted: unknown[] = [];
+      return {
+        emitted,
+        pi: {
+          events: {
+            on: () => () => {},
+            emit: (_event: string, data: unknown) => emitted.push(data),
+          },
+        },
+      };
+    };
+    const first = createPi();
+    const second = createPi();
+    const firstState = createState();
+    firstState.currentSessionId = "session-owner";
+    const secondState = createState();
+    secondState.currentSessionId = "session-owner";
+    const firstWatcher = createResultWatcher(first.pi, firstState, resultsDir);
+    const secondWatcher = createResultWatcher(second.pi, secondState, resultsDir);
+    const resultPath = path.join(resultsDir, "raced.json");
+    try {
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({
+          id: "raced-run",
+          agent: "worker",
+          success: true,
+          state: "complete",
+          summary: "one delivery",
+          sessionId: "session-owner",
+        }),
+        "utf8",
+      );
+      firstWatcher.primeExistingResults();
+      secondWatcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(first.emitted.length + second.emitted.length, 1);
+      assert.equal(fs.existsSync(resultPath), false);
+    } finally {
+      firstWatcher.stopResultWatcher();
+      secondWatcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes orphan claim markers on startup without reading result bodies", () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-orphan-claim-"));
+    const orphanClaimPath = path.join(resultsDir, "orphan.json.claim");
+    const pairedResultPath = path.join(resultsDir, "paired.json");
+    const pairedClaimPath = `${pairedResultPath}.claim`;
+    fs.writeFileSync(orphanClaimPath, "opaque claim marker", "utf8");
+    fs.writeFileSync(
+      pairedResultPath,
+      JSON.stringify({ id: "paired", sessionId: "other-session", summary: "not ours" }),
+      "utf8",
+    );
+    fs.writeFileSync(pairedClaimPath, "opaque claim marker", "utf8");
+    const pi = {
+      events: {
+        on: () => () => {},
+        emit() {},
+      },
+    };
+    const state = createState();
+    const fsProxy = {
+      ...fs,
+      readFileSync: (() => {
+        throw new Error("orphan-claim cleanup must not read result bodies");
+      }) as typeof fs.readFileSync,
+    };
+    const watcher = createResultWatcher(pi, state, resultsDir, { fs: fsProxy });
+    try {
+      watcher.startResultWatcher();
+      assert.equal(fs.existsSync(orphanClaimPath), false);
+      assert.equal(fs.existsSync(pairedClaimPath), true);
+      fs.writeFileSync(orphanClaimPath, "opaque claim marker", "utf8");
+      watcher.primeExistingResults();
+      assert.equal(fs.existsSync(orphanClaimPath), false);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds permanent delivered-artifact unlink retries with backoff and one diagnostic", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-unlink-bound-"));
+    const resultPath = path.join(resultsDir, "permanent-unlink.json");
+    const pending: Array<{ callback: () => void; delay: number }> = [];
+    const setTimeoutSpy = ((callback: () => void, delay = 0) => {
+      const handle = { unref() {} } as ReturnType<typeof setTimeout>;
+      pending.push({ callback, delay });
+      return handle;
+    }) as typeof setTimeout;
+    const clearTimeoutSpy = ((_handle: ReturnType<typeof setTimeout>) => {}) as typeof clearTimeout;
+    const setIntervalSpy = ((callback: () => void, delay = 0) => {
+      const handle = { unref() {} } as ReturnType<typeof setInterval>;
+      pending.push({ callback, delay });
+      return handle;
+    }) as typeof setInterval;
+    const clearIntervalSpy = ((
+      _handle: ReturnType<typeof setInterval>,
+    ) => {}) as typeof clearInterval;
+    let unlinkAttempts = 0;
+    const fsProxy = {
+      ...fs,
+      unlinkSync(filePath: fs.PathLike) {
+        if (String(filePath) === resultPath) {
+          unlinkAttempts += 1;
+          const error = new Error("permanent unlink failure") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return fs.unlinkSync(filePath);
+      },
+    };
+    const pi = {
+      events: {
+        on: () => () => {},
+        emit() {},
+      },
+    };
+    const state = createState();
+    state.currentSessionId = "session-1";
+    const watcher = createResultWatcher(pi, state, resultsDir, {
+      fs: fsProxy,
+      timers: {
+        setTimeout: setTimeoutSpy,
+        clearTimeout: clearTimeoutSpy,
+        setInterval: setIntervalSpy,
+        clearInterval: clearIntervalSpy,
+      },
+    });
+    const originalError = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({
+          id: "permanent-unlink",
+          agent: "worker",
+          success: true,
+          state: "complete",
+          summary: "delivered before cleanup failed",
+          sessionId: "session-1",
+        }),
+        "utf8",
+      );
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      let callbackIndex = 0;
+      while (callbackIndex < pending.length) pending[callbackIndex++]!.callback();
+      assert.equal(unlinkAttempts, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS);
+      assert.deepEqual(
+        pending.map((entry) => entry.delay),
+        [250, 500, 1_000, 2_000],
+        "cleanup retries should use bounded backoff after the immediate unlink attempt",
+      );
+      assert.equal(logged.length, 1, "permanent cleanup failure should emit one diagnostic");
+      assert.equal(fs.existsSync(resultPath), true);
+      assert.equal(fs.existsSync(`${resultPath}.claim`), true);
+    } finally {
+      console.error = originalError;
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds persistent result-read retries without repeated diagnostics or claim churn", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-read-bound-"));
+    const resultPath = path.join(resultsDir, "persistent-read.json");
+    const pending: Array<{ callback: () => void; delay: number }> = [];
+    const setTimeoutSpy = ((callback: () => void, delay = 0) => {
+      const handle = { unref() {} } as ReturnType<typeof setTimeout>;
+      pending.push({ callback, delay });
+      return handle;
+    }) as typeof setTimeout;
+    const clearTimeoutSpy = ((_handle: ReturnType<typeof setTimeout>) => {}) as typeof clearTimeout;
+    const setIntervalSpy = ((_callback: () => void, _delay = 0) => {
+      const handle = { unref() {} } as ReturnType<typeof setInterval>;
+      return handle;
+    }) as typeof setInterval;
+    const clearIntervalSpy = ((
+      _handle: ReturnType<typeof setInterval>,
+    ) => {}) as typeof clearInterval;
+    let readAttempts = 0;
+    let claimAttempts = 0;
+    let claimReleases = 0;
+    const fsProxy = {
+      ...fs,
+      openSync(filePath: fs.PathLike, flags: string | number, mode?: string | number | null) {
+        if (String(filePath) === `${resultPath}.claim`) claimAttempts += 1;
+        return fs.openSync(filePath, flags, mode);
+      },
+      readFileSync: (() => {
+        readAttempts += 1;
+        const error = new Error("persistent result read failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }) as typeof fs.readFileSync,
+      unlinkSync(filePath: fs.PathLike) {
+        if (String(filePath) === `${resultPath}.claim`) claimReleases += 1;
+        return fs.unlinkSync(filePath);
+      },
+    };
+    const pi = {
+      events: {
+        on: () => () => {},
+        emit() {},
+      },
+    };
+    const state = createState();
+    state.currentSessionId = "session-1";
+    const watcher = createResultWatcher(pi, state, resultsDir, {
+      fs: fsProxy,
+      timers: {
+        setTimeout: setTimeoutSpy,
+        clearTimeout: clearTimeoutSpy,
+        setInterval: setIntervalSpy,
+        clearInterval: clearIntervalSpy,
+      },
+    });
+    const originalError = console.error;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      logged.push(args);
+    };
+    try {
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify({
+          id: "persistent-read",
+          agent: "worker",
+          success: true,
+          state: "complete",
+          summary: "unreadable result",
+          sessionId: "session-1",
+        }),
+        "utf8",
+      );
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      let callbackIndex = 0;
+      while (callbackIndex < pending.length) {
+        pending[callbackIndex++]!.callback();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(readAttempts, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS + 1);
+      assert.deepEqual(
+        pending.map((entry) => entry.delay),
+        [100, 250, 500, 1_000, 2_000],
+        "result retries should use the bounded backoff sequence",
+      );
+      const retryDiagnostics = logged.filter((args) => String(args[0] ?? "").includes(resultPath));
+      assert.equal(
+        retryDiagnostics.length,
+        1,
+        "persistent result failures should emit one diagnostic",
+      );
+      assert.equal(fs.existsSync(resultPath), true);
+      assert.equal(fs.existsSync(`${resultPath}.claim`), false);
+      assert.equal(claimAttempts, readAttempts);
+      assert.equal(claimReleases, readAttempts);
+
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(readAttempts, RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS + 1);
+      assert.equal(claimAttempts, readAttempts);
+      assert.equal(claimReleases, readAttempts);
+      assert.equal(logged.filter((args) => String(args[0] ?? "").includes(resultPath)).length, 1);
+    } finally {
+      console.error = originalError;
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears pending result and claim cleanup timers when stopped", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-stop-timers-"));
+    const retryResultPath = path.join(resultsDir, "retry.json");
+    const cleanupResultPath = path.join(resultsDir, "cleanup.json");
+    const pending: Array<{ callback: () => void; handle: ReturnType<typeof setTimeout> }> = [];
+    const cleared = new Set<ReturnType<typeof setTimeout>>();
+    const setTimeoutSpy = ((callback: () => void) => {
+      const handle = { unref() {} } as ReturnType<typeof setTimeout>;
+      pending.push({ callback, handle });
+      return handle;
+    }) as typeof setTimeout;
+    const clearTimeoutSpy = ((handle: ReturnType<typeof setTimeout>) => {
+      cleared.add(handle);
+    }) as typeof clearTimeout;
+    const setIntervalSpy = ((callback: () => void) => {
+      const handle = { unref() {} } as ReturnType<typeof setInterval>;
+      pending.push({ callback, handle });
+      return handle;
+    }) as typeof setInterval;
+    const clearIntervalSpy = ((
+      _handle: ReturnType<typeof setInterval>,
+    ) => {}) as typeof clearInterval;
+    let claimFailures = 1;
+    const fsProxy = {
+      ...fs,
+      openSync(filePath: fs.PathLike, flags: string | number, mode?: string | number | null) {
+        if (String(filePath) === `${retryResultPath}.claim` && claimFailures > 0) {
+          claimFailures -= 1;
+          const error = new Error("simulated claim failure") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return fs.openSync(filePath, flags, mode);
+      },
+      unlinkSync(filePath: fs.PathLike) {
+        if (String(filePath) === cleanupResultPath) {
+          const error = new Error("simulated permanent cleanup failure") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        }
+        return fs.unlinkSync(filePath);
+      },
+    };
+    const pi = {
+      events: {
+        on: () => () => {},
+        emit() {},
+      },
+    };
+    const state = createState();
+    state.currentSessionId = "session-1";
+    const watcher = createResultWatcher(pi, state, resultsDir, {
+      fs: fsProxy,
+      timers: {
+        setTimeout: setTimeoutSpy,
+        clearTimeout: clearTimeoutSpy,
+        setInterval: setIntervalSpy,
+        clearInterval: clearIntervalSpy,
+      },
+    });
+    const originalCoalescer = state.resultFileCoalescer;
+    let coalescerScheduleCount = 0;
+    state.resultFileCoalescer = {
+      schedule(file, delayMs) {
+        coalescerScheduleCount += 1;
+        return originalCoalescer.schedule(file, delayMs);
+      },
+      clear() {
+        originalCoalescer.clear();
+      },
+    };
+    try {
+      fs.writeFileSync(
+        retryResultPath,
+        JSON.stringify({ id: "retry", summary: "retry", sessionId: "session-1" }),
+        "utf8",
+      );
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      fs.writeFileSync(
+        cleanupResultPath,
+        JSON.stringify({
+          id: "cleanup",
+          agent: "worker",
+          success: true,
+          state: "complete",
+          summary: "cleanup",
+          sessionId: "session-1",
+        }),
+        "utf8",
+      );
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.ok(pending.length >= 2, "expected result retry and claim cleanup timers");
+      const scheduleCountBeforeStop = pending.length;
+      const coalescerScheduleCountBeforeStop = coalescerScheduleCount;
+      watcher.stopResultWatcher();
+      assert.equal(cleared.size, scheduleCountBeforeStop);
+      for (const entry of pending) entry.callback();
+      assert.equal(pending.length, scheduleCountBeforeStop);
+      assert.equal(coalescerScheduleCount, coalescerScheduleCountBeforeStop);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
   it("logs malformed result files instead of swallowing them silently", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
     try {
@@ -496,7 +606,7 @@ describe("result watcher", () => {
         },
       };
       const state = createState();
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       const originalError = console.error;
       const logged: unknown[][] = [];
       console.error = (...args: unknown[]) => {
@@ -544,7 +654,7 @@ describe("result watcher", () => {
         target === resultsDir
           ? nativeResultsDir
           : fs.realpathSync.native(target)) as typeof fs.realpathSync.native;
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+      const watcher = createResultWatcher(pi, state, resultsDir, {
         fs: {
           ...fs,
           realpathSync,
@@ -590,7 +700,7 @@ describe("result watcher", () => {
       let poll: (() => void) | undefined;
       const emfile = new Error("too many open files") as NodeJS.ErrnoException;
       emfile.code = "EMFILE";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+      const watcher = createResultWatcher(pi, state, resultsDir, {
         fs: {
           ...fs,
           watch: () => {
@@ -699,7 +809,7 @@ describe("result watcher", () => {
         close() {},
         unref() {},
       } as fs.FSWatcher;
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000, {
+      const watcher = createResultWatcher(pi, state, resultsDir, {
         fs: {
           ...fs,
           watch: () => fakeWatcher,
@@ -767,7 +877,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       const firstSession = path.join(resultsDir, "a-session.jsonl");
       const missingSession = path.join(resultsDir, "b-session.jsonl");
       try {
@@ -857,7 +967,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       const resultPath = path.join(resultsDir, "async-nested-root.json");
       try {
         fs.writeFileSync(
@@ -924,7 +1034,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       const resultPath = path.join(resultsDir, "async-explicit-nested.json");
       const originalError = console.error;
       const logged: unknown[][] = [];
@@ -1050,7 +1160,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       const resultPath = path.join(resultsDir, "async-nested-retry.json");
       const originalError = console.error;
       const logged: unknown[][] = [];
@@ -1076,9 +1186,10 @@ describe("result watcher", () => {
 
         assert.equal(fs.existsSync(resultPath), true);
         assert.equal(emitted.length, 0);
-        assert.ok(
-          logged.some((entry) => /will retry later/.test(String(entry[0] ?? ""))),
-          "expected nested enrichment retry warning to be logged",
+        assert.equal(
+          logged.length,
+          0,
+          "transient retry failures should not spam diagnostics before exhaustion",
         );
 
         fs.rmSync(registryPath, { force: true });
@@ -1130,7 +1241,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-top-session.json"),
@@ -1187,7 +1298,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-paused.json"),
@@ -1257,7 +1368,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       state.currentSessionId = "session-1";
-      const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+      const watcher = createResultWatcher(pi, state, resultsDir);
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-2.json"),

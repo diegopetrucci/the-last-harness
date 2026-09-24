@@ -253,14 +253,9 @@ export function makeSubagentState(overrides: Partial<SubagentState> = {}): Subag
     baseCwd: process.cwd(),
     currentSessionId: null,
     asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
     cleanupTimers: new Map(),
     lastUiContext: null,
     poller: null,
-    completionSeen: new Map(),
     watcher: null,
     watcherRestartTimer: null,
     resultFileCoalescer: {
@@ -334,7 +329,6 @@ export function makeAsyncCtx(
     cwd,
     currentSessionId: "session-1",
     currentModel: undefined,
-    currentModelProvider: undefined,
     modelScope: undefined,
     ...overrides,
   };

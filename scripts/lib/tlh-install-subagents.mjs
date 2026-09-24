@@ -388,6 +388,7 @@ const RETIRED_SUBAGENT_CONTROL_KEYS = [
     "activeNoticeAfterMs",
     "activeNoticeAfterTurns",
     "activeNoticeAfterTokens",
+    "failedToolAttemptsBeforeAttention",
 ];
 const RETIRED_SUBAGENT_NOTIFY_EVENT = "active_long_running";
 const SUBAGENT_EXTENSION_CONFIG_RELATIVE_PATH = "extensions/subagent/config.json";

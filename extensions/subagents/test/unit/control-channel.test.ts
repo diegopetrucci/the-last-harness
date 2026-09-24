@@ -77,6 +77,49 @@ describe("control channel: request file", () => {
     }
   });
 
+  it("does not lose a replacement request while atomically claiming one", () => {
+    const asyncDir = tmpAsyncDir("pi-control-consume-race-");
+    try {
+      requestAsyncInterrupt(asyncDir, { source: "first" });
+      const fsImpl = {
+        existsSync: fs.existsSync,
+        readFileSync: fs.readFileSync,
+        renameSync: (source: fs.PathLike, target: fs.PathLike) => {
+          fs.renameSync(source, target);
+          requestAsyncInterrupt(asyncDir, { source: "second" });
+        },
+        rmSync: fs.rmSync,
+      };
+      assert.equal(consumeInterruptRequest(asyncDir, fsImpl), true);
+      assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
+      assert.equal(consumeInterruptRequest(asyncDir), true);
+      assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
+  it("retries a request when the atomic claim fails for a non-missing-file error", () => {
+    const asyncDir = tmpAsyncDir("pi-control-consume-claim-error-");
+    try {
+      requestAsyncInterrupt(asyncDir);
+      const fsImpl = {
+        existsSync: fs.existsSync,
+        readFileSync: fs.readFileSync,
+        renameSync: () => {
+          const error = new Error("permission denied") as NodeJS.ErrnoException;
+          error.code = "EACCES";
+          throw error;
+        },
+        rmSync: fs.rmSync,
+      };
+      assert.equal(consumeInterruptRequest(asyncDir, fsImpl), false);
+      assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), true);
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
   it("removes a malformed request directory instead of firing forever", () => {
     const asyncDir = tmpAsyncDir("pi-control-consume-dir-");
     try {
@@ -537,6 +580,7 @@ describe("control channel: watchAsyncControlInbox", () => {
       mkdirSync: fs.mkdirSync,
       existsSync: fs.existsSync,
       rmSync: fs.rmSync,
+      renameSync: fs.renameSync,
       readdirSync: fs.readdirSync,
       readFileSync: fs.readFileSync,
       watch,
@@ -548,16 +592,82 @@ describe("control channel: watchAsyncControlInbox", () => {
   it("fires on a request that arrived before the watcher started", () => {
     const asyncDir = tmpAsyncDir("pi-control-watch-early-");
     try {
-      requestAsyncInterrupt(asyncDir);
+      requestAsyncInterrupt(asyncDir, { source: "test-source", reason: "parent_abort" });
       let fired = 0;
+      let received: { reason?: string; source?: string } | undefined;
       const h = harness();
       const dispose = watchAsyncControlInbox(asyncDir, {
-        onInterrupt: () => fired++,
+        onInterrupt: (request) => {
+          fired++;
+          received = request;
+        },
         fs: h.fsImpl,
         timers: h.timers,
       });
       assert.equal(fired, 1);
+      assert.equal(received?.source, "test-source");
+      assert.equal(received?.reason, "parent_abort");
       assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+      dispose();
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
+  it("delivers a corrupt interrupt claim exactly once without blocking later control messages", () => {
+    const asyncDir = tmpAsyncDir("pi-control-watch-corrupt-");
+    try {
+      fs.mkdirSync(path.dirname(interruptRequestPath(asyncDir)), { recursive: true });
+      fs.writeFileSync(interruptRequestPath(asyncDir), "{not-json", "utf-8");
+      let interrupted = 0;
+      let received: { reason?: string; source?: string } | undefined;
+      const steers: string[] = [];
+      const h = harness();
+      const dispose = watchAsyncControlInbox(asyncDir, {
+        onInterrupt: (request) => {
+          interrupted++;
+          received = request;
+        },
+        onSteer: (request) => steers.push(request.message),
+        fs: h.fsImpl,
+        timers: h.timers,
+      });
+      assert.equal(interrupted, 1);
+      assert.equal(received, undefined);
+      assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+      h.trigger();
+      assert.equal(interrupted, 1);
+
+      requestAsyncSteer(asyncDir, { message: "still live", id: "after-corrupt", ts: 1 });
+      h.trigger();
+      assert.deepEqual(steers, ["still live"]);
+      dispose();
+    } finally {
+      cleanup(asyncDir);
+    }
+  });
+
+  it("delivers a replacement request on the next poll after atomic claim", () => {
+    const asyncDir = tmpAsyncDir("pi-control-watch-race-");
+    try {
+      requestAsyncInterrupt(asyncDir, { source: "first" });
+      const h = harness();
+      const sources: string[] = [];
+      const fsImpl = {
+        ...h.fsImpl,
+        renameSync: (source: fs.PathLike, target: fs.PathLike) => {
+          fs.renameSync(source, target);
+          requestAsyncInterrupt(asyncDir, { source: "second" });
+        },
+      } satisfies WatchHarness["fsImpl"];
+      const dispose = watchAsyncControlInbox(asyncDir, {
+        onInterrupt: (request) => sources.push(request?.source ?? "malformed"),
+        fs: fsImpl,
+        timers: h.timers,
+      });
+      assert.deepEqual(sources, ["first"]);
+      h.trigger();
+      assert.deepEqual(sources, ["first", "second"]);
       dispose();
     } finally {
       cleanup(asyncDir);

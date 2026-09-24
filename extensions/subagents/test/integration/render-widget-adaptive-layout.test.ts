@@ -1066,74 +1066,6 @@ describe("subagent async widget rendering", () => {
     resetWidgetLayout();
   });
 
-  it("shows tk ticket titles in progressive widget rows without changing non-ticket jobs", () => {
-    resetWidgetLayout();
-    withStdoutSize(22, 120, () => {
-      const ui = createUiContext();
-      renderWidget(ui.ctx as never, [
-        {
-          asyncId: "run-ticket",
-          asyncDir: "/tmp/run-ticket",
-          status: "running",
-          mode: "single",
-          agents: ["ticketed"],
-          tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-          currentTool: "read",
-        },
-        {
-          asyncId: "run-plain",
-          asyncDir: "/tmp/run-plain",
-          status: "running",
-          mode: "single",
-          agents: ["plain"],
-          currentTool: "grep",
-        },
-        {
-          asyncId: "run-hidden",
-          asyncDir: "/tmp/run-hidden",
-          status: "running",
-          mode: "single",
-          agents: ["hidden"],
-          currentTool: "edit",
-        },
-      ]);
-
-      const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-      assert.match(text, /ticketed · ticket: Show active tk title/);
-      assert.doesNotMatch(text, /plain · ticket:/);
-      assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
-    });
-    resetWidgetLayout();
-  });
-
-  it("sanitizes and wraps complete direct tk ticket widget state", () => {
-    const safeTitle = `Unsafe title now ${"x".repeat(120)}`;
-    const lines = buildWidgetLines(
-      [
-        {
-          asyncId: "run-unsafe-ticket",
-          asyncDir: "/tmp/run-unsafe-ticket",
-          status: "running",
-          agents: ["worker"],
-          tkTicket: {
-            id: "psr-raw4",
-            title: `Unsafe\u009b title\u001b[31m now\u001b[0m ${"x".repeat(120)}`,
-          },
-          currentTool: "read",
-        },
-      ],
-      theme,
-      90,
-    );
-
-    assertWrappedSource(lines, safeTitle);
-    assert.ok(lines.every((line) => visibleWidth(line) <= 88));
-    const rendered = lines.join("");
-    assert.ok(!rendered.includes("…"), "ellipsis should be sanitized");
-    assert.ok(!rendered.includes("\u009b"), "C1 CSI should be sanitized");
-    assert.ok(!rendered.includes("\u001b[31m"), "red ESC sequence should be sanitized");
-  });
-
   it("uses a single collapsed widget line when the terminal has almost no spare rows", () => {
     resetWidgetLayout();
     withStdoutSize(20, 120, () => {
@@ -1555,7 +1487,6 @@ describe("subagent async widget rendering", () => {
     const width = 42;
     const longArgs = `--path=${"src/deep/".repeat(14)}report.json --query=${"needle-".repeat(18)}`;
     const longOutput = `recent-output-${"value-".repeat(18)}`;
-    const longTicket = `Wrap ${"complete-ticket-title-".repeat(10)}`;
     const job: AsyncJobState = {
       asyncId: "narrow-wrap",
       asyncDir: "/tmp/narrow-wrap",
@@ -1564,7 +1495,6 @@ describe("subagent async widget rendering", () => {
       agents: ["worker"],
       stepsTotal: 1,
       updatedAt: 20_000,
-      tkTicket: { id: "tlh-narrow", title: longTicket },
       steps: [
         {
           index: 0,
@@ -1590,14 +1520,12 @@ describe("subagent async widget rendering", () => {
     assert.match(compactPreview.at(-1) ?? "", /…/);
     assert.match(compactPreview.join(""), /grep:\s+--path=/);
     assert.doesNotMatch(compactPreview.join(""), /needle/);
-    assertWrappedSource(compact, longTicket);
 
     const expanded = buildWidgetLines([job], theme, width, true);
     assert.ok(expanded.length > compact.length);
     assert.ok(expanded.every((line) => visibleWidth(line) <= width - 2));
     assertWrappedSource(expanded, longArgs);
     assertWrappedSource(expanded, longOutput);
-    assertWrappedSource(expanded, longTicket);
     assert.doesNotMatch(expanded.join(""), /…|\.\.\./);
   });
 });

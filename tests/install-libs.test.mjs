@@ -1430,6 +1430,7 @@ test("migrateSubagentExtensionConfig replaces overrides, removes retired control
           activeNoticeAfterMs: 123456,
           activeNoticeAfterTurns: 7,
           activeNoticeAfterTokens: 99,
+          failedToolAttemptsBeforeAttention: 3,
           needsAttentionAfterMs: 321,
           notifyOn: ["active_long_running", "needs_attention", "active_long_running", "custom"],
           nestedKey: "preserve",
@@ -1447,6 +1448,7 @@ test("migrateSubagentExtensionConfig replaces overrides, removes retired control
     "remove control.activeNoticeAfterMs",
     "remove control.activeNoticeAfterTurns",
     "remove control.activeNoticeAfterTokens",
+    "remove control.failedToolAttemptsBeforeAttention",
     "remove active_long_running from control.notifyOn",
     "set control.needsAttentionAfterMs: 180000",
   ]);
@@ -1973,7 +1975,6 @@ test("cleanupManagedRetiredSubagentPackages removes owned git checkout and empty
   // Empty intermediate parent under git root must also be cleaned up.
   assert.equal(existsSync(ownerDir), false, "empty owner dir under git root must be removed");
 });
-
 test("cleanupManagedRetiredSubagentPackages does not remove non-empty sibling git dirs", (t) => {
   const root = tempFixture(t, "tlh-subagents-cleanup-git-sibling-");
   const agentDir = join(root, "agent");

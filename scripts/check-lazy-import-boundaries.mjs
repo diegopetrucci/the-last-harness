@@ -114,8 +114,8 @@ function parseArgs(argv) {
 //
 //   extensions/shared/project-agent-worktree.js
 //     Pure filesystem/path validation helpers with no peer imports or mutable
-//     module state. Shared by eager built-in guidance and the lazy custom-agent
-//     snapshot loader; allowing this overlap avoids a second root authority.
+//     module state. Shared by eager built-in guidance and the lazy on-demand
+//     custom-agent loader; allowing this overlap avoids a second root authority.
 //     Verified 2026-08-30.
 //
 //   the-last-harness/mcp-tools.js

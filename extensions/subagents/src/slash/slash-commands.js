@@ -1,9 +1,9 @@
-import { buildDoctorReport } from "../extension/doctor.js";
+import { buildDoctorReport, resolveProjectAgentDoctorTrust } from "../extension/doctor.js";
 import { SLASH_TEXT_RESULT_TYPE, } from "../shared/types.js";
 function sendSlashText(pi, text) {
     pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
-function doctorReportForContext(pi, state, config, ctx) {
+async function doctorReportForContext(pi, state, config, ctx, getProjectAgentTrustOptions) {
     let currentSessionFile = null;
     let currentSessionId = state.currentSessionId;
     let sessionError;
@@ -14,6 +14,7 @@ function doctorReportForContext(pi, state, config, ctx) {
     catch (error) {
         sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     }
+    const projectAgentTrust = await resolveProjectAgentDoctorTrust(ctx.cwd, getProjectAgentTrustOptions?.(ctx.cwd));
     return buildDoctorReport({
         cwd: ctx.cwd,
         config,
@@ -21,13 +22,14 @@ function doctorReportForContext(pi, state, config, ctx) {
         currentSessionFile,
         currentSessionId,
         sessionError,
+        projectAgentTrust,
     });
 }
-export function registerSlashCommands(pi, state, config) {
+export function registerSlashCommands(pi, state, config, getProjectAgentTrustOptions) {
     pi.registerCommand("subagents-doctor", {
         description: "Show subagent diagnostics",
         handler: async (_args, ctx) => {
-            sendSlashText(pi, doctorReportForContext(pi, state, config, ctx));
+            sendSlashText(pi, await doctorReportForContext(pi, state, config, ctx, getProjectAgentTrustOptions));
         },
     });
 }

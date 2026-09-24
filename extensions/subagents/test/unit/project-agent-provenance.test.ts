@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("packaged minor-agent provenance", () => {
-  it("derives independent ticket ids only for canonical developer tasks", () => {
+  it("does not infer ticket ids from task text", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-ticket-plan-"));
     fixtures.push(root);
     const agentDir = path.join(root, "agent");
@@ -49,8 +49,8 @@ describe("packaged minor-agent provenance", () => {
     assert.equal("error" in built, false);
     if ("error" in built) return;
     assert.deepEqual(
-      built.plan.tasks.map((task) => task.tkTicketId),
-      ["tlhm-o1qg", undefined, undefined, undefined],
+      built.plan.tasks.map((task) => task.ticketId),
+      [undefined, undefined, undefined, undefined],
     );
   });
 

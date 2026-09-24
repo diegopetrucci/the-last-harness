@@ -25,7 +25,7 @@ export function formatActivityLabel(lastActivityAt, activityState, now = Date.no
     return `active ${age} ago`;
 }
 function isCompletedStepStatus(status) {
-    return status === "complete" || status === "completed";
+    return status === "complete";
 }
 function formatAgentRunningLabel(count) {
     return count === 1 ? "1 agent running" : `${count} agents running`;

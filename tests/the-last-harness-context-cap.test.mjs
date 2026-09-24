@@ -14,12 +14,10 @@ const { registerContextCap } = await jiti.import("../extensions/the-last-harness
 // Production uses the eager TLH extension through Jiti and the subagent runtime
 // through a separate native ESM loader graph. Keep these imports native so this
 // regression exercises the real cross-loader metadata handoff.
-const { toModelInfo, contextWindowsForChildModels } =
+const { toModelInfo, contextWindowsForChildModels, resolveRuntimeModelContext } =
   await import("../extensions/subagents/src/shared/model-info.js");
 const { resolveEffectiveContextWindow } =
   await import("../extensions/subagents/src/shared/context-diagnostics.js");
-const { resolveRuntimeModelContext } =
-  await import("../extensions/subagents/src/runs/shared/model-fallback.js");
 const { contextWindowForModel } =
   await import("../extensions/subagents/src/runs/background/pi-streaming.js");
 
@@ -413,7 +411,7 @@ test("child context policy honors tlh.contextCap.disabled and toggle restoration
   );
 });
 
-test("native subagent loader keeps foreground/background role policies aligned", async (t) => {
+test("native subagent loader keeps async-runner role policies aligned", async (t) => {
   const enabledFixture = createIsolatedProfileFixture("tlh-cap-loader-test-", { test: t });
   writeFileSync(join(enabledFixture.agent, "settings.json"), "{}\n");
 
@@ -448,12 +446,12 @@ test("native subagent loader keeps foreground/background role policies aligned",
       assert.equal(
         resolveEffectiveContextWindow("openai-codex/gpt-5.6-luna:high", availableModels),
         372_000,
-        "non-developer foreground diagnostics must recover native context across loaders",
+        "non-developer async-runner diagnostics must recover native context across loaders",
       );
       assert.equal(
         resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels),
         450_000,
-        "non-developer foreground diagnostics must recover native context across loaders",
+        "non-developer async-runner diagnostics must recover native context across loaders",
       );
       assert.equal(
         resolveEffectiveContextWindow(
@@ -463,7 +461,7 @@ test("native subagent loader keeps foreground/background role policies aligned",
           { canonicalDeveloper: true },
         ),
         272_000,
-        "canonical developer foreground diagnostics must apply the uniform ceiling",
+        "canonical developer async-runner diagnostics must apply the uniform ceiling",
       );
       assert.equal(
         resolveEffectiveContextWindow("anthropic/claude-sonnet-4.6", availableModels, undefined, {
@@ -785,8 +783,6 @@ test("provider/id native policy keys remain collision-safe for embedded NULs", a
         provider: `collision${embeddedNull}provider`,
         id: "model",
         fullId: `collision${embeddedNull}provider/model`,
-        reasoning: undefined,
-        thinkingLevelMap: undefined,
         contextWindow: 272_000,
         nativeContextWindow: 450_000,
         developerChildContextWindow: 272_000,
@@ -795,8 +791,6 @@ test("provider/id native policy keys remain collision-safe for embedded NULs", a
         provider: "collision",
         id: `provider${embeddedNull}model`,
         fullId: `collision/provider${embeddedNull}model`,
-        reasoning: undefined,
-        thinkingLevelMap: undefined,
         contextWindow: 272_000,
         nativeContextWindow: 600_000,
         developerChildContextWindow: 272_000,

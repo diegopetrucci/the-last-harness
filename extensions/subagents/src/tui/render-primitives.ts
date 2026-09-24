@@ -1,5 +1,5 @@
 /**
- * Stateless display primitives shared by the async widget and foreground result cards.
+ * Stateless display primitives shared by the async widget and awaited result cards.
  */
 
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -268,7 +268,7 @@ export function modelThinkingBadge(theme: Theme, model?: string, thinking?: stri
  * cwd → repo (different repo only) → linked worktree → branch / detached HEAD → no git repo.
  * Returns undefined when the snapshot is absent (same-cwd run, the common case).
  */
-export function childLocationText(loc: ChildLocationSnapshot | undefined): string | undefined {
+function childLocationText(loc: ChildLocationSnapshot | undefined): string | undefined {
   if (!loc) return undefined;
   // Keep newline-bearing path components visible without allowing them to
   // become physical rows. Escape before the single-line display boundary so

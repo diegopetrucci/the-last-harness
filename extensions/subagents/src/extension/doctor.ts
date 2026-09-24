@@ -1,6 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.ts";
+import {
+  resolveCanonicalGitWorktreeRoot,
+  resolveProjectAgentTrust,
+  type ProjectAgentTrustOptions,
+  type ProjectAgentTrustResult,
+} from "../agents/project-agent-loader.ts";
+import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { discoverAvailableSkills, SOURCE_PRIORITY, type SkillSource } from "../agents/skills.ts";
 import {
@@ -11,6 +18,14 @@ import {
   type SubagentState,
 } from "../shared/types.ts";
 import { inspectRuntimeDirs } from "./runtime-cleanup.ts";
+import {
+  listAsyncRuns,
+  type AsyncRunUnreadableStatusIssue,
+} from "../runs/background/async-status.ts";
+import {
+  formatUnreadableStatus,
+  MAX_UNREADABLE_STATUS_REPORTS,
+} from "../runs/background/async-status-boundary.ts";
 
 interface DoctorPaths {
   tempRootDir: string;
@@ -24,6 +39,20 @@ interface DoctorDeps {
   discoverAvailableSkills: typeof discoverAvailableSkills;
 }
 
+export type ProjectAgentDoctorTrust = ProjectAgentTrustResult | { readonly kind: "unavailable" };
+
+export async function resolveProjectAgentDoctorTrust(
+  cwd: string,
+  options: ProjectAgentTrustOptions = {},
+): Promise<ProjectAgentDoctorTrust> {
+  const projectRoot = resolveCanonicalGitWorktreeRoot(cwd);
+  if (!projectRoot) return { kind: "unavailable" };
+  if (options.trustStore === undefined && options.createProjectTrustStore === undefined) {
+    return { kind: "unavailable" };
+  }
+  return resolveProjectAgentTrust(projectRoot, options);
+}
+
 interface DoctorReportInput {
   cwd: string;
   config: ExtensionConfig;
@@ -35,6 +64,8 @@ interface DoctorReportInput {
   expandTilde?: (value: string) => string;
   paths?: DoctorPaths;
   deps?: Partial<DoctorDeps>;
+  /** Read-only persisted trust state for the request cwd's canonical Git root. */
+  projectAgentTrust?: ProjectAgentDoctorTrust;
 }
 
 const DEFAULT_PATHS: DoctorPaths = {
@@ -123,6 +154,16 @@ function formatSessionLines(input: DoctorReportInput): string[] {
   return lines;
 }
 
+function formatExecutionSection(input: DoctorReportInput): string[] {
+  const policy = resolveExecutionPolicy(input.config.execution);
+  const runCeiling = policy.maxRunTimeMs === false ? "disabled" : `${policy.maxRunTimeMs}ms`;
+  return [
+    `- shared run ceiling: ${runCeiling}`,
+    "- role ceilings: fresh wall-clock deadline per child spawn (fallback/resume restart the clock)",
+    ...(policy.diagnostic ? [`- execution policy: warning — ${policy.diagnostic}`] : []),
+  ];
+}
+
 function formatRuntimeDirCounts(paths: DoctorPaths): string {
   const counts = inspectRuntimeDirs({
     asyncDir: paths.asyncDir,
@@ -136,15 +177,36 @@ function formatRuntimeDirCounts(paths: DoctorPaths): string {
   );
 }
 
+function formatStatusHealth(paths: DoctorPaths): string[] {
+  const unreadableStatuses: AsyncRunUnreadableStatusIssue[] = [];
+  try {
+    listAsyncRuns(paths.asyncDir, {
+      reconcile: false,
+      onUnreadable: (issue) => unreadableStatuses.push(issue),
+    });
+  } catch (error) {
+    return [`- status scan: failed — ${errorText(error)}`];
+  }
+  if (unreadableStatuses.length === 0) return ["- unreadable statuses: none"];
+  const lines = unreadableStatuses
+    .slice(0, MAX_UNREADABLE_STATUS_REPORTS)
+    .map((issue) => `- ${formatUnreadableStatus(issue.statusPath)}`);
+  const remaining = unreadableStatuses.length - MAX_UNREADABLE_STATUS_REPORTS;
+  if (remaining > 0) lines.push(`- and ${remaining} more unreadable statuses`);
+  return lines;
+}
+
 function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
-  return [
+  let discovered: ReturnType<DoctorDeps["discoverAgentsAll"]> | undefined;
+  const lines = [
     lineFromCheck("agents", () => {
-      const discovered = deps.discoverAgentsAll(input.cwd);
+      const current = deps.discoverAgentsAll(input.cwd);
+      discovered = current;
       const agentCounts = {
-        builtin: discovered.builtin.length,
-        package: discovered.package?.length ?? 0,
-        user: discovered.user.length,
-        project: discovered.project.length,
+        builtin: current.builtin.length,
+        package: current.package?.length ?? 0,
+        user: current.user.length,
+        project: current.project.length,
       };
       return `- agents: total ${agentCounts.builtin + agentCounts.package + agentCounts.user + agentCounts.project} (${formatSourceCounts(agentCounts)})`;
     }),
@@ -153,6 +215,39 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
       return `- skills: total ${skills.length} (${formatSkillSourceCounts(skills)})`;
     }),
   ];
+  const obsoleteCompletionGuardNotices = (discovered?.agentDiagnostics ?? []).filter(
+    (diagnostic) =>
+      diagnostic.kind === "notice" &&
+      diagnostic.error.includes("Obsolete") &&
+      diagnostic.error.includes("completionGuard"),
+  );
+  if (obsoleteCompletionGuardNotices.length > 0) {
+    lines.push(
+      "- agent migration notices:",
+      ...obsoleteCompletionGuardNotices.map(
+        (diagnostic) => `  - ${diagnostic.filePath}: ${diagnostic.error}`,
+      ),
+    );
+  }
+  return lines;
+}
+
+function formatProjectAgentTrust(value: ProjectAgentDoctorTrust | undefined): string {
+  if (!value || value.kind === "unavailable") return "- project-agent trust: unavailable";
+  if (value.trusted) return "- project-agent trust: trusted";
+  switch (value.source) {
+    case "saved-negative":
+    case "explicit-negative":
+      return "- project-agent trust: denied";
+    case "no-persisted-trust":
+      return "- project-agent trust: not configured";
+    case "trust-path-mismatch":
+      return "- project-agent trust: path mismatch";
+    case "trust-store-error":
+      return "- project-agent trust: trust-store error";
+    default:
+      return "- project-agent trust: unavailable";
+  }
 }
 
 function formatLegacyHeartbeatNotice(config: ExtensionConfig): string[] {
@@ -198,14 +293,21 @@ export function buildDoctorReport(input: DoctorReportInput): string {
     ),
     ...formatSessionLines(input),
     "",
+    "Execution",
+    ...formatExecutionSection(input),
+    "",
     "Filesystem",
     formatExistingDirectory("temp root", paths.tempRootDir),
     formatExistingDirectory("async runs", paths.asyncDir),
     formatExistingDirectory("results", paths.resultsDir),
     lineFromCheck("runtime dir counts", () => formatRuntimeDirCounts(paths)),
+    ...formatStatusHealth(paths),
     "",
     "Discovery",
     ...formatDiscovery(input, deps),
+    "",
+    "Project agents",
+    formatProjectAgentTrust(input.projectAgentTrust),
     "",
     "Permission system",
     ...formatPermissionSystemSection(),

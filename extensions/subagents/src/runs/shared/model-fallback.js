@@ -1,4 +1,4 @@
-import { parseThinkingLevel, splitKnownThinkingSuffix, } from "../../shared/model-info.js";
+import { parseThinkingLevel, splitKnownThinkingSuffix } from "../../shared/model-info.js";
 import { checkModelScope, } from "./model-scope.js";
 function sameModelIdentity(left, right) {
     return Boolean(left &&
@@ -24,9 +24,6 @@ export function appendRuntimeFallbackResolution(input) {
         resumed: current,
         reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
     };
-}
-function splitThinkingSuffix(model) {
-    return splitKnownThinkingSuffix(model);
 }
 const INHERIT_MODEL = "inherit";
 export function canonicalSubagentModelIdentity(model, thinking) {
@@ -83,157 +80,13 @@ export function sanitizeSubagentModelResolution(value) {
 export function modelReferenceFromIdentity(identity) {
     return `${identity.provider}/${identity.model}`;
 }
-const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
-function runtimeIdentityFromFullId(fullId, thinkingSuffix) {
-    const separator = fullId.indexOf("/");
-    if (separator <= 0 || separator === fullId.length - 1)
-        return undefined;
-    const provider = fullId.slice(0, separator);
-    const model = fullId.slice(separator + 1);
-    if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model))
-        return undefined;
-    return {
-        provider,
-        model,
-        ...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
-    };
-}
-export function resolveRuntimeModelContext(providerValue, modelValue, contextWindows) {
-    if (!contextWindows ||
-        (typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
-        typeof modelValue !== "string" ||
-        (providerValue !== undefined && typeof providerValue !== "string"))
-        return undefined;
-    const provider = typeof providerValue === "string" ? providerValue.trim() : "";
-    const model = modelValue.trim();
-    if (model === "")
-        return undefined;
-    if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider))
-        return undefined;
-    const parsed = splitKnownThinkingSuffix(model);
-    if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel))
-        return undefined;
-    const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
-    if (!Object.hasOwn(contextWindows, fullId))
-        return undefined;
-    const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
-    if (!identity)
-        return undefined;
-    const contextWindow = contextWindows[fullId];
-    if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
-        return undefined;
-    return { identity, contextWindow };
-}
-export function normalizeModelSegment(segment) {
-    return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-}
-function isPlausibleDateStamp(year, month, day) {
-    const yyyy = Number(year);
-    const mm = Number(month);
-    const dd = Number(day);
-    return yyyy >= 1900 && yyyy <= 2099 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
-}
-function stripTrailingDateStamp(segment) {
-    const dashed = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(segment);
-    if (dashed && isPlausibleDateStamp(dashed[2], dashed[3], dashed[4]))
-        return dashed[1];
-    const compact = /^(.*)-(\d{4})(\d{2})(\d{2})$/.exec(segment);
-    if (compact && isPlausibleDateStamp(compact[2], compact[3], compact[4]))
-        return compact[1];
-    return segment;
-}
-function resolveBaseModelCandidate(baseModel, availableModels, preferredProvider) {
-    if (baseModel.includes("/")) {
-        const exact = availableModels.find((entry) => entry.fullId === baseModel);
-        if (exact)
-            return exact.fullId;
-    }
-    else {
-        const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
-        if (preferredProvider) {
-            const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
-            if (preferredMatch)
-                return preferredMatch.fullId;
-        }
-        if (exactMatches.length === 1)
-            return exactMatches[0].fullId;
-    }
-    return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
-}
-export function fuzzyResolveModel(baseModel, availableModels, preferredProvider) {
-    let queryProvider;
-    let queryIdRaw = baseModel;
-    const slashIdx = baseModel.indexOf("/");
-    if (slashIdx !== -1) {
-        queryProvider = normalizeModelSegment(baseModel.slice(0, slashIdx));
-        queryIdRaw = baseModel.slice(slashIdx + 1);
-    }
-    else {
-        const providerSeparators = [":", "."];
-        for (const separator of providerSeparators) {
-            const separatorIdx = baseModel.indexOf(separator);
-            if (separatorIdx <= 0)
-                continue;
-            const providerPart = normalizeModelSegment(baseModel.slice(0, separatorIdx));
-            if (!availableModels.some((entry) => normalizeModelSegment(entry.provider) === providerPart))
-                continue;
-            queryProvider = providerPart;
-            queryIdRaw = baseModel.slice(separatorIdx + 1);
-            break;
-        }
-    }
-    const queryId = normalizeModelSegment(queryIdRaw);
-    const queryIdNoDate = stripTrailingDateStamp(queryId);
-    const candidates = availableModels.filter((entry) => {
-        const entryId = normalizeModelSegment(entry.id);
-        if (entryId !== queryId && stripTrailingDateStamp(entryId) !== queryIdNoDate)
-            return false;
-        if (queryProvider !== undefined && normalizeModelSegment(entry.provider) !== queryProvider)
-            return false;
-        return true;
-    });
-    if (candidates.length === 0)
-        return undefined;
-    if (preferredProvider) {
-        const preferredProviderNorm = normalizeModelSegment(preferredProvider);
-        const preferred = candidates.find((entry) => normalizeModelSegment(entry.provider) === preferredProviderNorm);
-        if (preferred)
-            return preferred.fullId;
-    }
-    if (candidates.length === 1)
-        return candidates[0].fullId;
-    return undefined;
-}
-export function resolveModelCandidate(model, availableModels, preferredProvider) {
-    if (!model)
-        return undefined;
-    if (!availableModels || availableModels.length === 0)
-        return model;
-    const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
-    if (resolvedWhole)
-        return resolvedWhole;
-    const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
-    if (!thinkingSuffix)
-        return model;
-    const resolvedBase = resolveBaseModelCandidate(baseModel, availableModels, preferredProvider);
-    if (resolvedBase)
-        return `${resolvedBase}${thinkingSuffix}`;
-    return model;
-}
 function defaultScopeWarn(violation) {
     console.warn(`[pi-subagents] ${violation.message}`);
 }
-export function resolveSubagentModelOverride(requestedModel, parentModel, availableModels, preferredProvider, options) {
+export function resolveSubagentModelOverride(requestedModel, parentModel, options) {
     const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
     const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
-    let resolved;
-    if (explicit === undefined) {
-        resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
-    }
-    else {
-        resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
-    }
+    const resolved = explicit ?? (parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined);
     if (resolved && options?.scope?.enforce) {
         const source = explicit === undefined ? "inherited" : (options.source ?? "inherited");
         const violation = checkModelScope(resolved, options.scope, source);
@@ -244,6 +97,15 @@ export function resolveSubagentModelOverride(requestedModel, parentModel, availa
         }
     }
     return resolved;
+}
+export function deduplicateModelCandidates(candidates) {
+    const seen = new Set();
+    return candidates.filter((candidate) => {
+        if (seen.has(candidate))
+            return false;
+        seen.add(candidate);
+        return true;
+    });
 }
 export function buildFallbackModelList(providerFallbackModels, agentFallbackModels) {
     const seen = new Set();
@@ -257,86 +119,26 @@ export function buildFallbackModelList(providerFallbackModels, agentFallbackMode
     }
     return fallbackModels.length > 0 ? fallbackModels : undefined;
 }
-function findCatalogModel(model, allModels, preferredProvider) {
-    const exactWhole = allModels.find((entry) => entry.fullId === model);
-    if (exactWhole)
-        return exactWhole;
-    const baseModel = splitKnownThinkingSuffix(model).baseModel;
-    const exact = allModels.find((entry) => entry.fullId === baseModel);
-    if (exact)
-        return exact;
-    const resolved = resolveModelCandidate(baseModel, allModels, preferredProvider);
-    if (!resolved)
-        return undefined;
-    return allModels.find((entry) => entry.fullId === resolved);
-}
-function isAuthoritativelyUnavailableFallback(normalizedCandidate, availableModels, preferredProvider, registry) {
-    if (!registry?.allModels ||
-        registry.allModels.length === 0 ||
-        registry.error?.trim() ||
-        !availableModels ||
-        availableModels.length === 0)
-        return false;
-    if (availableModels.some((entry) => entry.fullId === normalizedCandidate))
-        return false;
-    const catalogModel = findCatalogModel(normalizedCandidate, registry.allModels, preferredProvider);
-    if (!catalogModel)
-        return false;
-    return !availableModels.some((entry) => entry.fullId === catalogModel.fullId);
-}
-function formatFilteredFallbackNotice(filteredFallbackModels) {
-    const names = [];
-    let remaining = filteredFallbackModels.length;
-    for (const model of filteredFallbackModels) {
-        const safeName = sanitizeModelFallbackNotice(model)?.slice(0, 48) ?? "(unnamed)";
-        const separator = names.length > 0 ? ", " : "";
-        if (names.join(", ").length + separator.length + safeName.length > 96)
-            break;
-        names.push(safeName);
-        remaining--;
-    }
-    if (remaining > 0)
-        names.push(`+${remaining} more`);
-    const modelLabel = filteredFallbackModels.length === 1 ? "model" : "models";
-    return (sanitizeModelFallbackNotice(`Skipped ${filteredFallbackModels.length} unavailable fallback ${modelLabel}${names.length > 0 ? ` (${names.join(", ")})` : ""}. Check provider credentials or update fallbackModels; the primary model was retained.`) ??
-        "Unavailable fallback models were skipped; check provider credentials or update fallbackModels.");
-}
-export function buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, preferredProvider, options) {
+export function buildModelCandidatePlan(primaryModel, fallbackModels, options) {
     const seen = new Set();
     const candidates = [];
-    const filteredFallbackModels = [];
     const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
-    for (let index = 0; index < rawCandidates.length; index++) {
+    for (let index = 0; index < rawCandidates.length; index += 1) {
         const raw = rawCandidates[index];
-        if (!raw)
+        if (typeof raw !== "string")
             continue;
         const model = raw.trim();
-        if (!model)
+        if (!model || seen.has(model))
             continue;
-        const normalized = resolveModelCandidate(model, availableModels, preferredProvider);
-        if (!normalized || seen.has(normalized))
-            continue;
-        if (index > 0 &&
-            isAuthoritativelyUnavailableFallback(normalized, availableModels, preferredProvider, options?.registry)) {
-            seen.add(normalized);
-            filteredFallbackModels.push(model);
-            continue;
-        }
         if (index > 0 && options?.scope?.enforce) {
-            const violation = checkModelScope(normalized, options.scope, "inherited");
+            const violation = checkModelScope(model, options.scope, "inherited");
             if (violation)
                 (options.onWarn ?? defaultScopeWarn)(violation);
         }
-        seen.add(normalized);
-        candidates.push(normalized);
+        seen.add(model);
+        candidates.push(model);
     }
-    return {
-        candidates,
-        filteredFallbackModels,
-        ...(filteredFallbackModels.length > 0
-            ? { filteringNotice: formatFilteredFallbackNotice(filteredFallbackModels) }
-            : {}),
-    };
+    return { candidates };
 }
 function replaceModelNoticeControlCharacters(value) {
     return [...value]
@@ -352,70 +154,26 @@ export function sanitizeModelFallbackNotice(notice) {
     const sanitized = replaceModelNoticeControlCharacters(notice).replace(/\s+/g, " ").trim();
     return sanitized ? sanitized.slice(0, 240) : undefined;
 }
-const MAX_MODEL_FALLBACK_NOTICE_LENGTH = 240;
-const MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH = 24;
-export function combineModelFallbackNotices(...notices) {
-    const unique = [...new Set(notices.map(sanitizeModelFallbackNotice).filter(Boolean))];
-    if (unique.length === 0)
-        return undefined;
-    const joined = unique.join(" ");
-    if (joined.length <= MAX_MODEL_FALLBACK_NOTICE_LENGTH)
-        return joined;
-    const priority = unique.at(-1);
-    if (priority.length >= MAX_MODEL_FALLBACK_NOTICE_LENGTH)
-        return priority.slice(0, MAX_MODEL_FALLBACK_NOTICE_LENGTH);
-    const prefixBudget = MAX_MODEL_FALLBACK_NOTICE_LENGTH - priority.length - 1;
-    if (prefixBudget < MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH)
-        return priority;
-    const prefixSource = unique.slice(0, -1).join(" ");
-    const truncatedPrefix = prefixSource.slice(0, prefixBudget).trimEnd();
-    const wordBoundary = truncatedPrefix.lastIndexOf(" ");
-    if (wordBoundary < MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH)
-        return priority;
-    const prefix = truncatedPrefix.slice(0, wordBoundary).trimEnd();
-    return prefix.length >= MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH
-        ? `${prefix} ${priority}`
-        : priority;
-}
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
     /rate\s*limit/i,
     /usage\s*limit/i,
     /too many requests/i,
     /\b429\b/,
-    /quota/i,
-    /billing/i,
-    /credit/i,
-    /auth(?:entication)?/i,
-    /unauthori[sz]ed/i,
-    /forbidden/i,
-    /api key/i,
-    /token expired/i,
-    /invalid key/i,
-    /provider.*unavailable/i,
-    /model.*unavailable/i,
-    /model.*disabled/i,
-    /model.*not found/i,
-    /unknown model/i,
-    /overloaded/i,
-    /service unavailable/i,
-    /temporar(?:ily)? unavailable/i,
-    /connection refused/i,
+    /\bquota\b/i,
+    /connection\s+(?:refused|reset|closed|timed?\s*out)/i,
     /fetch failed/i,
-    /network error/i,
+    /network\s+error/i,
     /socket hang up/i,
+    /\b(?:econnreset|econnrefused|enetunreach|ehostunreach|eai_again|etimedout)\b/i,
+    /(?:request|provider|upstream|gateway)\s+.*\b(?:timed?\s*out|timeout)\b/i,
     /stream ended without finish_reason/i,
-    /upstream/i,
-    /timed? out/i,
-    /timeout/i,
-    /\b502\b/,
-    /\b503\b/,
-    /\b504\b/,
-    /cold.?start/i,
-    /empty response/i,
-    /no output/i,
-    /model.*(?:load|fail|error)/i,
+    /service unavailable/i,
+    /bad gateway/i,
+    /gateway timeout/i,
+    /internal server error/i,
+    /\boverloaded(?:_error)?\b/i,
 ];
-const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i;
+const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:(?:\(exit \d+\):))|(?:with exit code \d+))(?:\s|$)/i;
 export function isRetryableModelFailure(error) {
     if (!error)
         return false;

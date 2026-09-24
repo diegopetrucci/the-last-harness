@@ -29,7 +29,7 @@ describe("subagent control attention state", () => {
     assert.equal(deriveActivityState({ config, startedAt: 0, now: 400 }), "needs_attention");
   });
 
-  it("suppresses idle attention while a tool call is in flight", () => {
+  it("suppresses idle attention while a tool call or compaction is in flight", () => {
     assert.equal(
       deriveActivityState({
         config,
@@ -45,9 +45,30 @@ describe("subagent control attention state", () => {
         config,
         startedAt: 0,
         lastActivityAt: 0,
+        compactionInFlight: true,
+        now: 400,
+      }),
+      undefined,
+    );
+    assert.equal(
+      deriveActivityState({
+        config,
+        startedAt: 0,
+        lastActivityAt: 0,
         toolCallInFlight: false,
         now: 400,
       }),
+      "needs_attention",
+    );
+  });
+
+  it("uses the newest baseline timestamp for idle detection", () => {
+    assert.equal(
+      deriveActivityState({ config, startedAt: 1_000, lastActivityAt: 100, now: 1_250 }),
+      undefined,
+    );
+    assert.equal(
+      deriveActivityState({ config, startedAt: 1_000, lastActivityAt: 100, now: 1_400 }),
       "needs_attention",
     );
   });
@@ -85,18 +106,6 @@ describe("subagent control attention state", () => {
     assert.equal(event.message, "worker completed without making edits for an implementation task");
   });
 
-  it("builds terminal completion guard control events", () => {
-    const event = buildControlEvent({
-      to: "needs_attention",
-      runId: "run-1",
-      agent: "worker",
-      message: "worker completed without making edits for an implementation task",
-      reason: "completion_guard",
-    });
-
-    assert.equal(event.reason, "completion_guard");
-  });
-
   it("defaults notifications to needs attention", () => {
     const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker" });
     assert.equal(shouldNotifyControlEvent(config, event), true);
@@ -112,6 +121,7 @@ describe("subagent control attention state", () => {
     Reflect.set(legacy, "activeNoticeAfterMs", 1);
     Reflect.set(legacy, "activeNoticeAfterTurns", 1);
     Reflect.set(legacy, "activeNoticeAfterTokens", 1);
+    Reflect.set(legacy, "failedToolAttemptsBeforeAttention", 2);
     Reflect.set(legacy, "notifyOn", ["active_long_running"]);
     const migrated = resolveControlConfig(legacy);
     assert.equal(migrated.needsAttentionAfterMs, 180_000);
@@ -119,6 +129,7 @@ describe("subagent control attention state", () => {
     assert.equal(Object.hasOwn(migrated, "activeNoticeAfterMs"), false);
     assert.equal(Object.hasOwn(migrated, "activeNoticeAfterTurns"), false);
     assert.equal(Object.hasOwn(migrated, "activeNoticeAfterTokens"), false);
+    assert.equal(Object.hasOwn(migrated, "failedToolAttemptsBeforeAttention"), false);
 
     Reflect.set(legacy, "notifyOn", ["active_long_running", "needs_attention"]);
     assert.deepEqual(resolveControlConfig(legacy).notifyOn, ["needs_attention"]);
@@ -127,12 +138,10 @@ describe("subagent control attention state", () => {
   it("resolves custom notification config", () => {
     const custom = resolveControlConfig(undefined, {
       needsAttentionAfterMs: 1234,
-      failedToolAttemptsBeforeAttention: 4,
       notifyOn: ["needs_attention", "nope" as never],
       notifyChannels: ["event", "bad" as never],
     });
     assert.equal(custom.needsAttentionAfterMs, 1234);
-    assert.equal(custom.failedToolAttemptsBeforeAttention, 4);
     assert.deepEqual(custom.notifyOn, ["needs_attention"]);
     assert.deepEqual(custom.notifyChannels, ["event"]);
   });
@@ -146,13 +155,13 @@ describe("subagent control attention state", () => {
     assert.deepEqual(custom.notifyChannels, ["event", "async"]);
   });
 
-  it("allows empty notification arrays to disable notifications", () => {
+  it("short-circuits notification claims when channels are empty", () => {
     const custom = resolveControlConfig(undefined, {
-      notifyOn: [],
+      notifyOn: ["needs_attention"],
       notifyChannels: [],
     });
     const event = buildControlEvent({ to: "needs_attention", runId: "run-1", agent: "worker" });
-    assert.deepEqual(custom.notifyOn, []);
+    assert.deepEqual(custom.notifyOn, ["needs_attention"]);
     assert.deepEqual(custom.notifyChannels, []);
     assert.equal(shouldNotifyControlEvent(custom, event), false);
   });
@@ -174,40 +183,20 @@ describe("subagent control attention state", () => {
     assert.doesNotMatch(message, /Wait:/);
   });
 
-  it("formats terminal completion guard notices without live-run commands", () => {
-    const event = buildControlEvent({
-      to: "needs_attention",
-      runId: "78f659a3",
-      agent: "worker",
-      index: 0,
-      message: "worker completed without making edits for an implementation task",
-      reason: "completion_guard",
-    });
-
-    const message = formatControlNoticeMessage(event);
-
-    assert.match(message, /Subagent failed: worker/);
-    assert.match(message, /read the output artifact or session/);
-    assert.match(message, /Run: 78f659a3 step 1/);
-    assert.doesNotMatch(message, /Status:/);
-    assert.doesNotMatch(message, /Interrupt:/);
-    assert.doesNotMatch(message, /What are you blocked on/);
-  });
-
   it("round-trips bounded idle episode identity without changing legacy or non-idle keys", () => {
     const idle = buildControlEvent({
       to: "needs_attention",
       runId: "run-episode",
       agent: "worker",
       reason: "idle",
-      idleEpisodeId: "  attempt-a~idle~1  ",
+      idleEpisodeId: "  attempt-a-idle-1  ",
     });
     const parsed = parseControlEvent(JSON.parse(JSON.stringify(idle)));
     assert.ok(parsed);
-    assert.equal(parsed.idleEpisodeId, "attempt-a~idle~1");
+    assert.equal(parsed.idleEpisodeId, "attempt-a-idle-1");
     assert.equal(
       controlNotificationKey(parsed),
-      "run-episode:needs_attention:idle:attempt-a~idle~1",
+      "run-episode:needs_attention:idle:attempt-a-idle-1",
     );
 
     const invalid = parseControlEvent({
@@ -230,7 +219,7 @@ describe("subagent control attention state", () => {
       runId: "run-episode",
       agent: "worker",
       reason: "context_pressure",
-      idleEpisodeId: "attempt-a~idle~2",
+      idleEpisodeId: "attempt-a-idle-2",
     });
     assert.equal(durable.idleEpisodeId, undefined);
     assert.equal(controlNotificationKey(durable), "run-episode:needs_attention:context_pressure::");
@@ -249,15 +238,15 @@ describe("subagent control attention state", () => {
     assert.equal(claimControlNotification(resolveControlConfig(), event, seen), true);
     assert.equal(claimControlNotification(resolveControlConfig(), event, seen), false);
 
-    const terminalEvent = buildControlEvent({
+    const pressureEvent = buildControlEvent({
       to: "needs_attention",
       runId: "run-1",
       agent: "worker",
       index: 0,
-      message: "worker completed without making edits for an implementation task",
-      reason: "completion_guard",
+      message: "worker context pressure",
+      reason: "context_pressure",
     });
-    assert.equal(claimControlNotification(resolveControlConfig(), terminalEvent, seen), true);
+    assert.equal(claimControlNotification(resolveControlConfig(), pressureEvent, seen), true);
   });
 
   it("dedupes warning and critical pressure events independently", () => {

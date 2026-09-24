@@ -2,16 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TEMP_ROOT_DIR, type ResolvedToolBudget } from "../../shared/types.ts";
-import {
-  findModelInfo,
-  getSupportedThinkingLevels,
-  THINKING_LEVELS,
-  type ModelInfo,
-  type ThinkingLevel,
-} from "../../shared/model-info.ts";
-import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
-import { normalizeTkTicketId } from "./tk-ticket.ts";
+import { TEMP_ROOT_DIR } from "../../shared/types.ts";
+import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR =
@@ -31,6 +23,8 @@ export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 /** Parent-verified provenance for installer-managed TLH minor-agent prompts. */
 export const SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV = "PI_SUBAGENT_PROJECT_AGENT_GUIDANCE";
+/** Parent-owned ticket identity retained so developer reminders survive compaction. */
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV = "PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -42,8 +36,6 @@ export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
-/** Parent-owned validated developer ticket assignment for the child runtime. */
-export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 
 interface BuildPiArgsInput {
   parentSessionId?: string;
@@ -54,8 +46,6 @@ interface BuildPiArgsInput {
   sessionFile?: string;
   model?: string;
   thinking?: string | false;
-  availableModels?: ModelInfo[];
-  preferredModelProvider?: string;
   systemPromptMode?: "append" | "replace";
   inheritProjectContext: boolean;
   inheritSkills: boolean;
@@ -77,11 +67,10 @@ interface BuildPiArgsInput {
   childAgentName?: string;
   /** True only when the parent selected the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
-  /** Validated per-child developer ticket assignment. */
-  tkTicketId?: string;
+  /** Validated ticket identity for the canonical developer child. */
+  ticketId?: string;
   childIndex?: number;
   steerInboxDir?: string;
-  toolBudget?: ResolvedToolBudget;
 }
 
 interface BuildPiArgsResult {
@@ -172,54 +161,20 @@ function supervisorChannelDir(runId: string, agent: string, childIndex: number):
   );
 }
 
-interface ThinkingSuffixOptions {
-  availableModels?: ModelInfo[];
-  preferredModelProvider?: string;
-}
-
-function shouldDropThinkingLevel(modelInfo: ModelInfo | undefined, thinking: string): boolean {
-  if (!modelInfo) return false;
-  if (modelInfo.reasoning === false) return thinking !== "off";
-
-  // Do not reuse getSupportedThinkingLevels' no-map default here: settings
-  // validation can be strict, but absent runtime metadata must fail open.
-  if (!modelInfo.thinkingLevelMap) return false;
-  return !getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel);
-}
-
 /**
- * Return the user-facing note for a capability-gated thinking level, if the
- * gate would drop it. This deliberately mirrors applyThinkingSuffix's gate
- * without changing the value that function returns.
+ * Append the requested thinking suffix and let Pi validate whether the model
+ * accepts it. Registry capability metadata is intentionally not consulted.
  */
-export function getThinkingLevelDropNote(
-  model: string | undefined,
-  thinking: string | false | undefined,
-  replaceExisting = false,
-  options?: ThinkingSuffixOptions,
-): string | undefined {
-  if (!model || !thinking || replaceExisting) return undefined;
-  const colonIdx = model.lastIndexOf(":");
-  if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1)))
-    return undefined;
-  const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
-  if (!shouldDropThinkingLevel(modelInfo, thinking)) return undefined;
-  return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
-}
-
 export function applyThinkingSuffix(
   model: string | undefined,
   thinking: string | false | undefined,
   replaceExisting = false,
-  options?: ThinkingSuffixOptions,
 ): string | undefined {
   if (!model || !thinking) return model;
-  const colonIdx = model.lastIndexOf(":");
-  if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
-    return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
+  const { thinkingSuffix } = splitKnownThinkingSuffix(model);
+  if (thinkingSuffix) {
+    return replaceExisting ? `${model.slice(0, -thinkingSuffix.length)}:${thinking}` : model;
   }
-  // replaceExisting is reserved for explicit caller overrides; preserve that deliberate instruction.
-  if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options)) return model;
   return `${model}:${thinking}`;
 }
 
@@ -254,10 +209,7 @@ function buildPiArgsInternal(
     }
   }
 
-  const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
-    availableModels: input.availableModels,
-    preferredModelProvider: input.preferredModelProvider,
-  });
+  const modelArg = applyThinkingSuffix(input.model, input.thinking);
   if (modelArg) {
     args.push("--model", modelArg);
   }
@@ -359,11 +311,11 @@ function buildPiArgsInternal(
   // Always write the provenance sentinel. An inherited "1" must never opt a
   // same-name custom agent into project guidance.
   env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
-  // Always override inherited ticket state. Invalid or missing assignments are
-  // explicitly cleared so a child cannot accidentally receive its parent's ID.
+  // Always overwrite inherited ticket state. A missing assignment clears it so
+  // a child cannot accidentally retain its parent's ticket reminder.
   env[SUBAGENT_TK_TICKET_ID_ENV] =
     input.projectAgentGuidance === true && input.childAgentName === "developer"
-      ? normalizeTkTicketId(input.tkTicketId)
+      ? input.ticketId
       : undefined;
   // Omitted supervisorBridge preserves native supervision; false must suppress
   // both prompt guidance and runtime tool registration in the child.
@@ -399,8 +351,6 @@ function buildPiArgsInternal(
   if (input.steerInboxDir) {
     env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
   }
-  const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
-  if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 
   env[SUBAGENT_PARENT_SESSION_ENV] =
     input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";

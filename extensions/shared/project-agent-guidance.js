@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { findValidatedGitWorktree, } from "./project-agent-worktree.js";
-import { getAgentDir, ProjectTrustStore, } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+export { isCanonicalPackagedMinorAgent } from "./project-agent-provenance.js";
 export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
 export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
@@ -653,24 +654,6 @@ function addSkippedSourceDiagnostic(inventory, candidate) {
         role: candidate.role,
     });
     return true;
-}
-export function isCanonicalPackagedMinorAgent(agent) {
-    if (typeof agent !== "object" || agent === null || Array.isArray(agent))
-        return false;
-    const candidate = agent;
-    if (typeof candidate.name !== "string" || typeof candidate.filePath !== "string")
-        return false;
-    const role = PACKAGED_MINOR_AGENT_ROLES.find((packagedRole) => packagedRole === candidate.name);
-    if (!role)
-        return false;
-    let canonicalPath;
-    try {
-        canonicalPath = resolve(getAgentDir(), "tlh", "agents", "subagents", `${role}.md`);
-        return resolve(candidate.filePath) === canonicalPath;
-    }
-    catch {
-        return false;
-    }
 }
 export function projectAgentGuidanceFilename(role) {
     if (typeof role !== "string" || !Object.hasOwn(ROLE_FILENAMES, role))

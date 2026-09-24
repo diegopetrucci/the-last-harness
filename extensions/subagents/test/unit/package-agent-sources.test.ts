@@ -63,7 +63,7 @@ describe("package agent source hard cutover", () => {
     const canonicalDir = path.join(agentDir, "tlh", "agents", "subagents");
     writeAgent(canonicalDir, "developer");
 
-    // A project package at the repository root is a distinct source from the #588 snapshot seam.
+    // A project package at the repository root remains outside explicit embedded dispatch.
     writeJson(path.join(tempProject, "package.json"), {
       "pi-subagents": { agents: ["agents"] },
     });

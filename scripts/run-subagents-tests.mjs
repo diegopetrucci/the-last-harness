@@ -11,13 +11,62 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
-    minimumFiles: 102,
-    minimumTests: 1474,
+    // B2 removes retired completion-guard/task-intent coverage while keeping
+    // the remaining unit tests protected from accidental broad deletion.
+    // C1 audit: 8 async-resume, 5 lifecycle-state, and 3 status/revival
+    // tests all asserted retired cumulative runtime-ledger/checkpoint behavior.
+    // Fresh per-spawn deadline and legacy-status tests retain required coverage.
+    // C2 removes 54 fuzzy/catalog/thinking-gate assertions while porting
+    // explicit ordering, transient retry, scope, identity, and context cases;
+    // four A-series run-support helper tests remain covered.
+    // C2 follow-up removes four obsolete runtime capability tests and ports
+    // runtime-context boundary coverage into model-info.test.
+    // D1 replaces fuzzy tk-ticket coverage with explicit ticket-context tests.
+    // E1 removes the retired completion-batcher and completion-dedupe suites.
+    // E3 removes one retired unit suite; E4 removes the status quarantine
+    // behavior suite while retaining the surviving status and privacy coverage.
+    // F1 removes project-agent snapshot/defaults/control-state tests and keeps
+    // the fixed-file loader coverage. G1 retires health-transition assertions;
+    // heartbeat retirement removes eight additional unit files; the current
+    // surviving floor is 93 files.
+    minimumFiles: 93,
+    // E1 removes batching/dedupe assertions and ports the surviving fixed-shape
+    // delivery, ownership, and bounded-reference coverage. The correction pass
+    // restores the exact current suite floor after its additional coverage.
+    // E2 removes three aggregate active-run rendering assertions while retaining
+    // the per-run status, transcript, privacy, and lifecycle coverage. The
+    // transcript schema/session/rejection coverage brings the floor to 1376.
+    // E3 removes the budget-only suite and assertions; E4 removes six
+    // quarantine-only tests and adds direct unreadable-status, cleanup, cache,
+    // and boundary coverage. F1 removes retired project-agent behavior tests;
+    // G1 retires health-transition assertions. From the 1221-test pre-heartbeat
+    // floor, the full heartbeat/doctor/cache-warming arithmetic is 1221 - 167
+    // standalone heartbeat removals - 5 net doctor removals (7 heartbeat tests
+    // replaced by 2 legacy-key tests) + 16 cache-warming/live-async additions
+    // = 1065. minimumTests intentionally remains five tests stricter at 1070
+    // to preserve the conservative deletion guard.
+    minimumTests: 1070,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
-    minimumFiles: 39,
-    minimumTests: 607,
+    // B1 removes acceptance-only suites and B2 removes retired completion-
+    // guard/task-intent coverage; surviving async/awaited coverage keeps this
+    // floor from allowing an accidental broad test deletion.
+    // C2 audit: catalog-filtering/thinking-gate assertions were replaced by
+    // ordered fallback exhaustion, non-transient stop, exact forwarding, and
+    // effective-candidate deduplication.
+    // D1 removes legacy ticket inference, metadata, and UI coverage.
+    // E1 replaces grouped/deduplicated notification coverage with the fixed-shape
+    // watcher-owner, awaited-suppression, artifact-claim race, and cleanup cases.
+    // The correction pass restores the exact current suite floor after its
+    // generation and lifecycle-cleanup regressions; transcript routing and
+    // rejection coverage bring the pre-E4 floor to 492; E4 ports the
+    // surviving status/doctor behavior and adds the retry/no-remediation,
+    // bounded-output, and single-read coverage, bringing the pre-G1 floor to
+    // 497. G1 retires the health-only integration suite and removes three
+    // obsolete assertions; the surviving floor is 486 tests.
+    minimumFiles: 33,
+    minimumTests: 486,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),

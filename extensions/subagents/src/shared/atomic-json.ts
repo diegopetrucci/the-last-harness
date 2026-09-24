@@ -18,7 +18,7 @@ const RETRYABLE_RENAME_ERROR_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 
-function waitSync(delayMs: number): void {
+export function waitSync(delayMs: number): void {
   if (delayMs <= 0) return;
   if (WAIT_VIEW) {
     try {

@@ -24,14 +24,6 @@ import {
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "./pi-args.ts";
 import {
-  TOOL_BUDGET_ENV,
-  decodeToolBudgetEnv,
-  shouldBlockToolForBudget,
-  toolBudgetBlockedMessage,
-  toolBudgetSoftNudge,
-} from "./tool-budget.ts";
-import type { ResolvedToolBudget } from "../../shared/types.ts";
-import {
   blockForcedSystemPrompt,
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
   CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
@@ -42,7 +34,7 @@ import {
   inventoryProjectAgentGuidance,
   PACKAGED_MINOR_AGENT_ROLES,
 } from "../../../../shared/project-agent-guidance.ts";
-import { normalizeTkTicketId } from "./tk-ticket.ts";
+import { normalizeTicketId } from "./ticket-context.ts";
 
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 
@@ -203,14 +195,14 @@ function resolveChildTkTicketId(): string | undefined {
   const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
   if (childAgentName !== "developer" || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1")
     return undefined;
-  return normalizeTkTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]);
+  return normalizeTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]).ticketId;
 }
 
 function formatChildTkTicketGuidance(ticketId: string): string {
   return [
     "Developer ticket assignment:",
     `Ticket ID: ${ticketId}`,
-    `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+    `Before making any changes, treat the injected \`## Ticket ${ticketId}\` body as the source of truth. You may run \`tk show ${ticketId}\` only to re-read it.`,
   ].join("\n");
 }
 
@@ -228,28 +220,6 @@ function resolveChildSupervisorGuidance(): string {
   // being mistaken for those prompts.
   if (process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] === "1") return "";
   return hasNativeSupervisorMetadata() ? NATIVE_SUPERVISOR_GUIDANCE : "";
-}
-
-function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
-  if (!budget) return;
-  let toolCount = 0;
-  let softNudged = false;
-  const sendUserMessage =
-    typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
-  pi.on("tool_call", (event) => {
-    const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
-    toolCount++;
-    if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
-      softNudged = true;
-      try {
-        sendUserMessage?.(toolBudgetSoftNudge(budget, toolCount), { deliverAs: "steer" });
-      } catch {
-        // Budget nudges are advisory; blocking below remains authoritative.
-      }
-    }
-    if (!shouldBlockToolForBudget(budget, toolName, toolCount)) return undefined;
-    return { block: true, reason: toolBudgetBlockedMessage(budget, toolName, toolCount) };
-  });
 }
 
 function registerSteeringInbox(pi: ExtensionAPI): void {
@@ -327,7 +297,6 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
 
 export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
   registerSteeringInbox(pi);
-  registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
   let nativeSupervisorClientRegistered = false;
   let projectAgentGuidanceSnapshot = "";
   let supervisorGuidanceSnapshot = "";

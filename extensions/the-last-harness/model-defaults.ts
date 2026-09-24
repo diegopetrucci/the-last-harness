@@ -55,34 +55,9 @@ type ProviderAwareSubagentResolution<T extends ProviderModelReference = Provider
   fallbackWarning?: string;
 };
 
-/** Per-role project defaults shape consumed by the subagent dispatch layer. */
-export type SubagentProjectDefaultsEntry = {
-  readonly model?: string;
-  readonly effort?: ThinkingLevel;
-};
-
-type ProjectDefaultsWarningSource = "project-default" | "stored";
-
 type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
-  /**
-   * Per-role project defaults from .tlh/defaults.json (loaded and trusted by
-   * the project-defaults-loader). Applied per field as `project-value ?? persisted-value`.
-   * Only "loaded" results should be forwarded; "denied"/"unavailable" must be omitted.
-   */
-  projectDefaults?: Readonly<Partial<Record<string, SubagentProjectDefaultsEntry>>>;
-  onWarning?: (warning: {
-    agent: string;
-    message: string;
-    source?: ProjectDefaultsWarningSource;
-  }) => void;
-};
-
-type SubagentEffortSource = "project" | "stored";
-
-type MergedSubagentOverride = {
-  override: TlhSubagentOverride | undefined;
-  effortSource?: SubagentEffortSource;
+  onWarning?: (warning: { agent: string; message: string; source?: "stored" }) => void;
 };
 
 type ReasoningProviderModelReference = ProviderModelReference & Partial<ReasoningModel>;
@@ -163,8 +138,8 @@ function agentModelsForFamily(
  * Format a model reference with an optional thinking suffix.
  * Every level in THINKING_LEVELS (including `max`) is a valid model-string suffix:
  * the subagents runtime that consumes these strings parses the same list in
- * `extensions/subagents/src/shared/model-info.ts`. Model capability is gated
- * separately by `getAvailableThinkingLevels`.
+ * `extensions/subagents/src/shared/model-info.ts`. Recognized effort is forwarded
+ * without capability filtering; Pi validates the resulting model argument.
  */
 export function formatResolvedProviderModelReference(
   model: ProviderModelReference,
@@ -613,8 +588,9 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
  * not apply (provider is not openrouter or agent prefers opposite provider).
  *
  * The current model is a session identity, not necessarily a registry entry. Keep
- * that identity separate from optional reasoning metadata: capability checks must
- * fail open when the registry omitted the active model.
+ * that identity separate from optional reasoning metadata: this follow path preserves
+ * the session identity and applies only the normalized OpenRouter effort; it does not
+ * normalize saved effort against missing registry metadata.
  */
 function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
@@ -714,83 +690,50 @@ export function selectProviderAwareAgentDefaults<T extends ProviderModelReferenc
 /**
  * Resolve the effective thinking level when a stored subagent override may be present.
  *
- * - If `override.thinking` is a valid ThinkingLevel, validate it against the model's
- *   supported levels and return it (or a neutralizing supported suffix on failure).
- * - If `override.thinking` is `false`, map it to `"off"`.
+ * - If `override.thinking` is a recognized ThinkingLevel, return it unchanged so
+ *   the model argument can carry the suffix to Pi, regardless of registry metadata.
+ * - If `override.thinking` is `false`, map it to `"off"` and forward it likewise.
  * - If `override.thinking` is absent (model-only override), compute the bundled level
- *   via `resolveThinkingForProvider` and validate against the model.
- *   - Supported by the model → `{ thinking }`.
- *   - Unsupported → fall back to `"off"` when the model supports it, else `{}`.
+ *   via `resolveThinkingForProvider` without capability filtering.
+ * - If the configured value is not a recognized level, omit only that invalid value
+ *   and return a warning that identifies the invalid effort.
  *
- * A stored effort is consumed independently by the subagents runtime. When it is
- * unsupported, an explicit bundled or `off` suffix keeps that runtime from applying
- * the raw stored value a second time and pins the intended TLH effort. If neither
- * suffix is supported, the bare model is retained and the runtime drops a known-
- * unsupported value (while failing open when the model cannot be resolved).
+ * Capability metadata may produce an informational warning for a known unsupported
+ *   level, but it never changes the recognized suffix. Pi validates the resulting
+ *   model argument; a Pi rejection is a non-transient model failure.
  *
  * This function must only be called when an `override` is present (`override !== undefined`).
  * For the pure no-override path use `resolveThinkingForProvider` directly.
  */
-function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
+function formatInvalidStoredThinkingWarning(
+  agent: AgentModelDefaults | undefined,
+  rawThinking: string | false,
+): string {
+  const roleLabel = agent?.name ?? "this subagent";
+  const value = String(rawThinking);
+  const validLevels = "off, minimal, low, medium, high, xhigh, max";
+  return `TLH ignored invalid stored minor-agent effort "${value}" for ${roleLabel}; expected one of ${validLevels}, so no effort suffix was applied.`;
+}
+
+function formatKnownUnsupportedThinkingWarning<T extends ReasoningProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   model: T,
   rawThinking: string | false,
-  neutralizingThinking: ThinkingLevel | undefined,
   generatedFallback: boolean,
-  effortSource: SubagentEffortSource,
 ): string {
-  const storedThinking = rawThinking === false ? "off" : String(rawThinking);
+  const effort = rawThinking === false ? "off" : String(rawThinking);
   const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
-  const standardStoredThinking =
-    rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
-  const roleLabel = generatedFallback ? modelLabel : (agent?.name ?? "this subagent");
-  const subject =
-    effortSource === "project"
-      ? standardStoredThinking
-        ? `TLH project default effort "${storedThinking}" from .tlh/defaults.json is not supported by ${modelLabel}`
-        : `TLH ignored unsupported project default effort "${storedThinking}" from .tlh/defaults.json for ${roleLabel}`
-      : standardStoredThinking
-        ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${roleLabel}`;
-  if (neutralizingThinking === undefined) {
-    const residual =
-      rawThinking === false
-        ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-        : `no supported suffix can neutralize it, so the subagents runtime will drop the ${effortSource === "project" ? "project" : "stored"} value for this run`;
-    return `${subject}; ${residual}.`;
-  }
-  if (neutralizingThinking === "off") {
-    const action = generatedFallback
-      ? "that fallback will use explicit off for this run"
-      : "using explicit off for this run";
-    return `${subject}; ${action}.`;
-  }
-  const action = generatedFallback
-    ? "that fallback will use bundled defaults for this run"
-    : "using bundled defaults for this run";
-  return `${subject}; ${action}.`;
+  return `TLH stored minor-agent effort "${effort}" is not advertised by ${modelLabel}; the :${effort} suffix is forwarded and Pi will validate it.`;
 }
 
-function formatUnresolvedStoredThinkingWarning(
+function formatUnavailableStoredThinkingWarning(
   agent: AgentModelDefaults | undefined,
-  rawThinking: string,
-  effortSource: SubagentEffortSource,
+  rawThinking: string | false,
+  unresolvedModelReference: string,
 ): string {
-  if (effortSource === "project") {
-    return `TLH ignored unsupported project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
-  }
-  return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
-}
-
-function formatUnresolvedStoredThinkingCapabilityWarning(
-  agent: AgentModelDefaults | undefined,
-  rawThinking: string,
-  effortSource: SubagentEffortSource,
-): string {
-  if (effortSource === "project") {
-    return `TLH project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
-  }
-  return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
+  const roleLabel = agent?.name ?? "this subagent";
+  const effort = rawThinking === false ? "off" : String(rawThinking);
+  return `TLH stored minor-agent effort "${effort}" had unavailable capability metadata for saved model "${unresolvedModelReference}"; the :${effort} suffix is forwarded and Pi will validate it for ${roleLabel}.`;
 }
 
 function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference>(
@@ -798,7 +741,7 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
   model: T | undefined,
   override: TlhSubagentOverride | undefined,
   generatedFallback = false,
-  effortSource: SubagentEffortSource = "stored",
+  unresolvedModelReference?: string,
 ): { thinking?: ThinkingLevel; warning?: string } {
   const rawThinking = override?.thinking;
   const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
@@ -810,64 +753,38 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
         : undefined;
 
   if (rawThinking === undefined) {
-    if (!bundledThinking) {
-      return {};
-    }
-    if (!model) {
-      return { thinking: bundledThinking };
-    }
-    // Identity without reasoning metadata means capability is unknown (the
-    // registry omitted this active model), not explicitly non-reasoning.
-    if (!Object.hasOwn(model, "reasoning")) {
-      return { thinking: bundledThinking };
-    }
-    const supportedLevels = getAvailableThinkingLevels(model);
-    if (supportedLevels.includes(bundledThinking)) {
-      return { thinking: bundledThinking };
-    }
-    return supportedLevels.includes("off") ? { thinking: "off" } : {};
+    return bundledThinking ? { thinking: bundledThinking } : {};
+  }
+
+  if (requestedThinking === undefined) {
+    return { warning: formatInvalidStoredThinkingWarning(agent, rawThinking) };
   }
 
   if (!model) {
-    if (requestedThinking !== undefined) {
-      return { thinking: requestedThinking };
-    }
+    return unresolvedModelReference
+      ? {
+          thinking: requestedThinking,
+          warning: formatUnavailableStoredThinkingWarning(
+            agent,
+            rawThinking,
+            unresolvedModelReference,
+          ),
+        }
+      : { thinking: requestedThinking };
+  }
+
+  // Capability metadata can explain a warning, but it never gates a recognized
+  // suffix. Pi remains the authority for accepting or rejecting the argument.
+  if (
+    Object.hasOwn(model, "reasoning") &&
+    !getAvailableThinkingLevels(model).includes(requestedThinking)
+  ) {
     return {
-      warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking), effortSource),
+      thinking: requestedThinking,
+      warning: formatKnownUnsupportedThinkingWarning(agent, model, rawThinking, generatedFallback),
     };
   }
-
-  // Fail open for a valid stored effort when the active model's capability is
-  // unknown; absent `reasoning` must not be interpreted as `off`.
-  if (!Object.hasOwn(model, "reasoning")) {
-    return requestedThinking !== undefined ? { thinking: requestedThinking } : {};
-  }
-
-  const supportedLevels = getAvailableThinkingLevels(model);
-  if (requestedThinking !== undefined && supportedLevels.includes(requestedThinking)) {
-    return { thinking: requestedThinking };
-  }
-
-  // Prefer a recognized suffix when the model supports one: this pins the intended
-  // bundled effort instead of merely letting the runtime drop to model default.
-  // The runtime capability gate remains the fallback when neither suffix is supported.
-  const neutralizingThinking =
-    bundledThinking && supportedLevels.includes(bundledThinking)
-      ? bundledThinking
-      : supportedLevels.includes("off")
-        ? "off"
-        : undefined;
-  return {
-    thinking: neutralizingThinking,
-    warning: formatStoredThinkingWarning(
-      agent,
-      model,
-      rawThinking,
-      neutralizingThinking,
-      generatedFallback,
-      effortSource,
-    ),
-  };
+  return { thinking: requestedThinking };
 }
 
 function resolveIndependence(
@@ -899,99 +816,7 @@ export function formatUnavailableStoredModelWarning(
   // Fallbacks can come from the dispatch, preserved role settings, or bundled
   // agent configuration. TLH cannot observe every source here, so do not claim
   // that this dispatch will fail closed.
-  return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
-}
-
-export function formatUnavailableProjectModelWarning(
-  agentName: string | undefined,
-  model: string,
-): string {
-  const roleLabel = agentName ?? "this minor-agent role";
-  return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
-}
-
-/**
- * Compute the effective subagent override by merging project defaults (layer 2) with
- * persisted overrides (layer 3) on a per-field basis.
- *
- * Rules:
- * - Project model (layer 2) wins over any persisted model value (layer 3), including
- *   `model: false` (inherit-session). `false` is a persisted value for the model field,
- *   not a separate axis, so it yields to the project exactly as a model string would.
- *   When the project model is unavailable in the registry, a warning is emitted and the
- *   persisted model value (including `false`) is kept. When `projectModelEligible` is false,
- *   the project model is ignored without an availability lookup or warning (explicit dispatch).
- * - When the project entry has no `model` field, the persisted model value (including
- *   `false`) is preserved unchanged.
- * - Project effort wins over persisted thinking with no special guards.
- * Returns a `MergedSubagentOverride` result:
- * - `override` is undefined when both merged fields are absent.
- * - `effortSource` is `"project"` when the effective effort comes from the project entry,
- *   `"stored"` when it comes from the persisted override, and undefined when no effort is in play.
- */
-function mergeProjectDefaultsWithOverride(
-  override: TlhSubagentOverride | undefined,
-  projectEntry: SubagentProjectDefaultsEntry | undefined,
-  availableModels: readonly ProviderModelReference[],
-  projectModelEligible: boolean,
-  agentName: string | undefined,
-  onWarning:
-    | ((w: { agent: string; message: string; source?: ProjectDefaultsWarningSource }) => void)
-    | undefined,
-): MergedSubagentOverride {
-  if (!projectEntry) {
-    return {
-      override,
-      effortSource: override?.thinking !== undefined ? "stored" : undefined,
-    };
-  }
-
-  // Per-field merge: project value ?? persisted value.
-  // model:false is a persisted value for the model field; it is overridden by a project
-  // model pin exactly like a persisted model string, subject to the same availability check.
-  let effectiveModel: string | false | undefined = override?.model;
-
-  if (projectModelEligible && projectEntry.model !== undefined) {
-    const available = findAvailableProviderModel(availableModels, projectEntry.model);
-    if (available) {
-      effectiveModel = projectEntry.model; // project model wins (including over model:false)
-    } else {
-      // Project model unavailable: warn and fall through to persisted value (string or false).
-      if (agentName && onWarning) {
-        onWarning({
-          agent: agentName,
-          message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
-          source: "project-default",
-        });
-      }
-      // effectiveModel stays as the persisted value (override?.model, which may be false)
-    }
-  }
-
-  // Effort from project maps directly to thinking level (same value set).
-  const effectiveThinking: string | false | undefined =
-    projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
-
-  if (effectiveModel === undefined && effectiveThinking === undefined) {
-    return { override: undefined };
-  }
-
-  const result: TlhSubagentOverride = {};
-  if (effectiveModel !== undefined) {
-    result.model = effectiveModel;
-  }
-  if (effectiveThinking !== undefined) {
-    result.thinking = effectiveThinking;
-  }
-  return {
-    override: result,
-    effortSource:
-      projectEntry.effort !== undefined
-        ? "project"
-        : override?.thinking !== undefined
-          ? "stored"
-          : undefined,
-  };
+  return `TLH saved minor-agent model override "${model}" is not in the available registry for ${roleLabel}; forwarding the model argument to Pi for validation instead of swapping in bundled defaults.${action}`;
 }
 
 /**
@@ -1000,13 +825,13 @@ function mergeProjectDefaultsWithOverride(
  *
  * Precedence (highest to lowest):
  *  1. Stored model pin (available)  → use it; resolve thinking from stored or bundled
- *  2. Stored model pin (unavailable) → forward pin unchanged, independence from parsed provider
+ *  2. Stored model pin (unavailable) → forward the exact pin and any recognized saved effort, and warn when capability metadata is unavailable
  *  3. Stored model: false            → inherit the current session model; apply stored thinking
  *  4. No stored model                → bundled provider-aware defaults
  *
  * When `override` is `undefined`, bundled defaults use `resolveThinkingForProvider`
- * directly without model-capability gating (preserving the runtime's authority to
- * apply the level even on models that do not advertise it).
+ * directly. Recognized stored effort is forwarded here without capability filtering;
+ * Pi validates the resulting model argument.
  */
 export function resolveProviderAwareSubagentResolution<T extends ReasoningProviderModelReference>(
   agent: AgentModelDefaults | undefined,
@@ -1014,18 +839,11 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
   currentProvider?: string,
   currentModel?: ProviderModelReference,
   override?: TlhSubagentOverride,
-  effortSource: SubagentEffortSource = "stored",
 ): ProviderAwareSubagentResolution<T> {
   // 1. Stored model pin — available in the registry
   const overrideModel = findAvailableProviderModel(availableModels, override?.model);
   if (overrideModel) {
-    const thinkingResolution = resolveStoredSubagentThinking(
-      agent,
-      overrideModel,
-      override,
-      false,
-      effortSource,
-    );
+    const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override, false);
     return {
       model: overrideModel,
       thinking: thinkingResolution.thinking,
@@ -1044,10 +862,14 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
       undefined,
       override,
       false,
-      effortSource,
+      override.model,
     );
     return {
       unavailableModel: override.model,
+      // A saved pin is still an exact argv identity. Recognized effort is
+      // forwarded even when this registry cannot describe the pinned model;
+      // Pi remains the authority for accepting or rejecting the suffix.
+      thinking: thinkingResolution.thinking,
       independence: resolveIndependence(agent, parsedOverrideModel, currentProvider, currentModel),
       warning: thinkingResolution.warning,
     };
@@ -1061,7 +883,6 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
       inheritedModel,
       override,
       false,
-      effortSource,
     );
     return {
       model: inheritedModel,
@@ -1074,8 +895,9 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
   // 4. No stored model override — use bundled provider-aware defaults.
 
   // OpenRouter follow rule (non-opposite-role agents only): follow the session model.
-  // Thinking-only overrides are capability-gated; the pure no-override path uses
-  // The normalized OpenRouter entry exclusively — the generic thinking key does not leak.
+  // Thinking-only overrides are normalized by the defaults layer; the pure
+  // no-override path uses the normalized OpenRouter entry exclusively — the generic
+  // thinking key does not leak.
   const openrouterFollow = resolveOpenrouterFollowDefaults(
     agent,
     availableModels,
@@ -1086,13 +908,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     const thinkingResolution =
       override === undefined
         ? { thinking: openrouterFollow.thinking }
-        : resolveStoredSubagentThinking(
-            agent,
-            openrouterFollow.model,
-            override,
-            false,
-            effortSource,
-          );
+        : resolveStoredSubagentThinking(agent, openrouterFollow.model, override, false);
     return {
       model: openrouterFollow.model,
       fallbackModels: [],
@@ -1133,19 +949,19 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
         currentSessionModel,
         override,
         false,
-        effortSource,
       );
       if (currentSessionThinkingResolution.thinking) {
         selectedModel = currentSessionModel;
       }
-    } else if (typeof override.thinking === "string" && override.thinking !== "off") {
-      currentSessionThinkingResolution = {
-        warning: formatUnresolvedStoredThinkingCapabilityWarning(
-          agent,
-          override.thinking,
-          effortSource,
-        ),
-      };
+    } else {
+      // Preserve a recognized effort value even when no registry-backed session
+      // model is available; only invalid syntax produces a warning here.
+      currentSessionThinkingResolution = resolveStoredSubagentThinking(
+        agent,
+        undefined,
+        override,
+        false,
+      );
     }
   }
 
@@ -1160,17 +976,15 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
       : [];
 
   // For the pure bundled path (no override at all), use resolveThinkingForProvider
-  // directly without model-capability gating, preserving main's existing behavior:
-  // a bundled level is passed through regardless of the model's advertised
-  // reasoning levels. Stored overrides are capability-gated instead, so an
-  // unsupported saved effort warns rather than being silently forwarded.
+  // directly. Stored effort is forwarded unchanged; model capability metadata may
+  // explain a warning but never filters the suffix before Pi.
   const resolveThinkingResult = (
     m: T | undefined,
     generatedFallback = false,
   ): ReturnType<typeof resolveStoredSubagentThinking> =>
     override === undefined
       ? { thinking: resolveThinkingForProvider(agent, m?.provider ?? currentProvider) }
-      : resolveStoredSubagentThinking(agent, m, override, generatedFallback, effortSource);
+      : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
 
   const primaryThinkingResolution = selectedModel
     ? resolveThinkingResult(selectedModel)
@@ -1222,7 +1036,7 @@ function formatEffectiveModelAndThinking(
     return undefined;
   }
   if (typeof model === "string") {
-    return model;
+    return applyThinkingSuffix(model, thinking);
   }
   return formatResolvedProviderModelReference(model, thinking);
 }
@@ -1233,7 +1047,6 @@ function applyExplicitModelThinking(
   agentName: string | undefined,
   availableModels: readonly ReasoningProviderModelReference[],
   override: TlhSubagentOverride | undefined,
-  effortSource: SubagentEffortSource | undefined,
   options: ApplyProviderAwareSubagentModelOptions,
 ): number {
   if (
@@ -1245,18 +1058,14 @@ function applyExplicitModelThinking(
   }
 
   const explicitModel = findAvailableProviderModel(availableModels, target.model);
-  const thinkingResolution = resolveStoredSubagentThinking(
-    agent,
-    explicitModel,
-    override,
-    false,
-    effortSource,
-  );
+  // An explicit model is caller-owned. If the registry cannot resolve it, do not
+  // classify the target as a persisted unavailable pin; Pi validates the argument.
+  const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override, false);
   if (thinkingResolution.warning && agentName) {
     options.onWarning?.({
       agent: agentName,
       message: thinkingResolution.warning,
-      source: effortSource === "project" ? "project-default" : "stored",
+      source: "stored",
     });
   }
   const modelWithThinking = applyThinkingSuffix(target.model, thinkingResolution.thinking);
@@ -1340,10 +1149,8 @@ function applyModelToRunnableTarget(
   }
 
   const agentName = agentNameForTarget(target);
-  // Project custom-agent dispatch uses an exact captured snapshot. Never let
-  // settings, project defaults, or bundled model/effort policy mutate an
-  // embedded target, even if a future caller bypasses the outer non-project
-  // dispatch filter.
+  // Never let stored or bundled model policy mutate an embedded target, even
+  // if a future caller bypasses the outer non-project dispatch filter.
   if (isEmbeddedSubagentTarget(agentName)) {
     return 0;
   }
@@ -1351,42 +1158,17 @@ function applyModelToRunnableTarget(
   const explicitModel = hasExplicitModel(target);
   const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
 
-  // Merge project defaults (layer 2) with persisted override (layer 3) per field.
-  // `agentName` comes from dispatch input, so do not traverse the project-defaults
-  // object's prototype for names such as `__proto__` or `constructor`.
-  const projectEntry =
-    agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
-      ? options.projectDefaults[agentName]
-      : undefined;
-  const mergedOverride = mergeProjectDefaultsWithOverride(
-    persistedOverride,
-    projectEntry,
-    availableModels,
-    !explicitModel,
-    agentName,
-    options.onWarning,
-  );
-  const override = mergedOverride.override;
-  const effortSource = mergedOverride.effortSource;
+  // Only persisted per-role overrides are applied here.
+  const override = persistedOverride;
 
   // Explicit dispatch: target already has a model set by the caller.
-  // Human-only model-choice rule: project model cannot override an explicit dispatch model.
-  // Project effort (thinking) CAN still apply to an explicit dispatch.
   if (explicitModel) {
-    return applyExplicitModelThinking(
-      target,
-      agent,
-      agentName,
-      availableModels,
-      override,
-      effortSource,
-      options,
-    );
+    return applyExplicitModelThinking(target, agent, agentName, availableModels, override, options);
   }
 
   // No effective override — fast path preserving main's bundled-defaults behavior:
-  // resolveThinkingForProvider's result is appended directly without
-  // model-capability gating.
+  // resolveThinkingForProvider's result is appended directly without stored-effort
+  // normalization because no stored effort is being applied.
   if (override === undefined) {
     return applyBundledModelDefaults(target, agent, availableModels, currentProvider, currentModel);
   }
@@ -1402,7 +1184,6 @@ function applyModelToRunnableTarget(
     currentProvider,
     currentModel,
     override,
-    effortSource,
   );
 
   if (resolution.unavailableModel && agentName) {
@@ -1416,7 +1197,7 @@ function applyModelToRunnableTarget(
     options.onWarning?.({
       agent: agentName,
       message: resolution.warning,
-      source: effortSource === "project" ? "project-default" : "stored",
+      source: "stored",
     });
   }
   const usesGeneratedFallback =
@@ -1425,13 +1206,13 @@ function applyModelToRunnableTarget(
     options.onWarning?.({
       agent: agentName,
       message: resolution.fallbackWarning,
-      source: effortSource === "project" ? "project-default" : "stored",
+      source: "stored",
     });
   }
 
   const selectedModel = formatEffectiveModelAndThinking(
     resolution.unavailableModel ?? resolution.model,
-    resolution.unavailableModel ? undefined : resolution.thinking,
+    resolution.thinking,
   );
   if (
     !selectedModel ||

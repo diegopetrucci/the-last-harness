@@ -12,29 +12,50 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { scaleTestTimeout, unscaledMs } from "../support/scale-timeout.ts";
 
-import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
-import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
-import {
-  lifecycleGeneration,
-  transitionLifecycleStatus,
-  withLifecycleContinuation,
-} from "../../src/runs/shared/lifecycle-state.ts";
-import type { AsyncStatus } from "../../src/shared/types.ts";
 import {
   ASYNC_DIR,
   type AsyncResultPayload,
   type AsyncStatusPayload,
   RESULTS_DIR,
-  executeAsyncParallel,
   executeAsyncSingle,
   readMockPiArgs,
   requestAsyncInterrupt,
-  waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForAsyncStatusPredicate,
+  waitForMarker,
 } from "../support/async-execution-helpers.ts";
+
+function highContextEmptyTerminalJsonl() {
+  const usage = {
+    totalTokens: 990,
+    input: 900,
+    output: 90,
+    cacheRead: 0,
+    cacheWrite: 0,
+  };
+  return [
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-context-boundary", name: "edit", arguments: {} }],
+        stopReason: "toolUse",
+        usage,
+      },
+    },
+    {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "  " }],
+        stopReason: "stop",
+        usage,
+      },
+    },
+  ];
+}
 
 describe("async execution model restoration and fallback", () => {
   let tempDir: string;
@@ -56,369 +77,6 @@ describe("async execution model restoration and fallback", () => {
 
   afterEach(() => {
     removeTempDir(tempDir);
-  });
-
-  it("background runs deliver warning and critical pressure controls exactly once", async () => {
-    mockPi.onCall({
-      jsonl: [
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "preserve progress" }],
-            provider: "mock",
-            model: "test-model:high",
-            stopReason: "toolUse",
-            usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
-          },
-        },
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "finish narrowly" }],
-            provider: "other",
-            model: "other-model",
-            stopReason: "stop",
-            usage: { totalTokens: 950, input: 850, output: 100, cacheRead: 0, cacheWrite: 0 },
-          },
-        },
-      ],
-    });
-    const id = `async-pressure-controls-${Date.now().toString(36)}`;
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    const run = executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Preserve the work.",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-pressure" },
-      availableModels: [
-        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
-        { provider: "other", id: "other-model", fullId: "other/other-model", contextWindow: 2000 },
-      ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-    assert.equal(run.details.asyncId, id);
-    await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-
-    assert.equal(payload.success, true);
-    assert.deepEqual(payload.results?.[0]?.contextPressureCrossedThresholds, [
-      "warning",
-      "critical",
-    ]);
-    assert.equal(payload.results?.[0]?.contextUsage?.contextWindow, 1000);
-    assert.equal(payload.results?.[0]?.contextUsage?.contextPercent, 95);
-    assert.equal(payload.results[0]?.model, "mock/test-model:high");
-    assert.deepEqual(payload.results[0]?.modelIdentity, {
-      provider: "mock",
-      model: "test-model",
-      thinking: "high",
-    });
-    assert.equal(payload.results[0]?.modelResolution, undefined);
-    const statusPayload = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.deepEqual(statusPayload.steps?.[0]?.contextPressureCrossedThresholds, [
-      "warning",
-      "critical",
-    ]);
-    assert.equal(statusPayload.steps?.[0]?.contextPressure?.severity, "critical");
-    assert.equal(statusPayload.steps?.[0]?.contextPressure?.remainingTokens, 50);
-    assert.deepEqual(statusPayload.steps?.[0]?.contextUsage, payload.results?.[0]?.contextUsage);
-    assert.equal(statusPayload.steps?.[0]?.model, "mock/test-model:high");
-    assert.equal(statusPayload.steps?.[0]?.thinking, "high");
-    assert.deepEqual(statusPayload.steps?.[0]?.modelIdentity, {
-      provider: "mock",
-      model: "test-model",
-      thinking: "high",
-    });
-    assert.equal(statusPayload.steps?.[0]?.modelResolution, undefined);
-    const events = fs
-      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-    const controls = events.filter((event) => event.type === "subagent.control");
-    assert.deepEqual(
-      controls.map((event) => event.event.contextPressureSeverity),
-      ["warning", "critical"],
-    );
-    assert.deepEqual(
-      controls.map((event) => event.event.contextPressureThreshold),
-      ["warning", "critical"],
-    );
-  });
-
-  it(
-    "background pressure projection preserves a paused continuation reservation before its notice",
-    {
-      skip:
-        process.platform === "win32"
-          ? "cross-process interrupt delivery unreliable on Windows CI"
-          : undefined,
-    },
-    async () => {
-      const markerDir = path.join(tempDir, "pressure-paused-race-markers");
-      fs.mkdirSync(markerDir, { recursive: true });
-      const readyMarker = path.join(markerDir, "child-ready");
-      const releaseMarker = path.join(markerDir, "child-release");
-      const afterPressureMarker = path.join(markerDir, "after-pressure");
-      const pressureMessage = {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "buffered pressure update" }],
-          provider: "mock",
-          model: "test-model",
-          stopReason: "toolUse",
-          usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
-        },
-      };
-      mockPi.onCall({
-        ignoreSigint: true,
-        ignoreSigterm: true,
-        steps: [
-          { writeMarker: readyMarker },
-          { waitForMarker: releaseMarker },
-          { jsonl: [pressureMessage] },
-          { waitForMarker: afterPressureMarker },
-        ],
-      });
-      const id = `async-pressure-paused-race-${Date.now().toString(36)}`;
-      executeAsyncSingle(id, {
-        agent: "worker",
-        task: "Preserve the work while reporting context pressure.",
-        agentConfig: makeAgent("worker", { completionGuard: false }),
-        ctx: {
-          pi: { events: { emit() {} } },
-          cwd: tempDir,
-          currentSessionId: "session-pressure-paused-race",
-        },
-        availableModels: [
-          { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
-        ],
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-      });
-
-      const asyncDir = path.join(ASYNC_DIR, id);
-      const readyDeadline = Date.now() + scaleTestTimeout(20_000);
-      while (!fs.existsSync(readyMarker)) {
-        if (Date.now() > readyDeadline)
-          assert.fail("Timed out waiting for pressure-race child ready marker");
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-
-      requestAsyncInterrupt(asyncDir, { source: "tlht-az3z-pressure-race" });
-      const pausedPayload = await waitForAsyncStatusPredicate(
-        asyncDir,
-        (status) => status.state === "paused",
-        "paused checkpoint before buffered pressure message",
-      );
-      const pausedStatus = pausedPayload;
-      const claimToken = "tlht-az3z-pressure-claim";
-      transitionLifecycleStatus({
-        asyncDir,
-        expectedGeneration: lifecycleGeneration(pausedStatus),
-        mutate: (status) => ({
-          ...status,
-          lifecycle: withLifecycleContinuation(status, 0, {
-            phase: "reserved",
-            claimToken,
-            claimedAt: 200,
-            ownerPid: process.pid,
-            continuationRunId: "tlht-az3z-pressure-continuation",
-          }),
-        }),
-      });
-
-      // The pressure message is the first buffered assistant output after the
-      // paused checkpoint. This is the stale in-memory payload that the old bare
-      // writer could use to erase the reservation.
-      fs.writeFileSync(releaseMarker, "", "utf-8");
-      const observed = await waitForAsyncControlCondition(asyncDir, (statusPayload, eventText) => {
-        const status = statusPayload;
-        const hasPressureNotice = eventText.split("\n").some((line) => {
-          try {
-            const record = JSON.parse(line) as { type?: string; event?: { reason?: string } };
-            return (
-              record.type === "subagent.control" && record.event?.reason === "context_pressure"
-            );
-          } catch {
-            return false;
-          }
-        });
-        return (
-          hasPressureNotice &&
-          status.state === "paused" &&
-          status.lifecycle?.continuation?.claimToken === claimToken &&
-          status.steps?.[0]?.contextPressure?.severity === "warning" &&
-          status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning" &&
-          status.steps?.[0]?.durableAttentionReasons?.includes("context_pressure") === true &&
-          status.activityState === undefined &&
-          status.steps?.[0]?.activityState === undefined &&
-          status.steps?.[0]?.idleEpisodeId === undefined &&
-          status.steps?.[0]?.compaction === undefined
-        );
-      });
-      const observedStatus = observed.status;
-      assert.deepEqual(observedStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
-      assert.equal(observedStatus.activityState, undefined);
-      assert.equal(observedStatus.steps?.[0]?.activityState, undefined);
-      assert.equal(observedStatus.steps?.[0]?.idleEpisodeId, undefined);
-      assert.equal(observedStatus.steps?.[0]?.compaction, undefined);
-      const pressureNotice = observed.eventText
-        .split("\n")
-        .map((line) => {
-          try {
-            return JSON.parse(line) as { type?: string; event?: { reason?: string; ts?: number } };
-          } catch {
-            return undefined;
-          }
-        })
-        .find(
-          (record) =>
-            record?.type === "subagent.control" && record.event?.reason === "context_pressure",
-        );
-      assert.ok(pressureNotice?.event?.ts, "pressure notice must carry its timestamp");
-      assert.ok(
-        (observedStatus.lastUpdate ?? 0) >= pressureNotice.event.ts,
-        "pressure projection lastUpdate must be current before its notice is appended",
-      );
-      assert.equal(observedStatus.lifecycle?.continuation?.claimToken, claimToken);
-      assert.equal(observedStatus.state, "paused");
-      assert.deepEqual(observedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
-
-      fs.writeFileSync(afterPressureMarker, "", "utf-8");
-      const resultPath = await waitForAsyncResultFile(id);
-      const finalStatus = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatus;
-      const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-      assert.equal(resultPayload.state, "paused");
-      assert.equal(finalStatus.state, "paused");
-      assert.equal(finalStatus.lifecycle?.continuation?.claimToken, claimToken);
-      assert.equal(finalStatus.steps?.[0]?.contextPressure?.severity, "warning");
-      assert.deepEqual(finalStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
-      assert.deepEqual(finalStatus.steps?.[0]?.durableAttentionReasons, ["context_pressure"]);
-      assert.equal(finalStatus.activityState, undefined);
-      assert.equal(finalStatus.steps?.[0]?.activityState, undefined);
-      assert.equal(finalStatus.steps?.[0]?.idleEpisodeId, undefined);
-      assert.equal(finalStatus.steps?.[0]?.compaction, undefined);
-      assert.deepEqual(resultPayload.results?.[0]?.durableAttentionReasons, ["context_pressure"]);
-      assert.equal(resultPayload.results?.[0]?.activityState, undefined);
-      assert.equal(resultPayload.results?.[0]?.idleEpisodeId, undefined);
-      assert.equal(resultPayload.results?.[0]?.compaction, undefined);
-      const controlEvents = observed.eventText
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } })
-        .filter(
-          (record) =>
-            record.type === "subagent.control" && record.event?.reason === "context_pressure",
-        );
-      assert.equal(controlEvents.length, 1, "pressure notice must be emitted exactly once");
-    },
-  );
-
-  it("background parallel result persistence survives result-only recovery with pressure diagnostics", async () => {
-    for (const output of ["parallel one", "parallel two"])
-      mockPi.onCall({
-        jsonl: [
-          {
-            type: "message_end",
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: output }],
-              model: "mock/test-model",
-              stopReason: "stop",
-              usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
-            },
-          },
-        ],
-      });
-    const id = `async-parallel-pressure-recovery-${Date.now().toString(36)}`;
-    const sessionFiles = [path.join(tempDir, `${id}-0.jsonl`), path.join(tempDir, `${id}-1.jsonl`)];
-    for (const sessionFile of sessionFiles)
-      fs.writeFileSync(sessionFile, '{"type":"session"}\n', "utf-8");
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    executeAsyncParallel(id, {
-      tasks: [
-        { agent: "reader", task: "Read" },
-        { agent: "editor", task: "Edit" },
-      ],
-      agents: [
-        makeAgent("reader", { model: "mock/test-model" }),
-        makeAgent("editor", { model: "mock/test-model" }),
-      ],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-pressure-recovery",
-      },
-      availableModels: [
-        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
-      ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      sessionFilesByFlatIndex: sessionFiles,
-      maxSubagentDepth: 2,
-    });
-    await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload & {
-      results?: Array<{
-        contextPressure?: { severity?: string };
-        contextPressureCrossedThresholds?: string[];
-      }>;
-    };
-    assert.deepEqual(
-      payload.results?.map((child) => child.contextPressure?.severity),
-      ["warning", "warning"],
-    );
-    assert.deepEqual(
-      payload.results?.map((child) => child.contextPressureCrossedThresholds),
-      [["warning"], ["warning"]],
-    );
-    const statusPath = path.join(asyncDir, "status.json");
-    const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-    assert.equal(status.steps?.[0]?.contextPressure?.severity, "warning");
-    assert.deepEqual(status.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
-    fs.rmSync(asyncDir, { recursive: true, force: true });
-    const recovered = resolveAsyncResumeTarget(
-      { id, index: 0 },
-      { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR },
-    );
-    assert.equal(recovered.kind, "revive");
-    assert.equal(recovered.contextPressure?.severity, "warning");
-    assert.deepEqual(recovered.contextPressureCrossedThresholds, ["warning"]);
   });
 
   it("background runs record fallback attempts and final model", async () => {
@@ -554,29 +212,33 @@ describe("async execution model restoration and fallback", () => {
     assert.equal(mockPi.callCount(), 2);
   });
 
-  it("propagates conservative registry filtering notices in background results", async () => {
-    mockPi.onCall({ output: "Primary completed" });
-    const primary = {
-      provider: "openai",
-      id: "gpt-5-mini",
-      fullId: "openai/gpt-5-mini",
-    };
-    const backup = {
-      provider: "anthropic",
-      id: "claude-sonnet-4",
-      fullId: "anthropic/claude-sonnet-4",
-    };
-    const id = `async-registry-filter-notice-${Date.now().toString(36)}`;
+  it("surfaces ordered fallback exhaustion after retryable failures", async () => {
+    for (const model of ["openai/primary", "anthropic/backup-a", "google/backup-b"]) {
+      mockPi.onCall({
+        jsonl: [
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: `${model} failed` }],
+              model,
+              errorMessage: "provider error 503: Service Unavailable",
+              usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 },
+            },
+          },
+        ],
+        exitCode: 1,
+      });
+    }
+    const id = `async-fallback-exhaustion-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Do work",
       agentConfig: makeAgent("worker", {
-        model: primary.fullId,
-        fallbackModels: [backup.fullId],
+        model: "openai/primary",
+        fallbackModels: ["anthropic/backup-a", "google/backup-b"],
       }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-filter" },
-      availableModels: [primary],
-      modelRegistry: { allModels: [primary, backup] },
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-exhaustion" },
       artifactConfig: {
         enabled: false,
         includeInput: false,
@@ -592,25 +254,15 @@ describe("async execution model restoration and fallback", () => {
     const payload = JSON.parse(
       fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
     ) as AsyncResultPayload;
-    assert.equal(payload.success, true);
-    assert.deepEqual(payload.results[0]?.attemptedModels, [primary.fullId]);
-    assert.match(
-      payload.results[0]?.modelFallbackNotice ?? "",
-      /Skipped.*unavailable fallback model/,
-    );
-    assert.match(
-      payload.results[0]?.modelFallbackNotice ?? "",
-      /provider credentials|fallbackModels/,
-    );
-    assert.ok((payload.results[0]?.modelFallbackNotice ?? "").length <= 240);
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.match(
-      status.steps?.[0]?.modelFallbackNotice ?? "",
-      /Skipped.*unavailable fallback model/,
-    );
-    assert.equal(mockPi.callCount(), 1);
+    assert.equal(payload.success, false);
+    assert.equal(payload.results[0]?.model, "google/backup-b");
+    assert.deepEqual(payload.results[0]?.attemptedModels, [
+      "openai/primary",
+      "anthropic/backup-a",
+      "google/backup-b",
+    ]);
+    assert.equal(payload.results[0]?.modelAttempts?.length, 3);
+    assert.equal(mockPi.callCount(), 3);
   });
 
   it("persists cached-token-heavy context diagnostics and termination reason", async () => {
@@ -673,6 +325,130 @@ describe("async execution model restoration and fallback", () => {
     assert.deepEqual(status.steps?.[0]?.contextUsage, payload.results[0]?.contextUsage);
     assert.equal(status.steps?.[0]?.terminationReason, "completed");
   });
+
+  it(
+    "does not let context exhaustion replace a timed-out terminal result",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout signal delivery intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      mockPi.onCall({
+        jsonl: highContextEmptyTerminalJsonl(),
+        keepAliveAfterFinalMessageMs: scaleTestTimeout(5_000),
+      });
+      const id = `async-context-timeout-boundary-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, id);
+      executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Finish the edit before the deadline.",
+        agentConfig: makeAgent("worker", {
+          model: "mock/test-model",
+          maxExecutionTimeMs: unscaledMs(750),
+        }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        availableModels: [
+          { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+        ],
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const child = payload.results[0];
+      assert.equal(payload.state, "failed");
+      assert.equal(child?.timedOut, true);
+      assert.equal(child?.terminationReason, "timed_out");
+      assert.equal(child?.contextUsage?.contextPercent, 99);
+      assert.doesNotMatch(
+        child?.error ?? "",
+        /unfinished tool interaction under high context pressure/,
+      );
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.terminationReason, "timed_out");
+    },
+  );
+
+  it(
+    "does not let context exhaustion replace an interrupted paused terminal result",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process interrupt delivery unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const readyMarker = path.join(tempDir, "context-pause-boundary-ready");
+      mockPi.onCall({
+        jsonl: highContextEmptyTerminalJsonl(),
+        writeMarkerAfter: readyMarker,
+        keepAliveAfterFinalMessageMs: scaleTestTimeout(5_000),
+      });
+      const id = `async-context-pause-boundary-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, id);
+      executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Pause after the unfinished edit.",
+        agentConfig: makeAgent("worker", {
+          model: "mock/test-model",
+        }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        availableModels: [
+          { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+        ],
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+
+      await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.steps?.[0]?.status === "running",
+        "running context-boundary child",
+      );
+      await waitForMarker(readyMarker);
+      requestAsyncInterrupt(asyncDir, { source: "context-boundary-test" });
+
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const child = payload.results[0];
+      assert.equal(payload.state, "paused");
+      assert.equal(child?.terminationReason, "paused");
+      assert.equal(child?.contextUsage?.contextPercent, 99);
+      assert.doesNotMatch(
+        child?.error ?? "",
+        /unfinished tool interaction under high context pressure/,
+      );
+      assert.equal(status.steps?.[0]?.status, "paused");
+      assert.equal(status.steps?.[0]?.terminationReason, "paused");
+    },
+  );
 
   it("fresh async runs do not mark a preallocated session path as restored", async () => {
     mockPi.onCall({
@@ -840,7 +616,6 @@ describe("async execution model restoration and fallback", () => {
       thinking: "high",
     });
     const reason = payload.results[0]?.modelResolution?.reason ?? "";
-    assert.match(reason, /not present in the current model registry/);
     assert.match(
       reason,
       /Runtime fallback selected 'openai\/gpt-5:high' after 'anthropic\/claude-sonnet-4:high' failed/,
@@ -998,57 +773,7 @@ describe("async execution model restoration and fallback", () => {
     assert.equal(statusPayload.steps?.[0]?.thinking, "high");
   });
 
-  it("background runs surface a dropped thinking level once without changing the model arg", async () => {
-    mockPi.onCall({ output: "Done asynchronously" });
-    const id = `async-thinking-drop-${Date.now().toString(36)}`;
-    const availableModels = [
-      {
-        provider: "openai",
-        id: "gpt-5",
-        fullId: "openai/gpt-5",
-        reasoning: true,
-        thinkingLevelMap: { max: null },
-      },
-    ];
-    const run = executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Do work",
-      agentConfig: makeAgent("worker", { model: "openai/gpt-5", thinking: "max" }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      availableModels,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    assert.equal(run.details.asyncId, id);
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const statusPayload = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
-    assert.ok(note);
-    assert.equal(payload.success, true);
-    assert.equal(payload.results[0]?.model, "openai/gpt-5");
-    assert.equal((payload.results[0]?.output?.split(note) ?? []).length - 1, 1);
-    assert.equal(
-      (statusPayload.steps?.[0]?.recentOutput?.filter((line) => line === note) ?? []).length,
-      1,
-    );
-    const args = readMockPiArgs(mockPi, 0);
-    assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
-  });
-
-  it("background runs preserve a max thinking suffix when capability metadata is missing", async () => {
+  it("background runs forward max thinking suffixes without capability gating", async () => {
     mockPi.onCall({ output: "Done asynchronously" });
     const id = `async-thinking-metadata-missing-${Date.now().toString(36)}`;
     const model = "anthropic/claude-sonnet-4-5";
@@ -1085,9 +810,63 @@ describe("async execution model restoration and fallback", () => {
     ) as AsyncResultPayload;
     assert.equal(payload.success, true);
     assert.equal(payload.results[0]?.model, `${model}:max`);
-    assert.equal(getThinkingLevelDropNote(model, "max", false, { availableModels }), undefined);
     const args = readMockPiArgs(mockPi, 0);
     assert.equal(args[args.indexOf("--model") + 1], `${model}:max`);
+  });
+
+  it("deduplicates fallback candidates after effective thinking suffix application", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "primary failed" }],
+            model: "openai/primary",
+            errorMessage: "HTTP 503 Service Unavailable",
+            usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 },
+          },
+        },
+      ],
+      exitCode: 1,
+    });
+    mockPi.onCall({ output: "Recovered on the distinct fallback" });
+    const id = `async-fallback-effective-dedupe-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: "openai/primary",
+        fallbackModels: ["openai/primary:high", "anthropic/backup"],
+        thinking: "high",
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dedupe" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.deepEqual(payload.results[0]?.attemptedModels, [
+      "openai/primary:high",
+      "anthropic/backup:high",
+    ]);
+    const firstArgs = readMockPiArgs(mockPi, 0);
+    const secondArgs = readMockPiArgs(mockPi, 1);
+    assert.equal(firstArgs[firstArgs.indexOf("--model") + 1], "openai/primary:high");
+    assert.equal(secondArgs[secondArgs.indexOf("--model") + 1], "anthropic/backup:high");
+    assert.equal(mockPi.callCount(), 2);
   });
 
   it("background runs try agent fallback models and only persist notices after a retry", async () => {
@@ -1210,7 +989,7 @@ describe("async execution model restoration and fallback", () => {
     assert.equal(secondArgs[secondArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4:off");
   });
 
-  it("background runs retry fallback models when a zero-exit attempt has empty output", async () => {
+  it("background runs stop without fallback after a zero-exit attempt has empty output", async () => {
     mockPi.onCall({
       jsonl: [
         {
@@ -1226,8 +1005,7 @@ describe("async execution model restoration and fallback", () => {
       ],
       exitCode: 0,
     });
-    mockPi.onCall({ output: "Recovered asynchronously from empty output" });
-    const id = `async-empty-output-fallback-${Date.now().toString(36)}`;
+    const id = `async-empty-output-nontransient-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Do work",
@@ -1250,15 +1028,106 @@ describe("async execution model restoration and fallback", () => {
 
     const resultPath = await waitForAsyncResultFile(id);
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    assert.equal(payload.success, true);
-    assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4");
-    assert.match(payload.results[0]?.output ?? "", /Recovered asynchronously from empty output/);
+    assert.equal(payload.success, false);
+    assert.equal(payload.results[0]?.model, "openai/gpt-5-mini");
     assert.match(payload.results[0]?.modelAttempts?.[0]?.error ?? "", /no output/i);
     assert.deepEqual(
       payload.results[0]?.modelAttempts?.map((attempt) => attempt.success),
-      [false, true],
+      [false],
     );
-    assert.equal(mockPi.callCount(), 2);
+    assert.equal(mockPi.callCount(), 1);
+  });
+
+  it("persists pressure across status, terminal result, and metadata projections", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Pressure projection complete" }],
+            model: "mock/test-model",
+            stopReason: "stop",
+            usage: {
+              totalTokens: 950,
+              input: 900,
+              output: 50,
+              cacheRead: 0,
+              cacheWrite: 0,
+              cost: { total: 0 },
+            },
+          },
+        },
+      ],
+    });
+    const id = `async-context-pressure-projection-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const artifactsDir = path.join(tempDir, "pressure-artifacts");
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Persist context pressure evidence",
+      agentConfig: makeAgent("worker", { model: "mock/test-model" }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      availableModels: [
+        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+      ],
+      artifactsDir,
+      artifactConfig: {
+        mode: "debug",
+        enabled: true,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeTranscript: false,
+        includeMetadata: true,
+        includeChildEventProjections: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const result = resultPayload.results[0];
+    assert.ok(result);
+    assert.equal(resultPayload.success, true);
+    assert.deepEqual(result.contextPressureCrossedThresholds, ["warning", "critical"]);
+    assert.equal(result.contextPressure?.severity, "critical");
+    assert.equal(result.contextPressure?.crossedThreshold, "critical");
+
+    const statusPayload = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const statusStep = statusPayload.steps?.[0];
+    assert.ok(statusStep);
+    assert.deepEqual(statusStep.contextPressureCrossedThresholds, ["warning", "critical"]);
+    assert.equal(statusStep.contextPressure?.severity, "critical");
+    assert.deepEqual(statusStep.tokens, { input: 900, output: 50, total: 950 });
+    assert.deepEqual(statusPayload.totalTokens, { input: 900, output: 50, total: 950 });
+
+    const metadataPath = result.artifactPaths?.metadataPath;
+    assert.ok(metadataPath);
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as {
+      contextPressure?: {
+        severity?: string;
+        crossedThreshold?: string;
+        contextTokens?: number;
+        contextWindow?: number;
+        contextPercent?: number;
+        remainingTokens?: number;
+        warnedAt?: number;
+      };
+      contextPressureCrossedThresholds?: string[];
+    };
+    assert.deepEqual(metadata.contextPressureCrossedThresholds, ["warning", "critical"]);
+    assert.equal(metadata.contextPressure?.severity, "critical");
+    assert.equal(metadata.contextPressure?.crossedThreshold, "critical");
+    assert.equal(metadata.contextPressure?.contextTokens, 950);
+    assert.equal(metadata.contextPressure?.contextWindow, 1000);
+    assert.equal(metadata.contextPressure?.contextPercent, 95);
+    assert.equal(metadata.contextPressure?.remainingTokens, 50);
+    assert.equal(typeof metadata.contextPressure?.warnedAt, "number");
   });
 
   it("background fallback does not combine failed pressure diagnostics with a later empty attempt", async () => {
@@ -1332,7 +1201,6 @@ describe("async execution model restoration and fallback", () => {
       agentConfig: makeAgent("worker", {
         model: "openai/gpt-5-mini",
         fallbackModels: ["anthropic/claude-sonnet-4"],
-        completionGuard: false,
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       availableModels: [
@@ -1358,8 +1226,14 @@ describe("async execution model restoration and fallback", () => {
 
     const resultPath = await waitForAsyncResultFile(id);
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    assert.equal(payload.success, true);
+    assert.equal(payload.success, false);
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.results[0]?.success, false);
+    assert.equal(payload.results[0]?.exitCode, 1);
+    assert.equal(payload.results[0]?.finalOutput, "");
     assert.notEqual(payload.results[0]?.terminationReason, "context_exhausted");
+    assert.match(payload.results[0]?.error ?? "", /no output/i);
     assert.doesNotMatch(
       payload.results[0]?.error ?? "",
       /unfinished tool interaction under high context pressure/,
@@ -1367,101 +1241,8 @@ describe("async execution model restoration and fallback", () => {
     assert.equal(payload.results[0]?.contextUsage?.contextPercent, 99);
     assert.deepEqual(
       payload.results[0]?.modelAttempts?.map((attempt) => attempt.success),
-      [false, true],
+      [false, false],
     );
-  });
-
-  it("background acceptance reports do not become context-exhausted empty terminals", async () => {
-    const acceptanceReport = [
-      "```acceptance-report",
-      JSON.stringify({
-        criteriaSatisfied: [
-          { id: "criterion-1", status: "satisfied", evidence: "terminal report" },
-        ],
-        changedFiles: [],
-        testsAddedOrUpdated: [],
-        commandsRun: [],
-        validationOutput: [],
-        residualRisks: [],
-        noStagedFiles: true,
-      }),
-      "```",
-    ].join("\n");
-    mockPi.onCall({
-      jsonl: [
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [
-              {
-                type: "toolCall",
-                id: "call-acceptance-bg",
-                name: "edit",
-                arguments: { path: "a.ts" },
-              },
-            ],
-            model: "mock/test-model",
-            stopReason: "toolUse",
-            usage: {
-              totalTokens: 990,
-              input: 900,
-              output: 90,
-              cacheRead: 0,
-              cacheWrite: 0,
-              cost: { total: 0 },
-            },
-          },
-        },
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: acceptanceReport }],
-            model: "mock/test-model",
-            stopReason: "stop",
-            usage: {
-              totalTokens: 990,
-              input: 900,
-              output: 90,
-              cacheRead: 0,
-              cacheWrite: 0,
-              cost: { total: 0 },
-            },
-          },
-        },
-      ],
-    });
-    const id = `async-context-acceptance-${Date.now().toString(36)}`;
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Finish the edit.",
-      agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      acceptance: false,
-      availableModels: [
-        { provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
-      ],
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    assert.equal(payload.success, true);
-    assert.equal(payload.results[0]?.exitCode, 0);
-    assert.equal(payload.results[0]?.terminationReason, "completed");
-    assert.equal(payload.results[0]?.contextUsage?.contextPercent, 99);
-    assert.equal(payload.results[0]?.output, "");
   });
 
   it("background runs fail zero-exit provider errors when no fallback succeeds", async () => {
@@ -1550,6 +1331,8 @@ describe("async execution model restoration and fallback", () => {
     const resultPath = await waitForAsyncResultFile(id);
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
+    // Top-level lifecycle artifacts retain the historical `complete` spelling;
+    // per-child terminalResult evidence uses the A1a `completed` label.
     assert.equal(payload.state, "complete");
     assert.equal(payload.exitCode, 0);
     assert.equal(payload.results[0]?.success, true);

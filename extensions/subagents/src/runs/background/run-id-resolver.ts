@@ -11,7 +11,6 @@ import {
 } from "../shared/nested-events.ts";
 
 export type ResolvedSubagentRunId =
-  | { kind: "foreground"; id: string }
   | { kind: "async"; id: string; location: AsyncRunLocation }
   | { kind: "nested"; id: string; match: NestedRunMatch };
 
@@ -37,13 +36,6 @@ function exactAsyncLocation(
   };
 }
 
-function foregroundIds(state: SubagentState | undefined): string[] {
-  if (!state) return [];
-  return [
-    ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
-  ];
-}
-
 function nestedScopeFromState(
   state: SubagentState | undefined,
 ): NestedRunResolutionScope | undefined {
@@ -57,8 +49,6 @@ function nestedScopeFromState(
     seen.add(key);
     routes.push(route);
   };
-  for (const control of state.foregroundControls.values())
-    add(control.nestedRoute as NestedRoute | undefined);
   for (const job of state.asyncJobs.values()) add(job.nestedRoute as NestedRoute | undefined);
   return { routes };
 }
@@ -80,8 +70,6 @@ export function resolveSubagentRunId(
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
 
   const nestedScope = deps.nested ?? nestedScopeFromState(deps.state);
-  if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id))
-    return { kind: "foreground", id };
   const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
   if (exactAsync) return { kind: "async", id, location: exactAsync };
   const exactNested = findNestedRunMatchesById(id, nestedScope ? { scope: nestedScope } : {});
@@ -92,11 +80,6 @@ export function resolveSubagentRunId(
   if (exactNested[0]) return { kind: "nested", id, match: exactNested[0] };
 
   const matches: ResolvedSubagentRunId[] = [];
-  for (const foregroundId of foregroundIds(deps.state).filter((candidate) =>
-    candidate.startsWith(id),
-  )) {
-    matches.push({ kind: "foreground", id: foregroundId });
-  }
   for (const match of asyncPrefixMatches(id, asyncDirRoot, resultsDir)) {
     matches.push({ kind: "async", id: match.id, location: match.location });
   }

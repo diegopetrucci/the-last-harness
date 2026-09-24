@@ -101,7 +101,7 @@ interface ControlChannelModule {
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
+const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
 const controlChannelMod = await tryImport<ControlChannelModule>(
   "./src/runs/background/control-channel.ts",
 );

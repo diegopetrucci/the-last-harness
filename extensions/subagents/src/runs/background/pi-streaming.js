@@ -5,9 +5,8 @@ import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js"
 import { CHILD_PROTOCOL_HARD_KILL_GRACE_MS, appendBoundedChildMessage, boundChildError, boundChildStderrError, claimChildTerminalReason, childUsageNumber, createBoundedBytePrefix, createBoundedByteTail, createBoundedLineReader, formatBoundedRawStdout, formatBoundedStderr, formatProtocolOutputLimit, formatStderrLineOverflow, formatStderrTailOverflow, MAX_CHILD_RAW_STDOUT_BYTES, MAX_CHILD_STDERR_LINE_BYTES, parseChildProtocolInput, } from "../shared/child-protocol.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { extractTextFromContent, extractToolArgsPreview, getFinalOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
-import { isMutatingTool } from "../shared/long-running-guard.js";
-import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
-import { resolveRuntimeModelContext } from "../shared/model-fallback.js";
+import { cleanupOwnedProcessGroup, createOwnedProcessGroupOwner, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
+import { resolveRuntimeModelContext } from "../../shared/model-info.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, resolveSubagentTerminationReason, updateContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 function shouldPersistChildEvent(event) {
@@ -49,6 +48,9 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             ...(ownsProcessGroup ? { detached: true } : {}),
         });
         const processGroupId = ownsProcessGroup && typeof child.pid === "number" && child.pid > 0 ? child.pid : undefined;
+        const processGroupOwner = processGroupId
+            ? createOwnedProcessGroupOwner(child)
+            : undefined;
         const stderrTail = createBoundedByteTail();
         const messages = [];
         const messageLedger = { bytes: 0, sizes: [] };
@@ -61,7 +63,6 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
         const terminalReason = {};
         let interrupted = false;
         let timedOut = false;
-        let observedMutationAttempt = false;
         let contextUsage;
         let runtimeModelIdentity;
         let finalAssistantStopReason;
@@ -122,8 +123,6 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             transcriptWriter?.writeChildEvent(event);
             onChildEvent?.(event);
             if (event.type === "tool_execution_start" && event.toolName) {
-                observedMutationAttempt =
-                    observedMutationAttempt || isMutatingTool(event.toolName, event.args);
                 const toolArgs = extractToolArgsPreview(event.args ?? {});
                 writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
                 return;
@@ -231,7 +230,7 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             softInterruptsEnabled = false;
             clearRegisteredInterrupt();
         };
-        const resolveProcessCleanup = () => {
+        const resolveProcessCleanup = (firstSignal = "SIGINT") => {
             disableSoftInterrupts();
             if (processCleanup)
                 return Promise.resolve(processCleanup);
@@ -239,10 +238,11 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                 return cleanupPromise;
             cleanupPromise = (async () => {
                 processCleanup = processGroupId
-                    ? await cleanupOwnedProcessGroup(processGroupId)
-                    : skipOwnedProcessGroupCleanup(supportsOwnedProcessGroupCleanup()
-                        ? "process_group_unavailable"
-                        : "unsupported_platform", processGroupId);
+                    ? await cleanupOwnedProcessGroup(processGroupId, {
+                        owner: processGroupOwner,
+                        ...(firstSignal === "SIGTERM" ? { firstSignal } : {}),
+                    })
+                    : skipOwnedProcessGroupCleanup(ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform", processGroupId, ownsProcessGroup);
                 return processCleanup;
             })();
             return cleanupPromise;
@@ -332,7 +332,6 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                         : finalOutput,
                 interrupted,
                 timedOut,
-                observedMutationAttempt,
                 processGroupId,
                 processCleanup,
                 contextUsage,
@@ -357,6 +356,7 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                 if (settled || childExited)
                     return;
                 trySignalChild(child, "SIGTERM");
+                void resolveProcessCleanup("SIGTERM");
                 protocolLimitHardKillTimer = setTimeout(() => {
                     protocolLimitHardKillTimer = undefined;
                     if (!settled && !childExited)
@@ -396,6 +396,7 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             interrupted = true;
             if (!error)
                 error = "Interrupted. Waiting for explicit next action.";
+            void resolveProcessCleanup();
             trySignalChild(child, "SIGINT");
             interruptTerminationTimer = setTimeout(() => {
                 if (!settled && !timedOut && softInterruptsEnabled)
@@ -417,6 +418,7 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             interrupted = false;
             error = boundChildError(timeoutMessage ?? "Subagent timed out.");
             trySignalChild(child, "SIGTERM");
+            void resolveProcessCleanup("SIGTERM");
             timeoutHardKillTimer = setTimeout(() => {
                 if (!settled)
                     trySignalChild(child, "SIGKILL");
@@ -469,6 +471,7 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             finalDrainTimer.unref?.();
         }
         child.on("exit", (exitCode, signal) => {
+            processGroupOwner?.observeExit(child.pid);
             childExited = true;
             exitCodeFromExit = exitCode;
             exitSignalFromExit = signal;
@@ -498,13 +501,14 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
             });
         });
         child.on("close", (exitCode, signal) => {
+            processGroupOwner?.observeExit(child.pid);
             disableSoftInterrupts();
             void resolveProcessCleanup().finally(() => {
                 finalize(exitCode, signal);
             });
         });
         child.on("error", (spawnError) => {
-            processCleanup = skipOwnedProcessGroupCleanup(supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform", processGroupId);
+            processCleanup = skipOwnedProcessGroupCleanup(ownsProcessGroup ? "process_group_unavailable" : "unsupported_platform", processGroupId, ownsProcessGroup);
             settled = true;
             disableSoftInterrupts();
             registerInterrupt?.(undefined);
@@ -528,7 +532,6 @@ export function runPiStreaming(args, cwd, outputFile, appendDiagnosticJsonl, env
                     : (error ?? assistantError ?? spawnErrorMessage),
                 finalOutput: timedOut && !finalOutput.trim() ? (timeoutMessage ?? "Subagent timed out.") : finalOutput,
                 timedOut,
-                observedMutationAttempt,
                 processGroupId,
                 processCleanup,
                 contextUsage,

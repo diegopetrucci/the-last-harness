@@ -1,123 +1,107 @@
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactPaths } from "../../shared/artifacts.js";
-import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
+import { readStatus } from "../../shared/utils.js";
 import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
-import { buildSkippedAcceptanceLedger } from "../shared/acceptance.js";
-import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundedActiveRuntimeMs, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, isLifecycleTransitionContentionError, } from "../shared/lifecycle-state.js";
-import { initialToolBudgetState } from "../shared/tool-budget.js";
-import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
+import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTransitionContentionError, isTerminalLifecycleState, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
+import { persistedTicketId } from "../shared/ticket-context.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
-import { normalizeTkTicketId } from "../shared/tk-ticket.js";
-import { readStatus } from "../../shared/utils.js";
-import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
-function validatedChildTkTicketId(task) {
-    return task.agent === "developer" && task.projectAgentGuidance === true
-        ? normalizeTkTicketId(task.tkTicketId)
-        : undefined;
-}
-function applyHealthStatusProjection(step, state) {
-    step.activityState = state.activityState;
-    step.idleEpisodeId = state.idleEpisodeId;
-    step.durableAttentionReasons = state.durableAttentionReasons.length
-        ? [...state.durableAttentionReasons]
-        : undefined;
-    step.compaction = state.compaction ? { ...state.compaction } : undefined;
-}
-const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
-function lifecycleTransitionErrorDetail(error, depth = 0) {
+const LIFECYCLE_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+function lifecycleErrorDetail(error) {
     try {
-        if (!(error instanceof Error))
-            return boundChildError(String(error), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown";
-        const errnoError = error;
-        const code = typeof errnoError.code === "string" ? `code=${errnoError.code}` : undefined;
-        const cause = error.cause !== undefined && depth < 2
-            ? `cause=${lifecycleTransitionErrorDetail(error.cause, depth + 1)}`
-            : undefined;
-        return (boundChildError([error.name ? `name=${error.name}` : undefined, code, `message=${error.message}`, cause]
-            .filter((part) => part !== undefined)
-            .join("; "), LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES) ?? "unknown");
+        const base = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        const record = typeof error === "object" && error !== null ? error : {};
+        const cause = error instanceof Error && error.cause && typeof error.cause === "object"
+            ? error.cause
+            : {};
+        const details = [
+            typeof record.code === "string" ? `code=${record.code}` : undefined,
+            typeof record.syscall === "string" ? `syscall=${record.syscall}` : undefined,
+            typeof cause.code === "string"
+                ? `cause code=${cause.code}`
+                : typeof cause.message === "string"
+                    ? `cause=${cause.message}`
+                    : undefined,
+        ].filter((value) => Boolean(value));
+        return (boundChildError(`${details.length ? `${details.join("; ")}; ` : ""}${base}`, LIFECYCLE_DIAGNOSTIC_MAX_BYTES) ?? "unknown");
     }
     catch {
         return "unavailable";
     }
 }
-export function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
+function appendLifecycleDiagnostic(append, runId, phase, error) {
     try {
-        appendDiagnosticEvent(JSON.stringify({
+        append(JSON.stringify({
             type: "subagent.run.lifecycle_transition_failed",
             ts: Date.now(),
             runId,
             phase,
-            cause: lifecycleTransitionErrorDetail(error),
+            cause: lifecycleErrorDetail(error),
         }), "subagent.run.lifecycle_transition_failed");
     }
     catch {
     }
 }
-export function appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
-    if (isLifecycleTransitionContentionError(error))
-        return;
-    appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error);
+export function appendUnexpectedLifecycleTransitionDiagnostic(append, runId, phase, error) {
+    if (!isLifecycleTransitionContentionError(error))
+        appendLifecycleDiagnostic(append, runId, phase, error);
 }
-function projectInitialModelFallbackFilterNotice(notice) {
-    const sanitized = sanitizeModelFallbackNotice(notice);
-    return sanitized ? { modelFallbackNotice: sanitized } : {};
+function validatedTicketId(step) {
+    return persistedTicketId(step.ticketId);
 }
-function resolveAsyncStepTranscriptPath(input) {
+function resolveTranscriptPath(input) {
     if (!input.artifactsDir ||
-        input.artifactConfig.enabled === false ||
-        input.artifactConfig.includeTranscript === false)
+        !input.artifactConfig.enabled ||
+        !input.artifactConfig.includeTranscript)
         return undefined;
-    return getArtifactPaths(input.artifactsDir, input.runId, input.agent, input.flatStepCount > 1 ? input.flatIndex : undefined).transcriptPath;
+    return getArtifactPaths(input.artifactsDir, input.runId, input.agent, input.count > 1 ? input.index : undefined).transcriptPath;
 }
+function normalizeAttemptResult(result) {
+    const parsed = result ? parseSubagentTerminalResult(result) : undefined;
+    return parsed
+        ? { state: parsed.state, facts: { attempts: boundSubagentAttemptFacts(parsed.facts.attempts) } }
+        : undefined;
+}
+const statusStepIsTerminal = (status) => isCompletedLifecycleStepState(status) || status === "failed" || status === "cancelled";
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
-    for (const step of flatSteps) {
-        step.contextPressure = parseContextPressureProjection(step.contextPressure);
-        step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
-    }
-    const initialStatusSteps = flatSteps.map((task, taskFlatIndex) => {
-        const transcriptPath = resolveAsyncStepTranscriptPath({
+    const initialStatusSteps = flatSteps.map((task, index) => {
+        const terminalResult = normalizeAttemptResult(task.terminalResult);
+        const ticketId = validatedTicketId(task);
+        const transcriptPath = resolveTranscriptPath({
             artifactsDir,
             artifactConfig,
             runId: id,
             agent: task.agent,
-            flatIndex: taskFlatIndex,
-            flatStepCount: flatSteps.length,
+            index,
+            count: flatSteps.length,
         });
         return {
             agent: task.agent,
             ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
+            ...(ticketId ? { ticketId } : {}),
             status: "pending",
-            ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
-            ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
-                ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
-                : {}),
-            ...(normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt) !== undefined
-                ? {
-                    activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(task.activeRuntimeCheckpointAt),
-                }
-                : {}),
             ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
+            ...(task.cwd && path.resolve(task.cwd) !== path.resolve(cwd) ? { cwd: task.cwd } : {}),
+            ...(terminalResult ? { terminalResult } : {}),
             ...(transcriptPath ? { transcriptPath } : {}),
             skills: task.skills,
+            ...(task.skillsWarning ? { skillsWarning: task.skillsWarning } : {}),
             model: task.model,
             thinking: task.thinking,
             ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
             ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
-            ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
+            modelFallbackNotice: sanitizeModelFallbackNotice(task.modelFallbackNotice),
             ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
             ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
             ...(task.contextPressureCrossedThresholds
                 ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
                 : {}),
-            attemptedModels: task.modelCandidates && task.modelCandidates.length > 0
+            attemptedModels: task.modelCandidates?.length
                 ? task.modelCandidates
                 : task.model
                     ? [task.model]
@@ -128,18 +112,9 @@ export function createBackgroundRunStatusOwner(input) {
         };
     });
     const sessionEnabled = Boolean(sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
-    const initialActiveRuntimeValues = initialStatusSteps
-        .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
-        .filter((value) => value !== undefined);
-    const initialActiveRuntimeMs = initialActiveRuntimeValues.reduce((total, value) => total + value, 0);
-    const initialActiveRuntimeCheckpointValues = initialStatusSteps
-        .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
-        .filter((value) => value !== undefined);
-    const initialActiveRuntimeCheckpointAt = initialActiveRuntimeCheckpointValues.length > 0
-        ? Math.max(...initialActiveRuntimeCheckpointValues)
-        : undefined;
     const statusPayload = {
-        lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+        lifecycleArtifactVersion: 1,
+        ...(input.awaited ? { awaited: true } : {}),
         runId: id,
         ...(sessionId ? { sessionId } : {}),
         mode: plan.kind,
@@ -147,17 +122,11 @@ export function createBackgroundRunStatusOwner(input) {
         lastActivityAt: overallStartTime,
         startedAt: overallStartTime,
         lastUpdate: overallStartTime,
-        ...(initialActiveRuntimeValues.length > 0 ? { activeRuntimeMs: initialActiveRuntimeMs } : {}),
-        ...(initialActiveRuntimeCheckpointAt !== undefined
-            ? { activeRuntimeCheckpointAt: initialActiveRuntimeCheckpointAt }
-            : {}),
         ...(deadlineAt !== undefined ? { deadlineAt } : {}),
-        ...(toolBudget ? { toolBudget: initialToolBudgetState(toolBudget) } : {}),
         pid: process.pid,
         cwd,
         currentStep: 0,
         steps: initialStatusSteps,
-        ...(tkTicket ? { tkTicket } : {}),
         ...(projectAgents ? { projectAgents } : {}),
         artifactsDir,
         sessionDir,
@@ -165,13 +134,15 @@ export function createBackgroundRunStatusOwner(input) {
     };
     fs.mkdirSync(asyncDir, { recursive: true });
     writeNormalizedLifecycleStatus(asyncDir, statusPayload);
-    const activeRuntimeTrackers = new Map();
-    const healthStates = initialStatusSteps.map(() => undefined);
-    const closedHealthSteps = new Set();
-    let currentActivityState;
-    const flatStepAcceptances = flatSteps.map((step) => step.effectiveAcceptance);
     const terminalReason = {};
-    const controlHooks = {
+    const trackedSessions = initialStatusSteps.map((step) => step.sessionFile
+        ? {
+            sessionDir: path.dirname(step.sessionFile),
+            baseline: new Set(listSessionFiles(path.dirname(step.sessionFile))),
+            discovered: path.resolve(step.sessionFile),
+        }
+        : undefined);
+    const hooks = {
         clearActivityState: () => undefined,
         interruptNestedDescendants: () => undefined,
         timeoutNestedDescendants: () => undefined,
@@ -180,23 +151,8 @@ export function createBackgroundRunStatusOwner(input) {
         abortInterrupt: () => undefined,
         abortTimeout: () => undefined,
     };
-    let latestSessionFile;
-    const trackedStepSessions = initialStatusSteps.map((step) => step.sessionFile
-        ? {
-            sessionDir: path.dirname(step.sessionFile),
-            baselineSessionFiles: new Set(listTrackedSessionFiles(path.dirname(step.sessionFile))),
-            discoveredSessionFile: path.resolve(step.sessionFile),
-        }
-        : undefined);
-    let supervisorPauseRequest;
-    let supervisorPauseTransitionFailed = false;
-    let durablePausingCheckpointPersisted = false;
-    let concurrentTerminalStatusAdopted = false;
-    let pausedCheckpointCommitted = false;
-    let interrupted = false;
-    let timedOut = false;
-    let runtimeCheckpointTimer;
-    function listTrackedSessionFiles(dir) {
+    let owner;
+    function listSessionFiles(dir) {
         if (!dir)
             return [];
         try {
@@ -229,313 +185,178 @@ export function createBackgroundRunStatusOwner(input) {
                 }),
             });
         }
-        catch (error) {
-            console.error("Failed to emit nested async status event:", error);
+        catch {
         }
     }
-    function beginTrackedSessionStep(flatIndex, stepSessionDir, sessionFile) {
-        trackedStepSessions[flatIndex] = {
-            sessionDir: stepSessionDir,
-            baselineSessionFiles: new Set(listTrackedSessionFiles(stepSessionDir)),
-            ...(sessionFile ? { discoveredSessionFile: path.resolve(sessionFile) } : {}),
+    function beginTrackedSessionStep(index, dir, file) {
+        trackedSessions[index] = {
+            sessionDir: dir,
+            baseline: new Set(listSessionFiles(dir)),
+            ...(file ? { discovered: path.resolve(file) } : {}),
         };
     }
-    function refreshTrackedSessionFile(flatIndex) {
-        const step = statusPayload.steps[flatIndex];
-        const tracked = trackedStepSessions[flatIndex];
+    function refreshTrackedSessionFile(index, fallback) {
+        const step = statusPayload.steps[index];
+        const tracked = trackedSessions[index];
+        if (fallback) {
+            if (tracked)
+                tracked.discovered = path.resolve(fallback);
+            if (step && !step.sessionFile)
+                step.sessionFile = fallback;
+            latestSessionFile = fallback;
+            if (!statusPayload.sessionFile)
+                statusPayload.sessionFile = statusPayload.steps.length === 1 ? fallback : latestSessionFile;
+            return fallback;
+        }
         if (!step || !tracked?.sessionDir)
             return step?.sessionFile;
-        const latestDiscovered = findLatestSessionFile(tracked.sessionDir) ?? undefined;
-        if (latestDiscovered) {
-            const resolvedLatest = path.resolve(latestDiscovered);
-            if (!tracked.baselineSessionFiles.has(resolvedLatest))
-                tracked.discoveredSessionFile = resolvedLatest;
-        }
-        if (tracked.discoveredSessionFile && !step.sessionFile)
-            step.sessionFile = tracked.discoveredSessionFile;
-        if (tracked.discoveredSessionFile)
-            latestSessionFile = tracked.discoveredSessionFile;
-        if (!statusPayload.sessionFile) {
+        const files = listSessionFiles(tracked.sessionDir).sort((a, b) => {
+            try {
+                return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+            }
+            catch {
+                return 0;
+            }
+        });
+        const discovered = files.find((file) => !tracked.baseline.has(file));
+        if (discovered)
+            tracked.discovered = discovered;
+        if (tracked.discovered && !step.sessionFile)
+            step.sessionFile = tracked.discovered;
+        if (tracked.discovered)
+            latestSessionFile = tracked.discovered;
+        if (!statusPayload.sessionFile)
             statusPayload.sessionFile =
                 statusPayload.steps.length === 1
                     ? (step.sessionFile ?? latestSessionFile)
                     : latestSessionFile;
-        }
-        return step.sessionFile ?? tracked.discoveredSessionFile;
+        return step.sessionFile ?? tracked.discovered;
     }
-    function resolveTrackedSessionFile(flatIndex, fallback) {
-        if (fallback) {
-            const tracked = trackedStepSessions[flatIndex];
-            if (tracked)
-                tracked.discoveredSessionFile = path.resolve(fallback);
-            return fallback;
+    function adoptConcurrentTerminalStatus() {
+        let persisted;
+        try {
+            persisted = readStatus(asyncDir, { cache: false });
         }
-        const current = statusPayload.steps[flatIndex]?.sessionFile;
-        if (current)
-            return current;
-        return refreshTrackedSessionFile(flatIndex);
+        catch {
+            return undefined;
+        }
+        if (!persisted || !isTerminalLifecycleState(persisted.state))
+            return undefined;
+        let adopted = persisted;
+        try {
+            adopted = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
+        }
+        catch {
+        }
+        if (!isTerminalLifecycleState(adopted.state))
+            adopted = persisted;
+        Object.assign(statusPayload, adopted);
+        owner.concurrentTerminalStatusAdopted = true;
+        owner.interrupted = adopted.state === "paused";
+        if (adopted.state === "paused")
+            owner.durablePausingCheckpointPersisted = true;
+        hooks.interruptNestedDescendants();
+        hooks.interruptActiveChildren();
+        return statusPayload;
     }
     function writeStatusPayload(options = {}) {
         if (statusPayload.currentStep !== undefined)
             refreshTrackedSessionFile(statusPayload.currentStep);
-        if (options.lifecycleLocked === true ||
-            concurrentTerminalStatusAdopted ||
-            (interrupted && pausedCheckpointCommitted)) {
-            const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
-            if (TERMINAL_RUN_STATES.has(merged.state) && merged.state !== statusPayload.state) {
-                adoptConcurrentTerminalStatus();
-            }
-            else {
-                statusPayload.lifecycle = merged.lifecycle;
-                for (let index = 0; index < (merged.steps?.length ?? 0); index++) {
-                    const mergedStep = merged.steps?.[index];
-                    const localStep = statusPayload.steps[index];
-                    if (!mergedStep || !localStep)
-                        continue;
-                    const mergedRuntime = normalizeActiveRuntimeMs(mergedStep.activeRuntimeMs);
-                    const localRuntime = normalizeActiveRuntimeMs(localStep.activeRuntimeMs);
-                    if (mergedRuntime !== undefined &&
-                        (localRuntime === undefined || mergedRuntime > localRuntime))
-                        localStep.activeRuntimeMs = mergedRuntime;
-                    const mergedCheckpoint = normalizeActiveRuntimeCheckpointAt(mergedStep.activeRuntimeCheckpointAt);
-                    const localCheckpoint = normalizeActiveRuntimeCheckpointAt(localStep.activeRuntimeCheckpointAt);
-                    if (mergedCheckpoint !== undefined &&
-                        (localCheckpoint === undefined || mergedCheckpoint > localCheckpoint))
-                        localStep.activeRuntimeCheckpointAt = mergedCheckpoint;
-                }
-            }
-        }
-        else {
-            writeNormalizedLifecycleStatus(asyncDir, statusPayload);
-        }
-        if (options.projectNested !== false) {
-            emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued"
+        statusPayload.activityState =
+            isActiveLifecycleState(statusPayload.state) &&
+                statusPayload.steps.some((step) => step.activityState === "needs_attention")
+                ? "needs_attention"
+                : undefined;
+        const previousState = statusPayload.state;
+        const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
+        Object.assign(statusPayload, merged);
+        if (isTerminalLifecycleState(merged.state) && merged.state !== previousState)
+            adoptConcurrentTerminalStatus();
+        if (options.projectNested !== false)
+            emitNestedSelfEvent(isActiveLifecycleState(statusPayload.state)
                 ? "subagent.nested.updated"
                 : "subagent.nested.completed");
+    }
+    function transition(phase, mutate) {
+        try {
+            Object.assign(statusPayload, transitionLifecycleStatus({
+                asyncDir,
+                expectedGeneration: lifecycleGeneration(statusPayload),
+                mutate,
+            }).status);
+            return true;
+        }
+        catch (error) {
+            appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent ?? appendEvent, id, phase, error);
+            return Boolean(adoptConcurrentTerminalStatus());
         }
     }
-    function checkpointActiveRuntime(now = Date.now(), freeze = false) {
-        const candidates = [...activeRuntimeTrackers].flatMap(([index, tracker]) => {
-            const step = statusPayload.steps[index];
-            if (!step || step.status !== "running")
-                return [];
-            return [
-                {
-                    tracker,
-                    previousActiveRuntimeMs: step.activeRuntimeMs,
-                    previousActiveRuntimeCheckpointAt: step.activeRuntimeCheckpointAt,
-                    apply: ({ activeRuntimeMs, activeRuntimeCheckpointAt, }) => {
-                        step.activeRuntimeMs = activeRuntimeMs;
-                        step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
-                    },
-                },
-            ];
-        });
-        return applyActiveRuntimeCheckpoint(candidates, {
-            now,
-            freeze,
-            persist: () => {
-                const aggregateRuntime = statusPayload.steps.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
-                const previousAggregateRuntime = normalizeActiveRuntimeMs(statusPayload.activeRuntimeMs);
-                statusPayload.activeRuntimeMs = Math.max(previousAggregateRuntime ?? 0, aggregateRuntime);
-                statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(now) ?? 0);
-                statusPayload.lastUpdate = now;
-                writeStatusPayload({ projectNested: false, lifecycleLocked: true });
-            },
-        });
-    }
-    function syncTopLevelHealthProjection() {
-        const nextRunState = statusPayload.steps.some((step) => step.activityState === "needs_attention")
-            ? "needs_attention"
-            : undefined;
-        const changed = nextRunState !== currentActivityState;
-        currentActivityState = nextRunState;
-        statusPayload.activityState = nextRunState;
-        return changed;
-    }
-    function healthStateForStep(flatIndex) {
-        const current = healthStates[flatIndex];
-        if (current)
-            return current;
-        const persistedReasons = statusPayload.steps[flatIndex]?.durableAttentionReasons;
-        const created = createHealthTransitionState(randomUUID());
-        healthStates[flatIndex] = persistedReasons?.length
-            ? { ...created, durableAttentionReasons: [...persistedReasons] }
-            : created;
-        return healthStates[flatIndex];
-    }
-    function ignoredHealthTransition(state) {
-        return {
-            state,
-            changed: false,
-            projectionChanged: false,
-            projection: state.activityState,
-            idleEpisodeStarted: false,
-            idleEpisodeEnded: false,
-            idleAttentionEligible: false,
-        };
-    }
-    function transitionStepHealth(flatIndex, action) {
-        const current = healthStateForStep(flatIndex);
-        const closed = closedHealthSteps.has(flatIndex);
-        if (closed && action.type !== "durable_attention")
-            return ignoredHealthTransition(current);
-        const transition = transitionHealth(current, action);
-        const publishedState = closed
-            ? {
-                ...transition.state,
-                activityState: undefined,
-                idleEpisodeId: undefined,
-                compaction: undefined,
-            }
-            : transition.state;
-        const publishedTransition = closed
-            ? {
-                ...transition,
-                state: publishedState,
-                projection: undefined,
-                projectionChanged: false,
-            }
-            : transition;
-        healthStates[flatIndex] = publishedState;
-        const step = statusPayload.steps[flatIndex];
-        if (step)
-            applyHealthStatusProjection(step, publishedState);
-        syncTopLevelHealthProjection();
-        return publishedTransition;
-    }
-    function resetStepHealth(flatIndex) {
-        closedHealthSteps.delete(flatIndex);
-        const transition = resetHealthTransitionState(healthStateForStep(flatIndex), randomUUID());
-        healthStates[flatIndex] = transition.state;
-        const step = statusPayload.steps[flatIndex];
-        if (step)
-            applyHealthStatusProjection(step, transition.state);
-        syncTopLevelHealthProjection();
-        return transition;
-    }
-    function clearStepHealth(flatIndex) {
-        const current = healthStateForStep(flatIndex);
-        if (closedHealthSteps.has(flatIndex))
-            return ignoredHealthTransition(current);
-        const transition = transitionHealth(current, { type: "clear_ephemeral" });
-        healthStates[flatIndex] = transition.state;
-        closedHealthSteps.add(flatIndex);
-        const step = statusPayload.steps[flatIndex];
-        if (step)
-            applyHealthStatusProjection(step, transition.state);
-        syncTopLevelHealthProjection();
-        return transition;
-    }
-    function clearRunningStepHealth() {
-        for (let index = 0; index < statusPayload.steps.length; index++) {
-            if (statusPayload.steps[index]?.status === "running")
-                clearStepHealth(index);
-        }
-    }
-    function endStepCompaction(flatIndex, options) {
-        const transition = transitionStepHealth(flatIndex, { type: "compaction_end" });
-        if (!transition.changed)
-            return;
-        const now = Date.now();
-        statusPayload.lastUpdate = now;
-        if (options?.publish !== false)
-            writeStatusPayload();
-    }
-    function endAllStepCompactions(options) {
-        for (let index = 0; index < statusPayload.steps.length; index++) {
-            if (healthStates[index]?.compaction)
-                endStepCompaction(index, options);
-        }
-    }
-    function adoptConcurrentTerminalStatus() {
-        const persisted = readStatus(asyncDir);
-        if (!persisted || persisted.state === "running" || persisted.state === "pausing")
+    function pauseMetadataForIndex(index, pausedAt) {
+        const request = owner.supervisorPauseRequest;
+        if (!request)
             return undefined;
-        const adoptedAt = Date.now();
-        const localRuntimeByIndex = new Map();
-        for (const [index, tracker] of activeRuntimeTrackers) {
-            localRuntimeByIndex.set(index, tracker.freeze(adoptedAt));
-        }
-        const adoptedSteps = persisted.steps?.map((step, index) => {
-            const localStep = statusPayload.steps[index];
-            const localRuntime = localRuntimeByIndex.get(index) ?? normalizeActiveRuntimeMs(localStep?.activeRuntimeMs);
-            const persistedRuntime = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-            const localCheckpoint = normalizeActiveRuntimeCheckpointAt(localStep?.activeRuntimeCheckpointAt);
-            const persistedCheckpoint = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+        if (index === request.requesterIndex)
             return {
-                ...step,
-                ...(localRuntime !== undefined || persistedRuntime !== undefined
-                    ? { activeRuntimeMs: Math.max(localRuntime ?? 0, persistedRuntime ?? 0) }
-                    : {}),
-                ...(localCheckpoint !== undefined || persistedCheckpoint !== undefined
-                    ? { activeRuntimeCheckpointAt: Math.max(localCheckpoint ?? 0, persistedCheckpoint ?? 0) }
-                    : {}),
+                ...request.pause,
+                ...(pausedAt !== undefined ? { pausedAt, ownerPid: undefined } : {}),
             };
-        });
-        const localAggregateRuntime = statusPayload.steps.reduce((total, step, index) => total +
-            (localRuntimeByIndex.get(index) ?? normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
-        const persistedAggregateRuntime = persisted.steps?.reduce((total, step) => total + (normalizeActiveRuntimeMs(step.activeRuntimeMs) ?? 0), 0);
-        const adoptedStatus = {
-            ...persisted,
-            ...(adoptedSteps ? { steps: adoptedSteps } : {}),
-            ...(localAggregateRuntime > 0 ||
-                persistedAggregateRuntime !== undefined ||
-                persisted.activeRuntimeMs !== undefined
-                ? {
-                    activeRuntimeMs: Math.max(normalizeActiveRuntimeMs(persisted.activeRuntimeMs) ?? 0, persistedAggregateRuntime ?? 0, localAggregateRuntime),
-                }
-                : {}),
-            ...(localRuntimeByIndex.size > 0 || persisted.activeRuntimeCheckpointAt !== undefined
-                ? {
-                    activeRuntimeCheckpointAt: Math.max(normalizeActiveRuntimeCheckpointAt(persisted.activeRuntimeCheckpointAt) ?? 0, ...[...localRuntimeByIndex.keys()].map((index) => normalizeActiveRuntimeCheckpointAt(statusPayload.steps[index]?.activeRuntimeCheckpointAt) ?? adoptedAt)),
-                }
-                : {}),
+        return {
+            kind: "cohort_pause",
+            summary: "Paused because another child in this cohort is awaiting supervisor.",
+            requestedAt: request.requestedAt,
+            ...(pausedAt !== undefined ? { pausedAt } : { ownerPid: process.pid }),
         };
-        Object.assign(statusPayload, adoptedStatus);
-        for (let index = 0; index < statusPayload.steps.length; index++) {
-            const adoptedStep = statusPayload.steps[index];
-            if (!adoptedStep ||
-                adoptedStep.status === "running" ||
-                adoptedStep.status === "pending" ||
-                adoptedStep.status === "pausing")
-                continue;
-            const currentHealth = healthStateForStep(index);
-            healthStates[index] = {
-                ...currentHealth,
-                activityState: undefined,
-                idleEpisodeId: undefined,
-                compaction: undefined,
-                durableAttentionReasons: [...(adoptedStep.durableAttentionReasons ?? [])],
-            };
-            closedHealthSteps.add(index);
-        }
-        syncTopLevelHealthProjection();
-        interrupted = persisted.state === "paused";
-        if (persisted.state === "paused")
-            pausedCheckpointCommitted = true;
-        concurrentTerminalStatusAdopted = true;
-        controlHooks.interruptNestedDescendants();
-        controlHooks.interruptActiveChildren();
-        return persisted;
+    }
+    function projectTerminal(state, now, options = {}) {
+        return transition("running->terminal", (status) => ({
+            ...status,
+            state,
+            pid: undefined,
+            activityState: undefined,
+            currentTool: undefined,
+            currentToolStartedAt: undefined,
+            currentPath: undefined,
+            ...(options.error !== undefined ? { error: options.error } : {}),
+            ...(options.timedOut ? { timedOut: true } : {}),
+            ...(options.cancel ? { cancel: options.cancel } : {}),
+            endedAt: status.endedAt ?? now,
+            lastUpdate: now,
+            steps: status.steps?.map((step) => {
+                if (!options.stepState ||
+                    (options.onlyRunning && step.status !== "running") ||
+                    statusStepIsTerminal(step.status))
+                    return step.compaction ? { ...step, compaction: undefined } : step;
+                return {
+                    ...step,
+                    status: options.stepState,
+                    activityState: undefined,
+                    compaction: undefined,
+                    ...(options.step ? options.step(step, now) : {}),
+                };
+            }),
+        }));
     }
     function onChildProtocolOutputLimit(limit) {
-        if (concurrentTerminalStatusAdopted ||
-            statusPayload.state !== "running" ||
-            timedOut ||
-            interrupted)
-            return;
-        if (!claimChildTerminalReason(terminalReason, "output_limit"))
+        if (owner.concurrentTerminalStatusAdopted ||
+            !isActiveLifecycleState(statusPayload.state) ||
+            owner.timedOut ||
+            owner.interrupted ||
+            owner.cancelled ||
+            !claimChildTerminalReason(terminalReason, "output_limit"))
             return;
         const now = Date.now();
-        endAllStepCompactions({ publish: false });
-        clearRunningStepHealth();
-        checkpointActiveRuntime(now, true);
-        const message = boundChildError(formatProtocolOutputLimit(limit));
-        statusPayload.state = "failed";
-        statusPayload.activityState = undefined;
-        statusPayload.error = message;
-        statusPayload.lastUpdate = now;
+        const error = boundChildError(formatProtocolOutputLimit(limit));
+        if (!projectTerminal("failed", now, {
+            stepState: "failed",
+            error,
+            step: (step) => ({
+                error,
+                exitCode: 1,
+                endedAt: now,
+                terminalResult: terminalResultForStatusStep(step, "failed"),
+            }),
+        }))
+            return;
         appendEvent(JSON.stringify({
             type: "subagent.child.protocol_output_limit",
             ts: now,
@@ -544,286 +365,226 @@ export function createBackgroundRunStatusOwner(input) {
             limitBytes: limit.limitBytes,
             observedBytes: limit.observedBytes,
         }));
-        writeStatusPayload();
     }
-    function pausedAcceptanceLedger(acceptance) {
-        return acceptance
-            ? buildSkippedAcceptanceLedger({
-                acceptance,
-                ledgerStatus: "skipped",
-                runtimeCheckStatus: "not-applicable",
-                id: "paused",
-                message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
-            })
-            : undefined;
-    }
-    function pauseMetadataForIndex(index, pausedAt) {
-        if (!supervisorPauseRequest)
-            return undefined;
-        if (index === supervisorPauseRequest.requesterIndex) {
-            return {
-                ...supervisorPauseRequest.pause,
-                ...(pausedAt !== undefined ? { pausedAt, ownerPid: undefined } : {}),
-            };
-        }
-        return {
-            kind: "cohort_pause",
-            summary: "Paused because another child in this cohort is awaiting supervisor.",
-            requestedAt: supervisorPauseRequest.requestedAt,
-            ...(pausedAt !== undefined ? { pausedAt } : { ownerPid: process.pid }),
-        };
-    }
-    function requestSupervisorPause(requesterIndex, pause) {
-        if (supervisorPauseRequest || interrupted || timedOut || statusPayload.state !== "running")
+    function requestSupervisorPause(index, pause) {
+        if (owner.supervisorPauseRequest ||
+            owner.interrupted ||
+            owner.cancelled ||
+            owner.timedOut ||
+            statusPayload.state !== "running" ||
+            !claimChildTerminalReason(terminalReason, "paused"))
             return;
-        if (!claimChildTerminalReason(terminalReason, "paused"))
-            return;
-        supervisorPauseRequest = {
-            requesterIndex,
+        const requestedAt = pause.requestedAt ?? Date.now();
+        owner.supervisorPauseRequest = {
+            requesterIndex: index,
             pause: { ...pause, ownerPid: process.pid },
-            requestedAt: pause.requestedAt ?? Date.now(),
+            requestedAt,
         };
         const now = Date.now();
-        endAllStepCompactions({ publish: false });
-        clearRunningStepHealth();
-        checkpointActiveRuntime(now, true);
-        if (concurrentTerminalStatusAdopted) {
-            interrupted = true;
-            controlHooks.abortInterrupt();
-            return;
-        }
-        const requesterSessionFile = refreshTrackedSessionFile(requesterIndex);
-        try {
-            const transition = transitionLifecycleStatus({
-                asyncDir,
-                expectedGeneration: lifecycleGeneration(statusPayload),
-                mutate: (status) => ({
-                    ...status,
-                    state: "pausing",
-                    pid: process.pid,
-                    pause: { ...supervisorPauseRequest.pause, ownerPid: process.pid },
-                    currentStep: requesterIndex,
-                    currentTool: undefined,
-                    currentToolStartedAt: undefined,
-                    currentPath: undefined,
+        const checkpointed = transition("running->pausing", (status) => ({
+            ...status,
+            state: "pausing",
+            pid: process.pid,
+            pause: { ...owner.supervisorPauseRequest.pause, ownerPid: process.pid },
+            currentStep: index,
+            currentTool: undefined,
+            currentToolStartedAt: undefined,
+            currentPath: undefined,
+            activityState: undefined,
+            lastUpdate: now,
+            sessionFile: refreshTrackedSessionFile(index) ?? status.sessionFile,
+            steps: status.steps?.map((step, stepIndex) => step.status !== "running"
+                ? step
+                : {
+                    ...step,
+                    status: "pausing",
                     activityState: undefined,
-                    lastUpdate: now,
-                    sessionFile: requesterSessionFile ?? status.sessionFile,
-                    steps: status.steps?.map((step, index) => {
-                        if (step.status !== "running")
-                            return step;
-                        const stepSessionFile = refreshTrackedSessionFile(index);
-                        const activeRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
-                        return {
-                            ...step,
-                            status: "pausing",
-                            activeRuntimeMs,
-                            activeRuntimeCheckpointAt: now,
-                            activityState: undefined,
-                            idleEpisodeId: undefined,
-                            compaction: undefined,
-                            interruptRequestedAt: now,
-                            ...(stepSessionFile ? { sessionFile: stepSessionFile } : {}),
-                            ...(index === requesterIndex
-                                ? { pause: { ...supervisorPauseRequest.pause, ownerPid: process.pid } }
-                                : { pause: pauseMetadataForIndex(index) }),
-                            acceptance: step.acceptance ?? pausedAcceptanceLedger(flatStepAcceptances[index]),
-                        };
-                    }),
+                    compaction: undefined,
+                    interruptRequestedAt: now,
+                    ...(stepIndex === index
+                        ? { pause: { ...owner.supervisorPauseRequest.pause, ownerPid: process.pid } }
+                        : { pause: pauseMetadataForIndex(stepIndex) }),
                 }),
-            });
-            Object.assign(statusPayload, transition.status);
-            supervisorPauseTransitionFailed = false;
-            durablePausingCheckpointPersisted = true;
-            pausedCheckpointCommitted = true;
-        }
-        catch (error) {
-            appendUnexpectedLifecycleTransitionDiagnostic(appendDiagnosticEvent ?? appendEvent, id, "running->pausing", error);
-            supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
-        }
-        interrupted = true;
-        controlHooks.clearActivityState();
+        }));
+        owner.supervisorPauseTransitionFailed = !checkpointed;
+        owner.durablePausingCheckpointPersisted =
+            checkpointed && statusPayload.state === "pausing";
+        owner.interrupted = true;
+        hooks.clearActivityState();
         appendEvent(JSON.stringify({
             type: "subagent.run.pausing",
             ts: now,
             runId: id,
-            stepIndex: requesterIndex,
-            pause: {
-                kind: supervisorPauseRequest.pause.kind,
-                summary: supervisorPauseRequest.pause.summary,
-                request: supervisorPauseRequest.pause.request,
-            },
+            stepIndex: index,
+            pause: { kind: pause.kind, summary: pause.summary, request: pause.request },
         }));
-        controlHooks.interruptNestedDescendants();
-        controlHooks.abortInterrupt();
-        controlHooks.interruptActiveChildren();
+        hooks.interruptNestedDescendants();
+        hooks.abortInterrupt();
+        hooks.interruptActiveChildren();
     }
-    function interrupt() {
-        if (interrupted || statusPayload.state !== "running")
+    function cancel() {
+        if (owner.supervisorPauseRequest &&
+            (statusPayload.state === "pausing" || statusPayload.state === "paused")) {
+            owner.interrupted = true;
+            hooks.abortInterrupt();
+            hooks.interruptActiveChildren();
             return;
-        if (!claimChildTerminalReason(terminalReason, "interrupted"))
+        }
+        if (owner.cancelled || isTerminalLifecycleState(statusPayload.state))
             return;
-        interrupted = true;
         const now = Date.now();
-        endAllStepCompactions({ publish: false });
-        checkpointActiveRuntime(now, true);
-        clearRunningStepHealth();
-        statusPayload.state = "paused";
-        controlHooks.clearActivityState();
-        statusPayload.activityState = undefined;
-        statusPayload.lastUpdate = now;
-        for (let flatIndex = 0; flatIndex < statusPayload.steps.length; flatIndex++) {
-            const step = statusPayload.steps[flatIndex];
-            if (step.status !== "running")
-                continue;
-            step.status = "paused";
-            step.activityState = undefined;
-            step.idleEpisodeId = undefined;
-            step.compaction = undefined;
-            step.endedAt = now;
-            step.durationMs = step.startedAt ? now - step.startedAt : undefined;
-            step.lastActivityAt = now;
-            if (!step.acceptance)
-                step.acceptance = pausedAcceptanceLedger(flatStepAcceptances[flatIndex]);
-            refreshTrackedSessionFile(flatIndex);
-        }
-        writeStatusPayload();
-        pausedCheckpointCommitted = true;
-        appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
-        controlHooks.interruptNestedDescendants();
-        controlHooks.abortInterrupt();
-        controlHooks.interruptActiveChildren();
-    }
-    function timeout() {
-        if (timedOut || interrupted || statusPayload.state !== "running")
+        const summary = "Cancelled by parent abort.";
+        projectTerminal("cancelled", now, {
+            stepState: "cancelled",
+            error: summary,
+            cancel: { summary, cancelledAt: now },
+            step: (step) => ({
+                cancel: { summary, cancelledAt: now },
+                error: summary,
+                exitCode: 1,
+                terminationReason: "cancelled",
+                endedAt: step.endedAt ?? now,
+            }),
+        });
+        if (statusPayload.state !== "cancelled")
             return;
-        if (!claimChildTerminalReason(terminalReason, "timed_out"))
-            return;
-        timedOut = true;
-        const now = Date.now();
-        endAllStepCompactions({ publish: false });
-        checkpointActiveRuntime(now, true);
-        for (let index = 0; index < statusPayload.steps.length; index++) {
-            const step = statusPayload.steps[index];
-            if (step?.status === "running" || step?.status === "pending")
-                clearStepHealth(index);
-        }
-        const message = timeoutMessage ?? "Subagent timed out.";
-        statusPayload.state = "failed";
-        statusPayload.timedOut = true;
-        statusPayload.error = message;
-        controlHooks.clearActivityState();
-        statusPayload.activityState = undefined;
-        statusPayload.lastUpdate = now;
-        for (const step of statusPayload.steps) {
-            if (step.status !== "running" && step.status !== "pending")
-                continue;
-            step.status = "failed";
-            step.error = message;
-            step.exitCode = 1;
-            step.timedOut = true;
-            step.terminationReason = "timed_out";
-            step.activityState = undefined;
-            step.idleEpisodeId = undefined;
-            step.compaction = undefined;
-            step.endedAt = now;
-            step.durationMs = step.startedAt ? now - step.startedAt : 0;
-            step.lastActivityAt = now;
-        }
-        writeStatusPayload();
+        owner.cancelled = true;
+        owner.interrupted = false;
+        owner.supervisorPauseRequest = undefined;
+        hooks.clearActivityState();
+        hooks.abortInterrupt();
+        hooks.abortTimeout();
+        hooks.interruptNestedDescendants();
+        hooks.interruptActiveChildren();
         appendEvent(JSON.stringify({
-            type: "subagent.run.timed_out",
+            type: "subagent.run.cancelled",
             ts: now,
             runId: id,
-            deadlineAt,
-            message,
+            reason: "parent_abort",
         }));
-        controlHooks.abortTimeout();
-        controlHooks.timeoutNestedDescendants();
-        controlHooks.timeoutActiveChildren();
+    }
+    function interrupt() {
+        if (owner.cancelled ||
+            owner.interrupted ||
+            statusPayload.state !== "running" ||
+            !claimChildTerminalReason(terminalReason, "interrupted"))
+            return;
+        const now = Date.now();
+        projectTerminal("paused", now, {
+            stepState: "paused",
+            onlyRunning: true,
+            step: (_step, at) => ({ endedAt: at, exitCode: 0, terminationReason: "paused" }),
+        });
+        owner.interrupted = true;
+        hooks.clearActivityState();
+        hooks.interruptNestedDescendants();
+        hooks.abortInterrupt();
+        hooks.interruptActiveChildren();
+        appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
+    }
+    function timeout() {
+        if (owner.timedOut ||
+            owner.interrupted ||
+            owner.cancelled ||
+            statusPayload.state !== "running" ||
+            !claimChildTerminalReason(terminalReason, "timed_out"))
+            return;
+        const now = Date.now();
+        const message = timeoutMessage ?? "Subagent timed out.";
+        projectTerminal("failed", now, {
+            stepState: "failed",
+            error: message,
+            timedOut: true,
+            step: (step, at) => ({
+                error: message,
+                exitCode: 1,
+                timedOut: true,
+                terminationReason: "timed_out",
+                endedAt: at,
+            }),
+        });
+        owner.timedOut = true;
+        hooks.clearActivityState();
+        hooks.abortTimeout();
+        hooks.timeoutNestedDescendants();
+        hooks.timeoutActiveChildren();
+        appendEvent(JSON.stringify({ type: "subagent.run.timed_out", ts: now, runId: id, deadlineAt, message }));
+    }
+    function recordAttemptFacts(index, facts) {
+        const step = statusPayload.steps[index];
+        if (!step || facts.attempt < 1)
+            return;
+        const previous = step.terminalResult?.facts.attempts ?? [];
+        if (previous.some((attempt) => attempt.attempt === facts.attempt))
+            return;
+        step.terminalResult = {
+            state: facts.exit.signal
+                ? statusPayload.state === "paused" || statusPayload.state === "pausing"
+                    ? "paused"
+                    : "failed"
+                : facts.exit.code === 0
+                    ? "completed"
+                    : "failed",
+            facts: { attempts: appendBoundedSubagentAttemptFact(previous, facts) },
+        };
+        statusPayload.lastUpdate = Date.now();
+        writeStatusPayload();
+    }
+    function syntheticStepResult(task, paused) {
+        const ticketId = validatedTicketId(task);
+        return {
+            agent: task.agent,
+            ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+            ...(ticketId ? { ticketId } : {}),
+            output: paused
+                ? "Paused after interrupt. Waiting for explicit next action."
+                : (timeoutMessage ?? "Subagent timed out."),
+            ...(paused ? {} : { error: timeoutMessage ?? "Subagent timed out.", timedOut: true }),
+            exitCode: paused ? 0 : 1,
+            ...(paused
+                ? { interrupted: true, terminationReason: "paused" }
+                : { terminationReason: "timed_out" }),
+            model: task.model,
+            modelIdentity: task.modelIdentity,
+            modelResolution: task.modelResolution,
+        };
     }
     function pausedStepResult(task) {
-        return {
-            agent: task.agent,
-            ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
-            output: "Paused after interrupt. Waiting for explicit next action.",
-            exitCode: 0,
-            interrupted: true,
-            terminationReason: "paused",
-            model: task.model,
-            modelIdentity: task.modelIdentity,
-            modelResolution: task.modelResolution,
-            acceptance: pausedAcceptanceLedger(task.effectiveAcceptance),
-        };
+        return syntheticStepResult(task, true);
     }
     function timedOutStepResult(task) {
-        return {
-            agent: task.agent,
-            ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-            ...(validatedChildTkTicketId(task) ? { tkTicketId: validatedChildTkTicketId(task) } : {}),
-            output: timeoutMessage ?? "Subagent timed out.",
-            error: timeoutMessage ?? "Subagent timed out.",
-            exitCode: 1,
-            timedOut: true,
-            terminationReason: "timed_out",
-            model: task.model,
-            modelIdentity: task.modelIdentity,
-            modelResolution: task.modelResolution,
-        };
+        return syntheticStepResult(task, false);
     }
     function ownedPauseProcessesConfirmedStopped() {
-        return statusPayload.steps.every((step) => {
-            if (step.status !== "pausing" && step.status !== "paused")
-                return true;
-            if (!step.startedAt)
-                return true;
-            return step.processCleanup?.terminated === true;
-        });
+        return statusPayload.steps.every((step) => (step.status !== "pausing" && step.status !== "paused") ||
+            step.processCleanup?.terminated === true);
     }
     function isPersistedAwaitingSupervisorPause(status) {
-        if (!status || !supervisorPauseRequest)
+        if (!status || !owner.supervisorPauseRequest)
             return false;
-        const requester = status.steps[supervisorPauseRequest.requesterIndex];
+        const requester = status.steps[owner.supervisorPauseRequest.requesterIndex];
         return (status.state === "paused" &&
             status.pid === undefined &&
             status.pause?.kind === "awaiting_supervisor" &&
-            status.pause?.ownerPid === undefined &&
-            requester?.status === "paused" &&
-            requester.pause?.kind === "awaiting_supervisor" &&
-            requester.pause?.ownerPid === undefined);
+            status.pause.ownerPid === undefined &&
+            requester?.status === "paused");
     }
-    function applyPausedStepMetadata(flatIndex, endedAt) {
-        const step = statusPayload.steps[flatIndex];
+    function applyPausedStepMetadata(index, endedAt) {
+        const step = statusPayload.steps[index];
         if (!step)
             return;
-        const sessionFile = refreshTrackedSessionFile(flatIndex);
+        const sessionFile = refreshTrackedSessionFile(index);
         if (sessionFile)
             step.sessionFile = sessionFile;
-        step.pause = pauseMetadataForIndex(flatIndex, endedAt);
-        step.acceptance = step.acceptance ?? pausedAcceptanceLedger(flatStepAcceptances[flatIndex]);
-        step.interruptRequestedAt = supervisorPauseRequest?.requestedAt ?? step.interruptRequestedAt;
+        step.pause = pauseMetadataForIndex(index, endedAt);
+        step.interruptRequestedAt =
+            owner.supervisorPauseRequest?.requestedAt ?? step.interruptRequestedAt;
     }
-    function startRuntimeCheckpointTimer() {
-        runtimeCheckpointTimer = setInterval(() => {
-            if (statusPayload.state !== "running")
-                return;
-            checkpointActiveRuntime(Date.now());
-        }, ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS);
-        runtimeCheckpointTimer.unref?.();
-    }
-    function disposeRuntimeCheckpointTimer() {
-        if (runtimeCheckpointTimer)
-            clearInterval(runtimeCheckpointTimer);
-        runtimeCheckpointTimer = undefined;
-    }
-    const owner = {
+    let latestSessionFile;
+    owner = {
         flatSteps,
-        initialStatusSteps,
         sessionEnabled,
         statusPayload,
-        activeRuntimeTrackers,
-        flatStepAcceptances,
         terminalReason,
         get latestSessionFile() {
             return latestSessionFile;
@@ -831,97 +592,33 @@ export function createBackgroundRunStatusOwner(input) {
         set latestSessionFile(value) {
             latestSessionFile = value;
         },
-        get interrupted() {
-            return interrupted;
-        },
-        set interrupted(value) {
-            interrupted = value;
-        },
-        get timedOut() {
-            return timedOut;
-        },
-        set timedOut(value) {
-            timedOut = value;
-        },
-        get supervisorPauseRequest() {
-            return supervisorPauseRequest;
-        },
-        set supervisorPauseRequest(value) {
-            supervisorPauseRequest = value;
-        },
-        get supervisorPauseTransitionFailed() {
-            return supervisorPauseTransitionFailed;
-        },
-        set supervisorPauseTransitionFailed(value) {
-            supervisorPauseTransitionFailed = value;
-        },
-        get durablePausingCheckpointPersisted() {
-            return durablePausingCheckpointPersisted;
-        },
-        set durablePausingCheckpointPersisted(value) {
-            durablePausingCheckpointPersisted = value;
-        },
-        get concurrentTerminalStatusAdopted() {
-            return concurrentTerminalStatusAdopted;
-        },
-        set concurrentTerminalStatusAdopted(value) {
-            concurrentTerminalStatusAdopted = value;
-        },
-        get pausedCheckpointCommitted() {
-            return pausedCheckpointCommitted;
-        },
-        set pausedCheckpointCommitted(value) {
-            pausedCheckpointCommitted = value;
-        },
-        setControlHooks(hooks) {
-            Object.assign(controlHooks, hooks);
-        },
-        claimTerminalReason(reason) {
-            return claimChildTerminalReason(terminalReason, reason);
+        interrupted: false,
+        cancelled: false,
+        timedOut: false,
+        supervisorPauseRequest: undefined,
+        supervisorPauseTransitionFailed: false,
+        durablePausingCheckpointPersisted: false,
+        concurrentTerminalStatusAdopted: false,
+        setControlHooks(value) {
+            Object.assign(hooks, value);
         },
         beginTrackedSessionStep,
         refreshTrackedSessionFile,
-        resolveTrackedSessionFile,
         writeStatusPayload,
-        checkpointActiveRuntime,
-        healthStateForStep,
-        transitionStepHealth,
-        resetStepHealth,
-        clearStepHealth,
-        clearRunningStepHealth,
-        endStepCompaction,
-        endAllStepCompactions,
-        syncTopLevelHealthProjection,
+        recordAttemptFacts,
         onChildProtocolOutputLimit,
-        pausedAcceptanceLedger,
         pausedStepResult,
         timedOutStepResult,
         pauseMetadataForIndex,
         adoptConcurrentTerminalStatus,
         requestSupervisorPause,
+        cancel,
         interrupt,
         timeout,
         ownedPauseProcessesConfirmedStopped,
         isPersistedAwaitingSupervisorPause,
         applyPausedStepMetadata,
-        startRuntimeCheckpointTimer,
-        disposeRuntimeCheckpointTimer,
         emitNestedSelfEvent,
     };
     return owner;
-}
-function findLatestSessionFile(sessionDir) {
-    try {
-        const files = fs
-            .readdirSync(sessionDir)
-            .filter((f) => f.endsWith(".jsonl"))
-            .map((f) => path.join(sessionDir, f));
-        if (files.length === 0)
-            return null;
-        files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-        return files[0] ?? null;
-    }
-    catch {
-        return null;
-    }
 }

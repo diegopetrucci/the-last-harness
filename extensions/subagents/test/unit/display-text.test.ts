@@ -17,11 +17,10 @@ import {
   formatAsyncResultTranscript,
   formatAsyncRunTranscript,
   formatNestedRunTranscript,
-  inspectSubagentFleet,
-} from "../../src/runs/background/fleet-view.ts";
+} from "../../src/runs/background/status-transcript.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { formatNestedRunStatusLines } from "../../src/runs/shared/nested-render.ts";
-import { formatForegroundNativeSubagentResult } from "../../src/shared/result-formatting.ts";
+import { formatAwaitedNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 import type { AsyncJobStep, AsyncStatus, NestedRunSummary } from "../../src/shared/types.ts";
 
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
@@ -117,44 +116,6 @@ describe("background display boundaries", () => {
     assert.deepEqual(run, snapshot);
   });
 
-  it("sanitizes fleet-view output while leaving persisted status bytes untouched", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-display-fleet-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const resultsRoot = path.join(root, "results");
-      const asyncDir = path.join(asyncRoot, "run-fleet");
-      fs.mkdirSync(asyncDir, { recursive: true });
-      const statusPath = path.join(asyncDir, "status.json");
-      const statusText = JSON.stringify({
-        runId: "run-fleet",
-        state: "running",
-        mode: "single",
-        startedAt: 100,
-        lastUpdate: 200,
-        error: unsafe,
-        steps: [
-          {
-            agent: "worker",
-            status: "running",
-            recentOutput: [unsafe],
-          },
-        ],
-      });
-      fs.writeFileSync(statusPath, statusText, "utf8");
-      const before = fs.readFileSync(statusPath);
-
-      const result = inspectSubagentFleet(
-        {},
-        { asyncDirRoot: asyncRoot, resultsDir: resultsRoot, kill: () => true, now: () => 250 },
-      );
-
-      assertTerminalSafe(textContent(result));
-      assert.deepEqual(fs.readFileSync(statusPath), before);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("sanitizes run-status output for top-level and step diagnostics", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-display-status-"));
     try {
@@ -243,11 +204,11 @@ describe("background display boundaries", () => {
   });
 });
 
-describe("immediate foreground diagnostics", () => {
+describe("immediate awaited diagnostics", () => {
   it("preserves binary placeholders in multiline native summaries", () => {
     const binary = "\x01\x02A".repeat(30) + "\x00";
-    const result = formatForegroundNativeSubagentResult({
-      runId: "foreground-binary-display",
+    const result = formatAwaitedNativeSubagentResult({
+      runId: "awaited-binary-display",
       mode: "single",
       children: [
         {
@@ -271,8 +232,8 @@ describe("immediate foreground diagnostics", () => {
       index: 0,
       artifactPath: `/tmp/${unsafe}.log`,
     };
-    const result = formatForegroundNativeSubagentResult({
-      runId: "foreground-display",
+    const result = formatAwaitedNativeSubagentResult({
+      runId: "awaited-display",
       mode: "single",
       children: [child],
     });

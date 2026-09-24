@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   findModelInfo,
-  getSupportedThinkingLevels,
+  resolveRuntimeModelContext,
   splitKnownThinkingSuffix,
   type ModelInfo,
 } from "../../src/shared/model-info.ts";
@@ -13,17 +13,92 @@ describe("model info helpers", () => {
       provider: "openai",
       id: "gpt-5-mini",
       fullId: "openai/gpt-5-mini",
-      reasoning: true,
-      thinkingLevelMap: { high: "high" },
     },
     {
       provider: "github-copilot",
       id: "gpt-5-mini",
       fullId: "github-copilot/gpt-5-mini",
-      reasoning: true,
-      thinkingLevelMap: { off: null, high: "high", xhigh: "xhigh" },
     },
   ];
+
+  it("resolves exact runtime context metadata and preserves opaque model ids", () => {
+    const contextWindows = {
+      "mock/test-model": 1000,
+      "openrouter/anthropic/claude-3.5-sonnet": 4096,
+      "ollama/qwen3:8b": 8192,
+    };
+    assert.deepEqual(resolveRuntimeModelContext("mock", "test-model", contextWindows), {
+      identity: { provider: "mock", model: "test-model" },
+      contextWindow: 1000,
+    });
+    assert.deepEqual(
+      resolveRuntimeModelContext("openrouter", "anthropic/claude-3.5-sonnet:high", contextWindows),
+      {
+        identity: {
+          provider: "openrouter",
+          model: "anthropic/claude-3.5-sonnet",
+          thinking: "high",
+        },
+        contextWindow: 4096,
+      },
+    );
+    assert.deepEqual(resolveRuntimeModelContext("ollama", "qwen3:8b", contextWindows), {
+      identity: { provider: "ollama", model: "qwen3:8b" },
+      contextWindow: 8192,
+    });
+  });
+
+  it("rejects malformed runtime model context boundaries without coercion", () => {
+    const contextWindows = {
+      "mock/test-model": 1000,
+      "openrouter/anthropic/claude-3.5-sonnet": 4096,
+    };
+    for (const [provider, model] of [
+      [null, "test-model"],
+      ["mock", 42],
+      [undefined, undefined],
+      ["mock", "/test-model"],
+      ["mock", "test-model/"],
+      ["other", "test-model"],
+    ] as const) {
+      assert.equal(resolveRuntimeModelContext(provider, model, contextWindows), undefined);
+    }
+    assert.deepEqual(
+      resolveRuntimeModelContext(
+        undefined,
+        "openrouter/anthropic/claude-3.5-sonnet:high",
+        contextWindows,
+      ),
+      {
+        identity: {
+          provider: "openrouter",
+          model: "anthropic/claude-3.5-sonnet",
+          thinking: "high",
+        },
+        contextWindow: 4096,
+      },
+    );
+  });
+
+  it("does not invent a context denominator for unknown or malformed models", () => {
+    const contextWindows = { "mock/test-model": 1000 };
+    assert.equal(resolveRuntimeModelContext("mock", "missing-model", contextWindows), undefined);
+    assert.equal(resolveRuntimeModelContext(undefined, "test-model", contextWindows), undefined);
+    assert.equal(
+      resolveRuntimeModelContext("bad provider", "test-model", contextWindows),
+      undefined,
+    );
+    const inherited = Object.create({ "mock/inherited": 3000 }) as Record<string, number>;
+    assert.equal(resolveRuntimeModelContext("mock", "inherited", inherited), undefined);
+  });
+
+  it("does not let a separately reported provider reinterpret a qualified model id", () => {
+    const contextWindows = {
+      "mock/test-model": 1000,
+      "other/test-model": 2000,
+    };
+    assert.equal(resolveRuntimeModelContext("other", "mock/test-model", contextWindows), undefined);
+  });
 
   it("does not choose arbitrary metadata for ambiguous bare model ids", () => {
     assert.equal(findModelInfo("gpt-5-mini", ambiguousModels), undefined);
@@ -43,78 +118,7 @@ describe("model info helpers", () => {
     );
   });
 
-  it("keeps the legacy thinking list for models without per-level metadata", () => {
-    assert.deepEqual(
-      getSupportedThinkingLevels({
-        provider: "openai",
-        id: "gpt-5",
-        fullId: "openai/gpt-5",
-        reasoning: true,
-      }),
-      ["off", "minimal", "low", "medium", "high", "xhigh"],
-    );
-    assert.deepEqual(getSupportedThinkingLevels(undefined), [
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-  });
-
-  it("keeps the legacy thinking list when older model metadata omits reasoning", () => {
-    assert.deepEqual(
-      getSupportedThinkingLevels({ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }),
-      ["off", "minimal", "low", "medium", "high", "xhigh"],
-    );
-  });
-
-  it("filters levels only when per-level metadata is present", () => {
-    assert.deepEqual(
-      getSupportedThinkingLevels({
-        provider: "deepseek",
-        id: "deepseek-v4-pro",
-        fullId: "deepseek/deepseek-v4-pro",
-        reasoning: true,
-        thinkingLevelMap: { minimal: null, low: null, medium: null, high: "high", xhigh: "max" },
-      }),
-      ["off", "high", "xhigh"],
-    );
-  });
-
-  it("honors metadata that marks off unsupported", () => {
-    assert.deepEqual(
-      getSupportedThinkingLevels({
-        provider: "always-thinking",
-        id: "model",
-        fullId: "always-thinking/model",
-        reasoning: true,
-        thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: "high" },
-      }),
-      ["high"],
-    );
-  });
-
-  it("honors an explicit max mapping and recognizes max suffixes", () => {
-    assert.deepEqual(
-      getSupportedThinkingLevels({
-        provider: "openai",
-        id: "gpt-5",
-        fullId: "openai/gpt-5",
-        reasoning: true,
-        thinkingLevelMap: {
-          off: null,
-          minimal: null,
-          low: null,
-          medium: null,
-          high: null,
-          xhigh: null,
-          max: "max",
-        },
-      }),
-      ["max"],
-    );
+  it("recognizes max suffixes without consulting model capabilities", () => {
     assert.deepEqual(splitKnownThinkingSuffix("openai/gpt-5:max"), {
       baseModel: "openai/gpt-5",
       thinkingSuffix: ":max",

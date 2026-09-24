@@ -1,11 +1,12 @@
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord } from "./common.js";
-import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
+import { THINKING_LEVELS } from "./constants.js";
+import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, splitKnownThinkingSuffix, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
 import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
+import { isThinkingLevel } from "./thinking.js";
 const SUBAGENT_SETTINGS_COMMAND = "subagent-settings";
 const INDEPENDENCE_SENSITIVE_AGENTS = new Set(["code-reviewer", "oracle", "contrarian"]);
 const INDEPENDENCE_WARNING = "Provider independence is not guaranteed when a fixed model override is configured for this role.";
@@ -57,9 +58,6 @@ function getStoredOverrides(cwd) {
     return new Map(Object.entries(overrides)
         .filter(([, value]) => isRecord(value))
         .map(([agent, value]) => [agent, value]));
-}
-function availableThinkingLevels(model) {
-    return getAvailableThinkingLevels(model);
 }
 function fixedModelWarning(agentName, override) {
     return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName)
@@ -225,15 +223,15 @@ function resetAllBundledSubagentOverrides(cwd, bundledAgentNames) {
         };
     });
 }
-function effectiveModelForEffort(agent, override, models, ctx) {
-    return resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), override).model;
-}
 function formatEffectiveModelAndThinking(model, thinking) {
     if (!model) {
         return thinking ? `no model (effort ${thinking})` : "no model";
     }
     if (typeof model === "string") {
-        return model;
+        const { baseModel, thinkingSuffix } = splitKnownThinkingSuffix(model);
+        return thinking
+            ? `${baseModel ?? model}:${thinking}`
+            : `${baseModel ?? model}${thinkingSuffix}`;
     }
     return formatResolvedProviderModelReference(model, thinking);
 }
@@ -268,9 +266,7 @@ function formatStatusForAgent(agent, override, ctx) {
         overrideResolution.warning,
     ].filter((warning) => Boolean(warning));
     const effectiveModel = overrideResolution.unavailableModel ?? overrideResolution.model;
-    const effectiveThinking = overrideResolution.unavailableModel
-        ? undefined
-        : overrideResolution.thinking;
+    const effectiveThinking = overrideResolution.thinking;
     const lines = [
         `- ${agent.name}: default ${formatEffectiveModelAndThinking(baseResolution.model, baseResolution.thinking)}; override model=${overrideModel}, effort=${overrideThinking}; effective ${formatEffectiveModelAndThinking(effectiveModel, effectiveThinking)}.`,
         ...warnings.map((warning) => `  ${warning}`),
@@ -313,16 +309,7 @@ function parseAvailableModel(models, modelRef) {
     }
     return model;
 }
-function validateModelEffortPair(model, effort) {
-    if (typeof effort !== "string" || !isThinkingLevel(effort)) {
-        return;
-    }
-    const supportedLevels = availableThinkingLevels(model);
-    if (!supportedLevels.includes(effort)) {
-        throw new Error(`Effort "${effort}" is not supported by ${model ? formatProviderModelReference(model) : "the effective model"}. Available: ${supportedLevels.join(", ")}.`);
-    }
-}
-function parseSetArguments(parts, agent, models, ctx, override) {
+function parseSetArguments(parts, models) {
     if (parts.length < 2 || parts.length % 2 !== 0) {
         throw new Error(usageMessage());
     }
@@ -346,9 +333,6 @@ function parseSetArguments(parts, agent, models, ctx, override) {
         }
         throw new Error(usageMessage());
     }
-    const finalModel = selectedModel ?? effectiveModelForEffort(agent, override, models, ctx);
-    const finalEffort = patch.thinking ?? override?.thinking;
-    validateModelEffortPair(finalModel, finalEffort);
     return patch;
 }
 async function confirmFixedModelOverride(ctx, agentName, model) {
@@ -363,7 +347,7 @@ async function confirmFixedModelOverride(ctx, agentName, model) {
 function subagentPickerOption(agent, override, ctx) {
     const models = availableModels(ctx);
     const effective = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), override);
-    const effectiveLabel = formatEffectiveModelAndThinking(effective.unavailableModel ?? effective.model, effective.unavailableModel ? undefined : effective.thinking);
+    const effectiveLabel = formatEffectiveModelAndThinking(effective.unavailableModel ?? effective.model, effective.thinking);
     const hasOverride = Boolean(override && (Object.hasOwn(override, "model") || Object.hasOwn(override, "thinking")));
     const overrideMarker = hasOverride ? "●" : "○";
     const riskMarker = fixedModelWarning(agent.name, override) ? " ⚠ independence" : "";
@@ -448,10 +432,8 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
                 ctx.ui.notify("Unknown model picker selection.", "error");
                 continue;
             }
-            let selectedModel;
             try {
-                selectedModel = parseAvailableModel(models, model);
-                validateModelEffortPair(selectedModel, override?.thinking);
+                parseAvailableModel(models, model);
             }
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -470,14 +452,13 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
             }
             continue;
         }
-        const model = effectiveModelForEffort(agent, override, models, ctx);
-        const supportedLevels = availableThinkingLevels(model);
+        const effortLevels = [...THINKING_LEVELS];
         const currentThinkingOverride = override?.thinking === false
             ? "off"
             : typeof override?.thinking === "string"
                 ? override.thinking
                 : undefined;
-        const optionToThinking = new Map(supportedLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level]));
+        const optionToThinking = new Map(effortLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level]));
         const selectedThinkingOption = await ctx.ui.select(`Pick effort for ${agentName}`, [
             ...optionToThinking.keys(),
         ]);
@@ -563,7 +544,7 @@ export function registerSubagentSettingsCommand(pi) {
                 const models = availableModels(ctx);
                 const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
                 const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
-                const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);
+                const patch = parseSetArguments(rest, models);
                 if (!(await confirmFixedModelOverride(ctx, rawAgentName, patch.model))) {
                     ctx.ui.notify("Model override cancelled.", "info");
                     return;

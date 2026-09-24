@@ -3,10 +3,9 @@ import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, SUBAGENT_TK_TICKET_ID_ENV, } from "./pi-args.js";
-import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
 import { blockForcedSystemPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION, setStructuredChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
 import { formatProjectAgentGuidance, inventoryProjectAgentGuidance, PACKAGED_MINOR_AGENT_ROLES, } from "../../../../shared/project-agent-guidance.js";
-import { normalizeTkTicketId } from "./tk-ticket.js";
+import { normalizeTicketId } from "./ticket-context.js";
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -124,13 +123,13 @@ function resolveChildTkTicketId() {
     const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
     if (childAgentName !== "developer" || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1")
         return undefined;
-    return normalizeTkTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]);
+    return normalizeTicketId(process.env[SUBAGENT_TK_TICKET_ID_ENV]).ticketId;
 }
 function formatChildTkTicketGuidance(ticketId) {
     return [
         "Developer ticket assignment:",
         `Ticket ID: ${ticketId}`,
-        `Before making any changes, run \`tk show ${ticketId}\` and treat that ticket as the source of truth.`,
+        `Before making any changes, treat the injected \`## Ticket ${ticketId}\` body as the source of truth. You may run \`tk show ${ticketId}\` only to re-read it.`,
     ].join("\n");
 }
 function formatDeveloperCompactionReminder(ticketId) {
@@ -145,28 +144,6 @@ function resolveChildSupervisorGuidance() {
     if (process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] === "1")
         return "";
     return hasNativeSupervisorMetadata() ? NATIVE_SUPERVISOR_GUIDANCE : "";
-}
-function registerToolBudget(pi, budget) {
-    if (!budget)
-        return;
-    let toolCount = 0;
-    let softNudged = false;
-    const sendUserMessage = typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
-    pi.on("tool_call", (event) => {
-        const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
-        toolCount++;
-        if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
-            softNudged = true;
-            try {
-                sendUserMessage?.(toolBudgetSoftNudge(budget, toolCount), { deliverAs: "steer" });
-            }
-            catch {
-            }
-        }
-        if (!shouldBlockToolForBudget(budget, toolName, toolCount))
-            return undefined;
-        return { block: true, reason: toolBudgetBlockedMessage(budget, toolName, toolCount) };
-    });
 }
 function registerSteeringInbox(pi) {
     const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
@@ -248,7 +225,6 @@ function registerSteeringInbox(pi) {
 }
 export default function registerSubagentPromptRuntime(pi) {
     registerSteeringInbox(pi);
-    registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
     let nativeSupervisorClientRegistered = false;
     let projectAgentGuidanceSnapshot = "";
     let supervisorGuidanceSnapshot = "";

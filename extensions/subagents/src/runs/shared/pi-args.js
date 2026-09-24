@@ -3,9 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TEMP_ROOT_DIR } from "../../shared/types.js";
-import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
-import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
-import { normalizeTkTicketId } from "./tk-ticket.js";
+import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR = "Cannot combine lazy skills with extension-path-only tools: list each extension tool name alongside its extension path (read is injected automatically).";
@@ -18,6 +16,7 @@ export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANN
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 export const SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV = "PI_SUBAGENT_PROJECT_AGENT_GUIDANCE";
+export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV = "PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -29,7 +28,6 @@ export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
-export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 function isExtensionToolPath(tool) {
     return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
@@ -83,35 +81,13 @@ function sanitizeSupervisorChannelSegment(value) {
 function supervisorChannelDir(runId, agent, childIndex) {
     return path.join(TEMP_ROOT_DIR, "supervisor-channels", `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`);
 }
-function shouldDropThinkingLevel(modelInfo, thinking) {
-    if (!modelInfo)
-        return false;
-    if (modelInfo.reasoning === false)
-        return thinking !== "off";
-    if (!modelInfo.thinkingLevelMap)
-        return false;
-    return !getSupportedThinkingLevels(modelInfo).includes(thinking);
-}
-export function getThinkingLevelDropNote(model, thinking, replaceExisting = false, options) {
-    if (!model || !thinking || replaceExisting)
-        return undefined;
-    const colonIdx = model.lastIndexOf(":");
-    if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1)))
-        return undefined;
-    const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
-    if (!shouldDropThinkingLevel(modelInfo, thinking))
-        return undefined;
-    return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
-}
-export function applyThinkingSuffix(model, thinking, replaceExisting = false, options) {
+export function applyThinkingSuffix(model, thinking, replaceExisting = false) {
     if (!model || !thinking)
         return model;
-    const colonIdx = model.lastIndexOf(":");
-    if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
-        return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
+    const { thinkingSuffix } = splitKnownThinkingSuffix(model);
+    if (thinkingSuffix) {
+        return replaceExisting ? `${model.slice(0, -thinkingSuffix.length)}:${thinking}` : model;
     }
-    if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options))
-        return model;
     return `${model}:${thinking}`;
 }
 export function buildPiArgs(input) {
@@ -141,10 +117,7 @@ function buildPiArgsInternal(input, onTempDirCreated) {
             args.push("--session-dir", input.sessionDir);
         }
     }
-    const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
-        availableModels: input.availableModels,
-        preferredModelProvider: input.preferredModelProvider,
-    });
+    const modelArg = applyThinkingSuffix(input.model, input.thinking);
     if (modelArg) {
         args.push("--model", modelArg);
     }
@@ -231,7 +204,7 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
     env[SUBAGENT_TK_TICKET_ID_ENV] =
         input.projectAgentGuidance === true && input.childAgentName === "developer"
-            ? normalizeTkTicketId(input.tkTicketId)
+            ? input.ticketId
             : undefined;
     env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";
     if (input.parentSessionId) {
@@ -259,9 +232,6 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     if (input.steerInboxDir) {
         env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
     }
-    const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
-    if (encodedToolBudget)
-        env[TOOL_BUDGET_ENV] = encodedToolBudget;
     env[SUBAGENT_PARENT_SESSION_ENV] =
         input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
     return { args, env, tempDir };

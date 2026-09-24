@@ -17,8 +17,12 @@ import {
 } from "../shared/types.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { countNestedRuns } from "../runs/shared/nested-render.ts";
-import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.ts";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.ts";
+import {
+  isCompletedLifecycleState,
+  isCompletedLifecycleStepState,
+  lifecycleContinuationForIndex,
+} from "../runs/shared/lifecycle-state.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
 import {
   buildLiveStatusLine,
@@ -68,10 +72,7 @@ export function widgetRenderKey(job: AsyncJobState): string {
     completedSteps: job.completedSteps,
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
-    activeRuntimeMs: job.activeRuntimeMs,
-    activeRuntimeCheckpointAt: job.activeRuntimeCheckpointAt,
     totalTokens: job.totalTokens,
-    tkTicket: job.tkTicket,
   });
 }
 
@@ -101,24 +102,24 @@ function isProtectedWidgetLifecycle(state: string, interruptRequestedAt?: number
 }
 
 function isCompletedWidgetStepStatus(status: AsyncJobStep["status"]): boolean {
-  return status === "complete" || status === "completed" || status === "continued";
+  return isCompletedLifecycleStepState(status);
 }
 
-function projectContinuedWidgetStep(
-  job: Pick<AsyncJobState, "status">,
-  step: AsyncJobStep,
-): AsyncJobStep {
-  if (job.status !== "continued") return step;
+function continuationIsActive(job: Pick<AsyncJobState, "lifecycle">, index = 0): boolean {
+  const phase = lifecycleContinuationForIndex(job, index)?.phase;
+  return phase === "launched" || phase === "continued";
+}
+
+function projectContinuedWidgetStep(job: AsyncJobState, step: AsyncJobStep): AsyncJobStep {
+  if (!continuationIsActive(job, step.index ?? 0)) return step;
   const status =
     step.status === "running" || step.status === "pausing" || step.status === "paused"
-      ? ("continued" as const)
+      ? ("complete" as const)
       : step.status;
   return {
     ...step,
     status,
     activityState: undefined,
-    idleEpisodeId: undefined,
-    compaction: undefined,
     lastActivityAt: undefined,
     currentTool: undefined,
     currentToolArgs: undefined,
@@ -141,7 +142,7 @@ function widgetActivityState(
   runningStep?: AsyncJobStep,
 ): ActivityState | undefined {
   // Job summaries use the aggregate projection. Per-child rows read each step's
-  // own projection in widgetParallelAgentDetails and foregroundStyleWidgetDetails.
+  // own projection in widgetParallelAgentDetails and awaitedStyleWidgetDetails.
   return (
     job.activityState ??
     job.steps?.find(
@@ -187,7 +188,7 @@ function widgetInlineThinkingActivity(
 }
 
 function widgetActivityLines(job: AsyncJobState, expanded = false): string[] {
-  if (job.status === "continued") return ["continued"];
+  if (continuationIsActive(job)) return ["continued"];
   const privacySafe = isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt);
   const runningStep = widgetRunningStep(job);
   if (job.interruptRequestedAt !== undefined && job.status === "running") {
@@ -299,15 +300,15 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
   if (job.status === "running") return theme.fg("accent", runningGlyph(widgetJobRunningSeed(job)));
   if (job.status === "queued") return theme.fg("muted", "◦");
-  if (job.status === "complete" || job.status === "continued") return theme.fg("success", "✓");
+  if (isCompletedLifecycleState(job.status) || continuationIsActive(job))
+    return theme.fg("success", "✓");
   if (job.status === "paused") return theme.fg("warning", "■");
   return theme.fg("error", "✗");
 }
 
 function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number): string {
   if (status === "running") return theme.fg("accent", runningGlyph(seed));
-  if (status === "complete" || status === "completed" || status === "continued")
-    return theme.fg("success", "✓");
+  if (isCompletedWidgetStepStatus(status)) return theme.fg("success", "✓");
   if (status === "failed") return theme.fg("error", "✗");
   if (status === "paused") return theme.fg("warning", "■");
   return theme.fg("muted", "◦");
@@ -321,29 +322,10 @@ function widgetStepStatus(
   if (status === "running" && interruptRequestedAt !== undefined)
     return theme.fg("accent", "pausing");
   if (status === "running") return "";
-  if (status === "complete" || status === "completed") return theme.fg("success", "complete");
-  if (status === "continued") return theme.fg("success", "continued");
+  if (isCompletedWidgetStepStatus(status)) return theme.fg("success", "complete");
   if (status === "failed") return theme.fg("error", "failed");
   if (status === "paused") return theme.fg("warning", "paused");
   return theme.fg("dim", safeTerminalText(status));
-}
-
-const TK_TICKET_WIDGET_PREFIX = "ticket: ";
-
-function widgetTkTicketText(job: AsyncJobState): string | undefined {
-  if (!job.tkTicket || (job.status !== "running" && job.status !== "queued")) return undefined;
-  const normalizedTkTicket = normalizeTkTicketMetadata(job.tkTicket);
-  return normalizedTkTicket ? `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}` : undefined;
-}
-
-function widgetTkTicketLine(job: AsyncJobState, theme: Theme, indent = "  "): string | undefined {
-  const ticket = widgetTkTicketText(job);
-  return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
-}
-
-function widgetTkTicketLines(job: AsyncJobState, theme: Theme, indent = "  "): string[] {
-  const line = widgetTkTicketLine(job, theme, indent);
-  return line ? [line] : [];
 }
 
 function widgetStepActivity(
@@ -351,7 +333,7 @@ function widgetStepActivity(
   snapshotNow?: number,
   expanded = false,
 ): string {
-  if (step.status === "continued") return "";
+  if (isCompletedWidgetStepStatus(step.status)) return "";
   const privacySafe = isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt);
   if (step.interruptRequestedAt !== undefined) return "pausing…";
   const facts: string[] = [];
@@ -461,17 +443,15 @@ function widgetStats(
 ): string {
   const parts: string[] = [];
   const stepsTotal = job.stepsTotal ?? job.agents?.length ?? 1;
-  const projectedSteps =
-    job.status === "continued"
-      ? job.steps?.map((step) => projectContinuedWidgetStep(job, step))
-      : undefined;
-  const running =
-    job.status === "continued" ? 0 : (job.runningSteps ?? (job.status === "running" ? 1 : 0));
-  const done =
-    job.status === "continued"
-      ? (projectedSteps?.filter((step) => isCompletedWidgetStepStatus(step.status)).length ??
-        stepsTotal)
-      : (job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0));
+  const continuationActive = continuationIsActive(job);
+  const projectedSteps = continuationActive
+    ? job.steps?.map((step) => projectContinuedWidgetStep(job, step))
+    : undefined;
+  const running = continuationActive ? 0 : (job.runningSteps ?? (job.status === "running" ? 1 : 0));
+  const done = continuationActive
+    ? (projectedSteps?.filter((step) => isCompletedWidgetStepStatus(step.status)).length ??
+      stepsTotal)
+    : (job.completedSteps ?? (isCompletedLifecycleState(job.status) ? stepsTotal : 0));
   if (includeStepProgress && job.mode === "parallel") {
     if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
       parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
@@ -518,7 +498,7 @@ function widgetStepActivityLines(
   snapshotNow?: number,
   fitTrailingStatus = false,
 ): string[] {
-  if (step.status === "continued") return [];
+  if (isCompletedWidgetStepStatus(step.status)) return [];
   if (step.interruptRequestedAt !== undefined) return ["pausing…"];
   const toolLines = formatCurrentToolLines(
     step,
@@ -582,7 +562,7 @@ function nestedStatusGlyph(
   seed?: number,
 ): string {
   if (state === "running") return theme.fg("accent", runningGlyph(seed));
-  if (state === "complete" || state === "completed") return theme.fg("success", "✓");
+  if (isCompletedLifecycleState(state)) return theme.fg("success", "✓");
   if (state === "failed") return theme.fg("error", "✗");
   if (state === "paused") return theme.fg("warning", "■");
   return theme.fg("muted", "◦");
@@ -738,7 +718,7 @@ function singleWidgetStepDisplayStatus(
   return projectedStep.status;
 }
 
-function foregroundStyleWidgetStepLines(
+function awaitedStyleWidgetStepLines(
   job: AsyncJobState,
   theme: Theme,
   step: NonNullable<AsyncJobState["steps"]>[number],
@@ -822,7 +802,7 @@ function foregroundStyleWidgetStepLines(
   return lines;
 }
 
-function foregroundStyleWidgetDetails(
+function awaitedStyleWidgetDetails(
   job: AsyncJobState,
   theme: Theme,
   expanded: boolean,
@@ -830,7 +810,6 @@ function foregroundStyleWidgetDetails(
 ): string[] {
   if (!job.steps?.length)
     return [
-      ...widgetTkTicketLines(job, theme),
       ...widgetActivityDetailLines(job, theme, expanded),
       ...formatNestedWidgetLines(
         job.nestedChildren,
@@ -844,10 +823,10 @@ function foregroundStyleWidgetDetails(
     ];
   const total = job.stepsTotal ?? job.steps.length;
   const itemTitle = job.mode === "parallel" ? "Agent" : "Step";
-  const lines: string[] = [...widgetTkTicketLines(job, theme)];
+  const lines: string[] = [];
   for (const [index, step] of job.steps.entries()) {
     lines.push(
-      ...foregroundStyleWidgetStepLines(
+      ...awaitedStyleWidgetStepLines(
         job,
         theme,
         step,
@@ -885,7 +864,7 @@ function singleWidgetAgentDetails(
 ): string[] {
   const step = job.steps?.[0];
   if (step) {
-    const stepLines = foregroundStyleWidgetStepLines(
+    const stepLines = awaitedStyleWidgetStepLines(
       job,
       theme,
       step,
@@ -896,8 +875,7 @@ function singleWidgetAgentDetails(
       width,
       singleWidgetStepDisplayStatus(job, step),
     );
-    const ticketLines = widgetTkTicketLines(job, theme, "    ");
-    const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
+    const lines = stepLines;
     const attached = new Set(step.children?.map((child) => child.id) ?? []);
     const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
     for (const nestedLine of formatNestedWidgetLines(
@@ -920,7 +898,6 @@ function singleWidgetAgentDetails(
   const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
   return [
     `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)}${statusSuffix}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-    ...widgetTkTicketLines(job, theme),
     ...widgetActivityDetailLines(job, theme, expanded),
     ...formatNestedWidgetLines(
       job.nestedChildren,
@@ -966,7 +943,7 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 // Job-level health state (needs_attention) is a staleness signal, not flavour
 // text: it tells the user a run may be stuck. The step-detail
 // render paths (singleWidgetAgentDetails' `if (step)` branch,
-// foregroundStyleWidgetDetails' steps branch, and compactSingleWidgetLines' own
+// awaitedStyleWidgetDetails' steps branch, and compactSingleWidgetLines' own
 // loop) build rows per step and never call widgetActivityDetailLines(job, ...),
 // so a job-level health state with no step-level counterpart would be dropped
 // entirely. The no-steps branches already surface it via widgetActivityDetailLines,
@@ -992,7 +969,7 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 // step-level dedup: when the step's widgetStepActivityLines already surfaces the
 // same health text, the job-level line is suppressed to avoid a duplicate.
 function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
-  if (job.status === "continued") return [];
+  if (continuationIsActive(job)) return [];
   if (!isHealthActivityState(job.activityState)) return [];
   if (!job.steps?.length) return [];
   // Pausing/interruption takes precedence: do not add a competing health line
@@ -1015,18 +992,17 @@ function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
 // health text, the job-level line is suppressed to avoid a duplicate.
 //
 // Known limitation: in the dedup case the retained health text is the step's own
-// activity line, which sits after the ticket line. At very narrow widths, wrapping
-// of the preceding agent row and ticket line can push the step-level health line out
-// of the kept prefix; the dedup does not protect against that. This risk is accepted
-// because it requires an unusually narrow terminal, and the pre-existing multi-agent
-// path carries the same class of exposure.
+// activity line. At very narrow widths, wrapping of the preceding agent row can push
+// the step-level health line out of the kept prefix; the dedup does not protect against
+// that. This risk is accepted because it requires an unusually narrow terminal, and
+// the pre-existing multi-agent path carries the same class of exposure.
 function singleModeHealthWarningLines(
   job: AsyncJobState,
   theme: Theme,
   contentWidth: number,
   expanded: boolean,
 ): string[] {
-  if (job.status === "continued") return [];
+  if (continuationIsActive(job)) return [];
   if (!isHealthActivityState(job.activityState)) return [];
   if (!job.steps?.length) return [];
   if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job)) return [];
@@ -1066,8 +1042,8 @@ function buildSingleWidgetLines(
     const details = singleWidgetAgentDetails(job, theme, expanded, contentWidth);
     const healthLines = singleModeHealthWarningLines(job, theme, contentWidth, expanded);
     // Splice the health line immediately after the agent row (details[0]) so it lands
-    // as the 3rd logical line of the render – before the ticket line, step activity
-    // lines, nested child lines, and the live-detail hint (which stays last).
+    // as the 3rd logical line of the render – before step activity lines, nested child
+    // lines, and the live-detail hint (which stays last).
     // singleWidgetAgentDetails always returns at least the agent row, and
     // singleModeHealthWarningLines returns [] when job.steps is empty, so both the
     // no-steps and the no-health-state paths are safe.
@@ -1081,7 +1057,7 @@ function buildSingleWidgetLines(
       contentWidth,
     );
   }
-  const details = foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
+  const details = awaitedStyleWidgetDetails(job, theme, expanded, contentWidth);
   return wrapDisplayLines(
     [
       ...singleWidgetHeaderLines(job, theme, expanded),
@@ -1104,7 +1080,6 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
   const lines = [
     ...wrapDisplayLines(singleWidgetHeaderLines(job, theme, false), contentWidth),
     ...jobHealthWarningLines(job, theme),
-    ...widgetTkTicketLines(job, theme),
   ];
   for (const [index, step] of job.steps.entries()) {
     const displayStep = projectContinuedWidgetStep(job, step);
@@ -1247,7 +1222,7 @@ function widgetHeaderCounts(jobs: AsyncJobState[]): {
   return {
     running: jobs.filter((job) => job.status === "running"),
     queued: jobs.filter((job) => job.status === "queued"),
-    complete: jobs.filter((job) => job.status === "complete" || job.status === "continued"),
+    complete: jobs.filter((job) => isCompletedLifecycleState(job.status)),
     failed: jobs.filter((job) => job.status === "failed"),
     paused: jobs.filter((job) => job.status === "paused"),
   };
@@ -1410,12 +1385,10 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number): st
   const stats = widgetSummaryStats(job, theme);
   const activity = widgetActivity(job);
   const status = job.status === "running" ? "" : job.status === "complete" ? "done" : job.status;
-  const ticket = widgetTkTicketText(job);
   const prefixParts = [
     themeBold(theme, widgetJobName(job)),
     status ? theme.fg("dim", status) : "",
     stats,
-    ticket ? theme.fg("dim", ticket) : "",
   ].filter(Boolean);
   const prefix = `  ${widgetStatusGlyph(job, theme)} ${prefixParts.join(` ${theme.fg("dim", "·")} `)}`;
   const thinkingActivity = widgetInlineThinkingActivity(job);
@@ -1430,7 +1403,7 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number): st
   const runningStep = widgetRunningStep(job);
   const activityState = widgetActivityState(job, runningStep);
   const healthWarning =
-    job.status !== "continued" &&
+    !continuationIsActive(job) &&
     job.interruptRequestedAt === undefined &&
     !job.currentTool &&
     !widgetActiveStep(job) &&
@@ -1688,7 +1661,6 @@ export function buildWidgetLines(
       job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
     items.push([
       `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-      ...widgetTkTicketLines(job, theme),
       ...(jobLocLine ? [jobLocLine] : []),
       ...widgetActivityDetailLines(job, theme, expanded),
       ...widgetParallelAgentDetails(job, theme, expanded, width),
@@ -1715,7 +1687,6 @@ export function buildWidgetLines(
       job.mode !== "parallel" ? childLocationLine(job.steps?.[0]?.childLocation, theme) : undefined;
     items.push([
       `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
-      ...widgetTkTicketLines(job, theme),
       ...(jobLocLine ? [jobLocLine] : []),
       ...widgetActivityDetailLines(job, theme, expanded),
       ...widgetParallelAgentDetails(job, theme, expanded, width),

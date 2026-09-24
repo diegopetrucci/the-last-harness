@@ -607,6 +607,19 @@ function scrubDisableBuiltinsSettings(settings, changes) {
     delete settings.subagents.disableBuiltins;
     changes.push("remove subagents.disableBuiltins (one-time cleanup)");
 }
+function scrubRetiredSubagentToolBudgets(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.subagents))
+        return;
+    const overrides = settings.subagents.agentOverrides;
+    if (!isPlainObject(overrides))
+        return;
+    for (const [name, value] of Object.entries(overrides)) {
+        if (!isPlainObject(value) || !Object.hasOwn(value, "toolBudget"))
+            continue;
+        delete value.toolBudget;
+        changes.push(`remove subagents.agentOverrides.${name}.toolBudget (one-time cleanup)`);
+    }
+}
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -833,6 +846,7 @@ function main() {
     scrubGnosisSettings(next, changes);
     scrubRtkSettings(next, changes);
     scrubDisableBuiltinsSettings(next, changes);
+    scrubRetiredSubagentToolBudgets(next, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneContextCapDisabledDefaultExtension(next, changes);
     pruneOracleDisabledDefaultExtension(next, changes);

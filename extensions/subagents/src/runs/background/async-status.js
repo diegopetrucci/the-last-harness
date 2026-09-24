@@ -2,21 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
-import { parsePersistedChildLocationSnapshot, } from "../../shared/child-location.js";
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
-import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
+import { formatUnreadableStatus, isAsyncStatusReadError, MAX_UNREADABLE_STATUS_REPORTS, } from "./async-status-boundary.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
+import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
-import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
-import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
-import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
-import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
-import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -53,42 +48,9 @@ function outputFileMtime(outputFile) {
         });
     }
 }
-const DURABLE_ATTENTION_REASONS = new Set([
-    "context_pressure",
-    "tool_failures",
-    "completion_guard",
-]);
-const COMPACTION_REASONS = new Set([
-    "manual",
-    "threshold",
-    "overflow",
-]);
-function normalizePersistedActivityState(value) {
-    return value === "needs_attention" ? value : undefined;
-}
-function normalizePersistedDurableAttentionReasons(value) {
-    if (!Array.isArray(value))
-        return undefined;
-    const reasons = value.filter((reason) => typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason));
-    return reasons.length > 0 ? [...new Set(reasons)] : undefined;
-}
-function normalizePersistedCompaction(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return undefined;
-    const reason = value.reason;
-    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
-        ? { reason: reason }
-        : undefined;
-}
-function normalizePersistedHealth(value) {
-    const activityState = normalizePersistedActivityState(value.activityState);
-    const idleEpisodeId = normalizeIdleEpisodeId(value.idleEpisodeId);
-    const durableAttentionReasons = normalizePersistedDurableAttentionReasons(value.durableAttentionReasons);
-    const compaction = normalizePersistedCompaction(value.compaction);
-    value.activityState = activityState;
-    value.idleEpisodeId = idleEpisodeId;
-    value.durableAttentionReasons = durableAttentionReasons;
-    value.compaction = compaction;
+function latestTimestamp(...values) {
+    const finite = values.filter((value) => value !== undefined && Number.isFinite(value));
+    return finite.length ? Math.max(...finite) : undefined;
 }
 function deriveAsyncActivityState(asyncDir, status) {
     if (status.state !== "running")
@@ -101,86 +63,8 @@ function deriveAsyncActivityState(asyncDir, status) {
     const currentStep = typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
     return {
         activityState: status.activityState,
-        lastActivityAt: status.lastActivityAt ??
-            outputFileMtime(outputPath) ??
-            currentStep?.lastActivityAt ??
-            currentStep?.startedAt ??
-            status.startedAt,
+        lastActivityAt: latestTimestamp(status.startedAt, status.lastActivityAt, outputFileMtime(outputPath), currentStep?.startedAt, currentStep?.lastActivityAt),
     };
-}
-export function validatePersistedAsyncStatus(asyncDir, status) {
-    normalizePersistedHealth(status);
-    if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
-        throw createAsyncStatusValidationError({
-            asyncDir,
-            message: "sessionId must be a string.",
-            fingerprint: fingerprintAsyncStatusFile(asyncDir),
-        });
-    }
-    if (status.tkTicket !== undefined) {
-        const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
-        if (!normalizedTkTicket) {
-            throw createAsyncStatusValidationError({
-                asyncDir,
-                message: "tkTicket must include a valid id and terminal-safe title.",
-                fingerprint: fingerprintAsyncStatusFile(asyncDir),
-            });
-        }
-        status.tkTicket = normalizedTkTicket;
-    }
-    if (status.projectAgents !== undefined) {
-        if (!Array.isArray(status.projectAgents)) {
-            throw createAsyncStatusValidationError({
-                asyncDir,
-                message: "projectAgents must be an array.",
-                fingerprint: fingerprintAsyncStatusFile(asyncDir),
-            });
-        }
-        for (const [index, capture] of status.projectAgents.entries()) {
-            if (!normalizeProjectAgentRunCapture(capture)) {
-                throw createAsyncStatusValidationError({
-                    asyncDir,
-                    message: `projectAgents[${index}] is invalid.`,
-                    fingerprint: fingerprintAsyncStatusFile(asyncDir),
-                });
-            }
-        }
-    }
-    const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
-    if (activeRuntimeMs === undefined)
-        status.activeRuntimeMs = undefined;
-    else
-        status.activeRuntimeMs = activeRuntimeMs;
-    if (activeRuntimeCheckpointAt === undefined)
-        status.activeRuntimeCheckpointAt = undefined;
-    else
-        status.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
-    for (const step of status.steps ?? []) {
-        normalizePersistedHealth(step);
-        const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-        const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
-        if (activeRuntimeMs === undefined)
-            step.activeRuntimeMs = undefined;
-        else
-            step.activeRuntimeMs = activeRuntimeMs;
-        if (activeRuntimeCheckpointAt === undefined)
-            step.activeRuntimeCheckpointAt = undefined;
-        else
-            step.activeRuntimeCheckpointAt = activeRuntimeCheckpointAt;
-        if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
-            throw createAsyncStatusValidationError({
-                asyncDir,
-                message: "step projectAgent capture is invalid.",
-                fingerprint: fingerprintAsyncStatusFile(asyncDir),
-            });
-        }
-        step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
-        step.contextPressure = parseContextPressureProjection(step.contextPressure);
-        step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
-        step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
-        step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
-    }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
@@ -197,21 +81,17 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     }
     const summarizedSteps = steps.map((step, index) => {
         const stepActivityState = step.activityState;
-        const stepLastActivityAt = step.lastActivityAt;
-        const activeRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-        const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
+        const stepLastActivityAt = latestTimestamp(step.startedAt, step.lastActivityAt);
         return {
             index,
             agent: step.agent,
+            ...(step.ticketId ? { ticketId: step.ticketId } : {}),
             status: step.status,
             ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
             ...(stepActivityState ? { activityState: stepActivityState } : {}),
             ...(step.idleEpisodeId ? { idleEpisodeId: step.idleEpisodeId } : {}),
-            ...(step.durableAttentionReasons?.length
-                ? { durableAttentionReasons: [...step.durableAttentionReasons] }
-                : {}),
             ...(step.compaction ? { compaction: { ...step.compaction } } : {}),
-            ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
+            ...(stepLastActivityAt !== undefined ? { lastActivityAt: stepLastActivityAt } : {}),
             ...(step.currentTool ? { currentTool: step.currentTool } : {}),
             ...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
             ...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
@@ -226,13 +106,12 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.steerCount !== undefined ? { steerCount: step.steerCount } : {}),
             ...(step.lastSteerAt !== undefined ? { lastSteerAt: step.lastSteerAt } : {}),
             ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-            ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
             ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {}),
             ...(step.deadlineAt !== undefined ? { deadlineAt: step.deadlineAt } : {}),
             ...(step.tokens ? { tokens: step.tokens } : {}),
             ...(step.totalCost ? { totalCost: step.totalCost } : {}),
             ...(step.skills ? { skills: step.skills } : {}),
+            ...(step.skillsWarning ? { skillsWarning: step.skillsWarning } : {}),
             ...(step.model ? { model: step.model } : {}),
             ...(step.thinking ? { thinking: step.thinking } : {}),
             ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
@@ -252,12 +131,13 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         };
     });
     attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
-    const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
     return {
         id: status.runId || path.basename(asyncDir),
         asyncDir,
+        ...(status.awaited ? { awaited: true } : {}),
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
         state: status.state,
+        ...(status.lifecycle ? { lifecycle: status.lifecycle } : {}),
         ...(status.error ? { error: status.error } : {}),
         activityState,
         lastActivityAt,
@@ -274,14 +154,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         startedAt: status.startedAt,
         lastUpdate: status.lastUpdate,
         endedAt: status.endedAt,
-        ...(normalizeActiveRuntimeMs(status.activeRuntimeMs) !== undefined
-            ? { activeRuntimeMs: normalizeActiveRuntimeMs(status.activeRuntimeMs) }
-            : {}),
-        ...(normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) !== undefined
-            ? {
-                activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt),
-            }
-            : {}),
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
@@ -296,7 +168,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.totalCost ? { totalCost: status.totalCost } : {}),
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
         ...(status.pause ? { pause: status.pause } : {}),
-        ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
     };
 }
@@ -315,9 +186,8 @@ function sortRuns(runs) {
                 return 2;
             case "cancelled":
                 return 2;
-            case "continued":
-                return 2;
             case "complete":
+            default:
                 return 3;
         }
     };
@@ -342,7 +212,7 @@ function listAsyncRunEntries(asyncDirRoot) {
         });
     }
 }
-function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict") {
+function buildRunCollector(asyncDirRoot, options = {}) {
     const allowedStates = options.states ? new Set(options.states) : undefined;
     const runs = [];
     let nestedRouteIndex;
@@ -351,41 +221,55 @@ function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict
             nestedRouteIndex = buildNestedRouteIndex();
         return nestedRouteIndex.get(rootRunId);
     };
+    const reportUnreadable = (entry, error) => {
+        const issue = Object.freeze({
+            entry,
+            asyncDir: error.asyncDir,
+            statusPath: error.statusPath,
+        });
+        options.onUnreadable?.(issue);
+    };
     const collectEntry = (entry) => {
         const asyncDir = path.join(asyncDirRoot, entry);
-        const reconciliation = options.reconcile === false
-            ? undefined
-            : reconcileAsyncRun(asyncDir, {
-                resultsDir: options.resultsDir,
-                kill: options.kill,
-                now: options.now,
-            });
-        const status = (reconciliation?.status ?? readStatus(asyncDir));
-        if (!status)
-            return;
-        if (validationOrder === "restore_scan")
-            validatePersistedAsyncStatus(asyncDir, status);
-        if (allowedStates && !allowedStates.has(status.state))
-            return;
-        if (options.sessionId && status.sessionId !== options.sessionId)
-            return;
-        if (validationOrder === "strict")
-            validatePersistedAsyncStatus(asyncDir, status);
-        const nestedWarnings = [];
-        let nestedRoute;
         try {
-            nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-            if (nestedRoute)
-                reconcileNestedAsyncDescendants(nestedRoute, {
+            const reconciliation = options.reconcile === false
+                ? undefined
+                : reconcileAsyncRun(asyncDir, {
                     resultsDir: options.resultsDir,
                     kill: options.kill,
                     now: options.now,
+                    statusRead: options.statusRead,
                 });
+            const persistedStatus = options.reconcile === false ? readStatus(asyncDir, options.statusRead) : undefined;
+            const status = (reconciliation?.status ?? persistedStatus);
+            if (!status)
+                return;
+            if (allowedStates && !allowedStates.has(status.state))
+                return;
+            if (options.sessionId && status.sessionId !== options.sessionId)
+                return;
+            const nestedWarnings = [];
+            let nestedRoute;
+            try {
+                nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
+                if (options.reconcile !== false && nestedRoute)
+                    reconcileNestedAsyncDescendants(nestedRoute, {
+                        resultsDir: options.resultsDir,
+                        kill: options.kill,
+                        now: options.now,
+                        statusRead: options.statusRead,
+                    });
+            }
+            catch (error) {
+                nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+            }
+            runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
         }
         catch (error) {
-            nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
+            if (!isAsyncStatusReadError(error))
+                throw error;
+            reportUnreadable(entry, error);
         }
-        runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
     };
     return { runs, collectEntry };
 }
@@ -402,25 +286,16 @@ export function listAsyncRuns(asyncDirRoot, options = {}) {
 }
 export function scanAsyncRunsForRestore(asyncDirRoot, options = {}) {
     const entries = listAsyncRunEntries(asyncDirRoot);
-    const collector = buildRunCollector(asyncDirRoot, options, "restore_scan");
     const issues = [];
-    for (const entry of entries) {
-        try {
-            collector.collectEntry(entry);
-        }
-        catch (error) {
-            if (!isAsyncStatusCorruptionError(error))
-                throw error;
-            issues.push(Object.freeze({
-                entry,
-                asyncDir: error.asyncDir,
-                statusPath: error.statusPath,
-                kind: error.kind,
-                message: error.message,
-                ...(error.fingerprint ? { fingerprint: error.fingerprint } : {}),
-            }));
-        }
-    }
+    const collector = buildRunCollector(asyncDirRoot, {
+        ...options,
+        onUnreadable: (issue) => {
+            issues.push(issue);
+            options.onUnreadable?.(issue);
+        },
+    });
+    for (const entry of entries)
+        collector.collectEntry(entry);
     return { runs: finalizeRunList(collector.runs, options.limit), issues };
 }
 function formatActivityFacts(input) {
@@ -477,7 +352,7 @@ export function formatAsyncRunProgressLabel(run) {
     if (run.mode === "parallel") {
         if (run.interruptRequestedAt !== undefined) {
             const pausing = run.steps.filter((step) => step.status === "running").length;
-            const done = run.steps.filter((step) => step.status === "complete" || step.status === "completed").length;
+            const done = run.steps.filter((step) => isCompletedLifecycleStepState(step.status)).length;
             return `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${stepCount} done`;
         }
         return formatParallelOutcome(run.steps, stepCount, { showRunning: run.state === "running" });
@@ -499,12 +374,13 @@ function formatRunHeader(run) {
     const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
         ? "pausing"
         : safeTerminalText(run.state);
+    const ownership = run.awaited ? " | awaited" : "";
     return privacySafe
-        ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
-        : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
+        ? `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+        : `${runId} | ${lifecycleState}${ownership}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
-export function formatAsyncRunList(runs, heading = "Active async runs") {
-    if (runs.length === 0)
+export function formatAsyncRunList(runs, heading = "Active async runs", unreadableStatuses = []) {
+    if (runs.length === 0 && unreadableStatuses.length === 0)
         return `No ${safeTerminalText(heading.toLowerCase())}.`;
     const lines = [`${safeTerminalText(heading)}: ${runs.length}`, ""];
     for (const run of runs) {
@@ -536,5 +412,11 @@ export function formatAsyncRunList(runs, heading = "Active async runs") {
             lines.push(`  session: ${safeTerminalText(shortenPath(run.sessionFile))}`);
         lines.push("");
     }
+    for (const issue of unreadableStatuses.slice(0, MAX_UNREADABLE_STATUS_REPORTS)) {
+        lines.push(`- ${formatUnreadableStatus(issue.statusPath)}`, "");
+    }
+    const remaining = unreadableStatuses.length - MAX_UNREADABLE_STATUS_REPORTS;
+    if (remaining > 0)
+        lines.push(`- and ${remaining} more unreadable statuses`, "");
     return safeTerminalDocument(lines.join("\n").trimEnd());
 }

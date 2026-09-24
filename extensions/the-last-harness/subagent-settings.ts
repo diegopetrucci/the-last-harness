@@ -6,12 +6,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
+import { THINKING_LEVELS } from "./constants.js";
 import {
   findAvailableProviderModel,
   formatProviderModelReference,
   formatResolvedProviderModelReference,
   formatUnavailableStoredModelWarning,
   parseProviderModelReference,
+  splitKnownThinkingSuffix,
   resolveProviderAwareSubagentResolution,
   type ProviderModelReference,
 } from "./model-defaults.js";
@@ -19,7 +21,7 @@ import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
 import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
+import { isThinkingLevel } from "./thinking.js";
 import type {
   ReasoningModel,
   SubagentMetadata,
@@ -103,10 +105,6 @@ function getStoredOverrides(cwd: string): ReadonlyMap<string, TlhSubagentOverrid
       .filter(([, value]) => isRecord(value))
       .map(([agent, value]) => [agent, value as TlhSubagentOverride]),
   );
-}
-
-function availableThinkingLevels(model: AvailableModel | undefined): ThinkingLevel[] {
-  return getAvailableThinkingLevels(model);
 }
 
 function fixedModelWarning(
@@ -312,21 +310,6 @@ function resetAllBundledSubagentOverrides(
   });
 }
 
-function effectiveModelForEffort(
-  agent: SubagentMetadata,
-  override: TlhSubagentOverride | undefined,
-  models: readonly AvailableModel[],
-  ctx: StatusContext,
-): AvailableModel | undefined {
-  return resolveProviderAwareSubagentResolution(
-    agent,
-    models,
-    ctx.model?.provider,
-    currentModelReference(ctx),
-    override,
-  ).model;
-}
-
 function formatEffectiveModelAndThinking(
   model: ProviderModelReference | string | undefined,
   thinking: ThinkingLevel | undefined,
@@ -335,7 +318,10 @@ function formatEffectiveModelAndThinking(
     return thinking ? `no model (effort ${thinking})` : "no model";
   }
   if (typeof model === "string") {
-    return model;
+    const { baseModel, thinkingSuffix } = splitKnownThinkingSuffix(model);
+    return thinking
+      ? `${baseModel ?? model}:${thinking}`
+      : `${baseModel ?? model}${thinkingSuffix}`;
   }
   return formatResolvedProviderModelReference(model, thinking);
 }
@@ -391,9 +377,7 @@ function formatStatusForAgent(
     overrideResolution.warning,
   ].filter((warning): warning is string => Boolean(warning));
   const effectiveModel = overrideResolution.unavailableModel ?? overrideResolution.model;
-  const effectiveThinking = overrideResolution.unavailableModel
-    ? undefined
-    : overrideResolution.thinking;
+  const effectiveThinking = overrideResolution.thinking;
   const lines = [
     `- ${agent.name}: default ${formatEffectiveModelAndThinking(baseResolution.model, baseResolution.thinking)}; override model=${overrideModel}, effort=${overrideThinking}; effective ${formatEffectiveModelAndThinking(effectiveModel, effectiveThinking)}.`,
     ...warnings.map((warning) => `  ${warning}`),
@@ -451,25 +435,7 @@ function parseAvailableModel(models: readonly AvailableModel[], modelRef: string
   return model;
 }
 
-function validateModelEffortPair(model: AvailableModel | undefined, effort: unknown): void {
-  if (typeof effort !== "string" || !isThinkingLevel(effort)) {
-    return;
-  }
-  const supportedLevels = availableThinkingLevels(model);
-  if (!supportedLevels.includes(effort)) {
-    throw new Error(
-      `Effort "${effort}" is not supported by ${model ? formatProviderModelReference(model) : "the effective model"}. Available: ${supportedLevels.join(", ")}.`,
-    );
-  }
-}
-
-function parseSetArguments(
-  parts: string[],
-  agent: SubagentMetadata,
-  models: readonly AvailableModel[],
-  ctx: StatusContext,
-  override: TlhSubagentOverride | undefined,
-): OverridePatch {
+function parseSetArguments(parts: string[], models: readonly AvailableModel[]): OverridePatch {
   if (parts.length < 2 || parts.length % 2 !== 0) {
     throw new Error(usageMessage());
   }
@@ -495,9 +461,9 @@ function parseSetArguments(
     }
     throw new Error(usageMessage());
   }
-  const finalModel = selectedModel ?? effectiveModelForEffort(agent, override, models, ctx);
-  const finalEffort = patch.thinking ?? override?.thinking;
-  validateModelEffortPair(finalModel, finalEffort);
+  // Recognized effort is intentionally not capability-filtered here. The
+  // defaults layer forwards it as an argv suffix and Pi reports unsupported
+  // model arguments as non-transient dispatch failures.
   return patch;
 }
 
@@ -533,7 +499,7 @@ function subagentPickerOption(
   );
   const effectiveLabel = formatEffectiveModelAndThinking(
     effective.unavailableModel ?? effective.model,
-    effective.unavailableModel ? undefined : effective.thinking,
+    effective.thinking,
   );
   const hasOverride = Boolean(
     override && (Object.hasOwn(override, "model") || Object.hasOwn(override, "thinking")),
@@ -661,10 +627,8 @@ async function runInteractivePicker(
         ctx.ui.notify("Unknown model picker selection.", "error");
         continue;
       }
-      let selectedModel: AvailableModel;
       try {
-        selectedModel = parseAvailableModel(models, model);
-        validateModelEffortPair(selectedModel, override?.thinking);
+        parseAvailableModel(models, model);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         ctx.ui.notify(message, "error");
@@ -689,8 +653,9 @@ async function runInteractivePicker(
       continue;
     }
 
-    const model = effectiveModelForEffort(agent, override, models, ctx);
-    const supportedLevels = availableThinkingLevels(model);
+    // Keep the picker aligned with dispatch: model capability metadata may
+    // explain a Pi rejection, but it does not filter recognized effort values.
+    const effortLevels = [...THINKING_LEVELS];
     const currentThinkingOverride =
       override?.thinking === false
         ? "off"
@@ -698,7 +663,7 @@ async function runInteractivePicker(
           ? override.thinking
           : undefined;
     const optionToThinking = new Map(
-      supportedLevels.map(
+      effortLevels.map(
         (level) => [thinkingPickerOption(level, currentThinkingOverride), level] as const,
       ),
     );
@@ -810,7 +775,7 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
         const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
         // Detect first-creation transition before write.
         const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
-        const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);
+        const patch = parseSetArguments(rest, models);
         if (!(await confirmFixedModelOverride(ctx, rawAgentName, patch.model))) {
           ctx.ui.notify("Model override cancelled.", "info");
           return;

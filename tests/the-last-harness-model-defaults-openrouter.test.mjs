@@ -293,7 +293,7 @@ test("openrouter follow rule: resolveProviderAwareSubagentResolution follows ses
   assert.equal(resolution.warning, undefined);
 });
 
-test("openrouter follow rule: stored thinking-only override is capability-gated on the session model", () => {
+test("openrouter follow rule: stored thinking-only override is normalized on the session model", () => {
   const reasoningOrAvailable = openrouterAvailableModels.map((m) => ({ ...m, reasoning: true }));
   const resolution = resolveProviderAwareSubagentResolution(
     openrouterDeveloperWithThinking,
@@ -303,7 +303,7 @@ test("openrouter follow rule: stored thinking-only override is capability-gated 
     { thinking: "high" },
   );
   assert.deepEqual(resolution.model, reasoningOrAvailable[0]);
-  assert.equal(resolution.thinking, "high"); // stored thinking, capability-gated
+  assert.equal(resolution.thinking, "high"); // stored thinking normalized by defaults
   assert.deepEqual(resolution.fallbackModels, []);
   assert.equal(resolution.independence, "not-applicable");
 });

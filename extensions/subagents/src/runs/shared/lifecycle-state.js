@@ -1,124 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { invalidateStatusCache } from "../../shared/utils.js";
-import { normalizeIdleEpisodeId } from "./health-transition.js";
+import { waitSync, writeAtomicJson } from "../../shared/atomic-json.js";
+import { invalidateStatusCache, readStatus } from "../../shared/utils.js";
+import { boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
+import { canonicalLifecycleState, canonicalLifecycleStepState, } from "../background/async-status-boundary.js";
+import { normalizeIdleEpisodeId } from "./subagent-control.js";
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
-export const ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS = 30_000;
 const SAFE_LIFECYCLE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const DEFAULT_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
-const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
-const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
-const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
-export function normalizeActiveRuntimeMs(value) {
-    return typeof value === "number" && Number.isFinite(value) && value >= 0
-        ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))
-        : undefined;
-}
-export function normalizeActiveRuntimeCheckpointAt(value) {
-    return typeof value === "number" && Number.isFinite(value) && value >= 0
-        ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
-        : undefined;
-}
-const DURABLE_ATTENTION_REASONS = new Set([
-    "context_pressure",
-    "tool_failures",
-    "completion_guard",
-]);
-const COMPACTION_REASONS = new Set([
-    "manual",
-    "threshold",
-    "overflow",
-]);
-function normalizeDurableAttentionReasons(value) {
-    if (!Array.isArray(value))
-        return undefined;
-    const reasons = value.filter((reason) => typeof reason === "string" && DURABLE_ATTENTION_REASONS.has(reason));
-    const unique = [...new Set(reasons)];
-    return unique.length > 0 ? unique : undefined;
-}
-function normalizeCompactionProjection(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return undefined;
-    const reason = value.reason;
-    return typeof reason === "string" && COMPACTION_REASONS.has(reason)
-        ? { reason: reason }
-        : undefined;
-}
-function normalizeHealthActivityState(value) {
-    return value === "needs_attention" ? value : undefined;
-}
-export function boundedActiveRuntimeMs(value, fallback = 0) {
-    return normalizeActiveRuntimeMs(value) ?? normalizeActiveRuntimeMs(fallback) ?? 0;
-}
-export function shouldPersistActiveRuntimeCheckpoint(input) {
-    if (input.trackerFrozen)
-        return false;
-    const current = normalizeActiveRuntimeMs(input.currentActiveRuntimeMs);
-    const previous = normalizeActiveRuntimeMs(input.previousActiveRuntimeMs);
-    return current !== undefined && (previous === undefined || current > previous);
-}
-export function applyActiveRuntimeCheckpoint(candidates, input) {
-    let advanced = false;
-    for (const candidate of candidates) {
-        const trackerFrozen = candidate.tracker.isFrozen();
-        const runtime = input.freeze
-            ? candidate.tracker.freeze(input.now)
-            : candidate.tracker.checkpoint(input.now);
-        if (!shouldPersistActiveRuntimeCheckpoint({
-            previousActiveRuntimeMs: candidate.previousActiveRuntimeMs,
-            currentActiveRuntimeMs: runtime,
-            trackerFrozen,
-        }))
-            continue;
-        candidate.apply({
-            activeRuntimeMs: Math.max(normalizeActiveRuntimeMs(candidate.previousActiveRuntimeMs) ?? 0, runtime),
-            activeRuntimeCheckpointAt: Math.max(normalizeActiveRuntimeCheckpointAt(candidate.previousActiveRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(input.now) ?? 0),
-        });
-        advanced = true;
-    }
-    if (advanced)
-        input.persist?.();
-    return advanced;
-}
-export function createActiveRuntimeTracker(input = {}) {
-    const now = input.now ?? (() => Date.now());
-    const suppliedSegmentStart = normalizeActiveRuntimeCheckpointAt(input.segmentStartedAt);
-    const initialNow = suppliedSegmentStart ?? normalizeActiveRuntimeCheckpointAt(now()) ?? Date.now();
-    let total = boundedActiveRuntimeMs(input.priorActiveRuntimeMs);
-    let segmentStartedAt = suppliedSegmentStart ?? initialNow;
-    let frozen = false;
-    const current = (at = now()) => {
-        if (frozen)
-            return total;
-        const normalizedAt = normalizeActiveRuntimeCheckpointAt(at);
-        const elapsed = normalizedAt === undefined ? 0 : Math.max(0, normalizedAt - segmentStartedAt);
-        return Math.min(Number.MAX_SAFE_INTEGER, total + elapsed);
-    };
-    const checkpoint = (at = now()) => {
-        const normalizedAt = normalizeActiveRuntimeCheckpointAt(at) ?? segmentStartedAt;
-        const checkpointAt = Math.max(segmentStartedAt, normalizedAt);
-        total = current(checkpointAt);
-        segmentStartedAt = checkpointAt;
-        return total;
-    };
-    const freeze = (at = now()) => {
-        if (!frozen) {
-            checkpoint(at);
-            frozen = true;
-        }
-        return total;
-    };
-    return {
-        current,
-        checkpoint,
-        freeze,
-        isFrozen: () => frozen,
-        finalize: (at = now()) => (frozen ? total : checkpoint(at)),
-    };
-}
+const TERMINAL_RUN_STATES = new Set(["complete", "failed", "cancelled", "paused"]);
+const ACTIVE_RUN_STATES = new Set(["queued", "running", "pausing"]);
+export const isActiveLifecycleState = (value) => ACTIVE_RUN_STATES.has(canonicalLifecycleState(value));
+export const isTerminalLifecycleState = (value) => TERMINAL_RUN_STATES.has(canonicalLifecycleState(value));
+export const isCompletedLifecycleState = (value) => canonicalLifecycleState(value) === "complete";
+export const isCompletedLifecycleStepState = (value) => canonicalLifecycleStepState(value) === "complete";
 class LifecycleLockExhaustedError extends Error {
     constructor(message, options) {
         super(message, options);
@@ -131,9 +28,18 @@ export class LifecycleGenerationConflictError extends Error {
         this.name = "LifecycleGenerationConflictError";
     }
 }
-export function isLifecycleTransitionContentionError(error) {
-    return (error instanceof LifecycleGenerationConflictError ||
-        error instanceof LifecycleLockExhaustedError);
+export const isLifecycleTransitionContentionError = (error) => error instanceof LifecycleGenerationConflictError || error instanceof LifecycleLockExhaustedError;
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+const codeOf = (error) => isRecord(error) && typeof error.code === "string" ? error.code : undefined;
+const finiteTimestamp = (value) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
+const positivePid = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+function boundedToken(value, maxBytes = DEFAULT_MAX_TOKEN_BYTES) {
+    if (typeof value !== "string")
+        return undefined;
+    const token = value.trim();
+    return token && Buffer.byteLength(token, "utf8") <= maxBytes && SAFE_LIFECYCLE_TOKEN.test(token)
+        ? token
+        : undefined;
 }
 function replaceControlCharacters(value) {
     return [...value]
@@ -156,198 +62,214 @@ export function boundSupervisorSummary(summary, maxBytes = DEFAULT_MAX_SUMMARY_B
     if (!normalized)
         return undefined;
     let bounded = normalized;
-    while (Buffer.byteLength(bounded, "utf-8") > maxBytes && bounded.length > 1) {
+    while (Buffer.byteLength(bounded, "utf8") > maxBytes && bounded.length > 1)
         bounded = `${bounded.slice(0, -2).trimEnd()}…`;
-    }
     return bounded;
 }
-function parsePauseKind(value) {
-    return value === "awaiting_supervisor" || value === "cohort_pause" ? value : undefined;
+function definedObject(entries) {
+    return Object.fromEntries(entries.filter(([, value]) => value !== undefined));
 }
-function parseTimestamp(value) {
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-function parsePid(value) {
-    return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
-}
-function boundLifecycleToken(value, maxBytes = DEFAULT_MAX_TOKEN_BYTES) {
-    if (typeof value !== "string")
+function normalizePause(value) {
+    if (!isRecord(value))
         return undefined;
-    const normalized = value.trim();
-    if (!normalized || Buffer.byteLength(normalized, "utf-8") > maxBytes)
-        return undefined;
-    return SAFE_LIFECYCLE_TOKEN.test(normalized) ? normalized : undefined;
-}
-function normalizeSupervisorRequestMetadata(request) {
-    if (!request || typeof request !== "object" || Array.isArray(request))
-        return undefined;
-    const raw = request;
-    const tool = raw.tool === "contact_supervisor" ? raw.tool : undefined;
-    if (!tool)
-        return undefined;
-    const reason = raw.reason === "need_decision" || raw.reason === "interview_request" ? raw.reason : undefined;
-    const requestId = boundLifecycleToken(raw.requestId);
-    const summary = boundSupervisorSummary(raw.summary);
-    return {
-        tool,
-        ...(reason ? { reason } : {}),
-        ...(requestId ? { requestId } : {}),
-        ...(summary ? { summary } : {}),
-    };
-}
-function normalizePauseMetadata(pause) {
-    if (!pause || typeof pause !== "object" || Array.isArray(pause))
-        return undefined;
-    const raw = pause;
-    const kind = parsePauseKind(raw.kind);
+    const kind = value.kind === "awaiting_supervisor" || value.kind === "cohort_pause" ? value.kind : undefined;
     if (!kind)
         return undefined;
-    const summary = boundSupervisorSummary(raw.summary);
-    const requestedAt = parseTimestamp(raw.requestedAt);
-    const pausedAt = parseTimestamp(raw.pausedAt);
-    const ownerPid = parsePid(raw.ownerPid);
-    const request = normalizeSupervisorRequestMetadata(raw.request);
-    return {
-        kind,
-        ...(summary ? { summary } : {}),
-        ...(requestedAt !== undefined ? { requestedAt } : {}),
-        ...(pausedAt !== undefined ? { pausedAt } : {}),
-        ...(ownerPid !== undefined ? { ownerPid } : {}),
-        ...(request ? { request } : {}),
-    };
-}
-function normalizeCancellationMetadata(cancel) {
-    if (!cancel || typeof cancel !== "object" || Array.isArray(cancel))
-        return undefined;
-    const raw = cancel;
-    const summary = boundSupervisorSummary(raw.summary);
-    const cancelledAt = parseTimestamp(raw.cancelledAt);
-    return {
-        ...(summary ? { summary } : {}),
-        ...(cancelledAt !== undefined ? { cancelledAt } : {}),
-    };
-}
-function parseContinuationPhase(value) {
-    return value === "claimed" ||
-        value === "reserved" ||
-        value === "launched" ||
-        value === "continued"
-        ? value
+    const request = isRecord(value.request) && value.request.tool === "contact_supervisor"
+        ? definedObject([
+            ["tool", "contact_supervisor"],
+            [
+                "reason",
+                value.request.reason === "need_decision" || value.request.reason === "interview_request"
+                    ? value.request.reason
+                    : undefined,
+            ],
+            ["requestId", boundedToken(value.request.requestId)],
+            ["summary", boundSupervisorSummary(value.request.summary)],
+        ])
         : undefined;
+    return definedObject([
+        ["kind", kind],
+        ["summary", boundSupervisorSummary(value.summary)],
+        ["requestedAt", finiteTimestamp(value.requestedAt)],
+        ["pausedAt", finiteTimestamp(value.pausedAt)],
+        ["ownerPid", positivePid(value.ownerPid)],
+        ["request", request],
+    ]);
 }
-function normalizeContinuationMetadata(continuation) {
-    if (!continuation || typeof continuation !== "object" || Array.isArray(continuation))
+const CONTINUATION_PHASES = new Set(["claimed", "reserved", "launched", "completed", "continued"]);
+function normalizeContinuation(value) {
+    if (!isRecord(value))
         return undefined;
-    const raw = continuation;
-    const phase = parseContinuationPhase(raw.phase);
-    const claimToken = boundLifecycleToken(raw.claimToken);
-    const claimedAt = parseTimestamp(raw.claimedAt);
-    const ownerPid = parsePid(raw.ownerPid);
-    const launchedAt = parseTimestamp(raw.launchedAt);
-    const continuedAt = parseTimestamp(raw.continuedAt);
-    const continuationRunId = boundLifecycleToken(raw.continuationRunId);
-    if (!phase &&
-        !claimToken &&
-        claimedAt === undefined &&
-        ownerPid === undefined &&
-        launchedAt === undefined &&
-        continuedAt === undefined &&
-        !continuationRunId)
-        return undefined;
-    return {
-        ...(phase ? { phase } : {}),
-        ...(claimToken ? { claimToken } : {}),
-        ...(claimedAt !== undefined ? { claimedAt } : {}),
-        ...(ownerPid !== undefined ? { ownerPid } : {}),
-        ...(launchedAt !== undefined ? { launchedAt } : {}),
-        ...(continuedAt !== undefined ? { continuedAt } : {}),
-        ...(continuationRunId ? { continuationRunId } : {}),
-    };
+    const phase = CONTINUATION_PHASES.has(String(value.phase))
+        ? value.phase
+        : undefined;
+    const result = definedObject([
+        ["phase", phase],
+        ["claimToken", boundedToken(value.claimToken)],
+        ["claimedAt", finiteTimestamp(value.claimedAt)],
+        ["ownerPid", positivePid(value.ownerPid)],
+        ["launchedAt", finiteTimestamp(value.launchedAt)],
+        ["completedAt", finiteTimestamp(value.completedAt)],
+        ["continuedAt", finiteTimestamp(value.continuedAt)],
+        ["continuationRunId", boundedToken(value.continuationRunId)],
+    ]);
+    return Object.keys(result).length ? result : undefined;
 }
-function normalizeContinuationIndexKey(value) {
-    if (typeof value === "number" && Number.isInteger(value) && value >= 0)
+function continuationKey(value) {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
         return String(value);
     if (typeof value !== "string" || !/^\d+$/.test(value))
         return undefined;
-    return String(Number(value));
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? String(number) : undefined;
 }
 function normalizeContinuationMap(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
+    if (!isRecord(value))
         return undefined;
-    const entries = Object.entries(value)
-        .map(([key, continuation]) => {
-        const normalizedKey = normalizeContinuationIndexKey(key);
-        const normalizedContinuation = normalizeContinuationMetadata(continuation);
-        return normalizedKey && normalizedContinuation
-            ? [normalizedKey, normalizedContinuation]
-            : undefined;
-    })
-        .filter((entry) => entry !== undefined);
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+        const normalizedKey = continuationKey(key);
+        const continuation = normalizeContinuation(item);
+        if (normalizedKey && continuation)
+            result[normalizedKey] = continuation;
+    }
+    return Object.keys(result).length ? result : undefined;
 }
 export function lifecycleContinuationForIndex(status, index) {
-    const normalizedIndex = normalizeContinuationIndexKey(index);
-    if (!normalizedIndex)
-        return undefined;
-    const indexed = status?.lifecycle?.continuationsByIndex?.[normalizedIndex];
-    if (indexed)
-        return indexed;
-    return index === 0 ? status?.lifecycle?.continuation : undefined;
+    const key = continuationKey(index);
+    return key
+        ? (status?.lifecycle?.continuationsByIndex?.[key] ??
+            (index === 0 ? status?.lifecycle?.continuation : undefined))
+        : undefined;
 }
 export function withLifecycleContinuation(status, index, continuation) {
-    const key = normalizeContinuationIndexKey(index);
+    const key = continuationKey(index);
+    const current = status.lifecycle ?? { generation: lifecycleGeneration(status) };
     if (!key)
-        return status.lifecycle ?? { generation: lifecycleGeneration(status) };
-    const nextIndexed = { ...status.lifecycle?.continuationsByIndex };
+        return current;
+    const byIndex = { ...current.continuationsByIndex };
     if (continuation)
-        nextIndexed[key] = continuation;
+        byIndex[key] = continuation;
     else
-        delete nextIndexed[key];
-    return {
-        ...status.lifecycle,
-        ...(index === 0 ? { continuation } : {}),
-        ...(Object.keys(nextIndexed).length > 0 ? { continuationsByIndex: nextIndexed } : {}),
-        ...(Object.keys(nextIndexed).length > 0 ? {} : { continuationsByIndex: undefined }),
-    };
+        delete byIndex[key];
+    const next = { ...current };
+    if (index === 0) {
+        if (continuation)
+            next.continuation = continuation;
+        else
+            delete next.continuation;
+    }
+    if (Object.keys(byIndex).length)
+        next.continuationsByIndex = byIndex;
+    else
+        delete next.continuationsByIndex;
+    return next;
 }
-function hasActionablePausedChildren(status) {
-    return (status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false);
+const RETIRED_FIELDS = [
+    "activeRuntimeMs",
+    "activeRuntimeCheckpointAt",
+    "durableAttentionReasons",
+];
+function normalizeRecord(raw, fields) {
+    const result = { ...raw };
+    for (const field of [...RETIRED_FIELDS, ...fields])
+        delete result[field];
+    if (raw.activityState === "needs_attention")
+        result.activityState = raw.activityState;
+    const terminalResult = parseSubagentTerminalResult(raw.terminalResult);
+    if (terminalResult)
+        result.terminalResult = terminalResult;
+    else
+        delete result.terminalResult;
+    return result;
 }
-function finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId) {
-    const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === index
-        ? {
-            ...step,
-            status: "continued",
-            endedAt: continuedAt,
-            exitCode: 0,
-            pause: undefined,
-        }
-        : step);
-    const remainingActionable = hasActionablePausedChildren(nextSteps);
-    const nextRootPause = remainingActionable
-        ? nextSteps?.find((step) => step.pause?.kind === "awaiting_supervisor" &&
-            (step.status === "paused" || step.status === "pausing"))?.pause
-        : (status.steps?.length ?? 0) <= 1
-            ? status.pause
-            : undefined;
-    return {
-        ...status,
-        state: remainingActionable ? "paused" : "continued",
-        pid: undefined,
-        endedAt: continuedAt,
-        lastUpdate: continuedAt,
-        pause: nextRootPause,
-        lifecycle: withLifecycleContinuation(status, index, remainingActionable
-            ? undefined
-            : {
-                ...continuation,
-                phase: "continued",
-                ownerPid: undefined,
-                continuedAt,
-                continuationRunId,
-            }),
-        steps: nextSteps,
+function normalizeStep(value) {
+    const raw = value;
+    const result = normalizeRecord(raw, ["activityState", "compaction"]);
+    const idleEpisodeId = normalizeIdleEpisodeId(raw.idleEpisodeId);
+    const compaction = isRecord(raw.compaction) &&
+        (raw.compaction.reason === "manual" ||
+            raw.compaction.reason === "threshold" ||
+            raw.compaction.reason === "overflow")
+        ? { reason: raw.compaction.reason }
+        : undefined;
+    if (idleEpisodeId)
+        result.idleEpisodeId = idleEpisodeId;
+    if (compaction)
+        result.compaction = compaction;
+    result.status = canonicalLifecycleStepState(raw.status);
+    return result;
+}
+export function normalizeAsyncLifecycleStatus(status) {
+    const raw = status;
+    const lifecycle = isRecord(raw.lifecycle) ? raw.lifecycle : undefined;
+    const result = normalizeRecord(raw, ["activityState", "lifecycle", "pause", "cancel", "steps"]);
+    const pause = normalizePause(raw.pause);
+    const cancel = isRecord(raw.cancel)
+        ? definedObject([
+            ["summary", boundSupervisorSummary(raw.cancel.summary)],
+            ["cancelledAt", finiteTimestamp(raw.cancel.cancelledAt)],
+        ])
+        : undefined;
+    const normalizedContinuation = normalizeContinuation(lifecycle?.continuation);
+    const normalizedByIndex = normalizeContinuationMap(lifecycle?.continuationsByIndex);
+    const resumeBlockedReason = lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure"
+        ? lifecycle.resumeBlockedReason
+        : undefined;
+    result.state = canonicalLifecycleState(raw.state);
+    if (pause)
+        result.pause = pause;
+    if (cancel)
+        result.cancel = cancel;
+    if (Array.isArray(raw.steps))
+        result.steps = raw.steps.map(normalizeStep);
+    result.lifecycle = {
+        generation: lifecycleGeneration(status),
+        ...(resumeBlockedReason ? { resumeBlockedReason } : {}),
+        ...(normalizedContinuation ? { continuation: normalizedContinuation } : {}),
+        ...(normalizedByIndex ? { continuationsByIndex: normalizedByIndex } : {}),
     };
+    return result;
+}
+export function writeNormalizedLifecycleStatus(asyncDir, status) {
+    const normalized = normalizeAsyncLifecycleStatus(status);
+    const statusFile = path.join(asyncDir, "status.json");
+    writeAtomicJson(statusFile, normalized);
+    invalidateStatusCache(statusFile);
+    return normalized;
+}
+const runLabel = (asyncDir) => path.basename(path.resolve(asyncDir)) || "unknown-run";
+const lockDir = (asyncDir) => path.join(asyncDir, ".lifecycle-transition.lock");
+const ownerPath = (asyncDir) => path.join(lockDir(asyncDir), "owner.json");
+function readLockOwner(asyncDir) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(ownerPath(asyncDir), "utf8"));
+        return isRecord(parsed)
+            ? {
+                token: boundedToken(parsed.token),
+                pid: positivePid(parsed.pid),
+                acquiredAt: finiteTimestamp(parsed.acquiredAt),
+            }
+            : {};
+    }
+    catch {
+        return {};
+    }
+}
+function lockSnapshot(asyncDir) {
+    try {
+        fs.statSync(lockDir(asyncDir));
+        return readLockOwner(asyncDir);
+    }
+    catch (error) {
+        if (codeOf(error) === "ENOENT")
+            return undefined;
+        throw error;
+    }
+}
+function completeOwner(owner) {
+    return owner.token !== undefined && owner.pid !== undefined && owner.acquiredAt !== undefined;
 }
 export function checkPidLiveness(pid, kill = process.kill) {
     try {
@@ -355,328 +277,78 @@ export function checkPidLiveness(pid, kill = process.kill) {
         return "alive";
     }
     catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ESRCH")
-            return "dead";
-        if (code === "EPERM")
-            return "unknown";
-        return "unknown";
+        return codeOf(error) === "ESRCH" ? "dead" : "unknown";
     }
 }
-export function lifecycleGeneration(status) {
-    const generation = status?.lifecycle?.generation;
-    return typeof generation === "number" && Number.isInteger(generation) && generation >= 0
-        ? generation
-        : 0;
-}
-export function normalizeAsyncLifecycleStatus(status) {
-    const pause = normalizePauseMetadata(status.pause);
-    const cancel = normalizeCancellationMetadata(status.cancel);
-    const continuation = normalizeContinuationMetadata(status.lifecycle?.continuation);
-    const continuationsByIndex = normalizeContinuationMap(status.lifecycle?.continuationsByIndex);
-    const generation = lifecycleGeneration(status);
-    const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
-    const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
-    const activityState = normalizeHealthActivityState(status.activityState);
-    const { activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _checkpointAt, activityState: _activityState, ...rest } = status;
-    const steps = status.steps?.map((step) => {
-        const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
-        const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
-        const stepIdleEpisodeId = normalizeIdleEpisodeId(step.idleEpisodeId);
-        const stepDurableAttentionReasons = normalizeDurableAttentionReasons(step.durableAttentionReasons);
-        const stepCompaction = normalizeCompactionProjection(step.compaction);
-        const stepActivityState = normalizeHealthActivityState(step.activityState);
-        const { activeRuntimeMs: _stepActiveRuntimeMs, activeRuntimeCheckpointAt: _stepCheckpointAt, activityState: _stepActivityState, idleEpisodeId: _stepIdleEpisodeId, durableAttentionReasons: _stepDurableAttentionReasons, compaction: _stepCompaction, ...stepRest } = step;
-        return {
-            ...stepRest,
-            ...(stepActiveRuntimeMs !== undefined ? { activeRuntimeMs: stepActiveRuntimeMs } : {}),
-            ...(stepCheckpointAt !== undefined ? { activeRuntimeCheckpointAt: stepCheckpointAt } : {}),
-            ...(stepActivityState !== undefined ? { activityState: stepActivityState } : {}),
-            ...(stepIdleEpisodeId !== undefined ? { idleEpisodeId: stepIdleEpisodeId } : {}),
-            ...(stepDurableAttentionReasons
-                ? { durableAttentionReasons: [...stepDurableAttentionReasons] }
-                : {}),
-            ...(stepCompaction ? { compaction: { ...stepCompaction } } : {}),
-        };
-    });
-    return {
-        ...rest,
-        ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-        ...(activityState !== undefined ? { activityState } : {}),
-        ...(typeof status.state === "string"
-            ? { state: status.state }
-            : { state: "failed" }),
-        ...(pause ? { pause } : {}),
-        ...(pause ? {} : { pause: undefined }),
-        ...(cancel ? { cancel } : {}),
-        ...(cancel ? {} : { cancel: undefined }),
-        ...(steps !== undefined ? { steps } : {}),
-        lifecycle: {
-            generation,
-            ...(continuation ? { continuation } : {}),
-            ...(continuationsByIndex ? { continuationsByIndex } : {}),
-        },
-    };
-}
-function statusPath(asyncDir) {
-    return path.join(asyncDir, "status.json");
-}
-function readLifecycleStatus(asyncDir) {
+function liveLock(asyncDir) {
     try {
-        return normalizeAsyncLifecycleStatus(JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8")));
-    }
-    catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
-            return null;
-        throw error;
-    }
-}
-export function writeNormalizedLifecycleStatus(asyncDir, status) {
-    const normalized = normalizeAsyncLifecycleStatus(status);
-    const filePath = statusPath(asyncDir);
-    writeAtomicJson(filePath, normalized);
-    invalidateStatusCache(filePath);
-    return normalized;
-}
-export const TERMINAL_RUN_STATES = new Set([
-    "continued",
-    "cancelled",
-    "failed",
-    "complete",
-]);
-const TERMINAL_STEP_STATUSES = new Set([
-    "continued",
-    "cancelled",
-    "failed",
-    "complete",
-    "completed",
-]);
-function mergeActiveRuntimeEvidence(inMemory, persisted) {
-    const values = [
-        normalizeActiveRuntimeMs(inMemory.activeRuntimeMs),
-        normalizeActiveRuntimeMs(persisted?.activeRuntimeMs),
-    ].filter((value) => value !== undefined);
-    const checkpoints = [
-        normalizeActiveRuntimeCheckpointAt(inMemory.activeRuntimeCheckpointAt),
-        normalizeActiveRuntimeCheckpointAt(persisted?.activeRuntimeCheckpointAt),
-    ].filter((value) => value !== undefined);
-    return {
-        ...(values.length > 0 ? { activeRuntimeMs: Math.max(...values) } : {}),
-        ...(checkpoints.length > 0 ? { activeRuntimeCheckpointAt: Math.max(...checkpoints) } : {}),
-    };
-}
-function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
-    if (!persisted) {
-        return writeNormalizedLifecycleStatus(asyncDir, inMemory);
-    }
-    const persistedGen = lifecycleGeneration(persisted);
-    const inMemoryGen = lifecycleGeneration(inMemory);
-    const lifecycle = persistedGen > inMemoryGen ? persisted.lifecycle : inMemory.lifecycle;
-    let state = inMemory.state;
-    if (TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== state) {
-        state = persisted.state;
-    }
-    const steps = inMemory.steps?.map((step, i) => {
-        const persistedStep = persisted.steps?.[i];
-        const runtimeStep = { ...step, ...mergeActiveRuntimeEvidence(step, persistedStep) };
-        if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status))
-            return runtimeStep;
-        const lifecycleOverrides = {
-            status: persistedStep.status,
-            endedAt: persistedStep.endedAt,
-            exitCode: persistedStep.exitCode,
-            cancel: persistedStep.cancel,
-            error: persistedStep.error,
-            pause: undefined,
-        };
-        if (persistedStep.status === runtimeStep.status) {
-            return { ...runtimeStep, ...lifecycleOverrides };
-        }
-        return { ...runtimeStep, ...lifecycleOverrides };
-    });
-    const terminalRunOverrides = TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state
-        ? {
-            cancel: persisted.cancel,
-            endedAt: persisted.endedAt,
-            error: persisted.error,
-            pid: undefined,
-            pause: undefined,
-        }
-        : {};
-    const merged = {
-        ...inMemory,
-        ...mergeActiveRuntimeEvidence(inMemory, persisted),
-        ...terminalRunOverrides,
-        state,
-        ...(steps !== undefined ? { steps } : {}),
-        lifecycle,
-    };
-    return writeNormalizedLifecycleStatus(asyncDir, merged);
-}
-export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
-    try {
-        return withLifecycleStatusLock(asyncDir, (persisted) => mergeAndWriteStatus(asyncDir, inMemory, persisted));
-    }
-    catch (error) {
-        if (!(error instanceof LifecycleLockExhaustedError))
-            throw error;
-        const persisted = readLifecycleStatus(asyncDir);
-        return persisted ?? inMemory;
-    }
-}
-function waitSync(delayMs) {
-    if (delayMs <= 0)
-        return;
-    if (WAIT_VIEW) {
-        try {
-            Atomics.wait(WAIT_VIEW, 0, 0, delayMs);
-            return;
-        }
-        catch {
-        }
-    }
-    const end = Date.now() + delayMs;
-    while (Date.now() < end) {
-        void 0;
-    }
-}
-function runLabel(asyncDir) {
-    const base = path.basename(path.resolve(asyncDir));
-    return base || "unknown-run";
-}
-function transitionLockDir(asyncDir) {
-    return path.join(asyncDir, ".lifecycle-transition.lock");
-}
-function transitionLockInfoPath(asyncDir) {
-    return path.join(transitionLockDir(asyncDir), "owner.json");
-}
-function transitionLockOwnerSummary(owner) {
-    const details = [
-        owner.pid !== undefined ? `pid ${owner.pid}` : undefined,
-        owner.acquiredAt !== undefined
-            ? `acquired ${new Date(owner.acquiredAt).toISOString()}`
-            : undefined,
-    ].filter(Boolean);
-    return details.length > 0 ? details.join(", ") : undefined;
-}
-function readTransitionLockOwner(asyncDir) {
-    try {
-        const raw = JSON.parse(fs.readFileSync(transitionLockInfoPath(asyncDir), "utf-8"));
-        return {
-            token: boundLifecycleToken(raw.token),
-            pid: parsePid(raw.pid),
-            acquiredAt: parseTimestamp(raw.acquiredAt),
-        };
+        const snapshot = lockSnapshot(asyncDir);
+        if (!snapshot)
+            return false;
+        return !completeOwner(snapshot) || checkPidLiveness(snapshot.pid) !== "dead";
     }
     catch {
-        return {};
+        return true;
     }
 }
-function readTransitionLockSnapshot(asyncDir) {
-    try {
-        const stats = fs.statSync(transitionLockDir(asyncDir));
-        return {
-            mtimeMs: stats.mtimeMs,
-            owner: readTransitionLockOwner(asyncDir),
-        };
-    }
-    catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
-            return undefined;
-        throw error;
-    }
-}
-function isCompleteTransitionLockOwner(owner) {
-    return (typeof owner.token === "string" &&
-        owner.token.length > 0 &&
-        typeof owner.pid === "number" &&
-        typeof owner.acquiredAt === "number");
-}
-function tryRecoverStaleTransitionLock(asyncDir, options = {}) {
-    const snapshot = readTransitionLockSnapshot(asyncDir);
+function recoverLock(asyncDir, options) {
+    const snapshot = lockSnapshot(asyncDir);
     if (!snapshot)
         return false;
-    const now = options.now?.() ?? Date.now();
-    const ownerlessStaleMs = options.ownerlessStaleMs ?? DEFAULT_OWNERLESS_LOCK_STALE_MS;
-    if (isCompleteTransitionLockOwner(snapshot.owner)) {
-        if (checkPidLiveness(snapshot.owner.pid, options.kill) !== "dead")
-            return false;
-        const latest = readTransitionLockSnapshot(asyncDir);
-        if (!latest || !isCompleteTransitionLockOwner(latest.owner))
-            return false;
-        if (latest.owner.token !== snapshot.owner.token ||
-            latest.owner.pid !== snapshot.owner.pid ||
-            latest.owner.acquiredAt !== snapshot.owner.acquiredAt) {
-            return false;
-        }
-    }
-    else {
-        if (now - snapshot.mtimeMs < ownerlessStaleMs)
-            return false;
-        const latest = readTransitionLockSnapshot(asyncDir);
-        if (!latest || isCompleteTransitionLockOwner(latest.owner))
-            return false;
-        if (latest.mtimeMs !== snapshot.mtimeMs || now - latest.mtimeMs < ownerlessStaleMs)
-            return false;
-    }
+    const owner = snapshot;
+    if (!completeOwner(owner) || checkPidLiveness(owner.pid, options.kill) !== "dead")
+        return false;
+    const latest = lockSnapshot(asyncDir);
+    if (!latest ||
+        !completeOwner(latest) ||
+        latest.token !== owner.token ||
+        latest.pid !== owner.pid ||
+        latest.acquiredAt !== owner.acquiredAt)
+        return false;
     try {
-        fs.rmSync(transitionLockDir(asyncDir), { recursive: true, force: false });
+        fs.rmSync(lockDir(asyncDir), { recursive: true, force: false });
         return true;
     }
     catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
+        if (codeOf(error) === "ENOENT")
             return false;
         throw error;
     }
 }
-function acquireTransitionLock(asyncDir, options = {}) {
-    const lockDir = transitionLockDir(asyncDir);
+function acquireLock(asyncDir, options) {
+    fs.mkdirSync(asyncDir, { recursive: true });
+    const directory = lockDir(asyncDir);
     const owner = {
         token: randomUUID(),
         pid: process.pid,
         acquiredAt: options.now?.() ?? Date.now(),
     };
-    const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_LOCK_RETRY_DELAYS_MS;
-    fs.mkdirSync(asyncDir, { recursive: true });
+    const delays = options.retryDelaysMs ?? DEFAULT_LOCK_RETRY_DELAYS_MS;
     for (let attempt = 0;; attempt++) {
         try {
-            fs.mkdirSync(lockDir);
+            fs.mkdirSync(directory);
             break;
         }
         catch (error) {
-            const code = typeof error === "object" && error !== null && "code" in error
-                ? error.code
-                : undefined;
-            if (code !== "EEXIST")
+            if (codeOf(error) !== "EEXIST")
                 throw error;
-            if (tryRecoverStaleTransitionLock(asyncDir, options))
+            if (recoverLock(asyncDir, options))
                 continue;
-            const delayMs = retryDelaysMs[attempt];
-            if (delayMs !== undefined) {
-                waitSync(delayMs);
+            const delay = delays[attempt];
+            if (delay !== undefined) {
+                waitSync(delay);
                 continue;
             }
-            const ownerSummary = transitionLockOwnerSummary(readTransitionLockOwner(asyncDir));
-            throw new LifecycleLockExhaustedError(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`, { cause: error });
+            const held = readLockOwner(asyncDir);
+            const acquired = held.acquiredAt === undefined ? "unknown time" : new Date(held.acquiredAt).toISOString();
+            throw new LifecycleLockExhaustedError(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': status lock (pid ${held.pid ?? "unknown"}, acquired ${acquired}) is held by another transition.`, { cause: error });
         }
     }
     try {
-        fs.writeFileSync(transitionLockInfoPath(asyncDir), JSON.stringify(owner, null, 2), "utf-8");
+        fs.writeFileSync(ownerPath(asyncDir), JSON.stringify(owner), { encoding: "utf8", mode: 0o600 });
     }
     catch (error) {
-        fs.rmSync(lockDir, { recursive: true, force: true });
+        fs.rmSync(directory, { recursive: true, force: true });
         throw error;
     }
     let released = false;
@@ -685,133 +357,318 @@ function acquireTransitionLock(asyncDir, options = {}) {
             return;
         released = true;
         try {
-            if (readTransitionLockOwner(asyncDir).token !== owner.token)
-                return;
-            fs.rmSync(lockDir, { recursive: true, force: true });
+            if (readLockOwner(asyncDir).token === owner.token)
+                fs.rmSync(directory, { recursive: true, force: true });
         }
         catch {
         }
     };
 }
 export function withLifecycleStatusLock(asyncDir, operation, options = {}) {
-    const releaseLock = acquireTransitionLock(asyncDir, options);
+    const release = acquireLock(asyncDir, options);
     try {
-        return operation(readLifecycleStatus(asyncDir));
+        return operation(readStatus(asyncDir, { cache: false }));
     }
     finally {
-        releaseLock();
+        release();
     }
 }
+const immutableTerminal = (value) => isTerminalLifecycleState(value) && value !== "paused";
+export const lifecycleGeneration = (status) => {
+    const generation = status?.lifecycle?.generation;
+    return typeof generation === "number" && Number.isSafeInteger(generation) && generation >= 0
+        ? generation
+        : 0;
+};
 export function transitionLifecycleStatus(options) {
     return withLifecycleStatusLock(options.asyncDir, (current) => {
         if (!current)
             throw new Error(`Cannot transition lifecycle state for run '${runLabel(options.asyncDir)}': persisted status was not found.`);
-        const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
-        const currentGeneration = lifecycleGeneration(normalizedCurrent);
-        if (currentGeneration !== options.expectedGeneration) {
-            throw new LifecycleGenerationConflictError(`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`);
-        }
-        const mutated = normalizeAsyncLifecycleStatus(options.mutate(normalizedCurrent));
-        const nextStatus = {
-            ...mutated,
-            lifecycle: {
-                ...mutated.lifecycle,
-                generation: currentGeneration + 1,
-            },
-        };
-        writeNormalizedLifecycleStatus(options.asyncDir, nextStatus);
-        return {
-            previousGeneration: currentGeneration,
-            nextGeneration: currentGeneration + 1,
-            status: nextStatus,
-        };
+        const generation = lifecycleGeneration(current);
+        if (generation !== options.expectedGeneration)
+            throw new LifecycleGenerationConflictError(`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${generation}.`);
+        const mutated = normalizeAsyncLifecycleStatus(options.mutate(current));
+        const next = immutableTerminal(current.state) && mutated.state !== current.state
+            ? {
+                ...current,
+                lifecycle: mutated.lifecycle,
+                lastUpdate: mutated.lastUpdate ?? current.lastUpdate,
+            }
+            : mutated;
+        const status = writeNormalizedLifecycleStatus(options.asyncDir, {
+            ...next,
+            lifecycle: { ...next.lifecycle, generation: generation + 1 },
+        });
+        return { previousGeneration: generation, nextGeneration: generation + 1, status };
     }, options.lockOptions);
 }
-function continuationTargetExists(sourceAsyncDir, continuationRunId, options) {
-    const asyncDirRoot = path.resolve(options.asyncDirRoot ?? path.dirname(path.resolve(sourceAsyncDir)));
-    const asyncTargetDir = path.join(asyncDirRoot, continuationRunId);
-    if (fs.existsSync(asyncTargetDir))
-        return true;
-    if (options.resultsDir &&
-        fs.existsSync(path.join(options.resultsDir, `${continuationRunId}.json`)))
-        return true;
-    return false;
+const SAFE_ROOT_FACTS = [
+    "sessionFile",
+    "processCleanup",
+    "endedAt",
+    "terminalResult",
+    "totalTokens",
+    "totalCost",
+];
+const TERMINAL_ONLY_ROOT_FACTS = new Set(["endedAt", "terminalResult"]);
+const SAFE_NONTERMINAL_ROOT_FACTS = SAFE_ROOT_FACTS.filter((field) => !TERMINAL_ONLY_ROOT_FACTS.has(field));
+const SAFE_STEP_FACTS = [
+    "sessionFile",
+    "processCleanup",
+    "exitCode",
+    "exitSignal",
+    "endedAt",
+    "durationMs",
+    "terminationReason",
+    "transcriptPath",
+    "transcriptError",
+    "childLocation",
+    "terminalResult",
+    "tokens",
+    "totalCost",
+    "model",
+    "thinking",
+    "modelIdentity",
+    "modelResolution",
+    "attemptedModels",
+    "modelAttempts",
+    "modelFallbackNotice",
+    "contextUsage",
+    "contextPressure",
+    "contextPressureCrossedThresholds",
+    "skills",
+    "skillsWarning",
+    "ticketId",
+];
+const TERMINAL_ONLY_STEP_FACTS = new Set([
+    "exitCode",
+    "exitSignal",
+    "endedAt",
+    "durationMs",
+    "terminationReason",
+    "terminalResult",
+]);
+const SAFE_NONTERMINAL_STEP_FACTS = SAFE_STEP_FACTS.filter((field) => !TERMINAL_ONLY_STEP_FACTS.has(field));
+const IMMUTABLE_STEP_STATES = new Set(["complete", "failed", "cancelled"]);
+function recordOf(value) {
+    return { ...value };
 }
-export function markLifecycleContinuationSpawned(asyncDir, index, claimToken, continuationRunId, options = {}) {
-    const current = readLifecycleStatus(asyncDir);
-    if (!current)
-        return { status: null, transitioned: false, final: false, lost: true };
-    const continuation = lifecycleContinuationForIndex(current, index);
-    if (current.state === "continued" || current.steps?.[index]?.status === "continued") {
-        const sameTarget = continuation?.claimToken === claimToken &&
-            continuation.continuationRunId === continuationRunId;
-        return { status: current, transitioned: false, final: sameTarget, lost: !sameTarget };
+function appendMissing(target, source, fields) {
+    for (const field of fields)
+        if (target[field] === undefined && source[field] !== undefined)
+            target[field] = source[field];
+}
+function maxNumber(left, right) {
+    const values = [left, right].filter((value) => typeof value === "number" && Number.isFinite(value));
+    return values.length ? Math.max(...values) : undefined;
+}
+function projectTerminalResult(result, status) {
+    if (!result)
+        return undefined;
+    return terminalResultForStatusStep({ terminalResult: result }, canonicalLifecycleStepState(status));
+}
+function mergeTerminalResult(persisted, memory, status) {
+    const left = parseSubagentTerminalResult(persisted);
+    const right = parseSubagentTerminalResult(memory);
+    if (!left)
+        return projectTerminalResult(right, status);
+    if (!right)
+        return projectTerminalResult(left, status);
+    const attempts = new Map(left.facts.attempts.map((attempt) => [attempt.attempt, attempt]));
+    for (const attempt of right.facts.attempts)
+        if (!attempts.has(attempt.attempt))
+            attempts.set(attempt.attempt, attempt);
+    return projectTerminalResult({
+        state: left.state,
+        facts: {
+            attempts: boundSubagentAttemptFacts([...attempts.values()].sort((a, b) => a.attempt - b.attempt)),
+        },
+    }, status);
+}
+function mergeStep(persisted, memory, changed) {
+    if (!persisted)
+        return changed ? undefined : memory;
+    if (!memory)
+        return persisted;
+    const immutable = IMMUTABLE_STEP_STATES.has(canonicalLifecycleStepState(persisted.status));
+    if (changed || immutable) {
+        const merged = { ...persisted };
+        appendMissing(merged, recordOf(memory), immutable ? SAFE_STEP_FACTS : SAFE_NONTERMINAL_STEP_FACTS);
+        if (!changed && Object.hasOwn(memory, "compaction")) {
+            if (memory.compaction)
+                merged.compaction = memory.compaction;
+            else
+                delete merged.compaction;
+        }
+        if (immutable) {
+            const terminalResult = mergeTerminalResult(persisted.terminalResult, memory.terminalResult, persisted.status);
+            if (terminalResult)
+                merged.terminalResult = terminalResult;
+        }
+        return merged;
     }
-    if (continuation?.claimToken !== claimToken ||
-        continuation.continuationRunId !== continuationRunId) {
-        return { status: current, transitioned: false, final: false, lost: true };
+    return { ...persisted, ...memory };
+}
+function mergeStatus(current, memory, changed) {
+    if (changed) {
+        const merged = { ...current };
+        appendMissing(merged, recordOf(memory), immutableTerminal(current.state) ? SAFE_ROOT_FACTS : SAFE_NONTERMINAL_ROOT_FACTS);
+        if (current.steps)
+            merged.steps = current.steps
+                .map((step, index) => mergeStep(step, memory.steps?.[index], true))
+                .filter((step) => step !== undefined);
+        return merged;
     }
-    if (continuation.phase === "launched" || continuation.phase === "continued") {
+    const currentState = canonicalLifecycleState(current.state);
+    const memoryState = canonicalLifecycleState(memory.state);
+    const immutable = immutableTerminal(currentState);
+    const continuationsByIndex = {
+        ...current.lifecycle?.continuationsByIndex,
+        ...memory.lifecycle?.continuationsByIndex,
+    };
+    const root = immutable && currentState !== memoryState
+        ? { ...current }
+        : immutable
+            ? { ...current }
+            : { ...current, ...memory };
+    const rootRecord = root;
+    if (immutable)
+        appendMissing(rootRecord, recordOf(memory), SAFE_ROOT_FACTS);
+    const steps = memory.steps?.map((step, index) => mergeStep(current.steps?.[index], step, false));
+    return {
+        ...root,
+        lifecycle: immutable
+            ? current.lifecycle
+            : {
+                ...current.lifecycle,
+                ...memory.lifecycle,
+                ...(Object.keys(continuationsByIndex).length ? { continuationsByIndex } : {}),
+            },
+        ...(steps ? { steps: steps.filter((step) => step !== undefined) } : {}),
+    };
+}
+export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
+    const memoryGeneration = lifecycleGeneration(inMemory);
+    try {
+        return withLifecycleStatusLock(asyncDir, (persisted) => {
+            if (!persisted)
+                return writeNormalizedLifecycleStatus(asyncDir, inMemory);
+            const current = normalizeAsyncLifecycleStatus(persisted);
+            return writeNormalizedLifecycleStatus(asyncDir, mergeStatus(current, inMemory, lifecycleGeneration(current) !== memoryGeneration));
+        });
+    }
+    catch (error) {
+        if (!(error instanceof LifecycleLockExhaustedError))
+            throw error;
+        const persisted = readStatus(asyncDir, { cache: false });
+        if (persisted &&
+            inMemory.state === "failed" &&
+            isActiveLifecycleState(persisted.state) &&
+            lifecycleGeneration(persisted) === memoryGeneration &&
+            !liveLock(asyncDir)) {
+            const merged = mergeStatus(normalizeAsyncLifecycleStatus(persisted), inMemory, false);
+            return writeNormalizedLifecycleStatus(asyncDir, {
+                ...persisted,
+                state: "failed",
+                pid: undefined,
+                pause: undefined,
+                activityState: undefined,
+                currentTool: undefined,
+                currentToolStartedAt: undefined,
+                currentPath: undefined,
+                error: inMemory.error,
+                endedAt: inMemory.endedAt ?? persisted.endedAt,
+                lastUpdate: maxNumber(persisted.lastUpdate, inMemory.lastUpdate),
+                lifecycle: {
+                    ...persisted.lifecycle,
+                    ...(inMemory.lifecycle?.resumeBlockedReason
+                        ? { resumeBlockedReason: inMemory.lifecycle.resumeBlockedReason }
+                        : {}),
+                    generation: memoryGeneration + 1,
+                },
+                steps: merged.steps ?? persisted.steps,
+            });
+        }
+        return persisted ?? normalizeAsyncLifecycleStatus(inMemory);
+    }
+}
+function continuationTargetExists(sourceAsyncDir, id, options) {
+    const root = path.resolve(options.asyncDirRoot ?? path.dirname(path.resolve(sourceAsyncDir)));
+    return (fs.existsSync(path.join(root, id)) ||
+        Boolean(options.resultsDir && fs.existsSync(path.join(options.resultsDir, `${id}.json`))));
+}
+const continuationDone = (continuation) => continuation?.phase === "completed" ||
+    continuation?.phase === "continued" ||
+    continuation?.completedAt !== undefined ||
+    continuation?.continuedAt !== undefined;
+function continuationResult(status, index, continuation, at, runId) {
+    const steps = status.steps?.map((step, stepIndex) => stepIndex === index
+        ? { ...step, status: "complete", endedAt: at, exitCode: 0, pause: undefined }
+        : step);
+    const actionable = steps?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
+    return {
+        ...status,
+        state: actionable ? "paused" : "complete",
+        pid: undefined,
+        endedAt: at,
+        lastUpdate: at,
+        pause: actionable ? status.pause : undefined,
+        lifecycle: withLifecycleContinuation(status, index, {
+            ...continuation,
+            phase: "completed",
+            ownerPid: undefined,
+            completedAt: at,
+            continuationRunId: runId,
+        }),
+        ...(steps ? { steps } : {}),
+    };
+}
+function continuationGate(status, index, claimToken, runId) {
+    const continuation = lifecycleContinuationForIndex(status, index);
+    if (continuationDone(continuation))
         return {
-            status: current,
-            transitioned: false,
-            final: continuation.phase === "continued",
-            lost: false,
+            kind: "done",
+            same: continuation?.claimToken === claimToken && continuation.continuationRunId === runId,
         };
-    }
-    const launchedAt = options.now?.() ?? Date.now();
-    try {
-        const transitioned = transitionLifecycleStatus({
-            asyncDir,
-            expectedGeneration: lifecycleGeneration(current),
-            mutate: (status) => ({
-                ...status,
-                lastUpdate: launchedAt,
-                lifecycle: withLifecycleContinuation(status, index, {
-                    ...continuation,
-                    phase: "launched",
-                    ownerPid: undefined,
-                    launchedAt,
-                    continuationRunId,
-                }),
-            }),
-        });
-        return { status: transitioned.status, transitioned: true, final: false, lost: false };
-    }
-    catch (error) {
-        if (error instanceof LifecycleGenerationConflictError) {
-            return markLifecycleContinuationSpawned(asyncDir, index, claimToken, continuationRunId, options);
-        }
-        throw error;
-    }
+    if (continuation?.claimToken !== claimToken || continuation.continuationRunId !== runId)
+        return { kind: "lost" };
+    return { kind: continuation.phase === "launched" ? "launched" : "ready", continuation };
 }
-export function finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken, continuationRunId, options = {}) {
-    const current = readLifecycleStatus(asyncDir);
+export function advanceLifecycleContinuation(asyncDir, index, claimToken, runId, finalize, now) {
+    const current = readStatus(asyncDir, { cache: false });
     if (!current)
-        return { status: null, finalized: false, lost: true };
-    const continuation = lifecycleContinuationForIndex(current, index);
-    if (current.state === "continued" || current.steps?.[index]?.status === "continued") {
-        const sameTarget = continuation?.claimToken === claimToken &&
-            continuation.continuationRunId === continuationRunId;
-        return { status: current, finalized: sameTarget, lost: !sameTarget };
-    }
-    if (continuation?.claimToken !== claimToken ||
-        continuation.continuationRunId !== continuationRunId) {
-        return { status: current, finalized: false, lost: true };
-    }
-    const continuedAt = options.now?.() ?? Date.now();
+        return { status: null, changed: false, done: false, lost: true };
+    const gate = continuationGate(current, index, claimToken, runId);
+    if (gate.kind === "done")
+        return { status: current, changed: false, done: gate.same, lost: !gate.same };
+    if (gate.kind === "lost")
+        return { status: current, changed: false, done: false, lost: true };
+    if (!finalize && gate.kind === "launched")
+        return { status: current, changed: false, done: false, lost: false };
+    const at = now?.() ?? Date.now();
     try {
-        const transitioned = transitionLifecycleStatus({
+        const result = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(current),
-            mutate: (status) => finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId),
+            mutate: (status) => finalize
+                ? continuationResult(status, index, gate.continuation, at, runId)
+                : {
+                    ...status,
+                    lastUpdate: at,
+                    lifecycle: withLifecycleContinuation(status, index, {
+                        ...gate.continuation,
+                        phase: "launched",
+                        ownerPid: undefined,
+                        launchedAt: at,
+                        continuationRunId: runId,
+                    }),
+                },
         });
-        return { status: transitioned.status, finalized: true, lost: false };
+        return { status: result.status, changed: true, done: false, lost: false };
     }
     catch (error) {
-        if (error instanceof LifecycleGenerationConflictError) {
-            return finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken, continuationRunId, options);
-        }
+        if (error instanceof LifecycleGenerationConflictError)
+            return advanceLifecycleContinuation(asyncDir, index, claimToken, runId, finalize, now);
         throw error;
     }
 }
@@ -819,24 +676,20 @@ export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index
     const continuation = lifecycleContinuationForIndex(current, index);
     if (!continuation?.claimToken)
         return { status: current, recovered: false, liveness: "unclaimed" };
-    if (continuation.continuedAt !== undefined ||
-        continuation.phase === "continued" ||
-        current.state === "continued" ||
-        current.steps?.[index]?.status === "continued") {
+    if (continuationDone(continuation))
         return { status: current, recovered: false, liveness: "completed" };
-    }
-    if (continuation.ownerPid === undefined) {
-        if (continuation.continuationRunId)
-            return { status: current, recovered: false, liveness: "blocked" };
-        return { status: current, recovered: false, liveness: "missing-owner" };
-    }
+    if (continuation.ownerPid === undefined)
+        return {
+            status: current,
+            recovered: false,
+            liveness: continuation.continuationRunId ? "blocked" : "missing-owner",
+        };
     const liveness = checkPidLiveness(continuation.ownerPid, options.kill);
     if (liveness !== "dead")
         return { status: current, recovered: false, liveness };
     if (continuation.continuationRunId &&
-        continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
+        continuationTargetExists(asyncDir, continuation.continuationRunId, options))
         return { status: current, recovered: false, liveness: "blocked" };
-    }
     return {
         status: {
             ...current,
@@ -848,94 +701,43 @@ export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index
     };
 }
 export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options = {}) {
-    const current = readLifecycleStatus(asyncDir);
+    const current = readStatus(asyncDir, { cache: false });
     if (!current)
         return { status: null, recovered: false, liveness: "unclaimed" };
     const inspected = recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options);
     if (!inspected.recovered)
         return inspected;
-    const expectedGeneration = lifecycleGeneration(current);
-    const inspectedClaimToken = lifecycleContinuationForIndex(current, index)?.claimToken;
-    return withLifecycleStatusLock(asyncDir, (lockedStatus) => {
-        if (!lockedStatus) {
-            throw new Error(`Cannot transition lifecycle state for run '${runLabel(asyncDir)}': persisted status was not found.`);
-        }
-        const normalizedLockedStatus = normalizeAsyncLifecycleStatus(lockedStatus);
-        const lockedGeneration = lifecycleGeneration(normalizedLockedStatus);
-        if (lockedGeneration !== expectedGeneration) {
-            return { status: normalizedLockedStatus, recovered: false, liveness: inspected.liveness };
-        }
-        const rechecked = recoverStaleLifecycleContinuationStatus(normalizedLockedStatus, asyncDir, index, options);
-        if (!rechecked.recovered)
-            return rechecked;
-        if (lifecycleContinuationForIndex(normalizedLockedStatus, index)?.claimToken !==
-            inspectedClaimToken) {
-            return { status: normalizedLockedStatus, recovered: false, liveness: rechecked.liveness };
-        }
-        const recoveryLastUpdate = rechecked.status.lastUpdate ?? Date.now();
-        const lastUpdate = typeof normalizedLockedStatus.lastUpdate === "number" &&
-            Number.isFinite(normalizedLockedStatus.lastUpdate)
-            ? Math.max(normalizedLockedStatus.lastUpdate, recoveryLastUpdate)
-            : recoveryLastUpdate;
-        const nextStatus = writeNormalizedLifecycleStatus(asyncDir, {
-            ...normalizedLockedStatus,
-            lastUpdate,
-            lifecycle: {
-                ...withLifecycleContinuation(normalizedLockedStatus, index, undefined),
-                generation: lockedGeneration + 1,
-            },
-        });
-        return { status: nextStatus, recovered: true, liveness: rechecked.liveness };
-    }, options);
-}
-export function recoverStoppedLifecycleOwnership(status, options = {}) {
-    const normalized = normalizeAsyncLifecycleStatus(status);
-    if ((normalized.state !== "paused" &&
-        normalized.state !== "cancelled" &&
-        normalized.state !== "continued" &&
-        normalized.state !== "pausing") ||
-        typeof normalized.pid !== "number") {
-        return { status: normalized, repaired: false };
-    }
-    const now = options.now?.() ?? normalized.lastUpdate;
-    const pidLiveness = checkPidLiveness(normalized.pid, options.kill);
-    const pause = normalized.pause
-        ? {
-            ...normalized.pause,
-            ownerPid: undefined,
-        }
-        : undefined;
-    if (normalized.state === "pausing") {
-        if (pidLiveness !== "dead")
-            return { status: normalized, repaired: false, pidLiveness };
-        const hasResumeCheckpoint = Boolean(pause?.kind &&
-            (pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
-            (normalized.sessionFile ||
-                normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)));
-        if (!hasResumeCheckpoint)
-            return { status: normalized, repaired: false, pidLiveness };
-        const pausedAt = pause?.pausedAt ?? now ?? Date.now();
+    const generation = lifecycleGeneration(current);
+    const token = lifecycleContinuationForIndex(current, index)?.claimToken;
+    return withLifecycleStatusLock(asyncDir, (locked) => {
+        if (!locked)
+            return { status: null, recovered: false, liveness: inspected.liveness };
+        const lockedContinuation = lifecycleContinuationForIndex(locked, index);
+        const generationChanged = lifecycleGeneration(locked) !== generation;
+        const claimChanged = lockedContinuation?.claimToken !== token;
+        if ((generationChanged || claimChanged || isTerminalLifecycleState(locked.state)) &&
+            lockedContinuation?.ownerPid !== undefined)
+            checkPidLiveness(lockedContinuation.ownerPid, options.kill);
+        if (generationChanged || claimChanged)
+            return { status: locked, recovered: false, liveness: inspected.liveness };
+        const terminalLocked = isTerminalLifecycleState(locked.state);
+        const again = terminalLocked
+            ? { status: locked, recovered: true, liveness: "dead" }
+            : recoverStaleLifecycleContinuationStatus(locked, asyncDir, index, options);
+        if (!again.recovered)
+            return again;
+        const at = options.now?.() ?? Date.now();
         return {
-            status: {
-                ...normalized,
-                state: "paused",
-                pid: undefined,
-                endedAt: normalized.endedAt ?? pausedAt,
-                lastUpdate: now ?? pausedAt,
-                ...(pause ? { pause: { ...pause, pausedAt } } : {}),
-                steps: normalized.steps?.map((step) => step.status === "pausing"
-                    ? { ...step, status: "paused", endedAt: step.endedAt ?? pausedAt, exitCode: 0 }
-                    : step),
-            },
-            repaired: true,
-            pidLiveness,
+            status: writeNormalizedLifecycleStatus(asyncDir, {
+                ...locked,
+                lastUpdate: Math.max(locked.lastUpdate ?? 0, again.status.lastUpdate ?? at),
+                lifecycle: {
+                    ...withLifecycleContinuation(locked, index, undefined),
+                    generation: generation + 1,
+                },
+            }),
+            recovered: true,
+            liveness: again.liveness,
         };
-    }
-    const repaired = {
-        ...normalized,
-        pid: undefined,
-        ...(pause ? { pause } : {}),
-        lastUpdate: now,
-    };
-    return { status: repaired, repaired: true, pidLiveness };
+    }, { kill: options.kill, now: options.now });
 }

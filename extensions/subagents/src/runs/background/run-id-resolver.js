@@ -14,13 +14,6 @@ function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
         resolvedId: id,
     };
 }
-function foregroundIds(state) {
-    if (!state)
-        return [];
-    return [
-        ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
-    ];
-}
 function nestedScopeFromState(state) {
     if (!state)
         return undefined;
@@ -35,8 +28,6 @@ function nestedScopeFromState(state) {
         seen.add(key);
         routes.push(route);
     };
-    for (const control of state.foregroundControls.values())
-        add(control.nestedRoute);
     for (const job of state.asyncJobs.values())
         add(job.nestedRoute);
     return { routes };
@@ -49,8 +40,6 @@ export function resolveSubagentRunId(id, deps = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
     const nestedScope = deps.nested ?? nestedScopeFromState(deps.state);
-    if (deps.state?.foregroundControls.has(id) || deps.state?.foregroundRuns?.has(id))
-        return { kind: "foreground", id };
     const exactAsync = exactAsyncLocation(id, asyncDirRoot, resultsDir);
     if (exactAsync)
         return { kind: "async", id, location: exactAsync };
@@ -60,9 +49,6 @@ export function resolveSubagentRunId(id, deps = {}) {
     if (exactNested[0])
         return { kind: "nested", id, match: exactNested[0] };
     const matches = [];
-    for (const foregroundId of foregroundIds(deps.state).filter((candidate) => candidate.startsWith(id))) {
-        matches.push({ kind: "foreground", id: foregroundId });
-    }
     for (const match of asyncPrefixMatches(id, asyncDirRoot, resultsDir)) {
         matches.push({ kind: "async", id: match.id, location: match.location });
     }

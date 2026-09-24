@@ -1,7 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import {
   acceptChildMessageRequest,
+  deliverInterruptRequest,
+  deliverTimeoutRequest,
   enqueueStepChildMessage,
   watchAsyncControlInbox,
   writeChildMessageAcceptanceForRequest,
@@ -13,51 +16,101 @@ import type {
   NestedRouteInfo,
   NestedRunSummary,
   ResolvedControlConfig,
+  SubagentModelIdentity,
 } from "../../shared/types.ts";
 import {
   buildControlEvent,
-  claimControlNotification,
   deriveActivityState,
   formatControlNoticeMessage,
+  normalizeIdleEpisodeId,
+  shouldNotifyControlEvent,
 } from "../shared/subagent-control.ts";
 import { projectNestedEvents, resolveNestedAsyncDir } from "../shared/nested-events.ts";
-import { deliverInterruptRequest, deliverTimeoutRequest } from "./control-channel.ts";
 import { childUsageNumber } from "../shared/child-protocol.ts";
 import { appendRecentProgressItem } from "../../shared/recent-progress.ts";
-import {
-  createMutatingFailureState,
-  didMutatingToolFail,
-  isMutatingTool,
-  recordMutatingFailure,
-  resetMutatingFailureState,
-  resolveCurrentPath,
-  shouldEscalateMutatingFailures,
-  summarizeRecentMutatingFailures,
-} from "../shared/long-running-guard.ts";
-import { extractTextFromContent, extractToolArgsPreview } from "../../shared/utils.ts";
-import {
-  canonicalSubagentModelIdentity,
-  resolveRuntimeModelContext,
-} from "../shared/model-fallback.ts";
+import { resolveCurrentPath } from "../shared/long-running-guard.ts";
+import { extractTextFromContent, extractToolArgsPreview, readStatus } from "../../shared/utils.ts";
+import { canonicalSubagentModelIdentity } from "../shared/model-fallback.ts";
+import { resolveRuntimeModelContext } from "../../shared/model-info.ts";
 import {
   detectContextPressureCrossing,
   formatContextPressureGuidance,
   updateContextUsageDiagnostics,
 } from "../../shared/context-diagnostics.ts";
-import { parseAndStripAcceptanceReport } from "../shared/acceptance.ts";
-import { boundSupervisorSummary } from "../shared/lifecycle-state.ts";
-import { toolBudgetState } from "../shared/tool-budget.ts";
+import { boundSupervisorSummary, lifecycleGeneration } from "../shared/lifecycle-state.ts";
 import type { ModelAttemptStart } from "./single-step-execution.ts";
 import type { BackgroundRunStatusOwner } from "./run-status-owner.ts";
-import {
-  ACTIVITY_MONITOR_INTERVAL_MS,
-  getActivityMonitorGap,
-  observeActivityWindow,
-} from "../shared/health-transition.ts";
 
-const MONITOR_GAP_DIAGNOSTIC_TYPE = "subagent.run.monitor_gap";
+const ACTIVITY_MONITOR_INTERVAL_MS = 1_000;
 
-export interface BackgroundRunControlOwnerInput {
+function latestTimestamp(...values: Array<number | undefined>): number | undefined {
+  const finite = values.filter(
+    (value): value is number => value !== undefined && Number.isFinite(value),
+  );
+  return finite.length ? Math.max(...finite) : undefined;
+}
+
+const MAX_ATTENTION_CLAIMS_PER_SCOPE = 32;
+
+const SAFE_LIFECYCLE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+
+function boundedEpisode(value: unknown): string | undefined {
+  const episode = normalizeIdleEpisodeId(value);
+  if (!episode) return undefined;
+  if (SAFE_LIFECYCLE_TOKEN.test(episode)) return episode;
+  // Legacy status/event records accepted printable path separators and other
+  // filename-unsafe characters. Preserve their notification identity without
+  // copying a path or user text into the durable claim filename.
+  return `legacy-${createHash("sha256").update(episode, "utf8").digest("hex")}`;
+}
+
+function pruneAttentionClaims(dir: string, prefix: string): void {
+  let files: string[];
+  try {
+    files = fs
+      .readdirSync(dir)
+      .filter((name) => name.startsWith(prefix) && name.endsWith(".claim"));
+  } catch {
+    return;
+  }
+  if (files.length <= MAX_ATTENTION_CLAIMS_PER_SCOPE) return;
+  files.sort((left, right) => {
+    try {
+      return fs.statSync(path.join(dir, left)).mtimeMs - fs.statSync(path.join(dir, right)).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
+  for (const file of files.slice(0, -MAX_ATTENTION_CLAIMS_PER_SCOPE)) {
+    try {
+      fs.unlinkSync(path.join(dir, file));
+    } catch {
+      // Another owner may have pruned or claimed the file concurrently.
+    }
+  }
+}
+
+export function claimAttentionNotification(
+  asyncDir: string,
+  input: { generation: number; episode: string; index?: number },
+): boolean {
+  if (!Number.isSafeInteger(input.generation) || input.generation < 0) return false;
+  const episode = boundedEpisode(input.episode);
+  if (!episode) return false;
+  const scope = `${input.generation}-${input.index ?? "run"}-`;
+  const key = `${scope}${episode}`.replace(/[^A-Za-z0-9._:~-]/g, "_");
+  try {
+    const dir = path.join(asyncDir, "control", "attention-claims");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.closeSync(fs.openSync(path.join(dir, `${key}.claim`), "wx", 0o600));
+    pruneAttentionClaims(dir, scope);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface BackgroundRunControlOwnerInput {
   status: BackgroundRunStatusOwner;
   id: string;
   asyncDir: string;
@@ -65,25 +118,26 @@ export interface BackgroundRunControlOwnerInput {
   controlConfig: ResolvedControlConfig;
   nestedRoute?: NestedRouteInfo;
   appendEvent: (line: string) => void;
-  appendDiagnosticEvent?: (line: string, droppedEventType?: string) => void;
 }
 
-export interface BackgroundRunControlOwner {
-  registerStepInterrupt(flatIndex: number, interrupt: (() => void) | undefined): void;
-  registerStepTimeout(flatIndex: number, interrupt: (() => void) | undefined): void;
+interface BackgroundRunControlOwner {
+  registerStepInterrupt(index: number, interrupt: (() => void) | undefined): void;
+  registerStepTimeout(index: number, interrupt: (() => void) | undefined): void;
   interruptActiveChildren(): void;
   timeoutActiveChildren(): void;
   interruptNestedAsyncDescendants(): void;
   timeoutNestedAsyncDescendants(): void;
   hasLiveNestedAsyncDescendants(): boolean;
-  appendControlEvent(event: ReturnType<typeof buildControlEvent>): void;
-  updateStepModel(flatIndex: number, attempt: ModelAttemptStart, now?: number): void;
-  updateStepFromChildEvent(flatIndex: number, event: ChildEvent): void;
-  flushPendingStepSteers(flatIndex: number): void;
+  updateStepModel(index: number, attempt: ModelAttemptStart, now?: number): void;
+  updateStepFromChildEvent(index: number, event: ChildEvent): void;
+  flushPendingStepSteers(index: number): void;
   clearActivityState(): void;
   startActivityTimer(): void;
   disposeActivityTimer(): void;
-  watchControlInbox(input: { onInterrupt: () => void; onTimeout: () => void }): () => void;
+  watchControlInbox(input: {
+    onInterrupt: (request?: { reason?: string; source?: string }) => void;
+    onTimeout: () => void;
+  }): () => void;
 }
 
 function resolveSupervisorPauseMetadata(input: {
@@ -92,94 +146,70 @@ function resolveSupervisorPauseMetadata(input: {
   requestedAt: number;
 }): AsyncStatus["pause"] | undefined {
   if (
-    input.toolName === "contact_supervisor" &&
-    (input.toolArgs?.reason === "need_decision" || input.toolArgs?.reason === "interview_request")
-  ) {
-    const summary = boundSupervisorSummary(input.toolArgs.message);
-    return {
-      kind: "awaiting_supervisor",
-      requestedAt: input.requestedAt,
+    input.toolName !== "contact_supervisor" ||
+    (input.toolArgs?.reason !== "need_decision" && input.toolArgs?.reason !== "interview_request")
+  )
+    return undefined;
+  const summary = boundSupervisorSummary(input.toolArgs.message);
+  return {
+    kind: "awaiting_supervisor",
+    requestedAt: input.requestedAt,
+    ...(summary ? { summary } : {}),
+    request: {
+      tool: "contact_supervisor",
+      reason: input.toolArgs.reason,
       ...(summary ? { summary } : {}),
-      request: {
-        tool: "contact_supervisor",
-        reason: input.toolArgs.reason,
-        ...(summary ? { summary } : {}),
-      },
-    };
-  }
-  return undefined;
+    },
+  };
 }
 
 export function createBackgroundRunControlOwner(
   input: BackgroundRunControlOwnerInput,
 ): BackgroundRunControlOwner {
-  const {
-    status,
-    id,
-    asyncDir,
-    overallStartTime,
-    controlConfig,
-    nestedRoute,
-    appendEvent,
-    appendDiagnosticEvent,
-  } = input;
+  const { status, id, asyncDir, overallStartTime, controlConfig, nestedRoute, appendEvent } = input;
   const statusPayload = status.statusPayload;
   const flatSteps = status.flatSteps;
   const activeChildInterrupts = new Map<number, () => void>();
   const activeChildTimeouts = new Map<number, () => void>();
   const pendingStepSteers: ChildMessageRequest[] = [];
-  const emittedControlEventKeys = new Set<string>();
-  // These timestamps describe what the watchdog has continuously observed, not
-  // the child's truthful activity timestamps. A delayed watchdog tick resets
-  // this observation window without rewriting lastActivityAt.
-  const observedIdleSince: Array<number | undefined> = status.initialStatusSteps.map(
-    () => undefined,
+  const observedIdleSince: Array<number | undefined> = statusPayload.steps.map((step) =>
+    latestTimestamp(step.lastActivityAt, step.startedAt, overallStartTime),
   );
-  const observedActivityAt: Array<number | undefined> = status.initialStatusSteps.map(
-    () => undefined,
-  );
-  const mutatingFailureStates = status.initialStatusSteps.map(() => createMutatingFailureState());
-  // Runtime-reported identity is trusted only after exact registry validation
-  // and is scoped to the currently dispatched child attempt. A fallback invokes
-  // updateStepModel again, which deliberately clears the prior observation.
   const runtimeModelContexts: Array<
-    | { identity: import("../../shared/types.ts").SubagentModelIdentity; contextWindow: number }
-    | undefined
-  > = status.initialStatusSteps.map(() => undefined);
-  const activeConfiguredModels: Array<string | undefined> = status.initialStatusSteps.map(
+    { identity: SubagentModelIdentity; contextWindow: number } | undefined
+  > = statusPayload.steps.map(() => undefined);
+  const activeConfiguredModels: Array<string | undefined> = statusPayload.steps.map(
     () => undefined,
   );
-  const pendingToolResults: Array<
-    { tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined
-  > = status.initialStatusSteps.map(() => undefined);
-  const mutatingFailureWindowMs = 5 * 60_000;
   let activityTimer: NodeJS.Timeout | undefined;
-  let lastMonitorTickAt: number | undefined;
 
-  function registerStepInterrupt(flatIndex: number, interrupt: (() => void) | undefined): void {
-    if (!interrupt) {
-      activeChildInterrupts.delete(flatIndex);
-      return;
+  function register(
+    map: Map<number, () => void>,
+    index: number,
+    interrupt: (() => void) | undefined,
+    active: boolean,
+  ): void {
+    if (!interrupt) map.delete(index);
+    else {
+      map.set(index, interrupt);
+      if (active) interrupt();
     }
-    activeChildInterrupts.set(flatIndex, interrupt);
-    if (status.interrupted) interrupt();
   }
 
-  function registerStepTimeout(flatIndex: number, interrupt: (() => void) | undefined): void {
-    if (!interrupt) {
-      activeChildTimeouts.delete(flatIndex);
-      return;
-    }
-    activeChildTimeouts.set(flatIndex, interrupt);
-    if (status.timedOut) interrupt();
+  function registerStepInterrupt(index: number, interrupt: (() => void) | undefined): void {
+    register(activeChildInterrupts, index, interrupt, status.interrupted || status.cancelled);
+  }
+
+  function registerStepTimeout(index: number, interrupt: (() => void) | undefined): void {
+    register(activeChildTimeouts, index, interrupt, status.timedOut);
   }
 
   function interruptActiveChildren(): void {
-    for (const interrupt of Array.from(activeChildInterrupts.values())) interrupt();
+    for (const interrupt of activeChildInterrupts.values()) interrupt();
   }
 
   function timeoutActiveChildren(): void {
-    for (const interrupt of Array.from(activeChildTimeouts.values())) interrupt();
+    for (const interrupt of activeChildTimeouts.values()) interrupt();
   }
 
   function* nestedRuns(children: NestedRunSummary[] | undefined): Generator<NestedRunSummary> {
@@ -190,44 +220,51 @@ export function createBackgroundRunControlOwner(
     }
   }
 
-  function interruptNestedAsyncDescendants(): void {
+  function nestedSignalFailure(kind: "interrupt" | "timeout", targetRunId?: string): void {
+    appendEvent(
+      JSON.stringify({
+        type: `subagent.nested.${kind}_failed`,
+        ts: Date.now(),
+        runId: id,
+        ...(targetRunId ? { targetRunId } : { message: "Unable to inspect nested runs." }),
+      }),
+    );
+  }
+
+  function signalNestedDescendants(kind: "interrupt" | "timeout"): void {
     if (!nestedRoute) return;
-    let registry: ReturnType<typeof projectNestedEvents>;
+    let children: NestedRunSummary[];
     try {
-      registry = projectNestedEvents(nestedRoute);
-    } catch (error) {
-      appendEvent(
-        JSON.stringify({
-          type: "subagent.nested.interrupt_failed",
-          ts: Date.now(),
-          runId: id,
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      );
+      children = projectNestedEvents(nestedRoute).children;
+    } catch {
+      nestedSignalFailure(kind);
       return;
     }
-    for (const run of nestedRuns(registry.children)) {
+
+    for (const run of nestedRuns(children)) {
       if (run.state !== "running" && run.state !== "queued") continue;
       const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(nestedRoute.rootRunId, run);
       if (!nestedAsyncDir) continue;
       try {
-        deliverInterruptRequest({
+        const request = {
           asyncDir: nestedAsyncDir,
           pid: run.pid,
-          source: "ancestor-interrupt",
-        });
-      } catch (error) {
-        appendEvent(
-          JSON.stringify({
-            type: "subagent.nested.interrupt_failed",
-            ts: Date.now(),
-            runId: id,
-            targetRunId: run.id,
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        );
+          source: kind === "interrupt" ? "ancestor-interrupt" : "ancestor-timeout",
+        };
+        if (kind === "interrupt") deliverInterruptRequest(request);
+        else deliverTimeoutRequest(request);
+      } catch {
+        nestedSignalFailure(kind, run.id);
       }
     }
+  }
+
+  function interruptNestedAsyncDescendants(): void {
+    signalNestedDescendants("interrupt");
+  }
+
+  function timeoutNestedAsyncDescendants(): void {
+    signalNestedDescendants("timeout");
   }
 
   function hasLiveNestedAsyncDescendants(): boolean {
@@ -241,78 +278,74 @@ export function createBackgroundRunControlOwner(
     }
   }
 
-  function timeoutNestedAsyncDescendants(): void {
-    if (!nestedRoute) return;
-    let registry: ReturnType<typeof projectNestedEvents>;
-    try {
-      registry = projectNestedEvents(nestedRoute);
-    } catch (error) {
-      appendEvent(
-        JSON.stringify({
-          type: "subagent.nested.timeout_failed",
-          ts: Date.now(),
-          runId: id,
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      );
-      return;
-    }
-    for (const run of nestedRuns(registry.children)) {
-      if (run.state !== "running" && run.state !== "queued") continue;
-      const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(nestedRoute.rootRunId, run);
-      if (!nestedAsyncDir) continue;
-      try {
-        deliverTimeoutRequest({
-          asyncDir: nestedAsyncDir,
-          pid: run.pid,
-          source: "ancestor-timeout",
-        });
-      } catch (error) {
-        appendEvent(
-          JSON.stringify({
-            type: "subagent.nested.timeout_failed",
-            ts: Date.now(),
-            runId: id,
-            targetRunId: run.id,
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        );
-      }
-    }
-  }
-
   function appendControlEvent(event: ReturnType<typeof buildControlEvent>): void {
-    if (!controlConfig.enabled) return;
-    const channels = controlConfig.notifyChannels;
     if (
-      channels.length === 0 ||
-      !claimControlNotification(controlConfig, event, emittedControlEventKeys)
+      statusPayload.state !== "running" ||
+      controlConfig.notifyChannels.length === 0 ||
+      !shouldNotifyControlEvent(controlConfig, event)
+    )
+      return;
+
+    const withGeneration = { ...event, generation: lifecycleGeneration(statusPayload) };
+    const episode =
+      withGeneration.idleEpisodeId ??
+      (withGeneration.reason === "context_pressure"
+        ? `context-${withGeneration.contextPressureThreshold ?? "unknown"}`
+        : `idle-${withGeneration.ts}`);
+    if (
+      !claimAttentionNotification(asyncDir, {
+        generation: withGeneration.generation ?? 0,
+        episode,
+        index: withGeneration.index,
+      })
     )
       return;
     appendEvent(
       JSON.stringify({
         type: "subagent.control",
-        event,
-        channels,
-        noticeText: formatControlNoticeMessage(event),
+        event: withGeneration,
+        channels: controlConfig.notifyChannels,
+        noticeText: formatControlNoticeMessage(withGeneration),
       }),
     );
   }
 
   function syncTopLevelCurrentTool(): void {
-    const activeStep = statusPayload.steps
-      .filter(
-        (step) =>
-          step.status === "running" &&
-          typeof step.currentTool === "string" &&
-          step.currentTool.length > 0,
+    let active: NonNullable<AsyncStatus["steps"]>[number] | undefined;
+    for (const step of statusPayload.steps) {
+      if (
+        step.status !== "running" ||
+        !step.currentTool ||
+        (step.currentToolStartedAt ?? 0) < (active?.currentToolStartedAt ?? 0)
       )
-      .sort(
-        (left, right) => (right.currentToolStartedAt ?? 0) - (left.currentToolStartedAt ?? 0),
-      )[0];
-    statusPayload.currentTool = activeStep?.currentTool;
-    statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
-    statusPayload.currentPath = activeStep?.currentPath;
+        continue;
+      active = step;
+    }
+    statusPayload.currentTool = active?.currentTool;
+    statusPayload.currentToolStartedAt = active?.currentToolStartedAt;
+    statusPayload.currentPath = active?.currentPath;
+  }
+
+  function markActivity(
+    index: number,
+    now: number,
+  ): NonNullable<AsyncStatus["steps"]>[number] | undefined {
+    const step = statusPayload.steps[index];
+    if (!step) return undefined;
+    const previous =
+      latestTimestamp(
+        observedIdleSince[index],
+        step.lastActivityAt,
+        step.startedAt,
+        overallStartTime,
+      ) ?? 0;
+    const activityAt = Math.max(now, step.lastActivityAt ?? 0, previous + 1);
+    observedIdleSince[index] = activityAt;
+    step.activityState = undefined;
+    step.idleEpisodeId = undefined;
+    step.lastActivityAt = activityAt;
+    statusPayload.lastActivityAt = Math.max(statusPayload.lastActivityAt ?? 0, activityAt);
+    return step;
   }
 
   function deliverChildMessageRequest(request: ChildMessageRequest): void {
@@ -326,20 +359,22 @@ export function createBackgroundRunControlOwner(
       });
       return;
     }
+
     const { acceptedIndexes: accepted, rejected } = acceptChildMessageRequest({
       request,
       steps: statusPayload.steps,
       enqueue: (index, childRequest) => enqueueStepChildMessage(asyncDir, index, childRequest),
       now: () => now,
     });
-    if (request.type === "steer") {
-      for (const index of accepted) {
-        const step = statusPayload.steps[index]!;
+    for (const index of accepted) {
+      const step = markActivity(index, now);
+      if (step && request.type === "steer") {
         step.steerCount = (step.steerCount ?? 0) + 1;
         step.lastSteerAt = now;
       }
     }
-    if (accepted.length > 0) {
+
+    if (accepted.length) {
       if (request.type === "steer") {
         statusPayload.steerCount = (statusPayload.steerCount ?? 0) + accepted.length;
         statusPayload.lastSteerAt = now;
@@ -347,14 +382,15 @@ export function createBackgroundRunControlOwner(
       statusPayload.lastUpdate = now;
       status.writeStatusPayload();
     }
+
     writeChildMessageAcceptanceForRequest(asyncDir, request, {
-      status: accepted.length > 0 ? "accepted" : "rejected",
+      status: accepted.length ? "accepted" : "rejected",
       ts: now,
       acceptedIndexes: accepted,
       ...(rejected.length ? { rejected } : {}),
-      ...(accepted.length === 0
-        ? { reason: rejected[0]?.reason ?? "no running child accepted the request" }
-        : {}),
+      ...(accepted.length
+        ? {}
+        : { reason: rejected[0]?.reason ?? "no running child accepted the request" }),
     });
     appendEvent(
       JSON.stringify({
@@ -371,88 +407,65 @@ export function createBackgroundRunControlOwner(
     );
   }
 
-  function flushPendingStepSteers(flatIndex: number): void {
+  function flushPendingStepSteers(index: number): void {
     const remaining: ChildMessageRequest[] = [];
     for (const request of pendingStepSteers.splice(0)) {
-      if (request.targetIndex === undefined)
-        deliverChildMessageRequest({ ...request, targetIndex: flatIndex });
-      else if (request.targetIndex === flatIndex) deliverChildMessageRequest(request);
+      if (request.targetIndex === undefined || request.targetIndex === index)
+        deliverChildMessageRequest({ ...request, targetIndex: index });
       else remaining.push(request);
     }
     pendingStepSteers.push(...remaining);
   }
 
-  function updateStepModel(flatIndex: number, attempt: ModelAttemptStart, now = Date.now()): void {
-    const step = statusPayload.steps[flatIndex];
+  function updateStepModel(index: number, attempt: ModelAttemptStart, now = Date.now()): void {
+    const step = markActivity(index, now);
     if (!step) return;
-    // A dispatched fallback is a new health segment. Reset the recoverable idle
-    // episode and any in-flight compaction while retaining durable causes.
-    status.resetStepHealth(flatIndex);
-    // A fallback attempt starts a fresh observed-idle segment. Keep the
-    // previous attempt's activity timestamp intact for truthful status output.
-    observedIdleSince[flatIndex] = now;
-    observedActivityAt[flatIndex] = step.lastActivityAt;
-    runtimeModelContexts[flatIndex] = undefined;
-    activeConfiguredModels[flatIndex] = attempt.model;
+    step.compaction = undefined;
+    runtimeModelContexts[index] = undefined;
+    activeConfiguredModels[index] = attempt.model;
     step.model = attempt.model;
     step.thinking = attempt.modelIdentity ? attempt.modelIdentity.thinking : attempt.thinking;
     step.modelIdentity =
       attempt.modelIdentity ?? canonicalSubagentModelIdentity(attempt.model, attempt.thinking);
-    // Preserve any restored/override resolution already persisted for the step
-    // when the attempt carries no resolution of its own.
     if (attempt.modelResolution) step.modelResolution = attempt.modelResolution;
-    if (attempt.attemptedModels && attempt.attemptedModels.length > 0)
-      step.attemptedModels = attempt.attemptedModels;
-    if (attempt.modelAttempts && attempt.modelAttempts.length > 0)
-      step.modelAttempts = attempt.modelAttempts;
+    if (attempt.attemptedModels?.length) step.attemptedModels = attempt.attemptedModels;
+    if (attempt.modelAttempts?.length) step.modelAttempts = attempt.modelAttempts;
     statusPayload.lastUpdate = now;
     status.writeStatusPayload();
   }
 
-  function updateStepFromChildEvent(flatIndex: number, event: ChildEvent): void {
-    const step = statusPayload.steps[flatIndex];
+  function updateStepFromChildEvent(index: number, event: ChildEvent): void {
+    let step = markActivity(index, Date.now());
     if (!step) return;
-    const now = Date.now();
-    // Validated child activity starts a new observed-idle window. Raw output
-    // freshness is still folded into this window by the monitor below.
-    observedIdleSince[flatIndex] = now;
-    // Only validated child protocol events can recover an idle episode. The
-    // compaction operation is tracked independently of tool-call state.
-    status.transitionStepHealth(flatIndex, { type: "validated_activity" });
+
+    const now = step.lastActivityAt ?? Date.now();
+    statusPayload.currentStep = index;
+    const pressureCrossings: Array<NonNullable<ReturnType<typeof detectContextPressureCrossing>>> =
+      [];
+
     if (event.type === "compaction_start") {
-      status.transitionStepHealth(flatIndex, { type: "compaction_start", reason: event.reason });
+      if (!step.compaction) step.compaction = { reason: event.reason };
     } else if (event.type === "compaction_end") {
-      status.transitionStepHealth(flatIndex, { type: "compaction_end" });
-    }
-    statusPayload.currentStep = flatIndex;
-    if (event.type === "tool_execution_start" && event.toolName) {
-      const supervisorPause = resolveSupervisorPauseMetadata({
+      if (step.compaction?.reason === event.reason) step.compaction = undefined;
+    } else if (event.type === "tool_execution_start" && event.toolName) {
+      const pause = resolveSupervisorPauseMetadata({
         toolName: event.toolName,
         toolArgs: event.args,
         requestedAt: now,
       });
-      if (supervisorPause?.kind === "awaiting_supervisor")
-        status.requestSupervisorPause(flatIndex, supervisorPause);
-      const mutates = isMutatingTool(event.toolName, event.args);
-      const currentPath = resolveCurrentPath(event.toolName, event.args);
-      step.toolCount = (step.toolCount ?? 0) + 1;
-      const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
-      if (configuredToolBudget) {
-        step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
-        statusPayload.toolBudget = step.toolBudget;
+      if (pause?.kind === "awaiting_supervisor") {
+        status.requestSupervisorPause(index, pause);
+        // The pause transition writes and merges the status, replacing the
+        // step object. Re-read it before applying the rest of this event.
+        step = statusPayload.steps[index];
+        if (!step) return;
       }
+      step.toolCount = (step.toolCount ?? 0) + 1;
       step.currentTool = event.toolName;
       step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
       step.currentToolStartedAt = now;
-      step.currentPath = currentPath;
-      pendingToolResults[flatIndex] = {
-        tool: event.toolName,
-        path: currentPath,
-        mutates,
-        startedAt: now,
-      };
+      step.currentPath = resolveCurrentPath(event.toolName, event.args);
       statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
-      syncTopLevelCurrentTool();
     } else if (event.type === "tool_execution_end") {
       if (step.currentTool) {
         step.recentTools ??= [];
@@ -466,99 +479,31 @@ export function createBackgroundRunControlOwner(
       step.currentToolArgs = undefined;
       step.currentToolStartedAt = undefined;
       step.currentPath = undefined;
-      syncTopLevelCurrentTool();
-    } else if (event.type === "tool_result_end" && event.message) {
-      const toolSnapshot = pendingToolResults[flatIndex];
-      pendingToolResults[flatIndex] = undefined;
-      const resultText = extractTextFromContent(event.message.content);
-      if (toolSnapshot && resultText.includes("Tool budget hard limit reached")) {
-        const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
-        if (configuredToolBudget) {
-          step.toolBudget = toolBudgetState(
-            configuredToolBudget,
-            step.toolCount ?? 0,
-            toolSnapshot.tool,
-          );
-          step.toolBudgetBlocked = true;
-          statusPayload.toolBudget = step.toolBudget;
-          statusPayload.toolBudgetBlocked = true;
-        }
-      }
-      appendRecentStepOutput(step, resultText.split("\n").slice(-10));
-      if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
-        const state = mutatingFailureStates[flatIndex]!;
-        recordMutatingFailure(
-          state,
-          {
-            tool: toolSnapshot.tool,
-            path: toolSnapshot.path,
-            error:
-              resultText
-                .split("\n")
-                .find((line) => line.trim())
-                ?.trim()
-                .slice(0, 180) ?? "mutating tool failed",
-            ts: now,
-          },
-          mutatingFailureWindowMs,
-        );
-        if (
-          controlConfig.enabled &&
-          shouldEscalateMutatingFailures(state, controlConfig.failedToolAttemptsBeforeAttention)
-        ) {
-          const previous = step.activityState;
-          status.transitionStepHealth(flatIndex, {
-            type: "durable_attention",
-            reason: "tool_failures",
-          });
-          appendControlEvent(
-            buildControlEvent({
-              type: "needs_attention",
-              from: previous,
-              to: "needs_attention",
-              runId: id,
-              agent: step.agent,
-              index: flatIndex,
-              ts: now,
-              message: `${step.agent} needs attention after repeated mutating tool failures`,
-              reason: "tool_failures",
-              turns: step.turnCount,
-              tokens: step.tokens?.total,
-              toolCount: step.toolCount,
-              currentTool: toolSnapshot.tool,
-              currentToolDurationMs: toolSnapshot.startedAt
-                ? Math.max(0, now - toolSnapshot.startedAt)
-                : undefined,
-              currentPath: toolSnapshot.path,
-              recentFailureSummary: summarizeRecentMutatingFailures(state),
-            }),
-          );
-        }
-      } else if (toolSnapshot?.mutates) {
-        resetMutatingFailureState(mutatingFailureStates[flatIndex]!);
-      }
-    } else if (event.type === "message_end" && event.message?.role === "assistant") {
+    } else if (event.type === "tool_result_end" && event.message)
       appendRecentStepOutput(
         step,
-        parseAndStripAcceptanceReport(extractTextFromContent(event.message.content))
-          .stripped.split("\n")
-          .slice(-10),
+        extractTextFromContent(event.message.content).split("\n").slice(-10),
+      );
+    else if (event.type === "message_end" && event.message?.role === "assistant") {
+      appendRecentStepOutput(
+        step,
+        extractTextFromContent(event.message.content).split("\n").slice(-10),
       );
       step.turnCount = (step.turnCount ?? 0) + 1;
-      const configuredModel = activeConfiguredModels[flatIndex];
+      const configuredModel = activeConfiguredModels[index];
       const configuredContextWindow = contextWindowForModel(
         configuredModel,
-        flatSteps[flatIndex]?.contextWindows,
+        flatSteps[index]?.contextWindows,
       );
-      let runtimeModelContext = runtimeModelContexts[flatIndex];
+      let runtimeModelContext = runtimeModelContexts[index];
       if (!configuredModel && runtimeModelContext === undefined) {
         runtimeModelContext = resolveRuntimeModelContext(
           event.message.provider,
           event.message.model,
-          flatSteps[flatIndex]?.contextWindows,
+          flatSteps[index]?.contextWindows,
         );
         if (runtimeModelContext) {
-          runtimeModelContexts[flatIndex] = runtimeModelContext;
+          runtimeModelContexts[index] = runtimeModelContext;
           step.model = runtimeModelReference(runtimeModelContext.identity);
           step.thinking = runtimeModelContext.identity.thinking;
           step.modelIdentity = runtimeModelContext.identity;
@@ -568,12 +513,6 @@ export function createBackgroundRunControlOwner(
         restored: false,
         contextWindow: configuredContextWindow ?? runtimeModelContext?.contextWindow,
       });
-      // Keep the persisted live projection in sync before publishing any
-      // pressure control event. Consumers can resolve the event's severity
-      // against the same usage and crossed-threshold history.
-      statusPayload.steps[flatIndex].contextUsage = step.contextUsage;
-      statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
-        step.contextPressureCrossedThresholds;
       while (true) {
         const pressure = detectContextPressureCrossing(
           step.contextUsage,
@@ -585,43 +524,10 @@ export function createBackgroundRunControlOwner(
           ...(step.contextPressureCrossedThresholds ?? []),
           pressure.crossedThreshold,
         ];
-        flatSteps[flatIndex].contextPressureCrossedThresholds =
-          step.contextPressureCrossedThresholds;
-        flatSteps[flatIndex].contextPressure = pressure;
-        statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
-          step.contextPressureCrossedThresholds;
-        statusPayload.steps[flatIndex].contextPressure = pressure;
-        statusPayload.lastUpdate = now;
-        // Persist the projection before appendControlEvent: the status file is
-        // the durable record paired with the notification, and uses the same
-        // terminal/pause-aware path as surrounding live status writes.
-        status.writeStatusPayload();
-        if (controlConfig.enabled) {
-          const previousActivityState = step.activityState;
-          status.transitionStepHealth(flatIndex, {
-            type: "durable_attention",
-            reason: "context_pressure",
-          });
-          appendControlEvent(
-            buildControlEvent({
-              type: "needs_attention",
-              from: previousActivityState,
-              to: "needs_attention",
-              runId: id,
-              agent: step.agent,
-              index: flatIndex,
-              ts: now,
-              message: formatContextPressureGuidance(pressure),
-              contextPressureSeverity: pressure.severity,
-              contextPressureThreshold: pressure.crossedThreshold,
-              reason: "context_pressure",
-              turns: step.turnCount,
-              tokens: step.tokens?.total,
-              toolCount: step.toolCount,
-            }),
-          );
-        }
+        step.contextPressure = pressure;
+        pressureCrossings.push(pressure);
       }
+
       const usage = event.message.usage;
       if (usage) {
         const inputTokens = childUsageNumber(usage, "input", "inputTokens");
@@ -643,13 +549,44 @@ export function createBackgroundRunControlOwner(
       }
       statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
     }
+
     syncTopLevelCurrentTool();
-    step.lastActivityAt = now;
-    observedActivityAt[flatIndex] = now;
-    statusPayload.lastActivityAt = now;
+    statusPayload.lastActivityAt = Math.max(statusPayload.lastActivityAt ?? 0, now);
     statusPayload.lastUpdate = now;
-    status.syncTopLevelHealthProjection();
+    // Persist the complete child-event projection before emitting pressure
+    // notifications. The write can replace the step objects, so notifications
+    // read their counters from the freshly merged status below.
     status.writeStatusPayload();
+
+    const persistedStep = statusPayload.steps[index];
+    if (!persistedStep) return;
+    const flatStep = flatSteps[index];
+    if (flatStep) {
+      flatStep.contextPressure = persistedStep.contextPressure
+        ? { ...persistedStep.contextPressure }
+        : undefined;
+      flatStep.contextPressureCrossedThresholds = persistedStep.contextPressureCrossedThresholds
+        ? [...persistedStep.contextPressureCrossedThresholds]
+        : undefined;
+    }
+    for (const pressure of pressureCrossings)
+      appendControlEvent(
+        buildControlEvent({
+          type: "needs_attention",
+          to: "needs_attention",
+          runId: id,
+          agent: persistedStep.agent,
+          index,
+          ts: now,
+          message: formatContextPressureGuidance(pressure),
+          contextPressureSeverity: pressure.severity,
+          contextPressureThreshold: pressure.crossedThreshold,
+          reason: "context_pressure",
+          turns: persistedStep.turnCount,
+          tokens: persistedStep.tokens?.total,
+          toolCount: persistedStep.toolCount,
+        }),
+      );
   }
 
   function appendRecentStepOutput(
@@ -657,122 +594,107 @@ export function createBackgroundRunControlOwner(
     lines: string[],
   ): void {
     const nonEmpty = lines.filter((line) => line.trim());
-    if (nonEmpty.length === 0) return;
+    if (!nonEmpty.length) return;
     step.recentOutput ??= [];
     step.recentOutput.push(...nonEmpty);
     if (step.recentOutput.length > 50) step.recentOutput.splice(0, step.recentOutput.length - 50);
   }
 
-  function stepOutputActivityAt(index: number): number {
-    const step = statusPayload.steps[index];
-    let lastActivityAt = step?.lastActivityAt ?? step?.startedAt ?? overallStartTime;
-    const outputPath = path.join(asyncDir, `output-${index}.log`);
-    try {
-      lastActivityAt = Math.max(lastActivityAt, fs.statSync(outputPath).mtimeMs);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        console.error(`Failed to inspect async output file '${outputPath}':`, error);
-    }
-    return lastActivityAt;
-  }
-
-  function appendMonitorGapDiagnostic(now: number, gapMs: number): void {
-    const line = JSON.stringify({
-      type: MONITOR_GAP_DIAGNOSTIC_TYPE,
-      ts: now,
-      runId: id,
-      gapMs,
-    });
-    if (appendDiagnosticEvent) appendDiagnosticEvent(line, MONITOR_GAP_DIAGNOSTIC_TYPE);
-    else appendEvent(line);
-  }
-
   function updateRunnerActivityState(now: number): boolean {
-    if (!controlConfig.enabled) return false;
-    const previousMonitorTickAt = lastMonitorTickAt;
-    const { gapMs: monitorGapMs, detected: monitorGapDetected } = getActivityMonitorGap(
-      previousMonitorTickAt,
-      now,
-    );
-    lastMonitorTickAt = now;
-    let changed = false;
-    let runLastActivityAt = statusPayload.lastActivityAt ?? overallStartTime;
-    if (monitorGapDetected && statusPayload.steps.some((step) => step.status === "running"))
-      appendMonitorGapDiagnostic(now, monitorGapMs);
-    for (let index = 0; index < statusPayload.steps.length; index++) {
-      const step = statusPayload.steps[index]!;
-      if (step.status !== "running") continue;
-      const lastActivityAt = stepOutputActivityAt(index);
-      runLastActivityAt = Math.max(runLastActivityAt, lastActivityAt);
-      if (step.lastActivityAt !== lastActivityAt) {
-        step.lastActivityAt = lastActivityAt;
-        changed = true;
-      }
-      const observation = observeActivityWindow({
-        previousMonitorTickAt,
-        now,
-        startedAt: step.startedAt ?? overallStartTime,
-        activityAt: lastActivityAt,
-        observedIdleSince: observedIdleSince[index],
-        observedActivityAt: observedActivityAt[index],
-      });
-      observedIdleSince[index] = observation.observedIdleSince;
-      observedActivityAt[index] = observation.observedActivityAt;
-      const observedActivitySince = observation.observedIdleSince;
-      const healthState = status.healthStateForStep(index);
-      const idleState = healthState.compaction
-        ? undefined
-        : deriveActivityState({
-            config: controlConfig,
-            startedAt: step.startedAt ?? overallStartTime,
-            lastActivityAt: observedActivitySince,
-            toolCallInFlight: Boolean(step.currentTool),
-            now,
-          });
-      if (idleState === "needs_attention") {
-        const previous = step.activityState;
-        const transition = status.transitionStepHealth(index, { type: "enter_idle" });
-        if (transition.idleEpisodeStarted) {
-          if (transition.idleAttentionEligible) {
-            appendControlEvent(
-              buildControlEvent({
-                from: previous,
-                to: "needs_attention",
-                runId: id,
-                agent: step.agent,
-                index,
-                ts: now,
-                lastActivityAt,
-                elapsedMs: Math.max(0, now - observedActivitySince),
-                idleEpisodeId: transition.state.idleEpisodeId,
-              }),
-            );
-          }
-          changed = true;
-        }
-      }
+    if (!controlConfig.enabled || statusPayload.state !== "running") return false;
+    let persisted: AsyncStatus | null = null;
+    try {
+      persisted = readStatus(asyncDir, { cache: false });
+    } catch {
+      /* local state remains usable */
     }
+    if (persisted && persisted.state !== "running") {
+      status.adoptConcurrentTerminalStatus();
+      return false;
+    }
+
+    let changed = false;
+    let runLastActivityAt =
+      latestTimestamp(statusPayload.lastActivityAt, overallStartTime) ?? overallStartTime;
+    for (const [index, step] of statusPayload.steps.entries()) {
+      if (step.status !== "running") continue;
+      const diskStep = persisted?.steps?.[index];
+      const diskActivity = diskStep?.lastActivityAt;
+      const idleSince =
+        latestTimestamp(
+          observedIdleSince[index],
+          step.lastActivityAt,
+          step.startedAt,
+          overallStartTime,
+        ) ?? overallStartTime;
+      if (diskActivity !== undefined && diskActivity > idleSince) {
+        observedIdleSince[index] = diskActivity;
+        step.lastActivityAt = diskActivity;
+        step.activityState = diskStep?.activityState;
+        step.idleEpisodeId = diskStep?.idleEpisodeId;
+        if (diskStep?.currentTool !== undefined) step.currentTool = diskStep.currentTool;
+        else if (step.currentTool && diskStep) step.currentTool = undefined;
+      }
+      const activityAt = latestTimestamp(observedIdleSince[index], idleSince) ?? idleSince;
+      runLastActivityAt = Math.max(runLastActivityAt, activityAt);
+      if (
+        deriveActivityState({
+          config: controlConfig,
+          startedAt: step.startedAt ?? overallStartTime,
+          lastActivityAt: activityAt,
+          toolCallInFlight: Boolean(step.currentTool),
+          compactionInFlight: Boolean(step.compaction),
+          now,
+        }) !== "needs_attention" ||
+        step.activityState === "needs_attention"
+      )
+        continue;
+      const idleEpisodeId = step.idleEpisodeId ?? `idle-${activityAt}`;
+      step.idleEpisodeId = idleEpisodeId;
+      step.activityState = "needs_attention";
+      changed = true;
+      appendControlEvent(
+        buildControlEvent({
+          to: "needs_attention",
+          runId: id,
+          agent: step.agent,
+          index,
+          ts: now,
+          lastActivityAt: activityAt,
+          elapsedMs: Math.max(0, now - activityAt),
+          reason: "idle",
+          idleEpisodeId,
+        }),
+      );
+    }
+
     if (statusPayload.lastActivityAt !== runLastActivityAt) {
       statusPayload.lastActivityAt = runLastActivityAt;
       changed = true;
     }
-    if (status.syncTopLevelHealthProjection()) changed = true;
     statusPayload.lastUpdate = now;
     if (changed) status.writeStatusPayload();
     return changed;
   }
 
   function clearActivityState(): void {
+    const now = Date.now();
+    for (const step of statusPayload.steps) {
+      step.activityState = undefined;
+      step.idleEpisodeId = undefined;
+      step.compaction = undefined;
+    }
+
+    for (let index = 0; index < observedIdleSince.length; index++) observedIdleSince[index] = now;
     statusPayload.activityState = undefined;
   }
 
   function startActivityTimer(): void {
-    if (!controlConfig.enabled) return;
-    lastMonitorTickAt = Date.now();
-    activityTimer = setInterval(() => {
-      if (statusPayload.state !== "running") return;
-      updateRunnerActivityState(Date.now());
-    }, ACTIVITY_MONITOR_INTERVAL_MS);
+    if (!controlConfig.enabled || activityTimer) return;
+    activityTimer = setInterval(
+      () => updateRunnerActivityState(Date.now()),
+      ACTIVITY_MONITOR_INTERVAL_MS,
+    );
     activityTimer.unref?.();
   }
 
@@ -782,29 +704,28 @@ export function createBackgroundRunControlOwner(
   }
 
   function routeControlRequest(request: ChildMessageRequest): void {
-    const targetStep =
-      request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
-    if (targetStep?.status === "pending") pendingStepSteers.push(request);
-    else if (
-      request.targetIndex !== undefined ||
-      statusPayload.steps.some((step) => step.status === "running")
+    const target =
+      request.targetIndex === undefined ? undefined : statusPayload.steps[request.targetIndex];
+    if (
+      target?.status === "pending" ||
+      (request.targetIndex === undefined &&
+        !statusPayload.steps.some((step) => step.status === "running"))
     )
-      deliverChildMessageRequest(request);
-    else pendingStepSteers.push(request);
+      pendingStepSteers.push(request);
+    else deliverChildMessageRequest(request);
   }
 
-  function watchControlInbox(input: {
-    onInterrupt: () => void;
+  function watchControlInbox(watchInput: {
+    onInterrupt: (request?: { reason?: string; source?: string }) => void;
     onTimeout: () => void;
   }): () => void {
     return watchAsyncControlInbox(asyncDir, {
-      onInterrupt: input.onInterrupt,
-      onTimeout: input.onTimeout,
+      onInterrupt: watchInput.onInterrupt,
+      onTimeout: watchInput.onTimeout,
       onSteer: routeControlRequest,
       onResume: routeControlRequest,
     });
   }
-
   return {
     registerStepInterrupt,
     registerStepTimeout,
@@ -813,7 +734,6 @@ export function createBackgroundRunControlOwner(
     interruptNestedAsyncDescendants,
     timeoutNestedAsyncDescendants,
     hasLiveNestedAsyncDescendants,
-    appendControlEvent,
     updateStepModel,
     updateStepFromChildEvent,
     flushPendingStepSteers,

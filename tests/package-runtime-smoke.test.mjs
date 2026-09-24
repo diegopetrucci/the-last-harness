@@ -94,7 +94,6 @@ tools: read
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
-acceptanceRole: read-only
 ---
 Return the deterministic faux child marker exactly.
 `,

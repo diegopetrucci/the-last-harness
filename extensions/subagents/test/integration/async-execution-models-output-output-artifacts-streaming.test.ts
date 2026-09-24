@@ -14,12 +14,6 @@ import {
 import type { MockPi } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import {
-  SUBAGENT_CHILD_AGENT_ENV,
-  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-  SUBAGENT_TK_TICKET_ID_ENV,
-} from "../../src/runs/shared/pi-args.ts";
-
-import {
   ASYNC_DIR,
   type AsyncResultPayload,
   type AsyncStatusPayload,
@@ -32,7 +26,10 @@ import {
   requestAsyncInterrupt,
   waitForAsyncControlCondition,
   waitForAsyncResultFile,
+  waitForAsyncStatusPredicate,
+  waitForMockPiArgs,
   waitForMockPiCall,
+  waitForMarker,
   writePackageSkill,
 } from "../support/async-execution-helpers.ts";
 
@@ -77,6 +74,53 @@ describe("async execution output and event streaming", () => {
   beforeEach(() => {
     tempDir = createTempDir();
     mockPi.reset();
+  });
+
+  it("keeps a Pi 0.87.1 system-role message_end out of the background answer", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "system",
+            content: [{ type: "text", text: "system diagnostic" }],
+            timestamp: 1,
+          },
+        },
+        events.assistantMessage("background final"),
+      ],
+    });
+
+    const id = `async-system-role-message-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Return the final answer.",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results?.[0]?.output, "background final");
+
+    const streamedOutputPath = path.join(asyncDir, "output-0.log");
+    assert.ok(fs.existsSync(streamedOutputPath), "expected streamed child output");
+    const streamedOutput = fs.readFileSync(streamedOutputPath, "utf-8");
+    assert.match(streamedOutput, /background final/);
+    assert.doesNotMatch(streamedOutput, /system diagnostic/);
   });
 
   afterEach(() => {
@@ -138,11 +182,7 @@ describe("async execution output and event streaming", () => {
         { agent: "third", task: "ordered third task" },
       ],
       concurrency: 1,
-      agents: [
-        makeAgent("first", { completionGuard: false }),
-        makeAgent("second", { completionGuard: false }),
-        makeAgent("third", { completionGuard: false }),
-      ],
+      agents: [makeAgent("first"), makeAgent("second"), makeAgent("third")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -205,7 +245,7 @@ describe("async execution output and event streaming", () => {
     const start = executeAsyncSingle(id, {
       agent: "worker",
       task: "This task must not start",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
+      agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -304,7 +344,7 @@ describe("async execution output and event streaming", () => {
       executeAsyncSingle(id, {
         agent: "worker",
         task,
-        agentConfig: makeAgent("worker", { completionGuard: false }),
+        agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig,
         shareEnabled: false,
@@ -337,7 +377,7 @@ describe("async execution output and event streaming", () => {
     executeAsyncSingle(lineId, {
       agent: "worker",
       task: "line-limited summary",
-      agentConfig: makeAgent("worker", { completionGuard: false }),
+      agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig: {
         enabled: false,
@@ -375,10 +415,7 @@ describe("async execution output and event streaming", () => {
         { agent: "second", task: "byte-limited second" },
       ],
       concurrency: 1,
-      agents: [
-        makeAgent("first", { completionGuard: false }),
-        makeAgent("second", { completionGuard: false }),
-      ],
+      agents: [makeAgent("first"), makeAgent("second")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       maxOutput: { lines: 5000, bytes: 40 },
       artifactsDir,
@@ -586,97 +623,7 @@ describe("async execution output and event streaming", () => {
     assert.equal(payload.results[0].success, false);
   });
 
-  it("background implementation runs fail when no mutation attempt occurred", async () => {
-    mockPi.onCall({ output: "I’ll do that now and report back after implementing." });
-
-    const id = `async-no-mutation-${Date.now().toString(36)}`;
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    const sessionRoot = path.join(tempDir, "sessions");
-
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Implement the approved fixes",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot,
-      maxSubagentDepth: 2,
-    });
-
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-    assert.equal(payload.success, false);
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.results[0].success, false);
-    assert.match(String(payload.results[0].error ?? ""), /completed without making edits/);
-    assert.match(
-      String(payload.results[0].modelAttempts?.[0]?.error ?? ""),
-      /completed without making edits/,
-    );
-
-    const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
-    const eventsText = fs.readFileSync(eventsPath, "utf-8");
-    assert.match(eventsText, /"reason":"completion_guard"/);
-    assert.match(eventsText, /Subagent failed: worker/);
-    assert.doesNotMatch(eventsText, /Status:/);
-    assert.doesNotMatch(eventsText, /Interrupt:/);
-  });
-
-  it("background bash-enabled non-implementation agents can opt out of the completion guard", async () => {
-    mockPi.onCall({ output: "cold start test after patch" });
-
-    const id = `async-completion-guard-optout-${Date.now().toString(36)}`;
-    const sessionRoot = path.join(tempDir, "sessions");
-
-    executeAsyncSingle(id, {
-      agent: "test-runner",
-      task: "Run cold start test after patch",
-      agentConfig: makeAgent("test-runner", {
-        tools: ["read", "grep", "bash", "ls"],
-        completionGuard: false,
-      }),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot,
-      maxSubagentDepth: 2,
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-    assert.equal(payload.success, true);
-    assert.equal(payload.exitCode, 0);
-    assert.equal(payload.results[0].success, true);
-    assert.equal(payload.results[0].output, "cold start test after patch");
-
-    const eventsPath = path.join(ASYNC_DIR, id, "events.jsonl");
-    const eventsText = fs.readFileSync(eventsPath, "utf-8");
-    assert.doesNotMatch(eventsText, /"reason":"completion_guard"/);
-  });
-
-  it("background runs prefer the parent session provider for ambiguous bare model ids", async () => {
+  it("background runs forward explicit model ids without catalog resolution", async () => {
     mockPi.onCall({ output: "Done asynchronously" });
 
     const id = `async-provider-${Date.now().toString(36)}`;
@@ -691,7 +638,6 @@ describe("async execution output and event streaming", () => {
         pi: { events: { emit() {} } },
         cwd: tempDir,
         currentSessionId: "session-1",
-        currentModelProvider: "github-copilot",
       },
       availableModels: [
         { provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
@@ -720,8 +666,8 @@ describe("async execution output and event streaming", () => {
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, true);
-    assert.equal(payload.results[0].model, "github-copilot/gpt-5-mini");
-    assert.deepEqual(payload.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
+    assert.equal(payload.results[0].model, "gpt-5-mini");
+    assert.deepEqual(payload.results[0].attemptedModels, ["gpt-5-mini"]);
   });
 
   it("background single runs inherit the parent session model when no model is set", async () => {
@@ -736,7 +682,6 @@ describe("async execution output and event streaming", () => {
         pi: { events: { emit() {} } },
         cwd: tempDir,
         currentSessionId: "session-1",
-        currentModelProvider: "deepseek",
         currentModel: { provider: "deepseek", id: "deepseek-v4-flash" },
       },
       artifactConfig: {
@@ -772,7 +717,6 @@ describe("async execution output and event streaming", () => {
         pi: { events: { emit() {} } },
         cwd: tempDir,
         currentSessionId: "session-1",
-        currentModelProvider: "deepseek",
         currentModel: { provider: "deepseek", id: "deepseek-v4-flash" },
       },
       artifactConfig: {
@@ -797,39 +741,33 @@ describe("async execution output and event streaming", () => {
     assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
   });
 
-  it("background single runs propagate tk ticket metadata from the effective task cwd", async () => {
-    mockPi.onCall({ output: "Done asynchronously" });
-    const ticketRoot = createTempDir("pi-subagent-async-ticket-cwd-");
-    const taskCwd = path.join(ticketRoot, "child", "nested");
-    const id = `async-ticket-single-${Date.now().toString(36)}`;
+  it("background single runs inject an explicit ticket body and persist only its ID", async () => {
+    const ticketBody =
+      "---\nid: tlhm-explicit\n---\n# Explicit ticket body\n\nKeep this exact text.\n";
+    const ticketRoot = createTempDir("tlh-async-explicit-ticket-");
+    const binDir = path.join(ticketRoot, "bin");
+    const taskCwd = path.join(ticketRoot, "child");
+    const id = `async-explicit-ticket-${Date.now().toString(36)}`;
     const asyncDir = path.join(ASYNC_DIR, id);
-    const emitted: Array<{ channel: string; payload: unknown }> = [];
-    const originalTicketsDir = process.env.TICKETS_DIR;
-
+    const previousPath = process.env.PATH;
     try {
-      delete process.env.TICKETS_DIR;
-      fs.mkdirSync(path.join(ticketRoot, ".tickets"), { recursive: true });
+      fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(taskCwd, { recursive: true });
+      const tkPath = path.join(binDir, "tk");
       fs.writeFileSync(
-        path.join(ticketRoot, ".tickets", "psr-raw4.md"),
-        "---\nid: psr-raw4\n---\n# Show active tk title\n",
-        "utf-8",
+        tkPath,
+        `#!/usr/bin/env node\nimport fs from "node:fs";\nif (fs.realpathSync(process.cwd()) !== fs.realpathSync(${JSON.stringify(taskCwd)})) process.exit(3);\nif (process.argv[2] !== "show" || process.argv[3] !== "tlhm-explicit") process.exit(4);\nprocess.stdout.write(${JSON.stringify(ticketBody)});\n`,
+        "utf8",
       );
+      fs.chmodSync(tkPath, 0o755);
+      process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+      mockPi.onCall({ output: "Done asynchronously" });
       executeAsyncSingle(id, {
         agent: "worker",
-        task: "Run `tk show psr-raw4` first.",
+        task: "Review the assigned work.",
+        ticket: " tlhm-explicit ",
         agentConfig: makeAgent("worker"),
-        ctx: {
-          pi: {
-            events: {
-              emit(channel: string, payload: unknown) {
-                emitted.push({ channel, payload });
-              },
-            },
-          },
-          cwd: tempDir,
-          currentSessionId: "session-1",
-        },
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         cwd: taskCwd,
         artifactConfig: {
           enabled: false,
@@ -844,239 +782,50 @@ describe("async execution output and event streaming", () => {
         maxSubagentDepth: 2,
       });
 
-      await waitForAsyncResultFile(id);
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       const status = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
-      assert.deepEqual(
-        (
-          emitted.find((entry) => entry.channel === "subagent:async-started")?.payload as
-            | { tkTicket?: unknown }
-            | undefined
-        )?.tkTicket,
-        { id: "psr-raw4", title: "Show active tk title" },
+      const args = await waitForMockPiArgs(mockPi, 0);
+      const taskArg = args.find((arg) => arg.startsWith("Task: ")) ?? "";
+      assert.equal(
+        taskArg,
+        `Task: Review the assigned work.\n\n## Ticket tlhm-explicit\n${ticketBody}`,
       );
+      assert.equal(status.steps?.[0]?.ticketId, "tlhm-explicit");
+      assert.equal(payload.results[0]?.ticketId, "tlhm-explicit");
+      assert.doesNotMatch(JSON.stringify(status), /Explicit ticket body/);
+      assert.doesNotMatch(JSON.stringify(payload), /Explicit ticket body/);
     } finally {
-      if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
-      else process.env.TICKETS_DIR = originalTicketsDir;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
       removeTempDir(ticketRoot);
     }
   });
 
-  it("background continuation launches preserve inherited tk ticket metadata when the follow-up omits tk show", async () => {
-    mockPi.onCall({ output: "Done asynchronously" });
-    const id = `async-ticket-continuation-${Date.now().toString(36)}`;
+  it("background single ticket lookup failures stop before child launch", () => {
+    const ticketRoot = createTempDir("tlh-async-missing-ticket-");
+    const binDir = path.join(ticketRoot, "bin");
+    const taskCwd = path.join(ticketRoot, "child");
+    const id = `async-missing-ticket-${Date.now().toString(36)}`;
     const asyncDir = path.join(ASYNC_DIR, id);
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Continue from the paused work.",
-      inheritedTkTicket: { id: "psr-raw4", title: "Show active tk title" },
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      cwd: tempDir,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    await waitForAsyncResultFile(id);
-    const status = JSON.parse(
-      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
-  });
-
-  it("continuation and replacement launches forward inherited IDs and prefer fresh literals", async () => {
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-    const previousTicketId = process.env[SUBAGENT_TK_TICKET_ID_ENV];
-    const agentDir = path.join(tempDir, "profile");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
-    process.env[SUBAGENT_TK_TICKET_ID_ENV] = "parent-ticket";
-    const canonicalDeveloper = makeAgent("developer", {
-      filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
-    });
-    const runIds: string[] = [];
-    const commonParams = {
-      agent: "developer",
-      agentConfig: canonicalDeveloper,
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    };
+    const previousPath = process.env.PATH;
     try {
-      const inheritedId = `async-ticket-inherited-${Date.now().toString(36)}`;
-      runIds.push(inheritedId);
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const inherited = executeAsyncSingle(inheritedId, {
-        ...commonParams,
-        task: "Continue the paused developer work.",
-        inheritedTkTicketId: "persisted-ticket",
-        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
-      });
-      assert.equal(inherited.isError, undefined);
-      const inheritedPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(inheritedId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(inheritedPayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
-      });
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(taskCwd, { recursive: true });
+      const tkPath = path.join(binDir, "tk");
+      fs.writeFileSync(tkPath, "#!/bin/sh\nexit 1\n", "utf8");
+      fs.chmodSync(tkPath, 0o755);
+      process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
 
-      const showroomId = `async-ticket-showroom-${Date.now().toString(36)}`;
-      runIds.push(showroomId);
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const showroom = executeAsyncSingle(showroomId, {
-        ...commonParams,
-        task: "Continue with the non-command suffix `tk show.case`.",
-        inheritedTkTicketId: "persisted-ticket",
-        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
-      });
-      assert.equal(showroom.isError, undefined);
-      const showroomPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(showroomId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(showroomPayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: "persisted-ticket",
-      });
-
-      const freshId = `async-ticket-fresh-${Date.now().toString(36)}`;
-      runIds.push(freshId);
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const fresh = executeAsyncSingle(freshId, {
-        ...commonParams,
-        task: "Continue with the fresh instruction `tk show fresh-ticket`.",
-        inheritedTkTicketId: "persisted-ticket",
-        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
-      });
-      assert.equal(fresh.isError, undefined);
-      const freshPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(freshId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(freshPayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: "fresh-ticket",
-      });
-
-      const malformedId = `async-ticket-malformed-${Date.now().toString(36)}`;
-      runIds.push(malformedId);
-      mockPi.onCall({
-        echoEnv: [
-          SUBAGENT_CHILD_AGENT_ENV,
-          SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
-          SUBAGENT_TK_TICKET_ID_ENV,
-        ],
-      });
-      const malformed = executeAsyncSingle(malformedId, {
-        ...commonParams,
-        task: "Continue with the malformed fresh instruction `tk show fresh-ticket.extra`.",
-        inheritedTkTicketId: "persisted-ticket",
-        inheritedTkTicket: { id: "persisted-ticket", title: "Persisted ticket" },
-      });
-      assert.equal(malformed.isError, undefined);
-      const malformedPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(malformedId), "utf-8"),
-      ) as AsyncResultPayload;
-      assert.deepEqual(JSON.parse(malformedPayload.results[0]?.output ?? "{}"), {
-        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
-        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
-        [SUBAGENT_TK_TICKET_ID_ENV]: null,
-      });
-      const malformedStatus = JSON.parse(
-        fs.readFileSync(path.join(ASYNC_DIR, malformedId, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      assert.equal(malformedStatus.tkTicket, undefined);
-    } finally {
-      for (const id of runIds) {
-        fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
-        fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
-      }
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      if (previousGuidanceMarker === undefined)
-        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
-      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
-      if (previousTicketId === undefined) delete process.env[SUBAGENT_TK_TICKET_ID_ENV];
-      else process.env[SUBAGENT_TK_TICKET_ID_ENV] = previousTicketId;
-    }
-  });
-
-  it("background parallel launches propagate step-cwd tk tickets and fail open for ambiguous matches", async () => {
-    mockPi.onCall({ output: "parallel one done" });
-    mockPi.onCall({ output: "parallel two done" });
-    const ticketRoot = createTempDir("pi-subagent-async-parallel-ticket-");
-    const ticketCwd = path.join(ticketRoot, "tasks", "alpha");
-    const id = `async-ticket-parallel-${Date.now().toString(36)}`;
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const emitted: Array<{ channel: string; payload: unknown }> = [];
-    const originalTicketsDir = process.env.TICKETS_DIR;
-
-    try {
-      delete process.env.TICKETS_DIR;
-      fs.mkdirSync(path.join(ticketRoot, ".tickets"), { recursive: true });
-      fs.mkdirSync(ticketCwd, { recursive: true });
-      fs.writeFileSync(
-        path.join(ticketRoot, ".tickets", "psr-raw4.md"),
-        "---\nid: psr-raw4\n---\n# Show active tk title\n",
-        "utf-8",
-      );
-      executeAsyncParallel(id, {
-        tasks: [
-          { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
-          { agent: "reviewer", task: "Do the review" },
-        ],
-        agents: [makeAgent("worker"), makeAgent("reviewer")],
-        ctx: {
-          pi: {
-            events: {
-              emit(channel: string, payload: unknown) {
-                emitted.push({ channel, payload });
-              },
-            },
-          },
-          cwd: tempDir,
-          currentSessionId: "session-1",
-        },
+      const result = executeAsyncSingle(id, {
+        agent: "worker",
+        task: "This child must not launch.",
+        ticket: "tlhm-missing",
+        agentConfig: makeAgent("worker"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        cwd: taskCwd,
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -1090,27 +839,54 @@ describe("async execution output and event streaming", () => {
         maxSubagentDepth: 2,
       });
 
-      await waitForAsyncResultFile(id);
-      const status = JSON.parse(
-        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
-      ) as AsyncStatusPayload;
-      assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
-      assert.deepEqual(
-        (
-          emitted.find((entry) => entry.channel === "subagent:async-started")?.payload as
-            | { tkTicket?: unknown }
-            | undefined
-        )?.tkTicket,
-        { id: "psr-raw4", title: "Show active tk title" },
-      );
+      assert.equal(result.isError, true);
+      assert.match(result.content[0]?.text ?? "", /tlhm-missing/);
+      assert.equal(mockPi.callCount(), 0);
+      assert.equal(fs.existsSync(asyncDir), false, "failed lookup must not leave a run directory");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      removeTempDir(ticketRoot);
+    }
+  });
 
-      mockPi.onCall({ output: "ambiguous one done" });
-      mockPi.onCall({ output: "ambiguous two done" });
-      const ambiguousId = `async-ticket-parallel-ambiguous-${Date.now().toString(36)}`;
-      executeAsyncParallel(ambiguousId, {
+  it("background parallel runs load each explicit ticket in its task cwd", async () => {
+    const ticketRoot = createTempDir("tlh-async-parallel-tickets-");
+    const binDir = path.join(ticketRoot, "bin");
+    const firstCwd = path.join(ticketRoot, "first");
+    const secondCwd = path.join(ticketRoot, "second");
+    const firstBody = "# First ticket body\n";
+    const secondBody = "# Second ticket body\n";
+    const id = `async-parallel-tickets-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const previousPath = process.env.PATH;
+    try {
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(firstCwd, { recursive: true });
+      fs.mkdirSync(secondCwd, { recursive: true });
+      const tkPath = path.join(binDir, "tk");
+      fs.writeFileSync(
+        tkPath,
+        `#!/usr/bin/env node
+import fs from "node:fs";
+const expected = {
+  "tlhm-first": { cwd: ${JSON.stringify(firstCwd)}, body: ${JSON.stringify(firstBody)} },
+  "tlhm-second": { cwd: ${JSON.stringify(secondCwd)}, body: ${JSON.stringify(secondBody)} },
+};
+const ticket = expected[process.argv[3]];
+if (!ticket || fs.realpathSync(process.cwd()) !== fs.realpathSync(ticket.cwd) || process.argv[2] !== "show") process.exit(3);
+process.stdout.write(ticket.body);
+`,
+        "utf8",
+      );
+      fs.chmodSync(tkPath, 0o755);
+      process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+      mockPi.onCall({ output: "first complete" });
+      mockPi.onCall({ output: "second complete" });
+      executeAsyncParallel(id, {
         tasks: [
-          { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
-          { agent: "reviewer", task: "Run `tk show psr-other` first.", cwd: ticketCwd },
+          { agent: "worker", task: "Review first.", ticket: "tlhm-first", cwd: firstCwd },
+          { agent: "reviewer", task: "Review second.", ticket: "tlhm-second", cwd: secondCwd },
         ],
         agents: [makeAgent("worker"), makeAgent("reviewer")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
@@ -1126,14 +902,27 @@ describe("async execution output and event streaming", () => {
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
-      await waitForAsyncResultFile(ambiguousId);
-      const ambiguousStatus = JSON.parse(
-        fs.readFileSync(path.join(ASYNC_DIR, ambiguousId, "status.json"), "utf-8"),
+
+      const resultPath = await waitForAsyncResultFile(id);
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
-      assert.equal(ambiguousStatus.tkTicket, undefined);
+      assert.deepEqual(
+        status.steps?.map((step) => step.ticketId),
+        ["tlhm-first", "tlhm-second"],
+      );
+      assert.deepEqual(
+        payload.results.map((result) => result.ticketId),
+        ["tlhm-first", "tlhm-second"],
+      );
+      const calls = await Promise.all([waitForMockPiCall(mockPi, 0), waitForMockPiCall(mockPi, 1)]);
+      const prompts = calls.map((call) => call.args.join("\n"));
+      assert.ok(prompts.some((prompt) => prompt.includes(`## Ticket tlhm-first\n${firstBody}`)));
+      assert.ok(prompts.some((prompt) => prompt.includes(`## Ticket tlhm-second\n${secondBody}`)));
     } finally {
-      if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
-      else process.env.TICKETS_DIR = originalTicketsDir;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
       removeTempDir(ticketRoot);
     }
   });
@@ -1334,6 +1123,112 @@ describe("async execution output and event streaming", () => {
     assert.equal(invariantViolated, false, "top-level currentTool drifted from running step tools");
   });
 
+  it("emits one attention notification per idle episode after validated activity re-arms detection", async () => {
+    mockPi.onCall({
+      steps: [
+        { jsonl: [events.assistantMessage("Initial progress.", "mock/test-model", "tool_use")] },
+        { delay: 1_300, jsonl: [events.toolStart("bash", { command: "echo resumed" })] },
+        { jsonl: [events.toolEnd("bash")] },
+        { delay: 1_300, jsonl: [events.assistantMessage("Final progress.")] },
+      ],
+    });
+
+    const id = `async-idle-episodes-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Observe idle episode recovery",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+
+    const observed = await waitForAsyncControlCondition(asyncDir, (_status, eventText) => {
+      return (eventText.match(/"reason":"idle"/g) ?? []).length >= 2;
+    });
+    const idleEvents = observed.eventText
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            type?: string;
+            event?: { reason?: string; idleEpisodeId?: string };
+          },
+      )
+      .filter((entry) => entry.type === "subagent.control" && entry.event?.reason === "idle");
+    assert.equal(idleEvents.length, 2);
+    assert.notEqual(idleEvents[0]?.event?.idleEpisodeId, idleEvents[1]?.event?.idleEpisodeId);
+    const resultPath = await waitForAsyncResultFile(id);
+    assert.equal(
+      (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload).success,
+      true,
+    );
+  });
+
+  it("does not claim or deliver attention when notification channels are empty", async () => {
+    mockPi.onCall({
+      steps: [{ delay: 1_300, jsonl: [events.assistantMessage("No notification needed.")] }],
+    });
+    const id = `async-empty-notification-channels-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Remain quiet while notification channels are disabled",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        notifyOn: ["needs_attention"],
+        notifyChannels: [],
+      },
+    });
+    const resultPath = await waitForAsyncResultFile(id);
+    const eventText = fs.existsSync(path.join(asyncDir, "events.jsonl"))
+      ? fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      : "";
+    assert.doesNotMatch(eventText, /subagent\.control|"reason":"idle"/);
+    const claimsDir = path.join(asyncDir, "control", "attention-claims");
+    assert.equal(
+      fs.existsSync(claimsDir) ? fs.readdirSync(claimsDir).length : 0,
+      0,
+      "empty channels must not create attention claims",
+    );
+    assert.equal(
+      (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload).success,
+      true,
+    );
+  });
+
   it("background runs do not emit idle attention while a tool call is still running", async () => {
     mockPi.onCall({
       steps: [
@@ -1364,7 +1259,6 @@ describe("async execution output and event streaming", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
@@ -1383,6 +1277,75 @@ describe("async execution output and event streaming", () => {
     assert.equal(status.steps?.[0]?.activityState, undefined);
     assert.equal(payload.state, "complete");
     assert.equal(payload.success, true);
+  });
+
+  it("tracks compaction strictly and suppresses idle attention until the matching end", async () => {
+    const mismatchMarker = path.join(tempDir, "compaction-mismatch.marker");
+    const matchingMarker = path.join(tempDir, "compaction-matching.marker");
+    const releaseMarker = path.join(tempDir, "compaction-release.marker");
+    mockPi.onCall({
+      steps: [
+        { jsonl: [events.compactionStart("threshold")] },
+        { jsonl: [events.compactionEnd("manual")], writeMarkerAfter: mismatchMarker },
+        {
+          delay: 1_300,
+          jsonl: [events.compactionEnd("threshold")],
+          writeMarkerAfter: matchingMarker,
+        },
+        { waitForMarker: releaseMarker, jsonl: [events.assistantMessage("Compaction complete.")] },
+      ],
+    });
+
+    const id = `async-compaction-tracking-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Track compaction lifecycle",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+      controlConfig: {
+        enabled: true,
+        needsAttentionAfterMs: 200,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+    });
+
+    await waitForAsyncStatusPredicate(
+      asyncDir,
+      (status) => status.steps?.[0]?.compaction?.reason === "threshold",
+      "compaction start",
+    );
+    await waitForMarker(mismatchMarker);
+    const mismatchedEndStatus = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.deepEqual(mismatchedEndStatus.steps?.[0]?.compaction, { reason: "threshold" });
+    await waitForMarker(matchingMarker);
+    await waitForAsyncStatusPredicate(
+      asyncDir,
+      (status) => status.steps?.[0]?.compaction === undefined,
+      "matching compaction end",
+    );
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+    assert.doesNotMatch(eventText, /"reason":"idle"/);
+    fs.writeFileSync(releaseMarker, "", "utf-8");
+    const resultPath = await waitForAsyncResultFile(id);
+    assert.equal(
+      (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload).success,
+      true,
+    );
   });
 
   it("background runs still emit idle attention after a tool finishes and the child goes silent", async () => {
@@ -1415,7 +1378,6 @@ describe("async execution output and event streaming", () => {
       controlConfig: {
         enabled: true,
         needsAttentionAfterMs: 200,
-        failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["needs_attention"],
         notifyChannels: ["event", "async"],
       },
@@ -1435,106 +1397,6 @@ describe("async execution output and event streaming", () => {
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.state, "complete");
     assert.equal(payload.success, true);
-  });
-
-  it("background runs escalate repeated mutating tool failures", async () => {
-    mockPi.onCall({
-      steps: [
-        {
-          jsonl: [
-            events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }),
-            events.toolEnd("edit"),
-            events.toolResult("edit", "No exact match found for subagent-runner.ts", true),
-          ],
-        },
-        {
-          jsonl: [
-            events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }),
-            events.toolEnd("edit"),
-            events.toolResult("edit", "No exact match found for subagent-runner.ts", true),
-          ],
-        },
-        {
-          jsonl: [
-            events.toolStart("edit", { path: "src/runs/background/subagent-runner.ts" }),
-            events.toolEnd("edit"),
-            events.toolResult("edit", "No exact match found for subagent-runner.ts", true),
-          ],
-        },
-        { delay: 2_000, jsonl: [events.assistantMessage("I need another attempt.")] },
-      ],
-    });
-
-    const id = `async-tool-failures-${Date.now().toString(36)}`;
-    const asyncDir = path.join(ASYNC_DIR, id);
-    const eventsPath = path.join(asyncDir, "events.jsonl");
-    const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Implement the approved fixes",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-      controlConfig: {
-        enabled: true,
-        needsAttentionAfterMs: 999_999,
-        failedToolAttemptsBeforeAttention: 3,
-        notifyOn: ["needs_attention"],
-        notifyChannels: ["event", "async"],
-      },
-    });
-
-    const statusPath = path.join(asyncDir, "status.json");
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    let eventText = "";
-    let statusDuringEvent: AsyncStatusPayload | undefined;
-    while (Date.now() < deadline) {
-      if (fs.existsSync(eventsPath)) {
-        eventText = fs.readFileSync(eventsPath, "utf-8");
-      }
-      if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(statusPath)) {
-        const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-        if (
-          status.activityState === "needs_attention" &&
-          status.steps?.[0]?.activityState === "needs_attention"
-        ) {
-          statusDuringEvent = status;
-          break;
-        }
-      }
-      if (eventText.includes('"reason":"tool_failures"') && fs.existsSync(resultPath)) {
-        assert.fail("run completed before status.json exposed needs_attention");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    assert.match(eventText, /"type":"needs_attention"/);
-    assert.match(eventText, /"reason":"tool_failures"/);
-    assert.match(eventText, /subagent-runner\.ts/);
-    assert.ok(
-      statusDuringEvent,
-      "expected status.json to expose needs_attention while the run is still active",
-    );
-    assert.equal(statusDuringEvent.activityState, "needs_attention");
-    assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
-
-    const doneDeadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > doneDeadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
   });
 
   it("background event logs drop noisy message updates and cap child diagnostics", async () => {

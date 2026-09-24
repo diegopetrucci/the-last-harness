@@ -8,31 +8,26 @@ import {
 } from "../../shared/types.ts";
 import {
   lifecycleContinuationForIndex,
-  normalizeActiveRuntimeCheckpointAt,
-  normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
-import { normalizeIdleEpisodeId } from "../shared/health-transition.ts";
 import {
-  normalizeProjectAgentRunCapture,
-  type ProjectAgentRunCapture,
-} from "../../agents/project-agent-snapshot.ts";
+  normalizeProjectAgentIdentity,
+  type ProjectAgentIdentity,
+} from "../../agents/project-agent-loader.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
-import { normalizeTkTicketId, normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { persistedTicketId } from "../shared/ticket-context.ts";
 import {
   canonicalSubagentModelIdentity,
   sanitizeSubagentModelIdentity,
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
 import type {
-  ActivityState,
-  CompactionReason,
   ContextPressureProjection,
   ContextUsageDiagnostics,
-  DurableAttentionReason,
   SubagentModelIdentity,
   SubagentModelResolution,
   SubagentTerminationReason,
+  SubagentTerminalResult,
 } from "../../shared/types.ts";
 import {
   parseContextPressureCrossedThresholds,
@@ -42,44 +37,8 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
-
-function resolvePausedContinuationAcceptance(
-  runId: string,
-  acceptance: unknown,
-): import("../../shared/types.ts").ResolvedAcceptanceConfig | undefined {
-  if (typeof acceptance !== "object" || acceptance === null || Array.isArray(acceptance)) {
-    throw new Error(
-      `Async run '${runId}' is paused but its persisted acceptance ledger is incomplete or malformed; refusing to resume with an unverified acceptance contract.`,
-    );
-  }
-  const ledger = acceptance as { status?: unknown; effectiveAcceptance?: unknown };
-  if (!isWellFormedResolvedAcceptance(ledger.effectiveAcceptance)) {
-    throw new Error(
-      `Async run '${runId}' is paused but its persisted acceptance ledger is incomplete or malformed; refusing to resume with an unverified acceptance contract.`,
-    );
-  }
-  if (ledger.status === "skipped") {
-    if (ledger.effectiveAcceptance.level === "none") {
-      throw new Error(
-        `Async run '${runId}' is paused but its persisted acceptance ledger is incompatible with continuation resume: status 'skipped' cannot carry effective level 'none'.`,
-      );
-    }
-    return ledger.effectiveAcceptance;
-  }
-  if (ledger.status === "not-required") {
-    if (ledger.effectiveAcceptance.level !== "none") {
-      throw new Error(
-        `Async run '${runId}' is paused but its persisted acceptance ledger is incompatible with continuation resume: status 'not-required' must carry effective level 'none'.`,
-      );
-    }
-    return undefined;
-  }
-  const persistedStatus = typeof ledger.status === "string" ? ledger.status : "unknown";
-  throw new Error(
-    `Async run '${runId}' is paused but its persisted acceptance ledger status '${persistedStatus}' is incompatible with continuation resume; expected 'skipped' or 'not-required'.`,
-  );
-}
+import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
+import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
 
 interface AsyncResumeParams {
   id?: string;
@@ -98,6 +57,8 @@ interface AsyncResumeOptions {
   requireSessionFile?: boolean;
   /** Read persisted state without repairing lifecycle metadata before a resume gate. */
   readOnly?: boolean;
+  /** Let the control owner recover a stale paused continuation claim after preflight. */
+  deferPausedContinuationGate?: boolean;
 }
 
 type AsyncResumeTarget = {
@@ -109,30 +70,21 @@ type AsyncResumeTarget = {
   index: number;
   cwd?: string;
   sessionFile?: string;
-  tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
-  /** Persisted per-child developer ticket assignment, when applicable. */
-  tkTicketId?: string;
+  /** Persisted per-child ticket assignment, when applicable. */
+  ticketId?: string;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
-  /** Source child health projection; never used to restore an in-flight operation. */
-  activityState?: ActivityState;
-  idleEpisodeId?: string;
-  durableAttentionReasons?: DurableAttentionReason[];
-  compaction?: { reason: CompactionReason };
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   pauseKind?: import("../../shared/types.ts").AsyncPauseState;
   claimed?: boolean;
-  continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
-  activeRuntimeMs?: number;
-  activeRuntimeCheckpointAt?: number;
-  /** Selected-child success, independent of the aggregate async lifecycle state. */
-  successfulCompletion?: boolean;
-  projectAgent?: ProjectAgentRunCapture;
+  /** Persisted attempt facts carried into the continuation runner. */
+  terminalResult?: SubagentTerminalResult;
+  projectAgent?: ProjectAgentIdentity;
   /** Present only when the persisted run carried a run-level project inventory. */
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgents?: ProjectAgentIdentity[];
 };
 
 /**
@@ -168,8 +120,8 @@ type AsyncResultFile = Defensive<AsyncResultArtifact> & {
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
-  projectAgent?: ProjectAgentRunCapture;
-  projectAgents?: ProjectAgentRunCapture[];
+  projectAgent?: ProjectAgentIdentity;
+  projectAgents?: ProjectAgentIdentity[];
   // Override results to add legacy per-item `thinking` field (written by
   // older runners but not part of the current canonical result item type).
   results?: Array<
@@ -187,89 +139,9 @@ type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
 type AsyncResultStep = NonNullable<AsyncResultFile["results"]>[number];
 
 type AsyncResumeModelMetadata = Pick<AsyncResumeTarget, "modelIdentity" | "modelResolution">;
-type AsyncResumeHealthMetadata = Pick<
-  AsyncResumeTarget,
-  "activityState" | "idleEpisodeId" | "durableAttentionReasons" | "compaction"
->;
-
-type HealthProjectionSource = {
-  activityState?: unknown;
-  idleEpisodeId?: unknown;
-  durableAttentionReasons?: unknown;
-  compaction?: unknown;
-};
-
-const DURABLE_ATTENTION_REASONS: ReadonlySet<DurableAttentionReason> = new Set([
-  "context_pressure",
-  "tool_failures",
-  "completion_guard",
-]);
-const COMPACTION_REASONS: ReadonlySet<CompactionReason> = new Set([
-  "manual",
-  "threshold",
-  "overflow",
-]);
-
-function normalizeHealthActivityState(value: unknown): ActivityState | undefined {
-  return value === "needs_attention" ? value : undefined;
-}
-
-function normalizeHealthDurableAttentionReasons(
-  value: unknown,
-): DurableAttentionReason[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const reasons = Array.from(
-    new Set(
-      value.filter(
-        (reason): reason is DurableAttentionReason =>
-          typeof reason === "string" &&
-          DURABLE_ATTENTION_REASONS.has(reason as DurableAttentionReason),
-      ),
-    ),
-  );
-  return reasons.length > 0 ? reasons : undefined;
-}
-
-function normalizeHealthCompaction(value: unknown): { reason: CompactionReason } | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const reason = (value as { reason?: unknown }).reason;
-  return typeof reason === "string" && COMPACTION_REASONS.has(reason as CompactionReason)
-    ? { reason: reason as CompactionReason }
-    : undefined;
-}
-
-function resolveResumeHealthMetadata(
-  primary?: HealthProjectionSource,
-  fallback?: HealthProjectionSource,
-): AsyncResumeHealthMetadata {
-  const activityState =
-    normalizeHealthActivityState(primary?.activityState) ??
-    normalizeHealthActivityState(fallback?.activityState);
-  const idleEpisodeId =
-    normalizeIdleEpisodeId(primary?.idleEpisodeId) ??
-    normalizeIdleEpisodeId(fallback?.idleEpisodeId);
-  const durableAttentionReasons =
-    normalizeHealthDurableAttentionReasons(primary?.durableAttentionReasons) ??
-    normalizeHealthDurableAttentionReasons(fallback?.durableAttentionReasons);
-  const compaction =
-    normalizeHealthCompaction(primary?.compaction) ??
-    normalizeHealthCompaction(fallback?.compaction);
-  return {
-    ...(activityState ? { activityState } : {}),
-    ...(idleEpisodeId ? { idleEpisodeId } : {}),
-    ...(durableAttentionReasons ? { durableAttentionReasons } : {}),
-    ...(compaction ? { compaction } : {}),
-  };
-}
-
 type AsyncResumeDiagnosticMetadata = Pick<
   AsyncResumeTarget,
   "contextUsage" | "contextPressure" | "contextPressureCrossedThresholds" | "terminationReason"
->;
-
-type AsyncResumeRuntimeMetadata = Pick<
-  AsyncResumeTarget,
-  "activeRuntimeMs" | "activeRuntimeCheckpointAt" | "successfulCompletion"
 >;
 
 interface AsyncResumeResolutionContext {
@@ -287,10 +159,28 @@ interface AsyncResumeResolutionContext {
   requestedIndex?: number;
   deps: AsyncResumeDeps;
   options: AsyncResumeOptions;
-  tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
 }
 
-const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
+const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "failed", "paused"]);
+
+export function continuationResumeBlock(
+  continuation: ReturnType<typeof lifecycleContinuationForIndex>,
+): "completed" | "launched" | "claimed" | undefined {
+  if (
+    continuation?.phase === "completed" ||
+    continuation?.phase === "continued" ||
+    continuation?.completedAt !== undefined ||
+    continuation?.continuedAt !== undefined
+  )
+    return "completed";
+  if (continuation?.phase === "reserved" || continuation?.phase === "launched") return "launched";
+  if (
+    continuation?.phase === "claimed" ||
+    (typeof continuation?.claimToken === "string" && continuation.claimToken.length > 0)
+  )
+    return "claimed";
+  return undefined;
+}
 
 export interface AsyncRunLocation {
   asyncDir: string | null;
@@ -391,7 +281,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         `results[${index}].sessionFile`,
       );
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
-      const tkTicketId = normalizeTkTicketId(child.tkTicketId);
+      const ticketId = persistedTicketId(child.ticketId);
       const thinking = parseThinkingLevel(child.thinking);
       const modelIdentity = parseResultModelIdentity(
         child.modelIdentity,
@@ -406,14 +296,14 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       // Result-only artifacts are recovered best-effort: these optional
       // diagnostics were added after legacy result files were already in use.
       // Status validation remains strict, while malformed result diagnostics are
-      // omitted so session/acceptance recovery can continue.
+      // omitted so session recovery can continue.
       const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
       const contextPressure = parseContextPressureProjection(child.contextPressure);
       const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
         child.contextPressureCrossedThresholds,
       );
-      const healthMetadata = resolveResumeHealthMetadata(child);
       const terminationReason = parseSubagentTerminationReason(child.terminationReason);
+      const terminalResult = parseSubagentTerminalResult(child.terminalResult);
       const success = child.success;
       if (success !== undefined && typeof success !== "boolean")
         throw new Error(
@@ -424,29 +314,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         throw new Error(
           `Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`,
         );
-      const activeRuntimeMs = child.activeRuntimeMs;
-      if (
-        activeRuntimeMs !== undefined &&
-        (typeof activeRuntimeMs !== "number" ||
-          !Number.isFinite(activeRuntimeMs) ||
-          activeRuntimeMs < 0)
-      ) {
-        throw new Error(
-          `Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`,
-        );
-      }
-      // Checkpoint timestamps are optional diagnostics. Invalid external values
-      // are unknown and must not affect continuation selection.
-      const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-        child.activeRuntimeCheckpointAt,
-      );
-      // Acceptance is accepted opaquely — the caller validates contract fields.
-      const acceptance =
-        child.acceptance !== undefined &&
-        typeof child.acceptance === "object" &&
-        !Array.isArray(child.acceptance)
-          ? (child.acceptance as import("../../shared/types.ts").AcceptanceLedger)
-          : undefined;
       const projectAgent = parseProjectAgentCapture(
         child.projectAgent,
         resultPath,
@@ -458,24 +325,16 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(model ? { model } : {}),
-        ...(tkTicketId ? { tkTicketId } : {}),
+        ...(ticketId ? { ticketId } : {}),
         ...(thinking ? { thinking } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(modelResolution ? { modelResolution } : {}),
         ...(contextUsage ? { contextUsage } : {}),
         ...(contextPressure ? { contextPressure } : {}),
         ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
-        ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
-        ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
-        ...(healthMetadata.durableAttentionReasons
-          ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
-          : {}),
-        ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(terminationReason ? { terminationReason } : {}),
-        ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
-        ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-        ...(acceptance ? { acceptance } : {}),
         ...(projectAgent ? { projectAgent } : {}),
+        ...(terminalResult ? { terminalResult } : {}),
       };
     });
   }
@@ -494,11 +353,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
     ?.map((capture, index) =>
       parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
     )
-    .filter((capture): capture is ProjectAgentRunCapture => Boolean(capture));
-  const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
-  const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    data.activeRuntimeCheckpointAt,
-  );
+    .filter((capture): capture is ProjectAgentIdentity => Boolean(capture));
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -529,8 +384,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         }
       : {}),
     ...(typeof success === "boolean" ? { success } : {}),
-    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
-    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
@@ -541,9 +394,9 @@ function parseProjectAgentCapture(
   value: unknown,
   source: string,
   field: string,
-): ProjectAgentRunCapture | undefined {
+): ProjectAgentIdentity | undefined {
   if (value === undefined) return undefined;
-  const normalized = normalizeProjectAgentRunCapture(value);
+  const normalized = normalizeProjectAgentIdentity(value);
   if (!normalized) throw new Error(`Invalid async result file '${source}': ${field} is invalid.`);
   return normalized;
 }
@@ -699,23 +552,24 @@ function persistedModelIdentity(input: {
 }
 
 function resultState(result: AsyncResultFile): AsyncStatus["state"] {
+  if (result.state === "complete" || result.state === "continued" || result.state === "completed")
+    return "complete";
   if (
-    result.state === "complete" ||
     result.state === "failed" ||
     result.state === "paused" ||
     result.state === "cancelled" ||
-    result.state === "continued" ||
     result.state === "running" ||
     result.state === "queued" ||
     result.state === "pausing"
-  ) {
+  )
     return result.state;
-  }
   return result.success ? "complete" : "failed";
 }
 
 function validateStatusForResume(status: AsyncStatus | null, source: string): void {
   if (!status) return;
+  if (status.lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure")
+    throw new Error(ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE);
   if (typeof status.runId !== "string")
     throw new Error(`Invalid async status '${source}': runId must be a string.`);
   if (status.sessionId !== undefined && typeof status.sessionId !== "string")
@@ -726,14 +580,14 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
     throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
   const statusProjectAgent = ownObjectProperty(status, "projectAgent");
   if (statusProjectAgent.present) {
-    if (!normalizeProjectAgentRunCapture(statusProjectAgent.value))
+    if (!normalizeProjectAgentIdentity(statusProjectAgent.value))
       throw new Error(`Invalid async status '${source}': projectAgent is invalid.`);
   }
   if (status.projectAgents !== undefined) {
     if (!Array.isArray(status.projectAgents))
       throw new Error(`Invalid async status '${source}': projectAgents must be an array.`);
     for (const [index, capture] of status.projectAgents.entries()) {
-      if (!normalizeProjectAgentRunCapture(capture))
+      if (!normalizeProjectAgentIdentity(capture))
         throw new Error(`Invalid async status '${source}': projectAgents[${index}] is invalid.`);
     }
   }
@@ -751,7 +605,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
         throw new Error(
           `Invalid async status '${source}': steps[${index}].sessionFile must be a string.`,
         );
-      if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent))
+      if (step.projectAgent !== undefined && !normalizeProjectAgentIdentity(step.projectAgent))
         throw new Error(
           `Invalid async status '${source}': steps[${index}].projectAgent is invalid.`,
         );
@@ -791,50 +645,6 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
           `Invalid async status '${source}': steps[${index}].terminationReason is invalid.`,
         );
     });
-  }
-}
-
-/**
- * Fail-closed pre-normalization check for steps[].activeRuntimeMs in a raw
- * status file. normalizeAsyncLifecycleStatus silently drops invalid values
- * before validateStatusForResume runs, so we must validate the raw JSON here
- * to mirror the result-path strict rejection at lines 385-393.
- *
- * activeRuntimeCheckpointAt is deliberately NOT checked; it cannot widen a
- * budget and is only normalized (never strictly validated) on all paths.
- */
-function validateRawStatusStepsForResume(statusPath: string): void {
-  let content: string;
-  try {
-    content = fs.readFileSync(statusPath, "utf-8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch {
-    // JSON parse errors are reported later by the reconciler/readStatus path.
-    return;
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-  const steps = (raw as Record<string, unknown>).steps;
-  if (!Array.isArray(steps)) return;
-  for (let index = 0; index < steps.length; index++) {
-    const step = steps[index];
-    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
-    const activeRuntimeMs = (step as Record<string, unknown>).activeRuntimeMs;
-    if (
-      activeRuntimeMs !== undefined &&
-      (typeof activeRuntimeMs !== "number" ||
-        !Number.isFinite(activeRuntimeMs) ||
-        activeRuntimeMs < 0)
-    ) {
-      throw new Error(
-        `Invalid async status '${statusPath}': steps[${index}].activeRuntimeMs must be a non-negative finite number.`,
-      );
-    }
   }
 }
 
@@ -886,6 +696,14 @@ function resolveResumeModelMetadata(
   };
 }
 
+function resolveResumeTerminalResult(
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+  resultSteps: AsyncResultStep[],
+): SubagentTerminalResult | undefined {
+  return statusStep?.terminalResult ?? resultSteps[index]?.terminalResult;
+}
+
 function resolveResumeDiagnosticMetadata(
   index: number,
   statusStep: AsyncStatusStep | undefined,
@@ -916,19 +734,13 @@ function resolveResumeDiagnosticMetadata(
 
 type AsyncResumeProjectAgentMetadata = Pick<AsyncResumeTarget, "projectAgent" | "projectAgents">;
 
-function resolvePersistedTkTicketId(
+function resolvePersistedTicketId(
   context: AsyncResumeResolutionContext,
   index: number,
   statusStep: AsyncStatusStep | undefined,
-  agent: string,
 ): string | undefined {
-  if (agent !== "developer") return undefined;
   const resultStep = context.resultSteps[index];
-  return (
-    normalizeTkTicketId(statusStep?.tkTicketId) ??
-    normalizeTkTicketId(resultStep?.tkTicketId) ??
-    (context.stepCount === 1 ? normalizeTkTicketId(context.tkTicket?.id) : undefined)
-  );
+  return persistedTicketId(statusStep?.ticketId) ?? persistedTicketId(resultStep?.ticketId);
 }
 
 function resolveProjectAgentMetadata(
@@ -937,21 +749,21 @@ function resolveProjectAgentMetadata(
   statusStep: AsyncStatusStep | undefined,
 ): AsyncResumeProjectAgentMetadata {
   const selectedCandidate = statusStep?.projectAgent ?? context.resultSteps[index]?.projectAgent;
-  let projectAgent: ProjectAgentRunCapture | undefined;
+  let projectAgent: ProjectAgentIdentity | undefined;
   if (selectedCandidate !== undefined) {
-    projectAgent = normalizeProjectAgentRunCapture(selectedCandidate);
+    projectAgent = normalizeProjectAgentIdentity(selectedCandidate);
     if (!projectAgent) {
       throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
     }
   }
   const topLevelProjectAgent =
-    normalizeProjectAgentRunCapture(ownObjectProperty(context.status, "projectAgent").value) ??
+    normalizeProjectAgentIdentity(ownObjectProperty(context.status, "projectAgent").value) ??
     context.result?.projectAgent;
   const explicitProjectAgents = context.status?.projectAgents ?? context.result?.projectAgents;
   const childProjectAgents = [...context.statusSteps, ...context.resultSteps].flatMap((step) => {
     const candidate = step?.projectAgent;
     if (candidate === undefined) return [];
-    const normalized = normalizeProjectAgentRunCapture(candidate);
+    const normalized = normalizeProjectAgentIdentity(candidate);
     return normalized ? [normalized] : [];
   });
   const projectAgents =
@@ -985,23 +797,18 @@ function buildLiveAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
-  const healthMetadata = resolveResumeHealthMetadata(statusStep, context.resultSteps[index]);
   const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
-  const tkTicketId = resolvePersistedTkTicketId(context, index, statusStep, target.agent);
+  const ticketId = resolvePersistedTicketId(context, index, statusStep);
   return {
     ...target,
-    ...(tkTicketId ? { tkTicketId } : {}),
+    ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
     ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
-    ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
-    ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
-    ...(healthMetadata.durableAttentionReasons
-      ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+    ...(resolveResumeTerminalResult(index, statusStep, context.resultSteps)
+      ? { terminalResult: resolveResumeTerminalResult(index, statusStep, context.resultSteps) }
       : {}),
-    ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
-    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
   };
 }
 
@@ -1039,60 +846,6 @@ function resolveLiveAsyncResumeTarget(
   return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
 }
 
-function selectedChildSuccessfulCompletion(
-  context: AsyncResumeResolutionContext,
-  index: number,
-): boolean {
-  const statusStep = context.statusSteps[index];
-  const resultStep = context.resultSteps[index];
-  if (
-    statusStep?.terminationReason === "interrupted" ||
-    resultStep?.interrupted === true ||
-    resultStep?.terminationReason === "interrupted"
-  ) {
-    return false;
-  }
-  const status = statusStep?.status;
-  if (status !== undefined) {
-    return status === "complete" || status === "completed";
-  }
-  const resultSuccess = resultStep?.success;
-  if (typeof resultSuccess === "boolean") return resultSuccess;
-  // Older single-child artifacts did not always persist per-child evidence.
-  // Preserve their aggregate completion fallback without letting a failed
-  // parallel cohort reset an unrelated child's runtime ledger.
-  return context.stepCount === 1 && context.state === "complete";
-}
-
-function resolveSelectedChildRuntimeMetadata(
-  context: AsyncResumeResolutionContext,
-  index: number,
-): AsyncResumeRuntimeMetadata {
-  const statusStep = context.statusSteps[index];
-  const resultStep = context.resultSteps[index];
-  const selectedActiveRuntimeMs = normalizeActiveRuntimeMs(statusStep?.activeRuntimeMs);
-  const resultActiveRuntimeMs = normalizeActiveRuntimeMs(resultStep?.activeRuntimeMs);
-  const selectedActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    statusStep?.activeRuntimeCheckpointAt,
-  );
-  const resultActiveRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
-    resultStep?.activeRuntimeCheckpointAt,
-  );
-  return {
-    ...(selectedActiveRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedActiveRuntimeMs }
-      : resultActiveRuntimeMs !== undefined
-        ? { activeRuntimeMs: resultActiveRuntimeMs }
-        : {}),
-    ...(selectedActiveRuntimeCheckpointAt !== undefined
-      ? { activeRuntimeCheckpointAt: selectedActiveRuntimeCheckpointAt }
-      : resultActiveRuntimeCheckpointAt !== undefined
-        ? { activeRuntimeCheckpointAt: resultActiveRuntimeCheckpointAt }
-        : {}),
-    successfulCompletion: selectedChildSuccessfulCompletion(context, index),
-  };
-}
-
 function buildTerminalAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
   index: number,
@@ -1100,7 +853,6 @@ function buildTerminalAsyncResumeTarget(
   selectedContinuation: ReturnType<typeof lifecycleContinuationForIndex>,
   agent: string,
   resolvedSessionFile: string | undefined,
-  continuationAcceptance: AsyncResumeTarget["continuationAcceptance"],
 ): AsyncResumeTarget {
   const target: AsyncResumeTarget = {
     kind: "revive",
@@ -1118,26 +870,24 @@ function buildTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
-  const healthMetadata = resolveResumeHealthMetadata(
-    selectedStatusStep,
-    context.resultSteps[index],
-  );
   const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
-  const tkTicketId = resolvePersistedTkTicketId(context, index, selectedStatusStep, target.agent);
+  const ticketId = resolvePersistedTicketId(context, index, selectedStatusStep);
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
-    ...(tkTicketId ? { tkTicketId } : {}),
+    ...(ticketId ? { ticketId } : {}),
     ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
     ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
     ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
-    ...(healthMetadata.activityState ? { activityState: healthMetadata.activityState } : {}),
-    ...(healthMetadata.idleEpisodeId ? { idleEpisodeId: healthMetadata.idleEpisodeId } : {}),
-    ...(healthMetadata.durableAttentionReasons
-      ? { durableAttentionReasons: [...healthMetadata.durableAttentionReasons] }
+    ...(resolveResumeTerminalResult(index, selectedStatusStep, context.resultSteps)
+      ? {
+          terminalResult: resolveResumeTerminalResult(
+            index,
+            selectedStatusStep,
+            context.resultSteps,
+          ),
+        }
       : {}),
-    ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
-    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
     ...(selectedStatusStep?.pause?.kind
       ? { pauseKind: selectedStatusStep.pause.kind }
       : context.status?.pause?.kind
@@ -1147,7 +897,6 @@ function buildTerminalAsyncResumeTarget(
     selectedContinuation.claimToken.length > 0
       ? { claimed: true }
       : {}),
-    ...(continuationAcceptance ? { continuationAcceptance } : {}),
   };
   const diagnosticMetadata = resolveResumeDiagnosticMetadata(
     index,
@@ -1155,7 +904,6 @@ function buildTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
-  const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
   return {
     ...targetWithModelMetadata,
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
@@ -1168,7 +916,6 @@ function buildTerminalAsyncResumeTarget(
     ...(diagnosticMetadata.terminationReason
       ? { terminationReason: diagnosticMetadata.terminationReason }
       : {}),
-    ...runtimeMetadata,
   };
 }
 
@@ -1211,36 +958,27 @@ function resolveTerminalAsyncResumeTarget(
     }
   }
 
-  if (context.state === "continued")
+  const continuationBlock = continuationResumeBlock(selectedContinuation);
+  const deferPausedContinuationGate =
+    context.options.deferPausedContinuationGate &&
+    context.state === "paused" &&
+    selectedStatusStep?.status === "paused";
+  if (continuationBlock === "completed" && !deferPausedContinuationGate)
     throw new Error(
-      `Async run '${context.runId}' already launched continuation '${selectedContinuation?.continuationRunId ?? context.status?.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and cannot be resumed again.`,
+      `Async run '${context.runId}' already launched continuation '${selectedContinuation?.continuationRunId ?? "unknown"}' and cannot be resumed again.`,
     );
   if (selectedStatusStep?.status === "cancelled")
     throw new Error(
       `Async run '${context.runId}' child ${index} was cancelled and cannot be resumed.`,
     );
-  if (selectedStatusStep?.status === "continued")
+  if (continuationBlock === "launched" && !deferPausedContinuationGate)
     throw new Error(
-      `Async run '${context.runId}' child ${index} already launched its continuation and cannot be resumed again.`,
+      `Async run '${context.runId}' child ${index} already launched continuation '${selectedContinuation?.continuationRunId ?? "unknown"}' and cannot be resumed again.`,
     );
-  if (
-    !context.options.readOnly &&
-    typeof selectedContinuation?.claimToken === "string" &&
-    selectedContinuation.claimToken.length > 0
-  ) {
-    const continuationRunId = selectedContinuation.continuationRunId;
-    if (
-      (selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") &&
-      continuationRunId
-    ) {
-      throw new Error(
-        `Async run '${context.runId}' child ${index} already launched continuation '${continuationRunId}' and cannot be resumed again.`,
-      );
-    }
+  if (continuationBlock === "claimed" && !deferPausedContinuationGate)
     throw new Error(
       `Async run '${context.runId}' child ${index} was already claimed for continuation and cannot be resumed again.`,
     );
-  }
 
   const agent =
     selectedStatusStep?.agent ?? context.resultSteps[index]?.agent ?? context.result?.agent;
@@ -1263,23 +1001,6 @@ function resolveTerminalAsyncResumeTarget(
   const resolvedSessionFile = sessionFile
     ? validateResumeSessionFile(context.runId, sessionFile, { allowMissing: selectedChildPaused })
     : undefined;
-  // When the status file is absent (result-only revival), read acceptance from the
-  // result artifact’s per-child entry; otherwise mirror the status-path behaviour.
-  const pausedStepAcceptance =
-    context.statusSteps.length > 0
-      ? context.statusSteps[index]?.acceptance
-      : context.resultSteps[index]?.acceptance;
-  if (selectedChildPaused && pausedStepAcceptance === undefined) {
-    throw new Error(
-      `Async run '${context.runId}' is paused but its skipped acceptance ledger has not been persisted yet. Retry the resume once pause metadata is written.`,
-    );
-  }
-  // Fail closed at this common read site (covers both status and result-only paths)
-  // so only explicitly compatible paused ledgers can resume without re-inferring a
-  // contract, and malformed or terminal statuses never reach continuation merge logic.
-  const continuationAcceptance = selectedChildPaused
-    ? resolvePausedContinuationAcceptance(context.runId, pausedStepAcceptance)
-    : undefined;
   return buildTerminalAsyncResumeTarget(
     context,
     index,
@@ -1287,7 +1008,6 @@ function resolveTerminalAsyncResumeTarget(
     selectedContinuation,
     agent,
     resolvedSessionFile,
-    continuationAcceptance,
   );
 }
 
@@ -1302,13 +1022,6 @@ export function resolveAsyncResumeTarget(
   const location = resolveAsyncRunLocation(params, asyncDirRoot, resultsDir);
   if (!location.asyncDir && !location.resultPath) {
     throw new Error("Async run not found. Provide id or dir.");
-  }
-
-  // Validate raw status JSON before normalization strips malformed budget fields.
-  // normalizeAsyncLifecycleStatus silently drops invalid steps[].activeRuntimeMs;
-  // fail-closed here mirrors the result-path strict rejection (lines 385-393).
-  if (location.asyncDir) {
-    validateRawStatusStepsForResume(path.join(location.asyncDir, "status.json"));
   }
 
   const reconciliation =
@@ -1330,8 +1043,9 @@ export function resolveAsyncResumeTarget(
     location.resolvedId ??
     (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
   const state = status?.state ?? (result ? resultState(result) : undefined);
-  const tkTicket = normalizeTkTicketMetadata(status?.tkTicket);
   if (!state) throw new Error(`Status file not found for async run '${runId}'.`);
+  if (status?.lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure")
+    throw new Error(ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE);
   if (state === "cancelled")
     throw new Error(`Async run '${runId}' was cancelled and cannot be resumed.`);
   if (state === "pausing")
@@ -1359,7 +1073,6 @@ export function resolveAsyncResumeTarget(
     requestedIndex,
     deps,
     options,
-    tkTicket,
   };
   if (state === "running") {
     const liveTarget = resolveLiveAsyncResumeTarget(context);

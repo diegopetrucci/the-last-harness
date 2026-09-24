@@ -1,0 +1,219 @@
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import type { MockPi } from "../support/helpers.ts";
+import {
+  createMockPi,
+  createTempDir,
+  removeTempDir,
+  events,
+  tryImport,
+} from "../support/helpers.ts";
+
+interface ResultContent {
+  text?: string;
+}
+
+interface SingleResultLike {
+  agent?: string;
+  exitCode?: number;
+  finalOutput?: string;
+  messages?: unknown[];
+  toolCalls?: Array<{ text?: string; expandedText?: string }>;
+  progress?: unknown;
+}
+
+interface ExecutorResult {
+  isError?: boolean;
+  content: ResultContent[];
+  details?: {
+    mode?: string;
+    results?: SingleResultLike[];
+    progress?: unknown;
+  };
+}
+
+interface ExecutorModule {
+  createSubagentExecutor?: (...args: unknown[]) => {
+    execute: (
+      id: string,
+      params: Record<string, unknown>,
+      signal: AbortSignal,
+      onUpdate: ((result: unknown) => void) | undefined,
+      ctx: unknown,
+    ) => Promise<ExecutorResult>;
+  };
+}
+
+const executorMod = await tryImport<ExecutorModule>("./src/extension/subagent-executor.ts");
+const available = !!executorMod?.createSubagentExecutor;
+const createSubagentExecutor = executorMod?.createSubagentExecutor;
+
+function makeState(cwd: string) {
+  return {
+    baseCwd: cwd,
+    currentSessionId: null,
+    asyncJobs: new Map(),
+    cleanupTimers: new Map(),
+    lastUiContext: null,
+    poller: null,
+    watcher: null,
+    watcherRestartTimer: null,
+    resultFileCoalescer: {
+      schedule: () => false,
+      clear: () => {},
+    },
+  };
+}
+
+function makeExecutor(cwd: string) {
+  return createSubagentExecutor!({
+    pi: {
+      events: { emit: () => {}, on: () => () => {} },
+      getSessionName: () => undefined,
+      setSessionName: () => {},
+    },
+    state: makeState(cwd),
+    config: {},
+    tempArtifactsDir: cwd,
+    getSubagentSessionRoot: () => cwd,
+    expandTilde: (value: string) => value,
+    discoverAgents: () => ({
+      agents: [{ name: "tester", description: "Tool-heavy test agent" }],
+    }),
+  });
+}
+
+function makeCtx(cwd: string) {
+  return {
+    cwd,
+    hasUI: false,
+    ui: {},
+    sessionManager: {
+      getSessionId: () => "session-123",
+      getSessionFile: () => null,
+    },
+    modelRegistry: { getAvailable: () => [] },
+  };
+}
+
+function buildDockerNoiseChunk(step: number): string {
+  const lines = [
+    `[docker] step ${step}: loading build definition from Dockerfile.test`,
+    `[docker] step ${step}: resolving image config for ghcr.io/example/service:${String(step % 7)}`,
+    `[docker] step ${step}: copying layer sha256:${String(step).padStart(4, "0")}${"ab".repeat(24)}`,
+    `[docker] step ${step}: running npm test -- --runInBand --reporter=dot`,
+    `[docker] step ${step}: warning: retrying flaky network fetch for registry metadata`,
+    `[docker] step ${step}: error: service container exited unexpectedly with code ${(step % 3) + 1}`,
+    `[docker] step ${step}: stack: ${"Trace line with nested module resolution and container stdout noise ".repeat(8)}`,
+    `[docker] step ${step}: stderr: ${"Build output and diagnostics ".repeat(16)}`,
+  ];
+  return lines.join("\n");
+}
+
+describe(
+  "awaited result payload compaction",
+  {
+    skip: !available ? "subagent executor not importable" : undefined,
+  },
+  () => {
+    let tempDir: string;
+    let mockPi: MockPi;
+
+    before(() => {
+      mockPi = createMockPi();
+      mockPi.install();
+    });
+
+    after(() => {
+      mockPi.uninstall();
+    });
+
+    beforeEach(() => {
+      tempDir = createTempDir("pi-subagent-payload-test-");
+      mockPi.reset();
+    });
+
+    afterEach(() => {
+      removeTempDir(tempDir);
+    });
+
+    it("keeps awaited single-run payloads compact after tool-heavy runs", async () => {
+      const jsonl: unknown[] = [];
+      jsonl.push({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              name: "write",
+              arguments: {
+                path: "/tmp/huge-report.md",
+                content: "x".repeat(50_000),
+              },
+            },
+          ],
+          model: "mock/test-model",
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+        },
+      });
+      jsonl.push(
+        events.toolStart("write", { path: "/tmp/huge-report.md", content: "x".repeat(50_000) }),
+      );
+      jsonl.push(events.toolResult("write", "ok"));
+      jsonl.push(events.toolEnd("write"));
+      for (let step = 0; step < 60; step++) {
+        jsonl.push(
+          events.toolStart("bash", {
+            command: `docker compose run --rm api test-shard-${step} --retry --verbose`,
+          }),
+        );
+        jsonl.push(events.toolResult("bash", buildDockerNoiseChunk(step)));
+        jsonl.push(events.toolEnd("bash"));
+      }
+      jsonl.push(
+        events.assistantMessage(
+          "Finished the test sweep. Three failures reproduced, two were flaky, and the smallest fix is to retry the image bootstrap before the integration shard starts.",
+        ),
+      );
+      mockPi.onCall({ jsonl });
+
+      const executor = makeExecutor(tempDir);
+      const result = await executor.execute(
+        "id",
+        { agent: "tester", task: "Run the full noisy test sweep" },
+        new AbortController().signal,
+        undefined,
+        makeCtx(tempDir),
+      );
+
+      assert.equal(result.isError, undefined);
+      assert.equal(result.details?.mode, "single");
+      assert.equal(result.details?.results?.length, 1);
+      assert.equal(
+        result.details?.progress,
+        undefined,
+        "terminal awaited details should keep the concise default and omit aggregate progress",
+      );
+
+      const displayText = result.content[0]?.text ?? "";
+      assert.ok(
+        displayText.length < 2_000,
+        `expected small visible output, got ${displayText.length} bytes`,
+      );
+
+      const step = result.details?.results?.[0];
+      assert.equal(step?.exitCode, 0);
+      assert.ok(
+        step?.messages === undefined,
+        "completed awaited results should not inline raw messages",
+      );
+      assert.ok(
+        step?.progress === undefined,
+        "completed awaited results should not inline full progress objects",
+      );
+      const payloadSize = JSON.stringify(result).length;
+      assert.ok(payloadSize < 80_000, `expected compact awaited payload, got ${payloadSize} bytes`);
+    });
+  },
+);

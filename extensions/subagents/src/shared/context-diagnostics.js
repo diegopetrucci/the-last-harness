@@ -13,7 +13,6 @@ const KNOWN_TERMINATION_REASONS = new Set([
     "model_error",
     "interrupted",
     "timed_out",
-    "tool_budget_blocked",
     "paused",
     "cancelled",
     "process_exit",
@@ -348,8 +347,6 @@ export function resolveSubagentTerminationReason(input) {
         return "paused";
     if (input.timedOut)
         return "timed_out";
-    if (input.toolBudgetBlocked)
-        return "tool_budget_blocked";
     if (input.interrupted)
         return "interrupted";
     switch (input.assistantStopReason) {

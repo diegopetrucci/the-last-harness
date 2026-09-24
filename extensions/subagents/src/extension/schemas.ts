@@ -48,6 +48,13 @@ const TaskItem = Type.Object(
   {
     agent: Type.String(),
     task: Type.String(),
+    ticket: Type.Optional(
+      Type.String({
+        maxLength: 128,
+        description:
+          "Optional ticket ID; TLH loads `tk show <id>` in this task's cwd before launch.",
+      }),
+    ),
     cwd: Type.Optional(
       Type.String({
         description: "Task working directory; relative paths resolve against the run cwd.",
@@ -74,10 +81,16 @@ const SubagentParamsSchema = Type.Object(
     task: Type.Optional(
       Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" }),
     ),
+    ticket: Type.Optional(
+      Type.String({
+        maxLength: 128,
+        description: "Optional ticket ID; TLH loads `tk show <id>` in the task cwd before launch.",
+      }),
+    ),
     tasks: Type.Optional(
       Type.Array(TaskItem, {
         description:
-          "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
+          "PARALLEL mode: [{agent, task, ticket?, cwd?, count?, output?, outputMode?, model?}, ...]",
       }),
     ),
     async: Type.Optional(
@@ -96,6 +109,19 @@ const SubagentParamsSchema = Type.Object(
       Type.String({
         description:
           "Run id or prefix for action='status', action='interrupt', action='resume', or action='steer', including durable paused-awaiting-supervisor runs.",
+      }),
+    ),
+    view: Type.Optional(
+      Type.String({
+        enum: ["transcript"],
+        description: "Optional retained-output transcript view for action='status'.",
+      }),
+    ),
+    lines: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 500,
+        description: "Transcript tail line count for action='status' (1-500).",
       }),
     ),
     index: Type.Optional(

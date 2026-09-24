@@ -14,10 +14,10 @@ import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
-import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
+import { createSubagentExecutor, normalizeProjectAgentAccess, } from "./subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
-import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
+import { disposeAwaitedRuns } from "../runs/background/awaited-run-registry.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
 import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
@@ -27,7 +27,7 @@ import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
-import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
+import { formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
 export { loadConfig } from "./config.js";
 export function createSubagentToolResultBridge() {
@@ -112,26 +112,64 @@ function parseSubagentNotifyContent(content) {
     if (!match)
         return undefined;
     const body = lines.slice(2);
-    let sessionIndex = -1;
-    for (let i = body.length - 1; i >= 1; i--) {
-        if (body[i - 1]?.trim() === "" &&
-            /^(Session|Session file|Session share error):\s+/.test(body[i])) {
-            sessionIndex = i;
-            break;
+    const summaryHeading = body.indexOf("Summary:");
+    const factsIndex = body.findIndex((line) => /^Facts:\s*/.test(line));
+    const artifactLines = body.filter((line) => /^Output artifact:\s+\S/.test(line));
+    const childSessionLines = body.filter((line) => /^Session:\s+\S/.test(line));
+    const metadataLines = body.filter((line) => /^(Async id:\s+\S|Revive(?: child)?:\s+subagent\(|No child process is running\.|Resume(?: unchanged| with guidance):\s+subagent\(|Cancel:\s+subagent\()/.test(line));
+    let resultPreview;
+    let factsPreview;
+    if (summaryHeading >= 0) {
+        const summaryStart = summaryHeading + 1;
+        const summaryEnd = [
+            factsIndex,
+            ...body
+                .map((line, index) => ({ line, index }))
+                .filter(({ line, index }) => index > summaryStart &&
+                /^(Session|Async id:|Revive(?: child)?:|No child process is running\.|Resume(?: unchanged| with guidance):|Cancel:)/.test(line))
+                .map(({ index }) => index),
+        ]
+            .filter((index) => index >= summaryStart)
+            .sort((a, b) => a - b)[0] ?? body.length;
+        resultPreview =
+            body
+                .slice(summaryStart, summaryEnd)
+                .map((line) => (line.startsWith("  ") ? line.slice(2) : line))
+                .join("\n")
+                .trim() || "(no output)";
+        if (factsIndex >= 0) {
+            const factsEnd = body
+                .map((line, index) => ({ line, index }))
+                .filter(({ line, index }) => index > factsIndex &&
+                /^(Session|Async id:|Revive(?: child)?:|No child process is running\.|Resume(?: unchanged| with guidance):|Cancel:)/.test(line))
+                .map(({ index }) => index)
+                .sort((a, b) => a - b)[0] ?? body.length;
+            const factsLine = body[factsIndex].replace(/^Facts:\s*/, "");
+            const trailingFacts = body
+                .slice(factsIndex + 1, factsEnd)
+                .join("\n")
+                .trim();
+            factsPreview = [factsLine, trailingFacts].filter(Boolean).join("\n") || undefined;
         }
     }
-    const sessionLine = sessionIndex >= 0 ? body[sessionIndex] : undefined;
-    const resultLines = sessionIndex >= 0 ? body.slice(0, sessionIndex) : body;
-    const referenceLines = [];
-    if (/^Async id:\s+\S/.test(resultLines[0] ?? "")) {
-        referenceLines.push(resultLines.shift());
-        if (/^Revive(?: child)?:\s+subagent\(/.test(resultLines[0] ?? "")) {
-            referenceLines.push(resultLines.shift());
-        }
-        if (resultLines[0]?.trim() === "")
+    else {
+        const resultLines = [...body];
+        while (resultLines[0] &&
+            (/^Async id:\s+\S/.test(resultLines[0]) ||
+                /^Revive(?: child)?:\s+subagent\(/.test(resultLines[0]) ||
+                resultLines[0].trim() === "")) {
             resultLines.shift();
+        }
+        resultPreview =
+            resultLines
+                .filter((line) => !/^Output artifact:\s+/.test(line) &&
+                !/^Facts:\s*/.test(line) &&
+                !/^Session(?: file| share error)?:\s+/.test(line))
+                .join("\n")
+                .trim() || "(no output)";
     }
-    const resultPreview = resultLines.join("\n").trim() || "(no output)";
+    const sessionLines = body.filter((line) => /^(Session file|Session share error):\s+\S/.test(line));
+    const sessionLine = sessionLines.at(-1);
     let sessionLabel;
     let sessionValue;
     if (sessionLine) {
@@ -145,10 +183,91 @@ function parseSubagentNotifyContent(content) {
             status: match[1],
             ...(match[3] ? { taskInfo: match[3] } : {}),
             resultPreview,
+            ...(factsPreview ? { factsPreview } : {}),
+            ...(artifactLines.length > 0
+                ? {
+                    artifactPaths: artifactLines.map((line) => boundedReference(line.slice("Output artifact:".length).trim())),
+                }
+                : {}),
+            ...(childSessionLines.length > 0
+                ? {
+                    sessionPaths: childSessionLines.map((line) => boundedReference(line.slice("Session:".length).trim())),
+                }
+                : {}),
             ...(sessionLabel && sessionValue ? { sessionLabel, sessionValue } : {}),
         },
-        referenceLines,
+        referenceLines: [
+            ...artifactLines,
+            ...(factsIndex >= 0 ? [body[factsIndex]] : []),
+            ...metadataLines,
+            ...childSessionLines,
+        ],
     };
+}
+function isSafeNotifyAsyncId(value) {
+    return (typeof value === "string" &&
+        value.trim().length > 0 &&
+        value.length <= 200 &&
+        !/[\\/]/.test(value) &&
+        !value.includes("..") &&
+        ![...value].some((character) => {
+            const code = character.codePointAt(0) ?? 0;
+            return code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029;
+        }));
+}
+function structuredNotifyReferenceLines(details) {
+    const lines = [];
+    if (Array.isArray(details.artifactPaths)) {
+        for (const value of details.artifactPaths) {
+            if (typeof value === "string" && value.length > 0)
+                lines.push(`Output artifact: ${boundedReference(value)}`);
+        }
+    }
+    if (typeof details.factsPreview === "string" && details.factsPreview.length > 0) {
+        const facts = details.factsPreview.split("\n");
+        lines.push(`Facts: ${facts.shift()}`, ...facts.map((line) => `  ${line}`));
+    }
+    if (Array.isArray(details.sessionPaths)) {
+        for (const value of details.sessionPaths) {
+            if (typeof value === "string" && value.length > 0)
+                lines.push(`Session: ${boundedReference(value)}`);
+        }
+    }
+    const asyncId = isSafeNotifyAsyncId(details.asyncId) ? details.asyncId : undefined;
+    if (!asyncId)
+        return lines;
+    lines.push(`Async id: ${asyncId}`);
+    const target = details.resumeTarget;
+    if (!target)
+        return lines;
+    const hasIndex = target.index !== undefined;
+    const validIndex = typeof target.index === "number" &&
+        Number.isInteger(target.index) &&
+        target.index >= 0 &&
+        typeof target.childCount === "number" &&
+        Number.isInteger(target.childCount) &&
+        target.index < target.childCount;
+    if (hasIndex && !validIndex)
+        return lines;
+    if (!details.awaitingSupervisor && !target.sessionPath)
+        return lines;
+    const idLiteral = JSON.stringify(asyncId);
+    if (details.awaitingSupervisor) {
+        lines.push("No child process is running.");
+        if (!hasIndex) {
+            lines.push(`Resume unchanged: subagent({ action: "resume", id: ${idLiteral} })`, `Resume with guidance: subagent({ action: "resume", id: ${idLiteral}, message: "Supervisor replied: ..." })`, `Cancel: subagent({ action: "interrupt", id: ${idLiteral} })`);
+        }
+        else {
+            lines.push(`Resume unchanged: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index} })`, `Resume with guidance: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index}, message: "Supervisor replied: ..." })`, `Cancel: subagent({ action: "interrupt", id: ${idLiteral}, index: ${target.index} })`);
+        }
+    }
+    else if (!hasIndex) {
+        lines.push(`Revive: subagent({ action: "resume", id: ${idLiteral}, message: "..." })`);
+    }
+    else {
+        lines.push(`Revive child: subagent({ action: "resume", id: ${idLiteral}, index: ${target.index}, message: "..." })`);
+    }
+    return lines;
 }
 class SubagentControlNoticeComponent {
     details;
@@ -226,15 +345,10 @@ export default function registerSubagentExtension(pi) {
         currentSessionId: null,
         subagentInProgress: false,
         asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-        pendingForegroundControlNotices: new Map(),
         cleanupTimers: new Map(),
         lastUiContext: null,
         liveDetailController,
         poller: null,
-        completionSeen: new Map(),
         watcher: null,
         watcherRestartTimer: null,
         resultFileCoalescer: {
@@ -271,16 +385,16 @@ export default function registerSubagentExtension(pi) {
         });
     };
     const supervisorChannel = createNativeSupervisorChannel(pi, state);
-    const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(pi, state, RESULTS_DIR, PROJECT_AGENT_TERMINAL_RETENTION_MS);
+    const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(pi, state, RESULTS_DIR);
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
+        disposeAwaitedRuns();
         removeLiveDetailTerminalInput();
         liveDetailController.clearToolRows();
         toolResultBridge.clear();
         stopResultWatcher();
         supervisorChannel.dispose();
-        clearPendingForegroundControlNotices(state);
         if (state.poller) {
             clearInterval(state.poller);
             state.poller = null;
@@ -313,31 +427,30 @@ export default function registerSubagentExtension(pi) {
         const content = typeof message.content === "string" ? message.content : "";
         const parsedContent = parseSubagentNotifyContent(content);
         const structuredDetails = message.details;
-        const parsedSession = parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
-            ? {
-                sessionLabel: parsedContent.details.sessionLabel,
-                sessionValue: parsedContent.details.sessionValue,
-            }
-            : undefined;
         const rawParsedPreview = parsedContent?.details.resultPreview;
-        const displayPreview = rawParsedPreview !== undefined
+        const displayParsedPreview = rawParsedPreview !== undefined
             ? rawParsedPreview.length <= MAX_DISPLAY_SUMMARY_CHARS
                 ? rawParsedPreview
                 : `${rawParsedPreview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`
             : undefined;
+        const boundStructuredPreview = (value) => {
+            const preview = typeof value === "string" ? value : "(no output)";
+            return preview.length <= MAX_DISPLAY_SUMMARY_CHARS
+                ? preview
+                : `${preview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+        };
         const details = structuredDetails
             ? {
                 ...structuredDetails,
-                resultPreview: displayPreview ?? structuredDetails.resultPreview,
+                resultPreview: boundStructuredPreview(structuredDetails.resultPreview),
                 ...(structuredDetails.sessionValue
                     ? { sessionValue: boundedReference(structuredDetails.sessionValue) }
                     : {}),
-                ...parsedSession,
             }
             : parsedContent?.details
                 ? {
                     ...parsedContent.details,
-                    resultPreview: displayPreview ?? parsedContent.details.resultPreview,
+                    resultPreview: displayParsedPreview ?? parsedContent.details.resultPreview,
                 }
                 : undefined;
         if (!details) {
@@ -346,7 +459,9 @@ export default function registerSubagentExtension(pi) {
                 : `${content.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
             return new Text(displayContent, 0, 0);
         }
-        const referenceLines = parsedContent?.referenceLines ?? [];
+        const referenceLines = structuredDetails
+            ? structuredNotifyReferenceLines(details)
+            : (parsedContent?.referenceLines ?? []);
         const icon = details.status === "completed"
             ? theme.fg("success", "✓")
             : details.status === "paused"
@@ -444,7 +559,16 @@ export default function registerSubagentExtension(pi) {
             handlePauseAllShortcut(state, ctx);
         },
     });
-    registerSlashCommands(pi, state, config);
+    registerSlashCommands(pi, state, config, (cwd) => {
+        const access = normalizeProjectAgentAccess(getTlhProjectAgentAccess({ cwd, sessionId: null, targetNames: [] }));
+        return {
+            ...(access?.agentDir ? { agentDir: access.agentDir } : {}),
+            ...(access?.trustStore ? { trustStore: access.trustStore } : {}),
+            ...(access?.createProjectTrustStore
+                ? { createProjectTrustStore: access.createProjectTrustStore }
+                : {}),
+        };
+    });
     registerCacheWarmingDecision(pi, state);
     const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
     const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
@@ -460,7 +584,7 @@ export default function registerSubagentExtension(pi) {
             }
         }
     }
-    registerSubagentNotify(pi, state, {});
+    registerSubagentNotify(pi, state);
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set
         ? existingVisibleControlNotices
@@ -471,7 +595,6 @@ export default function registerSubagentExtension(pi) {
     const controlEventHandler = (payload) => {
         handleSubagentControlNotice({
             pi,
-            state,
             visibleControlNotices,
             details: payload,
             isIdle: isControlNoticeIdle,
@@ -518,7 +641,6 @@ export default function registerSubagentExtension(pi) {
         }
         state.lastUiContext = ctx;
         cleanupSessionArtifacts(ctx);
-        clearPendingForegroundControlNotices(state);
         liveDetailController.clearToolRows();
         resetJobs(ctx);
         restoreActiveJobs(ctx);
@@ -538,6 +660,7 @@ export default function registerSubagentExtension(pi) {
         liveDetailController.clearToolRows();
     });
     pi.on("session_shutdown", () => {
+        disposeAwaitedRuns();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();
         delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -555,7 +678,6 @@ export default function registerSubagentExtension(pi) {
         if (state.poller)
             clearInterval(state.poller);
         state.poller = null;
-        clearPendingForegroundControlNotices(state);
         for (const timer of state.cleanupTimers.values()) {
             clearTimeout(timer);
         }

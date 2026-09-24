@@ -3,10 +3,11 @@
  *
  * Spawns an actual child `pi` subprocess (a repo-local child CLI that runs a
  * real `AgentSession` backed by a faux provider) and exercises the extension's
- * real foreground execution path: the parent session calls the `subagent` tool,
- * the tool spawns the child, the child streams jsonl events, the extension's
- * real stdout parser extracts the result, and the marker flows back as a tool
- * result that the parent relays. No real API keys are used.
+ * default awaited execution path: the parent session calls the `subagent` tool,
+ * the tool spawns the child, the awaited owner waits for terminal completion,
+ * the child streams jsonl events, the extension's real stdout parser extracts
+ * the result, and the marker flows back as a tool result that the parent
+ * relays. No real API keys are used.
  *
  * Pi runtime packages are required test dependencies; import failures fail the suite.
  */
@@ -51,7 +52,7 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
     run = undefined;
   });
 
-  it("boots the extension in a real parent session and delivers a faux child result", async () => {
+  it("uses the default awaited route in a real parent session", async () => {
     const { routeParentThroughSubagent, runRealSubagentSession, subagentToolResults } =
       await import("../support/real-session-runner.ts");
 
@@ -91,6 +92,23 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
       const toolResults = subagentToolResults(run.parentSession);
       assert.equal(toolResults.length, 1);
       assert.match(toolResults[0]!, new RegExp(CHILD_MARKER));
+      const toolResult = run.parentSession.messages.find(
+        (message) =>
+          message.role === "toolResult" &&
+          (message as { toolName?: string }).toolName === "subagent",
+      ) as { details?: { asyncDir?: unknown } } | undefined;
+      const asyncDir = toolResult?.details?.asyncDir;
+      assert.equal(
+        typeof asyncDir,
+        "string",
+        "default sync dispatch should expose its run directory",
+      );
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir as string, "status.json"), "utf-8"),
+      ) as {
+        awaited?: boolean;
+      };
+      assert.equal(status.awaited, true, "default sync dispatch should persist awaited ownership");
       assert.match(run.responseText, new RegExp(CHILD_MARKER));
       assert.doesNotMatch(run.responseText, /CHILD_MISSING/);
       assert.ok(

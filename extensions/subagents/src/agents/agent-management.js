@@ -65,8 +65,6 @@ function formatAgentDetail(agent) {
     lines.push(`System prompt mode: ${agent.systemPromptMode}`);
     lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
     lines.push(`Inherit skills: ${agent.inheritSkills ? "true" : "false"}`);
-    if (agent.acceptanceRole)
-        lines.push(`Acceptance role: ${agent.acceptanceRole}`);
     if (agent.source === "builtin")
         lines.push(`Disabled: ${agent.disabled ? "true" : "false"}`);
     if (agent.extensions !== undefined)
@@ -85,12 +83,8 @@ function formatAgentDetail(agent) {
         lines.push(`Max subagent depth: ${agent.maxSubagentDepth}`);
     if (agent.maxExecutionTimeMs !== undefined)
         lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
-    if (agent.completionGuard === false)
-        lines.push("Completion guard: false");
     if (agent.supervisorBridge === false)
         lines.push("Supervisor bridge: false");
-    if (agent.toolBudget)
-        lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
     if (agent.systemPrompt.trim())
         lines.push("", "System Prompt:", agent.systemPrompt);
     return lines.join("\n");
@@ -112,7 +106,7 @@ export function handleList(params, ctx) {
             ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`)
             : ["- (none)"]),
     ];
-    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isSourceVisibleInScope(diagnostic.source, scope));
+    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => diagnostic.kind !== "notice" && isSourceVisibleInScope(diagnostic.source, scope));
     if (visibleDiagnostics.length > 0) {
         lines.push("", "Agent load warnings:", ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`));
     }

@@ -311,15 +311,10 @@ test("tracker keeps concurrent async jobs active across duplicate, out-of-order,
   }
 });
 
-test("tracker ignores foreground control notices and only tracks safe async control contexts", () => {
+test("tracker ignores control notices without async context and honors asyncDir precedence", () => {
   const root = mkdtempSync(join(tmpdir(), "tlh-control-context-"));
   try {
-    const asyncDirBackground = makeAsyncDir(root, "job-background", {
-      runId: "job-background",
-      state: "running",
-      pid: 99980,
-    });
-    const asyncDirAsync = makeAsyncDir(root, "job-async", {
+    const asyncDir = makeAsyncDir(root, "job-async", {
       runId: "job-async",
       state: "running",
       pid: 99981,
@@ -328,20 +323,54 @@ test("tracker ignores foreground control notices and only tracks safe async cont
       checkPidLiveness: () => "alive",
     });
 
-    tracker.handleAsyncControl({ event: { runId: "foreground-source", source: "foreground" } });
-    tracker.handleAsyncControl({ event: { runId: "foreground-mode", mode: "foreground" } });
+    tracker.handleAsyncControl({ event: { runId: "unknown-source", source: "unknown" } });
+    tracker.handleAsyncControl({ event: { runId: "unknown-mode", mode: "unknown" } });
     tracker.handleAsyncControl({ event: { runId: "missing-context" } });
     assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
 
     tracker.handleAsyncControl({
-      event: { runId: "job-background", mode: "background" },
-      asyncDir: asyncDirBackground,
+      event: { runId: "job-async", source: "async", mode: "unknown" },
+      asyncDir,
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-async"]);
+    assert.equal(tracker.isInProgress(), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tracker classifies async control events from event asyncDir and prefers payload asyncDir", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-async-control-context-"));
+  try {
+    const eventAsyncDir = makeAsyncDir(root, "job-event-dir", {
+      runId: "job-event-dir",
+      state: "running",
+      pid: 99979,
+    });
+    const staleAsyncDir = makeAsyncDir(root, "stale-event-dir", {
+      runId: "job-payload-dir",
+      state: "complete",
+      pid: 99978,
+    });
+    const payloadAsyncDir = makeAsyncDir(root, "job-payload-dir", {
+      runId: "job-payload-dir",
+      state: "running",
+      pid: 99977,
+    });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    tracker.handleAsyncControl({
+      event: { runId: "job-event-dir", source: "async", asyncDir: eventAsyncDir },
     });
     tracker.handleAsyncControl({
-      event: { runId: "job-async", mode: "async" },
-      asyncDir: asyncDirAsync,
+      asyncDir: payloadAsyncDir,
+      event: { runId: "job-payload-dir", source: "async", asyncDir: staleAsyncDir },
     });
-    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-async", "job-background"]);
+
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["job-event-dir", "job-payload-dir"]);
+    assert.equal(tracker.isInProgress(), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
