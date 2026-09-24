@@ -572,6 +572,7 @@ describe(
         assert.equal(spawnedPids.length, 4);
       } finally {
         fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+        await originalPromise.catch(() => undefined);
       }
       const original = await originalPromise;
       const runId = original.details?.runId;
