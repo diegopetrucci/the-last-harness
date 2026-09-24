@@ -564,11 +564,15 @@ describe(
         undefined,
         cohortContext,
       );
-      await waitForMockPiCall(3);
-      assert.equal(mockPi.callCount(), 4);
-      const spawnedPids = startedMockPiPids();
-      assert.equal(spawnedPids.length, 4);
-      fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+      let spawnedPids: number[] = [];
+      try {
+        await waitForMockPiCall(3);
+        assert.equal(mockPi.callCount(), 4);
+        spawnedPids = startedMockPiPids();
+        assert.equal(spawnedPids.length, 4);
+      } finally {
+        fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+      }
       const original = await originalPromise;
       const runId = original.details?.runId;
       assert.ok(runId, "expected awaited run id");
