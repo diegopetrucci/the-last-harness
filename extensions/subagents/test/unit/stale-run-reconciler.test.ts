@@ -8,7 +8,10 @@ import {
   checkPidLiveness,
   reconcileAsyncRun,
 } from "../../src/runs/background/stale-run-reconciler.ts";
+import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+
+const STALE_LIVE_PID_MS = 24 * 60 * 60 * 1000;
 
 function tempRoot(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -152,6 +155,250 @@ describe("async stale-run reconciliation", () => {
         { requireSessionFile: false },
       );
       assert.equal(resultOnlyTarget.kind, "revive");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a live PID before the 24-hour stale-record cutoff", () => {
+    const root = tempRoot("pi-stale-live-pid-fresh-");
+    try {
+      const asyncDir = path.join(root, "run-live-fresh");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-live-fresh",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 2001,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"));
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => true,
+        now: () => STALE_LIVE_PID_MS + 2000,
+      });
+
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "running");
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-live-fresh.json")), false);
+      assert.deepEqual(fs.readFileSync(path.join(asyncDir, "status.json")), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a live PID at the exact injected stale-record cutoff", () => {
+    const root = tempRoot("pi-stale-live-pid-exact-");
+    try {
+      const asyncDir = path.join(root, "run-live-exact");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-live-exact",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"));
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => true,
+        now: () => 2000,
+        staleAlivePidMs: 1000,
+      });
+
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "running");
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-live-exact.json")), false);
+      assert.deepEqual(fs.readFileSync(path.join(asyncDir, "status.json")), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails a live PID after the stale-record cutoff and clears ownership", () => {
+    const root = tempRoot("pi-stale-live-pid-old-");
+    try {
+      const asyncDir = path.join(root, "run-live-old");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-live-old",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => true,
+        now: () => STALE_LIVE_PID_MS + 1001,
+      });
+
+      assert.equal(result.repaired, true);
+      assert.equal(result.status?.state, "failed");
+      assert.equal(result.status?.pid, undefined);
+      assert.match(result.message ?? "", /live PID, but status has not updated/);
+      assert.match(result.message ?? "", /PID ownership cannot be verified/);
+      const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+      assert.equal(status.pid, undefined);
+      assert.equal(status.state, "failed");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fail a stale snapshot when the running record refreshes before commit", () => {
+    const root = tempRoot("pi-stale-live-pid-race-");
+    try {
+      const asyncDir = path.join(root, "run-live-race");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-live-race",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+      const refreshedAt = STALE_LIVE_PID_MS + 1500;
+      let refreshed = false;
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          if (!refreshed) {
+            refreshed = true;
+            const current = readStatus(asyncDir);
+            assert.ok(current);
+            writeNormalizedLifecycleStatus(asyncDir, {
+              ...current,
+              lastUpdate: refreshedAt,
+            });
+          }
+          return true;
+        },
+        now: () => STALE_LIVE_PID_MS + 2000,
+      });
+
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "running");
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(result.status?.lastUpdate, refreshedAt);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-live-race.json")), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains an unknown PID before the stale-record cutoff", () => {
+    const root = tempRoot("pi-stale-unknown-pid-fresh-");
+    try {
+      const asyncDir = path.join(root, "run-unknown-fresh");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-unknown-fresh",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 2001,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"));
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("EPERM");
+        },
+        now: () => STALE_LIVE_PID_MS + 2000,
+      });
+
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "running");
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-unknown-fresh.json")), false);
+      assert.deepEqual(fs.readFileSync(path.join(asyncDir, "status.json")), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an old unknown PID using startedAt when lastUpdate is absent", () => {
+    const root = tempRoot("pi-stale-unknown-pid-old-");
+    try {
+      const asyncDir = path.join(root, "run-unknown-old");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-unknown-old",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+      });
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("EPERM");
+        },
+        now: () => STALE_LIVE_PID_MS + 1001,
+      });
+
+      assert.equal(result.repaired, true);
+      assert.equal(result.status?.state, "failed");
+      assert.equal(result.status?.pid, undefined);
+      assert.match(result.message ?? "", /PID ownership cannot be verified/);
+      const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+      assert.equal(status.pid, undefined);
+      assert.equal(status.state, "failed");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps old live pausing ownership lifecycle-protected", () => {
+    const root = tempRoot("pi-stale-pausing-live-pid-");
+    try {
+      const asyncDir = path.join(root, "run-pausing");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-pausing",
+        mode: "single",
+        state: "pausing",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        pause: { kind: "awaiting_supervisor", ownerPid: 12345 },
+        steps: [{ agent: "worker", status: "pausing" }],
+      });
+      const before = fs.readFileSync(path.join(asyncDir, "status.json"));
+
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => true,
+        now: () => STALE_LIVE_PID_MS + 1001,
+      });
+
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "pausing");
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(fs.existsSync(path.join(resultsDir, "run-pausing.json")), false);
+      assert.deepEqual(fs.readFileSync(path.join(asyncDir, "status.json")), before);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

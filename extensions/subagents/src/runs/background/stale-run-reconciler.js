@@ -10,6 +10,8 @@ import { boundChildError } from "../shared/child-protocol.js";
 import { isAsyncStatusReadError } from "./async-status-boundary.js";
 const STALE_MESSAGE_PREFIX = "Async runner process";
 const STALE_MESSAGE_SUFFIX = "exited before writing a result. Marked run failed by stale-run reconciliation.";
+const DEFAULT_STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000;
+const STALE_REPAIR_GUARD_FAILED = Symbol("stale-repair-guard-failed");
 function safeStatus(asyncDir, options = {}) {
     try {
         return readStatus(asyncDir, { ...options, cache: false });
@@ -30,6 +32,7 @@ function appendRepairEvent(filePath, payload) {
 }
 const validPid = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 const staleMessage = (pid) => boundChildError(`${STALE_MESSAGE_PREFIX} ${pid} ${STALE_MESSAGE_SUFFIX}`);
+const staleAlivePidMessage = (pid, ageMs) => boundChildError(`Async runner process ${pid} still has a live PID, but status has not updated for ${ageMs}ms. Marked run failed by stale-run reconciliation because PID ownership cannot be verified.`);
 function failedStatus(status, now, message) {
     const steps = status.steps?.map((step) => isCompletedLifecycleStepState(step.status) ||
         step.status === "failed" ||
@@ -99,13 +102,17 @@ function resultArtifact(status, asyncDir, now, message) {
     };
 }
 const protectedLifecycle = (status) => status.state === "pausing" || status.pause?.kind === "awaiting_supervisor";
-function commitStaleFailure(asyncDir, observed, resultPath, now, message) {
+function commitStaleFailure(asyncDir, observed, resultPath, now, message, guard) {
     let committed;
     try {
         committed = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(observed),
-            mutate: (current) => failedStatus(current, now, message),
+            mutate: (current) => {
+                if (guard && !guard(current))
+                    throw STALE_REPAIR_GUARD_FAILED;
+                return failedStatus(current, now, message);
+            },
         }).status;
     }
     catch {
@@ -190,7 +197,20 @@ export function reconcileAsyncRun(asyncDir, options = {}) {
     const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
     if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid))
         return { status: observed, repaired: false, resultPath };
-    if (checkPidLiveness(observed.pid, options.kill) !== "dead")
+    const liveness = checkPidLiveness(observed.pid, options.kill);
+    if (liveness !== "dead" && observed.state !== "running")
         return { status: observed, repaired: false, resultPath };
-    return commitStaleFailure(asyncDir, observed, resultPath, options.now?.() ?? Date.now(), staleMessage(observed.pid));
+    const now = options.now?.() ?? Date.now();
+    if (liveness !== "dead") {
+        const staleAfterMs = options.staleAlivePidMs ?? DEFAULT_STALE_ALIVE_PID_MS;
+        const lastUpdate = observed.lastUpdate ?? observed.startedAt;
+        const ageMs = now - lastUpdate;
+        if (ageMs <= staleAfterMs)
+            return { status: observed, repaired: false, resultPath };
+        return commitStaleFailure(asyncDir, observed, resultPath, now, staleAlivePidMessage(observed.pid, ageMs), (current) => current.state === "running" &&
+            current.pid === observed.pid &&
+            lifecycleGeneration(current) === lifecycleGeneration(observed) &&
+            now - (current.lastUpdate ?? current.startedAt) > staleAfterMs);
+    }
+    return commitStaleFailure(asyncDir, observed, resultPath, now, staleMessage(observed.pid));
 }
