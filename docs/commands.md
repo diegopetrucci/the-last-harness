@@ -323,11 +323,12 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/transcribe` | `pi-transcribe` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
+| `/voice-settings` | `pi-voice` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
+| `/transcribe` | `pi-voice` (`pi-transcribe` compatibility alias) | Compatibility alias for `/voice-settings` |
 
-### `/transcribe` and `Ctrl+Alt+Z`
+### `/voice-settings`, `/transcribe`, and `Ctrl+Alt+Z`
 
-Run `/transcribe` once to choose and confirm a local model; pi-transcribe downloads the model after confirmation. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
+Run `/voice-settings` once to choose and confirm a local model; Pi Voice downloads the model after confirmation. `/transcribe` remains available as a compatibility alias for `/voice-settings`. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
 
 ---
 
@@ -392,7 +393,7 @@ tlh defaults disable <id>  # disable a separately managed default extension (e.g
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`. Updates replace legacy `pi-transcribe` string entries, including manual pins, with the canonical Pi Voice package; replacement objects migrate in place while retaining their extension filters and other metadata, and explicit `tlh.disabledDefaultExtensions` opt-outs plus existing manual canonical pins remain respected.
 
 ### Configuring the notify extension
 

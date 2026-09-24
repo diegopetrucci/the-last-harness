@@ -43,8 +43,14 @@
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
   },
   {
-    "id": "pi-transcribe",
-    "source": "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816",
-    "description": "Local speech-to-text dictation with /transcribe, Ctrl+Alt+Z, and the transcribe_file tool."
+    "id": "pi-voice",
+    "aliases": ["pi-transcribe"],
+    "replaces": [
+      "git:github.com/earendil-works/pi-transcribe",
+      "npm:@earendil-works/pi-transcribe"
+    ],
+    "migrateReplacements": true,
+    "source": "npm:@earendil-works/pi-voice@0.1.0",
+    "description": "Pi Voice local speech-to-text with /voice-settings, the /transcribe compatibility alias, Ctrl+Alt+Z, and the transcribe_file tool."
   }
 ]

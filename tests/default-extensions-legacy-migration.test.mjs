@@ -9,6 +9,7 @@ import {
   bundledExtension,
   bundledExtensionsPath,
   bundledSource,
+  currentPiTranscribeGitSource,
   defaultsScript,
   harnessPackage,
   mergeScript,
@@ -788,26 +789,33 @@ test("tlh-defaults disable migrates the fast alias and removes the replaced pack
   assert.deepEqual(settings.packages, []);
 });
 
-test("future pi-transcribe npm manifest migrates TLH-managed Git installs and preserves manual npm pins", () => {
-  const bundled = bundledExtension("pi-transcribe");
-  assert.ok(bundled, "bundled pi-transcribe default should exist");
-  const futurePiTranscribe = {
-    ...bundled,
-    replaces: [piTranscribeGitSource],
-    migrateReplacements: true,
-    source: piTranscribeNpmSource,
-  };
+test("Pi Voice migration replaces current and historical pi-transcribe pins", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  assert.deepEqual(bundled.aliases, ["pi-transcribe"]);
+  assert.equal(bundled.source, "npm:@earendil-works/pi-voice@0.1.0");
+  assert.equal(bundled.migrateReplacements, true);
 
-  const managedFixture = tempFixture();
-  writeFileSync(managedFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
   writeFileSync(
-    managedFixture.settings,
+    fixture.settings,
     JSON.stringify(
       {
-        packages: [harnessPackage, piTranscribeGitSource, "npm:user-owned-package@1.2.3"],
+        packages: [
+          harnessPackage,
+          currentPiTranscribeGitSource,
+          piTranscribeGitSource,
+          piTranscribeNpmSource,
+          "npm:@earendil-works/pi-transcribe@0.0.0",
+          "npm:user-owned-package@1.2.3",
+        ],
         tlh: {
           defaultExtensionProvenance: {
-            managedPackageIdentities: [packageIdentity(piTranscribeGitSource)],
+            managedPackageIdentities: [
+              packageIdentity(currentPiTranscribeGitSource),
+              packageIdentity(piTranscribeNpmSource),
+            ],
           },
         },
       },
@@ -817,30 +825,41 @@ test("future pi-transcribe npm manifest migrates TLH-managed Git installs and pr
   );
 
   runNode(mergeScript, [
-    managedFixture.defaults,
+    fixture.defaults,
     "--settings",
-    managedFixture.settings,
+    fixture.settings,
     "--default-extensions",
-    managedFixture.extensions,
+    fixture.extensions,
     "--quiet",
   ]);
 
-  const managedSettings = readJson(managedFixture.settings);
-  assert.equal(managedSettings.packages.includes(piTranscribeGitSource), false);
-  assert.equal(managedSettings.packages.includes(piTranscribeNpmSource), true);
-  assert.equal(managedSettings.packages.includes("npm:user-owned-package@1.2.3"), true);
-  assert.deepEqual(managedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
-    "npm:@earendil-works/pi-transcribe",
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    "npm:user-owned-package@1.2.3",
+    bundled.source,
   ]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@earendil-works/pi-voice",
+  ]);
+});
 
-  const manualFixture = tempFixture();
-  const manualPiTranscribeSource = "npm:@earendil-works/pi-transcribe@0.0.0";
-  writeFileSync(manualFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+test("Pi Voice migration removes legacy pins even when they are not provenance-managed", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
   writeFileSync(
-    manualFixture.settings,
+    fixture.settings,
     JSON.stringify(
       {
-        packages: [harnessPackage, manualPiTranscribeSource, "npm:user-owned-package@1.2.3"],
+        packages: [
+          harnessPackage,
+          piTranscribeGitSource,
+          "npm:@earendil-works/pi-transcribe@0.0.0",
+          "npm:user-owned-package@1.2.3",
+        ],
         tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
       },
       null,
@@ -849,22 +868,669 @@ test("future pi-transcribe npm manifest migrates TLH-managed Git installs and pr
   );
 
   runNode(mergeScript, [
-    manualFixture.defaults,
+    fixture.defaults,
     "--settings",
-    manualFixture.settings,
+    fixture.settings,
     "--default-extensions",
-    manualFixture.extensions,
+    fixture.extensions,
     "--quiet",
   ]);
 
-  const manualSettings = readJson(manualFixture.settings);
-  assert.deepEqual(manualSettings.packages, [
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
     harnessPackage,
-    manualPiTranscribeSource,
     "npm:user-owned-package@1.2.3",
+    bundled.source,
   ]);
-  assert.deepEqual(manualSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@earendil-works/pi-voice",
+  ]);
 });
+
+test("tlh-defaults disable accepts the pi-transcribe compatibility alias", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, bundled.source, piTranscribeGitSource],
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "pi-transcribe",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["pi-voice"]);
+  assert.deepEqual(settings.packages, [harnessPackage]);
+});
+
+for (const filter of [[], ["-*"], ["!*"], ["-index.ts"], ["!index.ts"]]) {
+  test(`merge migrates filtered Pi Voice replacement objects in place ${JSON.stringify(filter)}`, () => {
+    const bundled = bundledExtension("pi-voice");
+    assert.ok(bundled, "bundled pi-voice default should exist");
+
+    const legacyEntry = {
+      source: piTranscribeGitSource,
+      extensions: filter,
+      autoload: true,
+      resources: ["model.bin"],
+      userMetadata: { preserve: true },
+    };
+    const fixture = tempFixture();
+    writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+    writeFileSync(
+      fixture.settings,
+      JSON.stringify(
+        {
+          packages: [harnessPackage, legacyEntry],
+          tlh: { userFlag: true },
+        },
+        null,
+        2,
+      ),
+    );
+
+    runNode(mergeScript, [
+      fixture.defaults,
+      "--settings",
+      fixture.settings,
+      "--default-extensions",
+      fixture.extensions,
+      "--quiet",
+    ]);
+
+    const settings = readJson(fixture.settings);
+    assert.deepEqual(settings.packages, [
+      harnessPackage,
+      { ...legacyEntry, source: bundled.source },
+    ]);
+    assert.deepEqual(settings.tlh.disabledDefaultExtensions ?? [], []);
+    assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+    assert.equal(settings.tlh.userFlag, true);
+  });
+}
+
+test("merge preserves a filtered canonical Pi Voice object without a durable opt-out", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const canonicalEntry = {
+    source: bundled.source,
+    extensions: ["!*"],
+    autoload: true,
+    resources: ["model.bin"],
+    userMetadata: { preserve: true },
+  };
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, canonicalEntry],
+        tlh: { userFlag: true },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [harnessPackage, canonicalEntry]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions ?? [], []);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+  assert.equal(settings.tlh.userFlag, true);
+});
+
+test("merge preserves filtered unrelated default objects without deriving opt-outs", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const unrelated = {
+    id: "unrelated-default",
+    source: "npm:unrelated-default@1.0.0",
+    description: "fixture",
+  };
+  const unrelatedEntry = {
+    source: unrelated.source,
+    extensions: [],
+    autoload: true,
+    resources: ["fixture.txt"],
+    userMetadata: { preserve: true },
+  };
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled, unrelated], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, unrelatedEntry, "npm:user-owned-package@1.2.3"],
+        tlh: { userFlag: true },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    unrelatedEntry,
+    "npm:user-owned-package@1.2.3",
+    bundled.source,
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions ?? [], []);
+  assert.equal(settings.tlh.userFlag, true);
+});
+
+for (const sourceKind of ["canonical", "replacement"]) {
+  test(`tlh-defaults reports a filtered Pi Voice ${sourceKind} as disabled by package filter`, () => {
+    const bundled = bundledExtension("pi-voice");
+    assert.ok(bundled, "bundled pi-voice default should exist");
+    const source = sourceKind === "canonical" ? bundled.source : piTranscribeGitSource;
+    const fixture = tempFixture();
+    writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+    writeFileSync(
+      fixture.settings,
+      JSON.stringify(
+        {
+          packages: [{ source, extensions: [], userMetadata: { preserve: true } }],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const list = runNode(defaultsScript, [
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "list",
+    ]);
+    assert.match(list, /disabled\s+pi-voice/);
+    assert.match(list, /disabled by package filter/);
+
+    const sources = runNode(defaultsScript, [
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "sources",
+    ]);
+    assert.equal(sources.trim(), "");
+  });
+}
+
+test("merge preserves partial package filters and unknown Pi Voice metadata", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          {
+            source: piTranscribeGitSource,
+            extensions: ["-src/extension/index.ts"],
+            autoload: true,
+            userMetadata: { preserve: true },
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    harnessPackage,
+    {
+      source: bundled.source,
+      extensions: ["-src/extension/index.ts"],
+      autoload: true,
+      userMetadata: { preserve: true },
+    },
+  ]);
+});
+
+test("tlh-defaults enable migrates an object replacement without dropping metadata", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          {
+            source: piTranscribeGitSource,
+            extensions: [],
+            autoload: true,
+            userMetadata: { preserve: true },
+          },
+        ],
+        tlh: { disabledDefaultExtensions: ["pi-voice"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "pi-voice",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    {
+      source: bundled.source,
+      autoload: true,
+      userMetadata: { preserve: true },
+    },
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+});
+
+test("merge preserves a manual canonical object pin when a replacement coexists", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalSource = "npm:@earendil-works/pi-voice@0.0.9";
+  const manualCanonicalEntry = {
+    source: manualCanonicalSource,
+    extensions: ["src/extension/index.ts"],
+    autoload: true,
+    userMetadata: { preserve: true },
+  };
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          {
+            source: piTranscribeGitSource,
+            extensions: ["src/extension/index.ts"],
+            replacementMetadata: { preserve: false },
+          },
+          manualCanonicalEntry,
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [harnessPackage, manualCanonicalEntry]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+});
+
+test("tlh-defaults enable preserves a manual canonical object pin when a replacement coexists", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalEntry = {
+    source: "npm:@earendil-works/pi-voice@0.0.9",
+    extensions: ["src/extension/index.ts"],
+    autoload: true,
+    userMetadata: { preserve: true },
+  };
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          {
+            source: piTranscribeGitSource,
+            extensions: ["src/extension/index.ts"],
+            replacementMetadata: { preserve: false },
+          },
+          manualCanonicalEntry,
+        ],
+        tlh: {
+          disabledDefaultExtensions: ["pi-voice"],
+          defaultExtensionProvenance: { managedPackageIdentities: [] },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "pi-voice",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [
+    {
+      source: "npm:@earendil-works/pi-voice@0.0.9",
+      autoload: true,
+      userMetadata: { preserve: true },
+    },
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+});
+
+test("merge preserves a canonical string pin when a replacement object coexists", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalSource = "npm:@earendil-works/pi-voice@0.0.9";
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          {
+            source: piTranscribeGitSource,
+            extensions: ["src/extension/index.ts"],
+            replacementMetadata: { preserve: false },
+          },
+          manualCanonicalSource,
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [harnessPackage, manualCanonicalSource]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+});
+
+test("tlh-defaults enable preserves a canonical string pin when a replacement object coexists", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalSource = "npm:@earendil-works/pi-voice@0.0.9";
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          {
+            source: piTranscribeGitSource,
+            extensions: ["src/extension/index.ts"],
+            replacementMetadata: { preserve: false },
+          },
+          manualCanonicalSource,
+        ],
+        tlh: {
+          disabledDefaultExtensions: ["pi-voice"],
+          defaultExtensionProvenance: { managedPackageIdentities: [] },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "pi-voice",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [manualCanonicalSource]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+});
+
+test("merge treats an unfiltered canonical identity as authoritative over a filtered replacement", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalSource = "npm:@earendil-works/pi-voice@0.0.9";
+
+  for (const canonicalEntry of [
+    manualCanonicalSource,
+    {
+      source: manualCanonicalSource,
+      extensions: ["src/extension/index.ts"],
+      canonicalMetadata: { preserve: true },
+    },
+  ]) {
+    const fixture = tempFixture();
+    writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+    writeFileSync(
+      fixture.settings,
+      JSON.stringify(
+        {
+          packages: [
+            harnessPackage,
+            {
+              source: piTranscribeGitSource,
+              extensions: [],
+              replacementMetadata: { stale: true },
+            },
+            canonicalEntry,
+          ],
+          tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+        },
+        null,
+        2,
+      ),
+    );
+
+    runNode(mergeScript, [
+      fixture.defaults,
+      "--settings",
+      fixture.settings,
+      "--default-extensions",
+      fixture.extensions,
+      "--quiet",
+    ]);
+
+    const settings = readJson(fixture.settings);
+    assert.deepEqual(settings.packages, [harnessPackage, canonicalEntry]);
+    assert.deepEqual(settings.tlh.disabledDefaultExtensions ?? [], []);
+    assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
+  }
+});
+
+test("tlh-defaults list and sources keep an unfiltered canonical identity enabled over a filtered replacement", () => {
+  const bundled = bundledExtension("pi-voice");
+  assert.ok(bundled, "bundled pi-voice default should exist");
+  const manualCanonicalSource = "npm:@earendil-works/pi-voice@0.0.9";
+
+  for (const canonicalEntry of [
+    manualCanonicalSource,
+    {
+      source: manualCanonicalSource,
+      extensions: ["src/extension/index.ts"],
+      canonicalMetadata: { preserve: true },
+    },
+  ]) {
+    const fixture = tempFixture();
+    writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+    writeFileSync(
+      fixture.settings,
+      JSON.stringify(
+        {
+          packages: [
+            {
+              source: piTranscribeGitSource,
+              extensions: [],
+              replacementMetadata: { stale: true },
+            },
+            canonicalEntry,
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const list = runNode(defaultsScript, [
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "list",
+    ]);
+    assert.match(list, /enabled\s+pi-voice/);
+    assert.doesNotMatch(list, /disabled by package filter/);
+
+    const sources = runNode(defaultsScript, [
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "sources",
+    ])
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    assert.deepEqual(sources, [bundled.source]);
+  }
+});
+
+for (const scenario of [
+  { name: "malformed tlh", tlh: "malformed" },
+  {
+    name: "malformed disabledDefaultExtensions",
+    tlh: { disabledDefaultExtensions: { malformed: true } },
+  },
+]) {
+  test(`merge migrates a filtered replacement with ${scenario.name} and is idempotent`, () => {
+    const bundled = bundledExtension("pi-voice");
+    assert.ok(bundled, "bundled pi-voice default should exist");
+    const filteredEntry = {
+      source: piTranscribeGitSource,
+      extensions: [],
+      autoload: true,
+      userMetadata: { preserve: true },
+    };
+    const fixture = tempFixture();
+    writeFileSync(fixture.extensions, JSON.stringify([bundled], null, 2));
+    writeFileSync(
+      fixture.settings,
+      JSON.stringify(
+        {
+          packages: [harnessPackage, filteredEntry],
+          tlh: scenario.tlh,
+        },
+        null,
+        2,
+      ),
+    );
+
+    runNode(mergeScript, [
+      fixture.defaults,
+      "--settings",
+      fixture.settings,
+      "--default-extensions",
+      fixture.extensions,
+      "--quiet",
+    ]);
+
+    const first = readJson(fixture.settings);
+    assert.deepEqual(first.packages, [
+      harnessPackage,
+      { ...filteredEntry, source: bundled.source },
+    ]);
+    assert.deepEqual(
+      first.tlh?.disabledDefaultExtensions ?? [],
+      scenario.tlh?.disabledDefaultExtensions ?? [],
+    );
+
+    const secondOutput = runNode(mergeScript, [
+      fixture.defaults,
+      "--settings",
+      fixture.settings,
+      "--default-extensions",
+      fixture.extensions,
+    ]);
+    assert.match(secondOutput, /No settings changes needed\./);
+    assert.deepEqual(readJson(fixture.settings), first);
+  });
+}
 
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
   const fixtureExtension = {

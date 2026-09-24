@@ -18,6 +18,8 @@ export const previousBundledDirtyRepoGuardSource = "npm:@diegopetrucci/pi-dirty-
 export const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 export const piTranscribeGitSource =
   "git:github.com/earendil-works/pi-transcribe@e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1";
+export const currentPiTranscribeGitSource =
+  "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816";
 export const piTranscribeNpmSource = "npm:@earendil-works/pi-transcribe@0.0.1";
 
 export function tempFixture() {
