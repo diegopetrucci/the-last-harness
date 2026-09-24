@@ -10,6 +10,8 @@ import type {
 
 const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
+const HERDR_METADATA_SOURCE = "user:tlh-display";
+const HERDR_DISPLAY_AGENT = "tlh";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
@@ -359,6 +361,8 @@ export function createHerdrActivityReporter(
   let heartbeatTimer: TimeoutHandle | undefined;
   let heartbeatStopped = false;
   let heartbeatStarted = false;
+  let displayMetadataPending = false;
+  let displayMetadataInFlight = false;
   let outboundChain: Promise<void> = Promise.resolve();
 
   const nextReportSeq = (): number => {
@@ -391,6 +395,32 @@ export function createHerdrActivityReporter(
     });
   };
 
+  const sendDisplayMetadata = async (): Promise<void> => {
+    try {
+      await sendRequest({
+        id: `${HERDR_METADATA_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
+        method: "pane.report_metadata",
+        params: {
+          pane_id: paneId,
+          source: HERDR_METADATA_SOURCE,
+          agent: HERDR_AGENT,
+          applies_to_source: HERDR_SOURCE,
+          display_agent: HERDR_DISPLAY_AGENT,
+        },
+      });
+    } catch {
+      // Heartbeats retry metadata after transient startup/server failures.
+    }
+  };
+
+  const retryDisplayMetadata = (): void => {
+    if (!displayMetadataPending || displayMetadataInFlight || !rootSession || disposed) return;
+    displayMetadataInFlight = true;
+    void sendDisplayMetadata().finally(() => {
+      displayMetadataInFlight = false;
+    });
+  };
+
   const stopHeartbeat = (): void => {
     heartbeatStopped = true;
     if (heartbeatTimer) {
@@ -411,9 +441,14 @@ export function createHerdrActivityReporter(
         // Read desiredState here, not when the timer fires, so a queued
         // heartbeat cannot replay a stale state after a newer snapshot.
         const state = desiredState ?? lastReportedState;
-        if (state === undefined) return;
-        await sendStateCore(state);
-        lastReportedState = state;
+        if (state !== undefined) {
+          await sendStateCore(state);
+          lastReportedState = state;
+        }
+        // Metadata is retried from the established heartbeat lifecycle, but
+        // is intentionally fire-and-forget so a metadata outage cannot delay
+        // or reorder the activity state writer.
+        retryDisplayMetadata();
       });
       // A heartbeat failure must not break the outbound chain; schedule the
       // next recovery attempt only after this delivery settles.
@@ -466,25 +501,34 @@ export function createHerdrActivityReporter(
     handleSessionStart(ctx) {
       if (disposed || ctx.mode !== "tui") {
         rootSession = false;
+        displayMetadataPending = false;
         return;
       }
       rootSession = true;
       sessionRef = readSessionRef(ctx);
-      if (!sessionRef.agentSessionId && !sessionRef.agentSessionPath) return;
       const startedSessionRef = sessionRef;
-      void sendRequest({
-        id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
-        method: "pane.report_agent_session",
-        params: withSessionRef(
-          {
-            pane_id: paneId,
-            source: HERDR_SOURCE,
-            agent: HERDR_AGENT,
-            seq: nextReportSeq(),
-          },
-          startedSessionRef,
-        ),
-      }).catch(() => undefined);
+      if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
+        void sendRequest({
+          id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
+          method: "pane.report_agent_session",
+          params: withSessionRef(
+            {
+              pane_id: paneId,
+              source: HERDR_SOURCE,
+              agent: HERDR_AGENT,
+              seq: nextReportSeq(),
+            },
+            startedSessionRef,
+          ),
+        }).catch(() => undefined);
+      }
+      // Keep presentation metadata on its own source so HERDR_SOURCE remains
+      // exclusively responsible for the pane's lifecycle authority. It does
+      // not require a session ref: pane metadata is keyed by pane/source.
+      // Keep it pending for this session so every heartbeat reasserts the
+      // display name if Herdr restarts after the initial report.
+      displayMetadataPending = true;
+      retryDisplayMetadata();
     },
     handleSnapshot(snapshot) {
       if (!rootSession || disposed) return;
@@ -493,6 +537,7 @@ export function createHerdrActivityReporter(
     handleSessionShutdown() {
       if (!rootSession) return;
       rootSession = false;
+      displayMetadataPending = false;
       stopHeartbeat();
       queuedReporter.handleSessionShutdown();
       // No pane.release_agent: herdr v0.8.0 (commit e608a751) made pane
@@ -504,6 +549,7 @@ export function createHerdrActivityReporter(
     dispose() {
       disposed = true;
       rootSession = false;
+      displayMetadataPending = false;
       stopHeartbeat();
       queuedReporter.dispose();
     },

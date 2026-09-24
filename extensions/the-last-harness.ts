@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import {
   AgentSession as TlhPiAgentSession,
   getMarkdownTheme,
@@ -116,6 +118,17 @@ function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefin
   return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
 }
 
+function setTlhTerminalTitle(ctx: ExtensionContext): void {
+  try {
+    if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.setTitle !== "function") return;
+    const cwdLabel = basename(ctx.cwd) || ctx.cwd;
+    if (!cwdLabel) return;
+    ctx.ui.setTitle(`tlh - ${cwdLabel}`);
+  } catch {
+    // Title branding must not make startup fragile in headless/test contexts.
+  }
+}
+
 function createRetryableLazyImport<TModule>(
   loader: () => Promise<TModule>,
 ): () => Promise<TModule> {
@@ -142,11 +155,18 @@ const EMPTY_STARTUP_RESOURCES: StartupResources = {
 
 type DeferredStartupTaskScheduler = (task: () => void) => void;
 type StartupResourceCollector = typeof collectStartupResourceSnapshot;
+type TerminalTitleScheduler = (task: () => void, delayMs: number) => void;
+
+const TERMINAL_TITLE_REASSERTION_DELAYS_MS = [0, 250, 1000] as const;
 
 let scheduleDeferredStartupTask: DeferredStartupTaskScheduler = (task) => {
   setImmediate(task);
 };
 let startupResourceCollector: StartupResourceCollector = collectStartupResourceSnapshot;
+let scheduleTerminalTitleReapplication: TerminalTitleScheduler = (task, delayMs) => {
+  const handle = setTimeout(task, delayMs);
+  handle.unref();
+};
 
 export const __testing = {
   setDeferredStartupTaskSchedulerForTests(scheduler: DeferredStartupTaskScheduler) {
@@ -155,11 +175,18 @@ export const __testing = {
   setStartupResourceCollectorForTests(collector: StartupResourceCollector) {
     startupResourceCollector = collector;
   },
+  setTerminalTitleSchedulerForTests(scheduler: TerminalTitleScheduler) {
+    scheduleTerminalTitleReapplication = scheduler;
+  },
   reset() {
     scheduleDeferredStartupTask = (task) => {
       setImmediate(task);
     };
     startupResourceCollector = collectStartupResourceSnapshot;
+    scheduleTerminalTitleReapplication = (task, delayMs) => {
+      const handle = setTimeout(task, delayMs);
+      handle.unref();
+    };
   },
 };
 
@@ -179,6 +206,27 @@ export default function theLastHarness(pi: ExtensionAPI) {
     activeTlhHeader = undefined;
     activeTlhHeaderComponentId = 0;
     return activeTlhHeaderSessionToken;
+  };
+  const scheduleTlhTerminalTitleReassertions = (
+    ctx: ExtensionContext,
+    sessionToken: number,
+  ): void => {
+    const reassert = (passIndex: number): void => {
+      if (activeTlhHeaderSessionToken !== sessionToken) return;
+      setTlhTerminalTitle(ctx);
+      const nextPassIndex = passIndex + 1;
+      if (
+        nextPassIndex >= TERMINAL_TITLE_REASSERTION_DELAYS_MS.length ||
+        activeTlhHeaderSessionToken !== sessionToken
+      ) {
+        return;
+      }
+      scheduleTerminalTitleReapplication(
+        () => reassert(nextPassIndex),
+        TERMINAL_TITLE_REASSERTION_DELAYS_MS[nextPassIndex],
+      );
+    };
+    scheduleTerminalTitleReapplication(() => reassert(0), TERMINAL_TITLE_REASSERTION_DELAYS_MS[0]);
   };
   // Session-scoped provider auth-health store. Created once per session so that
   // dispatch-time probing and the footer renderer share the same instance.
@@ -360,8 +408,20 @@ export default function theLastHarness(pi: ExtensionAPI) {
     refreshSubscriptionUsage(ctx);
   });
 
+  pi.on("turn_start", (_event, ctx) => {
+    setTlhTerminalTitle(ctx);
+  });
+
   pi.on("turn_end", (_event, ctx) => {
+    setTlhTerminalTitle(ctx);
     refreshSubscriptionUsage(ctx);
+  });
+
+  pi.on("session_info_changed", (_event, ctx) => {
+    // Pi updates its title before dispatching this extension event. Re-apply
+    // TLH's title synchronously so supported session-name refreshes cannot
+    // replace the integration branding.
+    setTlhTerminalTitle(ctx);
   });
 
   pi.on("session_start", async (event, ctx) => {
@@ -372,6 +432,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
     if (!ctx.hasUI) {
       return;
     }
+    setTlhTerminalTitle(ctx);
+    // Pi's rebind path calls updateTerminalTitle after session_start handlers
+    // complete. Spaced, unref'd timers tolerate startup handlers and
+    // provider-count work that yield for more than one check phase.
+    scheduleTlhTerminalTitleReassertions(ctx, sessionToken);
 
     if (event.reason === "startup") {
       try {
