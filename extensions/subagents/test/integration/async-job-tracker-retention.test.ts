@@ -661,7 +661,7 @@ describe(
         tracker.resetJobs(ui.ctx as never);
         tracker.handleStarted({ id: "run-2", asyncDir: runDir, agent: "worker" });
 
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        await waitForCondition(() => state.asyncJobs.size === 0, "polling cleanup");
 
         assert.equal(state.asyncJobs.size, 0);
         assert.ok(ui.widgets.length > 0, "expected polling cleanup to replace the widget");
