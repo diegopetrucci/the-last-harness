@@ -261,6 +261,7 @@ async function createExtensionHarness({
     cwd,
     emptyBinDir,
     shortcuts: pi.shortcuts,
+    sessionStartHandlers,
     async shutdownSession(ctx) {
       for (const handler of sessionShutdownHandlers) {
         await handler({}, ctx);
@@ -390,6 +391,99 @@ async function runSessionStart({
     harness.cleanup();
   }
 }
+
+test("TLH filters only the exact Pi Voice setup info notice once per shared UI", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+  });
+
+  try {
+    const notifications = [];
+    const ctx = createCtx({ cwd: harness.cwd, notifications });
+    const filterHandler = harness.sessionStartHandlers[0];
+    assert.equal(typeof filterHandler, "function", "TLH notice filter must register first");
+
+    await filterHandler({ reason: "startup" }, ctx);
+    const wrappedNotify = ctx.ui.notify;
+    await filterHandler({ reason: "reload" }, ctx);
+    assert.equal(
+      ctx.ui.notify,
+      wrappedNotify,
+      "repeated session starts must not stack notifier wrappers",
+    );
+
+    const setupNotice = "Pi Voice installed · press Ctrl+Alt+Z or run /voice-settings to set up";
+    const alternatePlatformSetupNotice =
+      "Pi Voice installed · press Ctrl+Option+Z or run /voice-settings to set up";
+    ctx.ui.notify(setupNotice, "info");
+    ctx.ui.notify(alternatePlatformSetupNotice, "info");
+    ctx.ui.notify(setupNotice, "warning");
+    ctx.ui.notify(`${setupNotice} now`, "info");
+    ctx.ui.notify(
+      "Pi Voice installed · press Ctrl+Shift+Z or run /voice-settings to set up",
+      "info",
+    );
+    ctx.ui.notify("Pi Voice ready", "info");
+    ctx.ui.notify(setupNotice, "error");
+
+    assert.deepEqual(notifications, [
+      { message: setupNotice, type: "warning" },
+      { message: `${setupNotice} now`, type: "info" },
+      {
+        message: "Pi Voice installed · press Ctrl+Shift+Z or run /voice-settings to set up",
+        type: "info",
+      },
+      { message: "Pi Voice ready", type: "info" },
+      { message: setupNotice, type: "error" },
+    ]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("TLH wraps a distinct UI object independently", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+  });
+
+  try {
+    const setupNotice = "Pi Voice installed · press Ctrl+Alt+Z or run /voice-settings to set up";
+    const firstNotifications = [];
+    const secondNotifications = [];
+    const firstCtx = createCtx({ cwd: harness.cwd, notifications: firstNotifications });
+    const secondCtx = createCtx({ cwd: harness.cwd, notifications: secondNotifications });
+    const filterHandler = harness.sessionStartHandlers[0];
+
+    await filterHandler({ reason: "startup" }, firstCtx);
+    await filterHandler({ reason: "reload" }, secondCtx);
+
+    assert.notEqual(firstCtx.ui.notify, secondCtx.ui.notify);
+    firstCtx.ui.notify(setupNotice, "info");
+    secondCtx.ui.notify(setupNotice, "info");
+    firstCtx.ui.notify("first UI remains usable", "info");
+    secondCtx.ui.notify("second UI remains usable", "info");
+
+    assert.deepEqual(firstNotifications, [{ message: "first UI remains usable", type: "info" }]);
+    assert.deepEqual(secondNotifications, [{ message: "second UI remains usable", type: "info" }]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("headless sessions leave the shared UI notifier untouched", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+  });
+
+  try {
+    const ctx = createCtx({ cwd: harness.cwd, notifications: [], hasUI: false });
+    const originalNotify = ctx.ui.notify;
+    await harness.sessionStartHandlers[0]({ reason: "startup" }, ctx);
+    assert.equal(ctx.ui.notify, originalNotify);
+  } finally {
+    harness.cleanup();
+  }
+});
 
 function createDeferred() {
   let resolve;
