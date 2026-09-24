@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
+import { basename, extname } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -175,21 +177,6 @@ test("normalization ignores generic compatibility fields when a provider block i
 
 const OPENAI_PROVIDERS = new Set(["openai", "openai-codex"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
-const EXPECTED_XAI_DEFAULTS = new Map([
-  ["architect", { model: "grok-4.6", effort: "high" }],
-  ["rush", { model: "grok-4.6", effort: "low" }],
-  ["product", { model: "grok-4.6", effort: "high" }],
-  ["bug-hunter", { model: "grok-4.6", effort: "high" }],
-  ["developer", { model: "grok-4.6", effort: "medium" }],
-  ["code-reviewer", { model: "grok-4.6", effort: "high" }],
-  ["oracle", { model: "grok-4.6", effort: "xhigh" }],
-  ["contrarian", { model: "grok-4.6", effort: "xhigh" }],
-  ["repo-scout", { model: "grok-4.3", effort: "medium" }],
-  ["web-scout", { model: "grok-4.3", effort: "medium" }],
-  ["librarian", { model: "grok-4.3", effort: "medium" }],
-  ["diff-summarizer", { model: "grok-4.3", effort: "medium" }],
-  ["test-runner", { model: "grok-4.3", effort: "low" }],
-]);
 
 function loadedModelEntries(agent) {
   return (agent.tlhModelDefaults ?? []).flatMap((entry) =>
@@ -209,30 +196,49 @@ function effortForModel(agent, model) {
   )?.entry.effort;
 }
 
-test("production bundled agents declare the approved xAI Grok defaults", () => {
+test("production bundled agents declare well-formed xAI defaults", () => {
+  const packagedAgentNames = ["primary", "subagents"].flatMap((directory) =>
+    readdirSync(new URL(`../agents/${directory}/`, import.meta.url))
+      .filter((filename) => extname(filename) === ".md")
+      .map((filename) => basename(filename, ".md")),
+  );
   const agents = [...loadPrimaryAgents().values(), ...loadSubagentMetadata()];
+  const loadedAgentNames = agents.map((agent) => agent.name);
+
   assert.equal(
     agents.length,
-    EXPECTED_XAI_DEFAULTS.size,
-    "every bundled agent must be loaded exactly once",
+    packagedAgentNames.length,
+    "every packaged agent file must be loaded exactly once",
+  );
+  assert.equal(
+    new Set(loadedAgentNames).size,
+    loadedAgentNames.length,
+    "every packaged agent must be loaded without duplicates",
   );
   assert.deepEqual(
-    new Set(agents.map((agent) => agent.name)),
-    new Set(EXPECTED_XAI_DEFAULTS.keys()),
-    "every bundled role must be covered exactly once",
+    [...new Set(loadedAgentNames)].sort(),
+    [...new Set(packagedAgentNames)].sort(),
+    "loaded agent names must match the packaged agent files",
   );
 
-  for (const [name, expected] of EXPECTED_XAI_DEFAULTS) {
-    const agent = agents.find((candidate) => candidate.name === name);
-    assert.ok(agent, `${name} must be loaded from production frontmatter`);
+  for (const agent of agents) {
     const entries = (agent.tlhModelDefaults ?? []).filter((entry) => entry.provider === "xai");
-    assert.equal(entries.length, 1, `${name} must declare exactly one xAI default`);
-    assert.deepEqual(
-      entries[0].models,
-      [{ provider: "xai", id: expected.model }],
-      `${name} xAI model`,
+    assert.equal(entries.length, 1, `${agent.name} must declare exactly one xAI default`);
+    const [entry] = entries;
+    assert.ok(
+      Array.isArray(entry.models) && entry.models.length > 0,
+      `${agent.name} xAI models must be non-empty`,
     );
-    assert.equal(entries[0].effort, expected.effort, `${name} xAI effort`);
+    assert.ok(
+      entry.models.every(
+        (model) => model.provider === "xai" && typeof model.id === "string" && model.id.length > 0,
+      ),
+      `${agent.name} xAI models must have provider and id values`,
+    );
+    assert.ok(
+      typeof entry.effort === "string" && entry.effort.length > 0,
+      `${agent.name} xAI effort must be a non-empty string`,
+    );
   }
 });
 

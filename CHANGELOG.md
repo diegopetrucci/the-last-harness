@@ -6,9 +6,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- The bundled `librarian`, `repo-scout`, and `web-scout` subagents now default to Anthropic Claude Sonnet 4.6 at medium effort instead of Claude Haiku 4.5 at high effort. `diff-summarizer` and `test-runner` continue to use Claude Haiku 4.5 at their existing effort levels. Non-Anthropic provider defaults, including the OpenRouter high-effort entries, are unchanged.
+- The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort instead of high; its Anthropic, xAI, and OpenRouter defaults are unchanged, and `contrarian` still uses OpenAI Codex GPT-5.6 Sol at high effort.
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available with the user-owned global `cacheWarming` modes `off`, `streaming`, and `idle`. Warm refreshes are real provider requests, append usage accounting, and show `Cache warmed ...` notices by default because TLH's packaged `showCacheMissNotices` default is `true`; users can disable that setting.
 - TLH now ships `cacheWarming: "idle"` as a packaged default (append-if-missing merge). An existing user value is preserved. To revert to Pi's native `streaming` mode or to disable warming, set `cacheWarming` to `streaming` or `off` in `/settings`.
 - TLH registers a `cache_warming_decision` hook in the subagent extension. While async children are live, the hook substitutes P=1 for Pi's idle prior of 0.15 and returns `warm` when missCost − warmCost ≥ $0.05; otherwise it abstains and lets Pi decide.
+- Replaced the bundled `pi-transcribe` Git source with npm `@earendil-works/pi-voice@0.1.0` under the canonical default-extension ID `pi-voice`; install/update replaces legacy `pi-transcribe` string entries, including manual pins, with the canonical pin, while migrating replacement objects in place and preserving package filters and metadata; existing `tlh.disabledDefaultExtensions` opt-outs and manual canonical pins remain respected.
 
 ### Removed
 

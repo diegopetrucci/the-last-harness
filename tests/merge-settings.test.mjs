@@ -1007,6 +1007,39 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
   assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, "npm:pi-web-access"]);
 });
 
+test("merge respects the pi-transcribe alias opt-out while removing its legacy Git pin", () => {
+  const piVoiceDefault = {
+    id: "pi-voice",
+    aliases: ["pi-transcribe"],
+    replaces: ["git:github.com/earendil-works/pi-transcribe", "npm:@earendil-works/pi-transcribe"],
+    migrateReplacements: true,
+    source: "npm:@earendil-works/pi-voice@0.1.0",
+  };
+  const legacyPiTranscribeGit =
+    "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816";
+  const unrelatedPackage = "npm:unrelated-package@1.2.3";
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [harnessPackage, legacyPiTranscribeGit, unrelatedPackage],
+      tlh: { disabledDefaultExtensions: ["pi-transcribe"] },
+    },
+    [piVoiceDefault],
+  );
+
+  const output = runMerge(fixture, { quiet: false });
+  const settings = readJson(fixture.settings);
+
+  assert.deepEqual(settings.packages, [harnessPackage, unrelatedPackage]);
+  assert.equal(
+    settings.packages.includes(piVoiceDefault.source),
+    false,
+    "the pi-transcribe alias opt-out must prevent Pi Voice installation",
+  );
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["pi-transcribe"]);
+  assert.match(output, /remove disabled default extension package: pi-voice/);
+});
+
 test("merge force-removes retired confirmation packages by identity while preserving unrelated packages", () => {
   const fixture = tempFixture(
     { packages: [] },

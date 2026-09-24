@@ -163,6 +163,18 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
 
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;
 
+const WHOLE_EXTENSION_DISABLING_FILTERS = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
+
+export function packageEntryDisablesExtensions(entry: unknown): boolean {
+  if (!isPlainObject(entry) || !Array.isArray(entry.extensions)) return false;
+  if (entry.extensions.length === 0) return true;
+
+  return entry.extensions
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .some((value) => WHOLE_EXTENSION_DISABLING_FILTERS.has(value));
+}
+
 export function packageSourceOf(entry: unknown): string | undefined {
   if (typeof entry === "string") return entry;
   if (isPlainObject(entry) && typeof entry.source === "string") return entry.source;
@@ -294,6 +306,44 @@ export function defaultExtensionPackageIdentities(extension: DefaultExtensionEnt
   return [extension.source, ...extension.replaces]
     .map(packageIdentity)
     .filter((value): value is string => Boolean(value));
+}
+
+export function defaultExtensionPackageFilterDisables(
+  settings: unknown,
+  extension: DefaultExtensionEntry,
+): boolean {
+  if (
+    extension.critical === true ||
+    !isPlainObject(settings) ||
+    !Array.isArray(settings.packages)
+  ) {
+    return false;
+  }
+
+  const canonicalIdentity = packageIdentity(extension.source);
+  if (!canonicalIdentity) return false;
+
+  const canonicalEntries = settings.packages.filter(
+    (entry) => packageIdentity(entry) === canonicalIdentity,
+  );
+  if (canonicalEntries.some(packageEntryDisablesExtensions)) return true;
+  if (canonicalEntries.length > 0) return false;
+
+  const replacementIdentities = new Set(
+    extension.replaces
+      .map(packageIdentity)
+      .filter((identity): identity is string =>
+        Boolean(identity && identity !== canonicalIdentity),
+      ),
+  );
+  return settings.packages.some((entry) => {
+    const identity = packageIdentity(entry);
+    return (
+      identity !== undefined &&
+      replacementIdentities.has(identity) &&
+      packageEntryDisablesExtensions(entry)
+    );
+  });
 }
 
 export function readDefaultExtensionProvenance(settings: unknown): DefaultExtensionProvenance {

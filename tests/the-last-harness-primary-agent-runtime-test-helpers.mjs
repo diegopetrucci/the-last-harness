@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
+const piSystemPrompt = await import(
+  new URL("./core/system-prompt.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+);
+export const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = piSystemPrompt;
 export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import(
   "../extensions/the-last-harness/attribution.ts",
 );
@@ -17,8 +21,6 @@ export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
 export const { normalizeAgentModelDefaults } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
 );
-const { buildSystemPrompt, normalizeBuildSystemPromptOptions } =
-  await import("../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js");
 
 export function createPiHarness() {
   const commands = new Map();
@@ -143,6 +145,14 @@ export function createToolCallContext(branchEntries = [], notifications, overrid
   };
 }
 
+export function makeStructuredPromptEvent(customPrompt = "base prompt", cwd = process.cwd()) {
+  const systemPromptOptions = normalizeBuildSystemPromptOptions({ cwd, customPrompt });
+  return {
+    systemPrompt: buildSystemPrompt(systemPromptOptions),
+    systemPromptOptions,
+  };
+}
+
 export function createBeforeAgentStartHarness(pi) {
   const handlers = pi.events
     .filter((event) => event.name === "before_agent_start")
@@ -178,8 +188,9 @@ export function createBeforeAgentStartHarness(pi) {
       const result = await handler(event, ctx);
       if (!result) continue;
       if (result.message) messages.push(result.message);
-      if (result.systemPrompt !== undefined)
+      if (result.systemPrompt !== undefined) {
         systemPromptOptions.forceSystemPrompt = result.systemPrompt;
+      }
     }
 
     return {

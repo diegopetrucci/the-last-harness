@@ -583,6 +583,83 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
   });
 
+  it("loads the prompt runtime after tool, custom, and subagent-only extensions", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["./tool-override.ts"],
+      extensions: ["./custom-override.ts"],
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+    assert.deepEqual(extensionArgs.slice(0, -1), [
+      "./tool-override.ts",
+      "./custom-override.ts",
+      "./child-override.ts",
+    ]);
+    assert.match(extensionArgs.at(-1) ?? "", /subagent-prompt-runtime\.ts$/);
+  });
+
+  it("deduplicates canonical child extension aliases while retaining first spelling and order", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-extension-alias-"));
+    const toolPath = path.join(cwd, "tool-override.ts");
+    const customPath = path.join(cwd, "custom-override.ts");
+    fs.writeFileSync(toolPath, "export default () => {};", "utf8");
+    fs.writeFileSync(customPath, "export default () => {};", "utf8");
+
+    try {
+      const toolSpelling = `.${path.sep}${path.basename(toolPath)}`;
+      const customSpelling = `.${path.sep}${path.basename(customPath)}`;
+      const runtimeProbe = buildPiArgs({
+        baseArgs: [],
+        task: "probe",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+      });
+      const runtimePath = runtimeProbe.args.find(
+        (_arg, index) => runtimeProbe.args[index - 1] === "--extension",
+      );
+      assert.ok(runtimePath);
+      const runtimeSpelling = `${path.dirname(runtimePath)}${path.sep}.${path.sep}${path.basename(runtimePath)}`;
+      const { args } = buildPiArgs({
+        baseArgs: ["-p"],
+        task: "hello",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+        tools: [toolSpelling],
+        extensions: [toolPath, customSpelling, runtimeSpelling],
+        subagentOnlyExtensions: [customPath],
+      });
+
+      const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+      assert.deepEqual(extensionArgs.slice(0, -1), [toolSpelling, customSpelling]);
+      assert.equal(extensionArgs.at(-1), runtimeSpelling);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("retains normal extension discovery when no explicit extension list is supplied", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    assert.equal(args.includes("--no-extensions"), false);
+  });
+
   it("passes tool budget through env", () => {
     const { env } = buildPiArgs({
       baseArgs: ["-p"],
