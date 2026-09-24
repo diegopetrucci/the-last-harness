@@ -73,6 +73,15 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+function createDeferredStateRequestSender(deliveries) {
+  return (request) => {
+    if (request.method === "pane.report_metadata") return Promise.resolve();
+    const deferred = createDeferred();
+    deliveries.push({ request, deferred });
+    return deferred.promise;
+  };
+}
+
 test("Herdr reporter no-ops without required env and when official reporter is installed", async () => {
   const calls = [];
   const noopReporter = createHerdrActivityReporter({
@@ -145,35 +154,47 @@ test("Herdr reporter retries timed out activity socket delivery once", async () 
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
+  assert.equal(sockets.length, 2);
+
+  // Metadata is a separate best-effort request. Settle it first so this test
+  // can continue to focus on activity-socket backoff.
+  sockets[0].emit("connect");
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
+  sockets[0].emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
   assert.deepEqual(timers.getPendingDelays(), [500]);
 
-  sockets[0].emit("connect");
-  assert.equal(sockets[0].writes.length, 1);
+  const firstActivitySocket = sockets[1];
+  firstActivitySocket.emit("connect");
+  assert.equal(firstActivitySocket.writes.length, 1);
 
   timers.advance(499);
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.equal(sockets[0].destroyCalls, 0);
+  assert.equal(sockets.length, 2);
+  assert.equal(firstActivitySocket.destroyCalls, 0);
 
   timers.advance(1);
   await flushAsyncWork();
-  assert.equal(sockets[0].destroyCalls, 1);
-  assert.equal(sockets.length, 2);
+  assert.equal(firstActivitySocket.destroyCalls, 1);
+  assert.equal(sockets.length, 3);
   assert.deepEqual(timers.getPendingDelays(), [1500]);
 
-  sockets[1].emit("connect");
-  assert.equal(sockets[1].writes.length, 1);
-  assert.equal(JSON.parse(sockets[1].writes[0]).method, "pane.report_agent");
-  sockets[1].emit("data", Buffer.from("ok"));
+  const secondActivitySocket = sockets[2];
+  secondActivitySocket.emit("connect");
+  assert.equal(secondActivitySocket.writes.length, 1);
+  assert.equal(JSON.parse(secondActivitySocket.writes[0]).method, "pane.report_agent");
+  secondActivitySocket.emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(sockets[1].destroyCalls, 1);
+  assert.equal(secondActivitySocket.destroyCalls, 1);
   // Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
   assert.deepEqual(
     timers.getPendingDelays().filter((d) => d <= 2000),
     [],
   );
-  assert.deepEqual(JSON.parse(sockets[0].writes[0]), JSON.parse(sockets[1].writes[0]));
+  assert.deepEqual(
+    JSON.parse(firstActivitySocket.writes[0]),
+    JSON.parse(secondActivitySocket.writes[0]),
+  );
 });
 
 test("Herdr reporter starts heartbeat recovery after exhausted socket retries", async () => {
@@ -204,24 +225,28 @@ test("Herdr reporter starts heartbeat recovery after exhausted socket retries", 
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
+  assert.equal(sockets.length, 2);
+  sockets[0].emit("connect");
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
+  sockets[0].emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
 
   // Exhaust both default socket attempts. The desired state must still start
   // a heartbeat so a later socket availability can recover without a new edge.
   timers.advance(500);
   await flushAsyncWork();
-  assert.equal(sockets.length, 2);
+  assert.equal(sockets.length, 3);
   timers.advance(1500);
   await flushAsyncWork();
   assert.deepEqual(timers.getPendingDelays(), [1000]);
 
   timers.advance(1000);
   await flushAsyncWork();
-  assert.equal(sockets.length, 3);
-  sockets[2].emit("connect");
-  sockets[2].emit("data", Buffer.from("ok"));
+  assert.equal(sockets.length, 4);
+  sockets[3].emit("connect");
+  sockets[3].emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(JSON.parse(sockets[2].writes[0]).params.state, "working");
+  assert.equal(JSON.parse(sockets[3].writes[0]).params.state, "working");
   reporter.dispose();
 });
 
@@ -367,14 +392,19 @@ test("Herdr reporter does not retry after first activity socket response", async
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.deepEqual(timers.getPendingDelays(), [500]);
-
+  assert.equal(sockets.length, 2);
   sockets[0].emit("connect");
-  assert.equal(sockets[0].writes.length, 1);
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
   sockets[0].emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(sockets[0].destroyCalls, 1);
+
+  const activitySocket = sockets[1];
+  assert.deepEqual(timers.getPendingDelays(), [500]);
+  activitySocket.emit("connect");
+  assert.equal(activitySocket.writes.length, 1);
+  activitySocket.emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
+  assert.equal(activitySocket.destroyCalls, 1);
   // Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
   assert.deepEqual(
     timers.getPendingDelays().filter((d) => d <= 2000),
@@ -383,8 +413,8 @@ test("Herdr reporter does not retry after first activity socket response", async
 
   timers.advance(5000);
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_agent");
+  assert.equal(sockets.length, 2);
+  assert.equal(JSON.parse(activitySocket.writes[0]).method, "pane.report_agent");
 });
 
 test("Herdr reporter sends monotonic working/idle state with session refs", async () => {
@@ -407,6 +437,15 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
   await flushAsyncWork();
   assert.equal(calls[0].method, "pane.report_agent_session");
   assert.equal(calls[0].params.agent_session_path, "/tmp/session.jsonl");
+  const metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 1);
+  assert.deepEqual(metadataCalls[0].params, {
+    pane_id: "pane-1",
+    source: "user:tlh-display",
+    agent: "pi",
+    applies_to_source: "herdr:tlh",
+    display_agent: "tlh",
+  });
 
   const workingSnapshot = {
     inProgress: true,
@@ -441,6 +480,61 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
     calls.every((call) => call.method !== "pane.release_agent"),
     "handleSessionShutdown must not emit pane.release_agent",
   );
+});
+
+test("Herdr metadata sends without a session ref and retries on heartbeat", async () => {
+  const timers = createFakeTimers();
+  const calls = [];
+  let metadataAttempts = 0;
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_TLH_HEARTBEAT_MS: "1000",
+    },
+    sendRequest: async (request) => {
+      calls.push(request);
+      if (request.method === "pane.report_metadata") {
+        metadataAttempts += 1;
+        if (metadataAttempts === 1) throw new Error("Herdr is starting");
+      }
+    },
+    now: timers.now,
+    timers,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+  });
+  await flushAsyncWork();
+  let metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 1);
+  assert.equal(metadataCalls[0].params.display_agent, "tlh");
+  assert.equal("agent_session_id" in metadataCalls[0].params, false);
+  assert.equal("agent_session_path" in metadataCalls[0].params, false);
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent_session").length, 0);
+
+  reporter.handleSnapshot({
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  });
+  await flushAsyncWork();
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
+
+  timers.advance(1000);
+  await flushAsyncWork();
+  metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 2, "heartbeat should retry metadata after startup failure");
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 2);
+
+  // Metadata is reasserted on later heartbeats as well, so a Herdr server
+  // restart after an initially successful report can recover the display name.
+  timers.advance(1000);
+  await flushAsyncWork();
+  assert.equal(calls.filter((call) => call.method === "pane.report_metadata").length, 3);
+  reporter.dispose();
 });
 
 test("Herdr reporter maps UI-prompt waiting to Herdr blocked state", async () => {
@@ -633,11 +727,7 @@ test("Herdr heartbeat followed by an idle transition preserves final state order
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -689,11 +779,7 @@ test("queued Herdr transition resolves the latest committed state behind a heart
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -796,11 +882,7 @@ test("queued Herdr heartbeat reads idle after a real send settles", async () => 
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -850,11 +932,7 @@ test("queued Herdr state is a no-op after shutdown", async () => {
   const deliveries = [];
   const reporter = createHerdrActivityReporter({
     env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -889,11 +967,7 @@ test("queued Herdr heartbeat is a no-op after shutdown and snapshots cannot rest
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,

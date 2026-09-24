@@ -12,6 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH now ships `cacheWarming: "idle"` as a packaged default (append-if-missing merge). An existing user value is preserved. To revert to Pi's native `streaming` mode or to disable warming, set `cacheWarming` to `streaming` or `off` in `/settings`.
 - TLH registers a `cache_warming_decision` hook in the subagent extension. While async children are live, the hook substitutes P=1 for Pi's idle prior of 0.15 and returns `warm` when missCost − warmCost ≥ $0.05; otherwise it abstains and lets Pi decide.
 - Replaced the bundled `pi-transcribe` Git source with npm `@earendil-works/pi-voice@0.1.0` under the canonical default-extension ID `pi-voice`; install/update replaces legacy `pi-transcribe` string entries, including manual pins, with the canonical pin, while migrating replacement objects in place and preserving package filters and metadata; existing `tlh.disabledDefaultExtensions` opt-outs and manual canonical pins remain respected.
+- Interactive TLH sessions now brand the terminal title as `tlh - <cwd basename>`. Herdr activity retains `agent: "pi"` for lifecycle ownership while publishing retryable display metadata with `display_agent: "tlh"`.
 
 ### Removed
 
