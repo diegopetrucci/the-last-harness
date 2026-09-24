@@ -12,7 +12,7 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { scaleTestTimeout, unscaledMs } from "../support/scale-timeout.ts";
 
 import {
   ASYNC_DIR,
@@ -346,7 +346,7 @@ describe("async execution model restoration and fallback", () => {
         task: "Finish the edit before the deadline.",
         agentConfig: makeAgent("worker", {
           model: "mock/test-model",
-          maxExecutionTimeMs: scaleTestTimeout(750),
+          maxExecutionTimeMs: unscaledMs(750),
         }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         availableModels: [
