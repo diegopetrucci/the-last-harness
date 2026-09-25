@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Subagent extension registration no longer walks stale runtime directories synchronously on launch, reload, or session replacement. Cleanup is now a best-effort detached Node process throttled to roughly once per 24 hours; a 10-minute lease limits redundant spawns from near-simultaneous launches, failed runs are retried after the lease expires, and occasional duplicate sweeps from near-simultaneous launches are possible and harmless.
+- Official `main` installs now compare their persisted checkout commit with GitHub `main` once per day and show a dim singular/plural `commit(s) behind origin/main` footer suffix only when the commit is an ancestor and behind.
 
 ## [0.43.0] - 2026-09-25
 
