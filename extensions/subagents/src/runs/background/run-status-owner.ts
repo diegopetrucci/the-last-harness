@@ -39,6 +39,9 @@ import {
 import { persistedTicketId } from "../shared/ticket-context.ts";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.ts";
 
+/** Interval at which a running async runner persists a lastUpdate heartbeat. */
+export const RUNNER_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
 export type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
   exitCode?: number | null;
 };
@@ -129,6 +132,27 @@ export interface BackgroundRunStatusOwner {
   isPersistedAwaitingSupervisorPause(status: RunnerStatusPayload | undefined): boolean;
   applyPausedStepMetadata(index: number, endedAt: number): void;
   emitNestedSelfEvent(type: "subagent.nested.updated" | "subagent.nested.completed"): void;
+  /**
+   * Start a periodic heartbeat that persists `lastUpdate` while the run is in
+   * the `running` state.  The heartbeat is independent of controlConfig and
+   * uses the generation-safe write path.  Call once after the runner starts
+   * executing steps.  Stops automatically on terminal/pause transitions.
+   *
+   * @param intervalMs - Polling interval in milliseconds; defaults to
+   *   {@link RUNNER_HEARTBEAT_INTERVAL_MS}.  Inject a short interval in unit
+   *   tests to avoid waiting for the real 5-minute default.
+   * @param timerFns - Optional timer function overrides; used by unit tests to
+   *   supply synchronous fake-clock implementations.
+   */
+  startHeartbeat(
+    intervalMs?: number,
+    timerFns?: {
+      setInterval: (fn: () => void, ms: number) => NodeJS.Timeout;
+      clearInterval: (id: NodeJS.Timeout | undefined) => void;
+    },
+  ): void;
+  /** Stop the heartbeat timer (idempotent). */
+  stopHeartbeat(): void;
 }
 
 const LIFECYCLE_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
@@ -464,6 +488,7 @@ export function createBackgroundRunStatusOwner(
     owner.concurrentTerminalStatusAdopted = true;
     owner.interrupted = adopted.state === "paused";
     if (adopted.state === "paused") owner.durablePausingCheckpointPersisted = true;
+    clearHeartbeatTimer();
     hooks.interruptNestedDescendants();
     hooks.interruptActiveChildren();
     return statusPayload;
@@ -536,6 +561,61 @@ export function createBackgroundRunStatusOwner(
     };
   }
 
+  // Heartbeat state and functions are declared here, above projectTerminal, so
+  // that the `let` bindings they reference are initialised before the first
+  // possible call to projectTerminal (which now calls clearHeartbeatTimer).
+  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let activeTimerFns: {
+    setInterval: (fn: () => void, ms: number) => NodeJS.Timeout;
+    clearInterval: (id: NodeJS.Timeout | undefined) => void;
+  } | null = null;
+
+  function clearHeartbeatTimer(): void {
+    if (heartbeatTimer !== undefined) {
+      (activeTimerFns?.clearInterval ?? clearInterval)(heartbeatTimer);
+      heartbeatTimer = undefined;
+    }
+  }
+
+  function writeHeartbeat(): void {
+    if (statusPayload.state !== "running") {
+      clearHeartbeatTimer();
+      return;
+    }
+    statusPayload.lastUpdate = Date.now();
+    try {
+      writeStatusPayload({ projectNested: false });
+    } catch {
+      // Heartbeat write failures are non-fatal; the next tick will retry.
+    }
+    // If a concurrent terminal status was adopted during the write, stop ticking.
+    if (statusPayload.state !== "running") {
+      clearHeartbeatTimer();
+    }
+  }
+
+  function startHeartbeat(
+    intervalMs = RUNNER_HEARTBEAT_INTERVAL_MS,
+    timerFns?: {
+      setInterval: (fn: () => void, ms: number) => NodeJS.Timeout;
+      clearInterval: (id: NodeJS.Timeout | undefined) => void;
+    },
+  ): void {
+    clearHeartbeatTimer();
+    activeTimerFns = timerFns ?? null;
+    if (timerFns) {
+      heartbeatTimer = timerFns.setInterval(() => writeHeartbeat(), intervalMs);
+    } else {
+      const timer = setInterval(() => writeHeartbeat(), intervalMs);
+      timer.unref();
+      heartbeatTimer = timer;
+    }
+  }
+
+  function stopHeartbeat(): void {
+    clearHeartbeatTimer();
+  }
+
   function projectTerminal(
     state: "complete" | "failed" | "cancelled" | "paused",
     now: number,
@@ -548,7 +628,7 @@ export function createBackgroundRunStatusOwner(
       step?: TerminalStepPatch;
     } = {},
   ): boolean {
-    return transition("running->terminal", (status) => ({
+    const succeeded = transition("running->terminal", (status) => ({
       ...status,
       state,
       pid: undefined,
@@ -577,6 +657,8 @@ export function createBackgroundRunStatusOwner(
         };
       }),
     }));
+    if (succeeded) clearHeartbeatTimer();
+    return succeeded;
   }
 
   function onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void {
@@ -667,6 +749,7 @@ export function createBackgroundRunStatusOwner(
     owner.durablePausingCheckpointPersisted =
       checkpointed && (statusPayload.state as string) === "pausing";
     owner.interrupted = true;
+    clearHeartbeatTimer();
 
     hooks.clearActivityState();
     appendEvent(
@@ -715,6 +798,7 @@ export function createBackgroundRunStatusOwner(
     owner.cancelled = true;
     owner.interrupted = false;
     owner.supervisorPauseRequest = undefined;
+    clearHeartbeatTimer();
     hooks.clearActivityState();
     hooks.abortInterrupt();
     hooks.abortTimeout();
@@ -747,6 +831,7 @@ export function createBackgroundRunStatusOwner(
     });
 
     owner.interrupted = true;
+    clearHeartbeatTimer();
     hooks.clearActivityState();
     hooks.interruptNestedDescendants();
     hooks.abortInterrupt();
@@ -780,6 +865,7 @@ export function createBackgroundRunStatusOwner(
     });
 
     owner.timedOut = true;
+    clearHeartbeatTimer();
     hooks.clearActivityState();
     hooks.abortTimeout();
     hooks.timeoutNestedDescendants();
@@ -866,6 +952,7 @@ export function createBackgroundRunStatusOwner(
     step.interruptRequestedAt =
       owner.supervisorPauseRequest?.requestedAt ?? step.interruptRequestedAt;
   }
+
   let latestSessionFile: string | undefined;
   owner = {
     flatSteps,
@@ -905,6 +992,8 @@ export function createBackgroundRunStatusOwner(
     isPersistedAwaitingSupervisorPause,
     applyPausedStepMetadata,
     emitNestedSelfEvent,
+    startHeartbeat,
+    stopHeartbeat,
   };
   return owner;
 }

@@ -648,6 +648,7 @@ async function runSubagentWithInput(
     statusOwner.timeout();
   };
   controlOwner.startActivityTimer();
+  statusOwner.startHeartbeat();
   // Portable control inbox: the parent drops control request files here when
   // it cannot deliver OS signals (e.g. ENOSYS on Windows) or when steering a
   // live child. Interrupts still route into the same graceful interruptRunner().
@@ -1401,6 +1402,7 @@ async function runSubagentWithInput(
   }
 
   controlOwner.disposeActivityTimer();
+  statusOwner.stopHeartbeat();
   if (timeoutTimer) timeoutTimer.cancel();
   disposeControlInbox();
   const effectiveSessionFile = sessionFile ?? statusOwner.latestSessionFile;

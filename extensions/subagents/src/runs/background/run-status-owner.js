@@ -8,6 +8,7 @@ import { isActiveLifecycleState, isCompletedLifecycleStepState, isLifecycleTrans
 import { appendBoundedSubagentAttemptFact, boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { persistedTicketId } from "../shared/ticket-context.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
+export const RUNNER_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const LIFECYCLE_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
 function lifecycleErrorDetail(error) {
     try {
@@ -255,6 +256,7 @@ export function createBackgroundRunStatusOwner(input) {
         owner.interrupted = adopted.state === "paused";
         if (adopted.state === "paused")
             owner.durablePausingCheckpointPersisted = true;
+        clearHeartbeatTimer();
         hooks.interruptNestedDescendants();
         hooks.interruptActiveChildren();
         return statusPayload;
@@ -307,8 +309,46 @@ export function createBackgroundRunStatusOwner(input) {
             ...(pausedAt !== undefined ? { pausedAt } : { ownerPid: process.pid }),
         };
     }
+    let heartbeatTimer;
+    let activeTimerFns = null;
+    function clearHeartbeatTimer() {
+        if (heartbeatTimer !== undefined) {
+            (activeTimerFns?.clearInterval ?? clearInterval)(heartbeatTimer);
+            heartbeatTimer = undefined;
+        }
+    }
+    function writeHeartbeat() {
+        if (statusPayload.state !== "running") {
+            clearHeartbeatTimer();
+            return;
+        }
+        statusPayload.lastUpdate = Date.now();
+        try {
+            writeStatusPayload({ projectNested: false });
+        }
+        catch {
+        }
+        if (statusPayload.state !== "running") {
+            clearHeartbeatTimer();
+        }
+    }
+    function startHeartbeat(intervalMs = RUNNER_HEARTBEAT_INTERVAL_MS, timerFns) {
+        clearHeartbeatTimer();
+        activeTimerFns = timerFns ?? null;
+        if (timerFns) {
+            heartbeatTimer = timerFns.setInterval(() => writeHeartbeat(), intervalMs);
+        }
+        else {
+            const timer = setInterval(() => writeHeartbeat(), intervalMs);
+            timer.unref();
+            heartbeatTimer = timer;
+        }
+    }
+    function stopHeartbeat() {
+        clearHeartbeatTimer();
+    }
     function projectTerminal(state, now, options = {}) {
-        return transition("running->terminal", (status) => ({
+        const succeeded = transition("running->terminal", (status) => ({
             ...status,
             state,
             pid: undefined,
@@ -335,6 +375,9 @@ export function createBackgroundRunStatusOwner(input) {
                 };
             }),
         }));
+        if (succeeded)
+            clearHeartbeatTimer();
+        return succeeded;
     }
     function onChildProtocolOutputLimit(limit) {
         if (owner.concurrentTerminalStatusAdopted ||
@@ -410,6 +453,7 @@ export function createBackgroundRunStatusOwner(input) {
         owner.durablePausingCheckpointPersisted =
             checkpointed && statusPayload.state === "pausing";
         owner.interrupted = true;
+        clearHeartbeatTimer();
         hooks.clearActivityState();
         appendEvent(JSON.stringify({
             type: "subagent.run.pausing",
@@ -451,6 +495,7 @@ export function createBackgroundRunStatusOwner(input) {
         owner.cancelled = true;
         owner.interrupted = false;
         owner.supervisorPauseRequest = undefined;
+        clearHeartbeatTimer();
         hooks.clearActivityState();
         hooks.abortInterrupt();
         hooks.abortTimeout();
@@ -476,6 +521,7 @@ export function createBackgroundRunStatusOwner(input) {
             step: (_step, at) => ({ endedAt: at, exitCode: 0, terminationReason: "paused" }),
         });
         owner.interrupted = true;
+        clearHeartbeatTimer();
         hooks.clearActivityState();
         hooks.interruptNestedDescendants();
         hooks.abortInterrupt();
@@ -504,6 +550,7 @@ export function createBackgroundRunStatusOwner(input) {
             }),
         });
         owner.timedOut = true;
+        clearHeartbeatTimer();
         hooks.clearActivityState();
         hooks.abortTimeout();
         hooks.timeoutNestedDescendants();
@@ -619,6 +666,8 @@ export function createBackgroundRunStatusOwner(input) {
         isPersistedAwaitingSupervisorPause,
         applyPausedStepMetadata,
         emitNestedSelfEvent,
+        startHeartbeat,
+        stopHeartbeat,
     };
     return owner;
 }

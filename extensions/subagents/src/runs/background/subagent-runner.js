@@ -507,6 +507,7 @@ async function runSubagentWithInput(config, plan) {
         statusOwner.timeout();
     };
     controlOwner.startActivityTimer();
+    statusOwner.startHeartbeat();
     const disposeControlInbox = controlOwner.watchControlInbox({
         onInterrupt: (request) => interruptRunner?.(request),
         onTimeout: timeoutRunner,
@@ -1145,6 +1146,7 @@ async function runSubagentWithInput(config, plan) {
         }
     }
     controlOwner.disposeActivityTimer();
+    statusOwner.stopHeartbeat();
     if (timeoutTimer)
         timeoutTimer.cancel();
     disposeControlInbox();

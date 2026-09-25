@@ -126,6 +126,8 @@ function makeOwner(options: { enabled: boolean } = { enabled: true }): {
     },
     applyPausedStepMetadata() {},
     emitNestedSelfEvent() {},
+    startHeartbeat() {},
+    stopHeartbeat() {},
   };
   const events: Array<Record<string, unknown>> = [];
   const controlConfig: ResolvedControlConfig = {
