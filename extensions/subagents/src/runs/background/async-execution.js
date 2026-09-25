@@ -28,10 +28,19 @@ function saturatingAsyncDeadlineAt(startedAt, durationMs) {
 export function formatAsyncStartedMessage(headline) {
     return headline;
 }
-function resolveAsyncRunnerModulePath(moduleUrl = import.meta.url) {
+export function resolveRunnerModulePath(moduleUrl, runnerName) {
     const modulePath = fileURLToPath(moduleUrl);
     const runnerExtension = path.extname(modulePath) === ".ts" ? ".ts" : ".js";
-    return path.join(path.dirname(modulePath), `subagent-runner${runnerExtension}`);
+    return path.join(path.dirname(modulePath), `${runnerName}${runnerExtension}`);
+}
+export function resolveRunnerNodeCommand() {
+    if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
+        return process.execPath;
+    }
+    return process.platform === "win32" ? "node.exe" : "node";
+}
+function resolveAsyncRunnerModulePath(moduleUrl = import.meta.url) {
+    return resolveRunnerModulePath(moduleUrl, "subagent-runner");
 }
 export function isAsyncAvailable() {
     return fs.existsSync(resolveAsyncRunnerModulePath());
@@ -51,12 +60,6 @@ function canUseCurrentNodeExecutable(execPath) {
     catch {
         return false;
     }
-}
-function resolveAsyncRunnerNodeCommand() {
-    if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
-        return process.execPath;
-    }
-    return process.platform === "win32" ? "node.exe" : "node";
 }
 export function resolveAsyncRunnerLogPaths(cfg) {
     const asyncDir = typeof cfg.asyncDir === "string" ? cfg.asyncDir : undefined;
@@ -93,7 +96,7 @@ function spawnRunner(cfg, suffix, cwd) {
     fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
     const cfgPath = getAsyncConfigPath(suffix);
     fs.writeFileSync(cfgPath, JSON.stringify(cfg));
-    const nodeCommand = resolveAsyncRunnerNodeCommand();
+    const nodeCommand = resolveRunnerNodeCommand();
     const runnerArgs = runner.endsWith(".ts")
         ? ["--experimental-strip-types", runner, cfgPath]
         : [runner, cfgPath];

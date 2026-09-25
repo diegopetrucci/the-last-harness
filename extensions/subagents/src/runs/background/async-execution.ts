@@ -233,14 +233,34 @@ export function formatAsyncStartedMessage(headline: string): string {
 }
 
 /**
- * Resolve the detached runner beside this module. Source modules use the
- * TypeScript runner for development/test loaders; generated runtime modules
- * always resolve the committed JavaScript runner.
+ * Resolve a named runner module alongside a given source module.
+ * The runner extension (.ts or .js) matches the referencing module so that
+ * source loaders pick up TypeScript and generated runtime picks up JavaScript.
  */
-function resolveAsyncRunnerModulePath(moduleUrl: string = import.meta.url): string {
+export function resolveRunnerModulePath(moduleUrl: string, runnerName: string): string {
   const modulePath = fileURLToPath(moduleUrl);
   const runnerExtension = path.extname(modulePath) === ".ts" ? ".ts" : ".js";
-  return path.join(path.dirname(modulePath), `subagent-runner${runnerExtension}`);
+  return path.join(path.dirname(modulePath), `${runnerName}${runnerExtension}`);
+}
+
+/**
+ * Resolve the Node executable suitable for spawning a detached runner.
+ * Prefers the current process executable when it is a Node binary and accessible.
+ */
+export function resolveRunnerNodeCommand(): string {
+  if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
+    return process.execPath;
+  }
+  return process.platform === "win32" ? "node.exe" : "node";
+}
+
+/**
+ * Resolve the detached async subagent runner beside this module. Source modules
+ * use the TypeScript runner for development/test loaders; generated runtime
+ * modules always resolve the committed JavaScript runner.
+ */
+function resolveAsyncRunnerModulePath(moduleUrl: string = import.meta.url): string {
+  return resolveRunnerModulePath(moduleUrl, "subagent-runner");
 }
 
 export function isAsyncAvailable(): boolean {
@@ -264,13 +284,6 @@ function canUseCurrentNodeExecutable(execPath: string): boolean {
   } catch {
     return false;
   }
-}
-
-function resolveAsyncRunnerNodeCommand(): string {
-  if (isNodeExecutableName(process.execPath) && canUseCurrentNodeExecutable(process.execPath)) {
-    return process.execPath;
-  }
-  return process.platform === "win32" ? "node.exe" : "node";
 }
 
 export function resolveAsyncRunnerLogPaths(
@@ -318,7 +331,7 @@ function spawnRunner(
   fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
   const cfgPath = getAsyncConfigPath(suffix);
   fs.writeFileSync(cfgPath, JSON.stringify(cfg));
-  const nodeCommand = resolveAsyncRunnerNodeCommand();
+  const nodeCommand = resolveRunnerNodeCommand();
   const runnerArgs = runner.endsWith(".ts")
     ? ["--experimental-strip-types", runner, cfgPath]
     : [runner, cfgPath];
