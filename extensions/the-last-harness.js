@@ -37,6 +37,45 @@ const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend re
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
+const PI_VOICE_SETUP_NOTICE_PATTERN = /^Pi Voice installed · press Ctrl\+(?:Alt|Option)\+Z or run \/voice-settings to set up$/;
+const wrappedPiVoiceNoticeUis = new WeakSet();
+function isPiVoiceSetupNotice(message, type) {
+    return (type === "info" && typeof message === "string" && PI_VOICE_SETUP_NOTICE_PATTERN.test(message));
+}
+function installPiVoiceSetupNoticeFilter(ctx) {
+    let ui;
+    try {
+        if (ctx.hasUI === false)
+            return;
+        ui = ctx.ui;
+    }
+    catch {
+        return;
+    }
+    if (typeof ui !== "object" || ui === null || wrappedPiVoiceNoticeUis.has(ui))
+        return;
+    let originalNotify;
+    try {
+        originalNotify = ui.notify;
+    }
+    catch {
+        return;
+    }
+    if (typeof originalNotify !== "function")
+        return;
+    const filteredNotify = function (...args) {
+        const [message, type] = args;
+        if (isPiVoiceSetupNotice(message, type))
+            return;
+        return originalNotify.apply(this, args);
+    };
+    try {
+        ui.notify = filteredNotify;
+        wrappedPiVoiceNoticeUis.add(ui);
+    }
+    catch {
+    }
+}
 function getActiveProjectTrustDecision(ctx) {
     const projectTrusted = ctx.isProjectTrusted?.();
     return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
@@ -104,6 +143,9 @@ export const __testing = {
     },
 };
 export default function theLastHarness(pi) {
+    pi.on("session_start", (_event, ctx) => {
+        installPiVoiceSetupNoticeFilter(ctx);
+    });
     let activeTlhHeader;
     let activeTlhHeaderSessionToken = 0;
     let activeTlhHeaderComponentId = 0;

@@ -8,7 +8,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, realpathForCompare, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
-import { LEGACY_MANAGED_PROFILE_ARTIFACTS, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl, cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, } from "./lib/tlh-install-profile-cleanup.mjs";
+import { LEGACY_MANAGED_PROFILE_ARTIFACTS, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl, cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
 import { preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
@@ -806,8 +806,8 @@ function installPiIfNeeded(config) {
             // on their next run (marker was introduced after initial deployments).
             writeRuntimeMarker(config, prefix, origin);
             if (config.dryRun)
-                return { installed: false, piCmd: "" };
-            return { installed: false, piCmd: piBin };
+                return { installed: false, piCmd: "", runtimePrefix: prefix };
+            return { installed: false, piCmd: piBin, runtimePrefix: prefix };
         }
     }
     else {
@@ -827,7 +827,7 @@ function installPiIfNeeded(config) {
     if (config.dryRun) {
         // Log marker intent in dry-run; the prefix may not exist yet.
         writeRuntimeMarker(config, prefix, origin);
-        return { installed: true, piCmd: "" };
+        return { installed: true, piCmd: "", runtimePrefix: prefix };
     }
     if (!existsSync(piBin)) {
         throw new Error(`Pi install completed, but ${piBin} does not exist`);
@@ -847,7 +847,7 @@ function installPiIfNeeded(config) {
     });
     // Write the ownership marker after full successful install+validation.
     writeRuntimeMarker(config, prefix, origin);
-    return { installed: true, piCmd: piBin };
+    return { installed: true, piCmd: piBin, runtimePrefix: prefix };
 }
 function profileCleanupIo(config, runtimeConfig) {
     return {
@@ -859,6 +859,7 @@ function profileCleanupIo(config, runtimeConfig) {
             if (runtimeConfig)
                 spawnCaptureIsolatedPi(runtimeConfig, commandArgs);
         },
+        runCommand: (commandArgs, options) => runtimeConfig ? runCommand(runtimeConfig, commandArgs, options) : undefined,
     };
 }
 export function cleanupRetiredProfileDirectories(config) {
@@ -1452,7 +1453,7 @@ async function runInstallFlow(config) {
     requireCommand(config, "git");
     await preflightRuntimeSupportFiles(config, supportFileIo(config));
     const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
-    const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);
+    const { installed: piInstalledByTlh, piCmd, runtimePrefix } = installPiIfNeeded(config);
     // A runtime installed by this run is always TLH-owned, even if an update passed through a
     // stale false/absent value from an older install-state. Otherwise preserve the explicit
     // override or previously recorded ownership state when present, and fall back to false only
@@ -1489,6 +1490,7 @@ async function runInstallFlow(config) {
     configureGnosis(config);
     configureTickets(config);
     await writeWrapper(config);
+    pruneRuntimeCache(config, profileCleanupIo(config, config), runtimePrefix);
     printSummary(config);
 }
 function printSupportManifest(config) {
