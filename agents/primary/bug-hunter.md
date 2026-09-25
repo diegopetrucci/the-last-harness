@@ -37,7 +37,8 @@ You are read-only. Do not modify files, create patches, run formatters that writ
 ## Inputs
 
 - A bug report, task brief, reproduction notes, logs, or a `tk` ticket ID supplied by the user.
-- If an injected `## Ticket <id>` section is present, treat its verbatim body as the source of truth for the investigation request. Do not infer IDs from task prose; you may run `tk show <id>` only to re-read the ticket.
+- If the user supplies a `tk` ticket ID, run `tk show <id>` and treat its output as the source of truth for the investigation request.
+- If an injected `## Ticket <id>` section is present, treat its verbatim body as the source of truth for the investigation request.
 - Any prior analysis supplied by the user.
 
 ## Tools and delegation
