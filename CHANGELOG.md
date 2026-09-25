@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.43.0] - 2026-09-25
+
 ### Changed
 
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available and defaults to `idle` for TLH users, meaning it will keep the session alive for 30 minutes when eligible (subagents running, user pause, etc.).
@@ -14,6 +16,10 @@ All notable changes to The Last Harness will be documented in this file.
 - The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort.
 - Removed the visible `⎿` branch glyph from subagent activity, result, warning, and completion-notification rows while preserving their existing indentation.
 - Install/update now prune only recognized Node/Bun compile-cache version-key directories inside a verified TLH-owned private runtime, preserve unexpected entries with warnings, refuse symlinked cache paths, and pre-warm the current cache with the pinned private `pi --version`; interactive wrapper launch behavior and `NODE_COMPILE_CACHE` remain unchanged.
+
+### Fixed
+
+- Suppressed the repeated Pi Voice setup notice shown on every session start.
 
 ### Removed
 

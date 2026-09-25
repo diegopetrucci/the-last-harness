@@ -140,7 +140,7 @@ The following Pi 0.87.1 checks are also required release-preparation work, remai
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
 - **Published-ref update convergence:** once the release ref advertises Pi `0.87.1`, verify update convergence from that published ref.
 
-The live-provider checks are deferred because the approved verification excludes paid-provider execution and does not treat faux-provider seams as substitutes. Published-ref update convergence is deferred separately because no published ref currently advertises Pi `0.87.1`. Record all release outcomes in the release validation notes/current release tracking; the durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
+The live-provider checks passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Only published-ref update convergence remains deferred to post-publication verification because no published ref currently advertises Pi `0.87.1`; the durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 
 ## Final validation guidance
 
