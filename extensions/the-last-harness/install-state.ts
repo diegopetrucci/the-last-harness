@@ -3,6 +3,7 @@ import { readTlhInstallState } from "./profile-state.js";
 import type { TlhInstallNotice, TlhInstallState } from "./types.js";
 
 const STABLE_TRACK = "latest-release";
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const VALID_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref", "custom"]);
 const REF_REQUIRED_TRACKS = new Set([STABLE_TRACK, "pinned-tag", "ref"]);
 
@@ -45,6 +46,11 @@ function isDefaultPackageSource(state: TlhInstallState | undefined): boolean | u
   return undefined;
 }
 
+function normalizedCommitSha(value: unknown): string | undefined {
+  const normalized = normalizedString(value)?.toLowerCase();
+  return normalized && COMMIT_SHA_PATTERN.test(normalized) ? normalized : undefined;
+}
+
 export function classifyTlhInstallState(
   state: TlhInstallState | undefined,
 ): TlhInstallNotice | undefined {
@@ -55,6 +61,10 @@ export function classifyTlhInstallState(
   const defaultPackageSource = isDefaultPackageSource(state);
   const mainCommitSubject =
     track === "ref" && ref === "main" ? normalizedString(state?.commitSubject) : undefined;
+  const mainCommitSha =
+    repo === TLH_REPO && track === "ref" && ref === "main" && defaultPackageSource === true
+      ? normalizedCommitSha(state?.commitSha)
+      : undefined;
 
   if (
     !repo ||
@@ -97,6 +107,7 @@ export function classifyTlhInstallState(
       summary: "TLH follows a non-stable git ref.",
       detail: ref,
       ...(mainCommitSubject ? { commitSubject: mainCommitSubject } : {}),
+      ...(mainCommitSha ? { commitSha: mainCommitSha } : {}),
     };
   }
 

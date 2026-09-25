@@ -12,6 +12,9 @@ const { __testing, default: theLastHarness } = await jiti.import(
 );
 const { TLH_STARTUP_TIPS } = await jiti.import("../extensions/the-last-harness/startup-tip.ts");
 const { getTlhVersion } = await jiti.import("../extensions/the-last-harness/package-version.ts");
+const { __resetTlhUpdateCheckForTests, __setTlhUpdateCheckTestHooks } = await jiti.import(
+  "../extensions/the-last-harness/update-check.js",
+);
 
 const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
 
@@ -180,11 +183,21 @@ function withProcessPath(path, callback) {
   }
 }
 
-function writeProfileFixture(agentDir, installState) {
+function writeProfileFixture(agentDir, installState, updateCheckEnabled = false) {
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(
     join(agentDir, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, telemetry: { enabled: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        tlh: {
+          primaryAgent: { enabled: false, selected: "disabled" },
+          telemetry: { enabled: false },
+          updateCheck: updateCheckEnabled ? {} : { enabled: false },
+        },
+      },
+      null,
+      2,
+    )}\n`,
   );
   writeFileSync(
     join(agentDir, "tlh", "install-state.json"),
@@ -211,6 +224,7 @@ async function createExtensionHarness({
   deferredStartupTaskScheduler,
   terminalTitleScheduler,
   afterSessionStartHandler,
+  updateCheckEnabled = false,
 }) {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
   const agentDir = join(tempDir, "agent");
@@ -226,12 +240,16 @@ async function createExtensionHarness({
 
   delete process.env.PI_SUBAGENT_CHILD;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  if (updateCheckEnabled) {
+    delete process.env.TLH_SKIP_UPDATE_CHECK;
+  } else {
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  }
   process.env.TLH_SKIP_TELEMETRY = "1";
   mkdirSync(cwd, { recursive: true });
   mkdirSync(emptyBinDir, { recursive: true });
   setupWorkspace?.(cwd);
-  writeProfileFixture(agentDir, installState);
+  writeProfileFixture(agentDir, installState, updateCheckEnabled);
   __testing.reset();
   const scheduleDeferredTask = deferredStartupTaskScheduler ?? ((task) => setImmediate(task));
   __testing.setDeferredStartupTaskSchedulerForTests((task) => {
@@ -281,6 +299,7 @@ async function createExtensionHarness({
       let headerFactory;
       let footerFactory;
       let requestRenderCalls = 0;
+      let footerRequestRenderCalls = 0;
       const ctx = createCtx({
         cwd: sessionCwd,
         notifications,
@@ -323,10 +342,19 @@ async function createExtensionHarness({
         },
         buildFooter() {
           return footerFactory
-            ? footerFactory({ requestRender() {} }, theme, undefined)
+            ? footerFactory(
+                {
+                  requestRender() {
+                    footerRequestRenderCalls += 1;
+                  },
+                },
+                theme,
+                undefined,
+              )
             : undefined;
         },
         requestRenderCalls: () => requestRenderCalls,
+        footerRequestRenderCalls: () => footerRequestRenderCalls,
       };
     },
     emit(event, payload, ctx) {
@@ -1221,6 +1249,43 @@ test("production footer wiring appends the persisted subject for a main ref inst
 
   assert.ok(footerLines);
   assert.equal(footerLines.at(-1), "TLH main • Add the main footer subject");
+});
+
+test("production footer wiring hydrates main-track status and renders only after a useful change", async () => {
+  const scheduledTasks = [];
+  const harness = await createExtensionHarness({
+    installState: {
+      ...REF_INSTALL_STATE,
+      commitSha: "a".repeat(40),
+    },
+    updateCheckEnabled: true,
+    deferredStartupTaskScheduler: (task) => scheduledTasks.push(task),
+    startupResourceCollector: () => new Promise(() => {}),
+  });
+  __resetTlhUpdateCheckForTests();
+  __setTlhUpdateCheckTestHooks({
+    now: () => Date.parse("2026-07-17T12:00:00.000Z"),
+    fetchLatestRelease: async () => undefined,
+    fetchMainTrackComparison: async () => ({ status: "behind", behindBy: 2 }),
+  });
+
+  let footer;
+  try {
+    const session = await harness.startSession({ reason: "startup" });
+    footer = session.buildFooter();
+    assert.equal(footer?.render(200).at(-1), "TLH main");
+    assert.equal(scheduledTasks.length, 1);
+
+    scheduledTasks[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+    assert.equal(session.footerRequestRenderCalls(), 1);
+    assert.equal(footer?.render(200).at(-1), "TLH main • 2 commits behind origin/main");
+  } finally {
+    __resetTlhUpdateCheckForTests();
+    footer?.dispose?.();
+    harness.cleanup();
+  }
 });
 
 test("production footer wiring: footer remains visible on non-startup session reasons", async () => {
