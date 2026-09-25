@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -230,6 +231,22 @@ async function createExtensionHarness({
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
   const emptyBinDir = join(tempDir, "empty-bin");
+  // Capture all terminal-integration env keys that activity-reporters.ts reads so
+  // tests cannot accidentally send real Herdr/cmux traffic when run from a live pane.
+  const HERDR_KEYS = [
+    "HERDR_ENV",
+    "HERDR_SOCKET_PATH",
+    "HERDR_PANE_ID",
+    "HERDR_TLH_HEARTBEAT_MS",
+    "HERDR_TLH_IDLE_DEBOUNCE_MS",
+  ];
+  const CMUX_KEYS = [
+    "CMUX_WORKSPACE_ID",
+    "CMUX_SURFACE_ID",
+    "CMUX_PI_CMUX_BIN",
+    "CMUX_BUNDLED_CLI_PATH",
+    "CMUX_BIN",
+  ];
   const previousEnv = {
     PATH: process.env.PATH,
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
@@ -237,6 +254,9 @@ async function createExtensionHarness({
     TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
     TLH_SKIP_TELEMETRY: process.env.TLH_SKIP_TELEMETRY,
   };
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    previousEnv[key] = process.env[key];
+  }
 
   delete process.env.PI_SUBAGENT_CHILD;
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -246,6 +266,9 @@ async function createExtensionHarness({
     process.env.TLH_SKIP_UPDATE_CHECK = "1";
   }
   process.env.TLH_SKIP_TELEMETRY = "1";
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    delete process.env[key];
+  }
   mkdirSync(cwd, { recursive: true });
   mkdirSync(emptyBinDir, { recursive: true });
   setupWorkspace?.(cwd);
@@ -1309,4 +1332,71 @@ test("production footer wiring: footer remains visible on non-startup session re
     false,
     "header must not show the install-track warning",
   );
+});
+
+test("session_start sends zero Herdr requests even when HERDR_* env is set in the outer process", async () => {
+  // Regression: the harness must scrub HERDR_* so tests run from a live Herdr
+  // pane never send real pane.report_agent / pane.report_metadata traffic.
+  const tmpSocketDir = mkdtempSync(join(tmpdir(), "tlh-herdr-smoke-"));
+  const socketPath = join(tmpSocketDir, "herdr.sock");
+  let connectionCount = 0;
+  const server = net.createServer(() => {
+    connectionCount += 1;
+  });
+  await new Promise((resolve, reject) =>
+    server.listen(socketPath, (err) => (err ? reject(err) : resolve())),
+  );
+
+  // Save originals so we can restore them after the test (handles the case
+  // where the outer process already has HERDR_* set).
+  const origHerdrEnv = process.env.HERDR_ENV;
+  const origHerdrSocketPath = process.env.HERDR_SOCKET_PATH;
+  const origHerdrPaneId = process.env.HERDR_PANE_ID;
+
+  // Simulate being invoked from inside a Herdr-managed pane.
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = socketPath;
+  process.env.HERDR_PANE_ID = "FAKE";
+
+  let harness;
+  try {
+    // createExtensionHarness captures and clears HERDR_* before the extension runs.
+    harness = await createExtensionHarness({
+      installState: LATEST_STABLE_INSTALL_STATE,
+    });
+    await harness.startSession({ reason: "start" });
+    // Allow any in-flight async socket attempts to complete.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(
+      connectionCount,
+      0,
+      "extension must not contact the Herdr socket when HERDR_* env is scrubbed by the harness",
+    );
+  } finally {
+    try {
+      harness?.cleanup();
+    } finally {
+      // cleanup() restores the env to what was captured at harness creation time
+      // (i.e. the fake values we set above). Restore originals now so they
+      // don't bleed into subsequent tests, and so we don't clobber any
+      // pre-existing outer values.
+      if (origHerdrEnv === undefined) {
+        delete process.env.HERDR_ENV;
+      } else {
+        process.env.HERDR_ENV = origHerdrEnv;
+      }
+      if (origHerdrSocketPath === undefined) {
+        delete process.env.HERDR_SOCKET_PATH;
+      } else {
+        process.env.HERDR_SOCKET_PATH = origHerdrSocketPath;
+      }
+      if (origHerdrPaneId === undefined) {
+        delete process.env.HERDR_PANE_ID;
+      } else {
+        process.env.HERDR_PANE_ID = origHerdrPaneId;
+      }
+      await new Promise((resolve) => server.close(resolve));
+      rmSync(tmpSocketDir, { recursive: true, force: true });
+    }
+  }
 });
