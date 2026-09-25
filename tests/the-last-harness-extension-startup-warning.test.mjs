@@ -1358,22 +1358,24 @@ test("session_start sends zero Herdr requests even when HERDR_* env is set in th
   process.env.HERDR_SOCKET_PATH = socketPath;
   process.env.HERDR_PANE_ID = "FAKE";
 
+  let harness;
   try {
     // createExtensionHarness captures and clears HERDR_* before the extension runs.
-    const harness = await createExtensionHarness({
+    harness = await createExtensionHarness({
       installState: LATEST_STABLE_INSTALL_STATE,
     });
+    await harness.startSession({ reason: "start" });
+    // Allow any in-flight async socket attempts to complete.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(
+      connectionCount,
+      0,
+      "extension must not contact the Herdr socket when HERDR_* env is scrubbed by the harness",
+    );
+  } finally {
     try {
-      await harness.startSession({ reason: "start" });
-      // Allow any in-flight async socket attempts to complete.
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      assert.equal(
-        connectionCount,
-        0,
-        "extension must not contact the Herdr socket when HERDR_* env is scrubbed by the harness",
-      );
+      harness?.cleanup();
     } finally {
-      harness.cleanup();
       // cleanup() restores the env to what was captured at harness creation time
       // (i.e. the fake values we set above). Restore originals now so they
       // don't bleed into subsequent tests, and so we don't clobber any
@@ -1393,9 +1395,8 @@ test("session_start sends zero Herdr requests even when HERDR_* env is set in th
       } else {
         process.env.HERDR_PANE_ID = origHerdrPaneId;
       }
+      await new Promise((resolve) => server.close(resolve));
+      rmSync(tmpSocketDir, { recursive: true, force: true });
     }
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    rmSync(tmpSocketDir, { recursive: true, force: true });
   }
 });
