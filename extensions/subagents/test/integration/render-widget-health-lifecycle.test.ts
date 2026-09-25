@@ -689,7 +689,8 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
 
-    assert.match(text, /⎿  pausing…/);
+    assert.match(text, /pausing…/);
+    assert.doesNotMatch(text, /⎿/);
     assert.match(text, /Agent 1\/1: worker · pausing · pausing…/);
     assert.doesNotMatch(text, /child-secret-tool|secret-child-args|private\/child|4\.0s/);
   });
@@ -996,11 +997,11 @@ describe("subagent async widget rendering", () => {
     const now = 200_000;
     const lastActivityAt = now - 180_000; // 3m gap: avoids the "now ago" strings owned by tlhmf-6y0z
     for (const [activityState, expected] of [["needs_attention", /no activity for 3m/] as const]) {
-      for (const [label, mode, steps, expectedHeight] of [
-        ["single mode with steps", "single", 1, 5],
-        ["single mode without steps", "single", 0, 3],
-        ["parallel mode with steps", "parallel", 3, 7],
-        ["parallel mode without steps", "parallel", 0, 3],
+      for (const [label, mode, steps, expectedHeight, expectedPrefix] of [
+        ["single mode with steps", "single", 1, 5, "       "],
+        ["single mode without steps", "single", 0, 3, "     "],
+        ["parallel mode with steps", "parallel", 3, 7, "     "],
+        ["parallel mode without steps", "parallel", 0, 3, "     "],
       ] as const) {
         resetWidgetLayout();
         withStdoutSize(30, 120, () => {
@@ -1045,6 +1046,13 @@ describe("subagent async widget rendering", () => {
             1,
             `${activityState} health signal must appear exactly once: ${label}`,
           );
+          const healthLine = lines.find((line) => expected.test(line));
+          assert.equal(
+            healthLine,
+            `${expectedPrefix}no activity for 3m`,
+            `${label} health line must keep its exact replacement column`,
+          );
+          assert.doesNotMatch(text, /⎿/, `${label} must not add the branch glyph`);
           assert.equal(lines.length, expectedHeight, `${activityState} render height: ${label}`);
           assert.ok(!lines.join("").includes("\u200c"), `must not emit filler rows: ${label}`);
         });
@@ -1097,18 +1105,15 @@ describe("subagent async widget rendering", () => {
         4,
         "deduped single-agent health render has 4 lines: header + agent + health + hint",
       );
-      // The health line must be at 4-space indent (under the agent row), not the
-      // 2-space indent that would place it under the header.
+      // The retained step activity line must keep the exact 7-space text column after
+      // removing the glyph (4 outer spaces + 3 replacement spaces).
       const healthLine = lines.find((l) => /no activity for 3m/.test(l));
-      assert.ok(
-        healthLine?.startsWith("    "),
-        "health line must be at 4-space indent (nested under agent row)",
+      assert.match(
+        healthLine ?? "",
+        /^ {7}no activity for 3m$/,
+        "single-agent health line must use exactly 7 spaces",
       );
-      // Must NOT appear at the 2-space (header-region) indent.
-      assert.ok(
-        !healthLine?.match(/^  [^ ]/),
-        "health line must not be at 2-space (header-level) indent",
-      );
+      assert.doesNotMatch(lines.join("\n"), /⎿/);
       // Ordering: agent row is at index 1 (header is 0); health text (from step
       // activity in details.slice(1)) must follow the agent row.
       const agentRowIndex = 1;
@@ -1158,16 +1163,14 @@ describe("subagent async widget rendering", () => {
       const lines = renderWidgetLines(ui.widgets.at(-1));
       const healthLine = lines.find((l) => /no activity for 3m/.test(l));
       assert.ok(healthLine !== undefined, "health warning must appear");
-      // Must be at 4-space indent (under the agent row).
-      assert.ok(
-        healthLine?.startsWith("    "),
-        "health line must be at 4-space indent (nested under agent row)",
+      // The job-level warning is nested under the agent row at the exact 7-space
+      // text column left by removing the glyph.
+      assert.match(
+        healthLine ?? "",
+        /^ {7}no activity for 3m$/,
+        "single-agent health line must use exactly 7 spaces",
       );
-      // Must not be at 2-space indent (header region).
-      assert.ok(
-        !healthLine?.match(/^  [^ ]/),
-        "health line must not be at 2-space (header-level) indent",
-      );
+      assert.doesNotMatch(lines.join("\n"), /⎿/);
       // Header line must NOT contain the health text (it stays as 'async subagent').
       assert.doesNotMatch(lines[0]!, /no activity for 3m/, "header must not carry health text");
       // Ordering: health line must be immediately after the agent row (index 1).
@@ -1219,11 +1222,14 @@ describe("subagent async widget rendering", () => {
       const lines = renderWidgetLines(ui.widgets.at(-1));
       const healthIndex = lines.findIndex((l) => /no activity for 3m/.test(l));
       assert.ok(healthIndex !== -1, "health warning must appear");
-      // For parallel mode the health line is at 2-space indent (header region).
-      assert.ok(
-        lines[healthIndex]!.startsWith("  ") && !lines[healthIndex]!.startsWith("    "),
-        "parallel health line must be at 2-space (header-level) indent",
+      // For parallel mode the header-level warning keeps the exact 5-space text
+      // column left by removing the glyph.
+      assert.match(
+        lines[healthIndex]!,
+        /^ {5}no activity for 3m$/,
+        "parallel health line must use exactly 5 spaces",
       );
+      assert.doesNotMatch(lines.join("\n"), /⎿/);
       // The agent rows come after the health warning.
       const firstAgentIndex = lines.findIndex((l) => /agent-0/.test(l));
       assert.ok(
