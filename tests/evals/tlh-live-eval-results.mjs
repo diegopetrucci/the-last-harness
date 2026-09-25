@@ -2,6 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 
 export const liveEvalResultSchemaVersion = 1;
+export const acceptanceEvidenceResultSchemaVersion = 1;
+
+const evidenceStatuses = new Set(["passed", "failed", "pending", "blocked"]);
 
 function uniqueStrings(values) {
   return [
@@ -42,7 +45,44 @@ function normalizeCheck(check) {
     passed: check.passed,
     details: String(check.details || ""),
     artifacts: uniqueStrings(check.artifacts),
+    ...(check.category ? { category: check.category } : {}),
   };
+}
+
+function summarizeEvidenceChecks(checks) {
+  const summarize = (category) => {
+    const selected = checks.filter((check) => check.category === category);
+    return {
+      passed: selected.filter((check) => check.status === "passed").length,
+      failed: selected.filter((check) => check.status === "failed").length,
+      pending: selected.filter((check) => check.status === "pending").length,
+      blocked: selected.filter((check) => check.status === "blocked").length,
+      total: selected.length,
+    };
+  };
+  return {
+    deterministic: summarize("deterministic"),
+    manual: summarize("manual"),
+  };
+}
+
+function evidenceScenarioStatus(checks, fallback = "pending") {
+  const statuses = checks.map((check) => check.status);
+  if (statuses.length === 0) return fallback;
+  if (statuses.includes("failed")) return "failed";
+  if (statuses.includes("blocked")) return "blocked";
+  if (statuses.includes("pending")) return "pending";
+  return "passed";
+}
+
+function evidenceSuiteStatus(scenarioResults) {
+  const statuses = scenarioResults.map((result) => result.status);
+  if (statuses.length === 0) return "pending";
+  if (statuses.includes("failed")) return "failed";
+  if (statuses.includes("blocked")) return "blocked";
+  if (statuses.includes("pending")) return "pending";
+  if (statuses.includes("prepared")) return "prepared";
+  return "passed";
 }
 
 export function createBinaryScoreCheck({ id, label, passed, details = "", artifacts = [] }) {
@@ -70,6 +110,163 @@ export function createManualRubricCheck({ id, label, details = "", artifacts = [
     details,
     artifacts,
   });
+}
+
+/**
+ * Create a check from offline evidence without treating an absent value as a
+ * failure or a model/assistant assertion as proof. This is additive to the
+ * original live-eval check shape; ordinary live-eval callers continue to use
+ * `createBinaryScoreCheck` and `createManualRubricCheck` unchanged.
+ */
+export function createEvidenceScoreCheck({
+  id,
+  label,
+  status = "pending",
+  details = "",
+  artifacts = [],
+  category = "deterministic",
+}) {
+  if (!evidenceStatuses.has(status))
+    throw new Error(`unsupported evidence check status: ${status}`);
+  if (category !== "deterministic" && category !== "manual") {
+    throw new Error(`unsupported evidence check category: ${category}`);
+  }
+  return normalizeCheck({
+    id,
+    label,
+    kind: category === "manual" ? "manual" : "automated",
+    scoreType: category === "manual" ? "human-attestation" : "deterministic-evidence",
+    status,
+    passed: status === "passed" ? true : status === "failed" ? false : null,
+    details,
+    artifacts,
+    category,
+  });
+}
+
+export function createAcceptanceEvidenceScenarioResult({
+  scenarioId,
+  mode = "manual",
+  summary,
+  detail = "",
+  checks = [],
+  artifacts = [],
+  status,
+  identity = {},
+}) {
+  const normalizedChecks = checks.map((check) => normalizeCheck(check));
+  const evidence = summarizeEvidenceChecks(normalizedChecks);
+  const scenarioStatus = status || evidenceScenarioStatus(normalizedChecks);
+  const base = createScenarioResult({
+    scenarioId,
+    mode,
+    summary,
+    status: scenarioStatus,
+    detail,
+    checks: normalizedChecks,
+    artifacts,
+  });
+  return {
+    ...base,
+    status: scenarioStatus,
+    identity: {
+      suiteId: String(identity.suiteId || ""),
+      scenarioId: String(identity.scenarioId || scenarioId),
+      candidateCommit: String(identity.candidateCommit || ""),
+    },
+    score: {
+      ...base.score,
+      deterministic: evidence.deterministic,
+      evidence: {
+        deterministic: evidence.deterministic,
+        manual: evidence.manual,
+      },
+      manual: {
+        pending: evidence.manual.pending,
+        total: evidence.manual.total,
+      },
+    },
+  };
+}
+
+export function createAcceptanceEvidenceSuiteResult({
+  selectedScenarios = [],
+  scenarioResults = [],
+  suiteId,
+  suiteVersion,
+  candidate = {},
+  evidenceReferences = [],
+  startedAt = "offline-evaluation",
+  finishedAt = startedAt,
+  sourceResultsFile = "results.json",
+  limitations = [],
+}) {
+  const deterministic = { passed: 0, failed: 0, pending: 0, blocked: 0, total: 0 };
+  const manual = { passed: 0, failed: 0, pending: 0, blocked: 0, total: 0 };
+  const scenarios = {
+    total: scenarioResults.length,
+    passed: 0,
+    prepared: 0,
+    pending: 0,
+    blocked: 0,
+    failed: 0,
+    other: 0,
+  };
+  for (const scenario of scenarioResults) {
+    if (Object.hasOwn(scenarios, scenario.status)) scenarios[scenario.status] += 1;
+    else scenarios.other += 1;
+    for (const check of scenario.checks || []) {
+      const target = check.category === "manual" ? manual : deterministic;
+      target.total += 1;
+      if (Object.hasOwn(target, check.status)) target[check.status] += 1;
+    }
+  }
+  const status = evidenceSuiteStatus(scenarioResults);
+  const sortedReferences = uniqueStrings(evidenceReferences);
+  const identity = {
+    suiteId: String(suiteId || ""),
+    suiteVersion: Number.isInteger(suiteVersion) ? suiteVersion : null,
+    candidate: {
+      mode: String(candidate.mode || ""),
+      ref: String(candidate.ref || candidate.candidateRef || ""),
+      commit: String(candidate.commit || candidate.candidateCommit || ""),
+      packageName: String(candidate.packageName || ""),
+      packageVersion: String(candidate.packageVersion || ""),
+      packageSha256: String(candidate.packageSha256 || ""),
+    },
+  };
+  return {
+    schemaVersion: acceptanceEvidenceResultSchemaVersion,
+    reportType: "acceptance-evidence",
+    generatedAt: String(finishedAt),
+    status,
+    metadata: {
+      runner: "tlh-acceptance-evidence",
+      startedAt: String(startedAt),
+      finishedAt: String(finishedAt),
+      suiteId: identity.suiteId,
+      suiteVersion: identity.suiteVersion,
+      candidate: identity.candidate,
+      requestedScenarioIds: selectedScenarios.map((scenario) => String(scenario.id)),
+      sourceResultsFile: String(sourceResultsFile),
+      evidenceReferences: sortedReferences,
+      limitations: uniqueStrings(limitations),
+    },
+    identity,
+    summary: {
+      scenarios,
+      checks: {
+        deterministic,
+        manual,
+        // Keep the original aggregate names available to consumers that only
+        // understand the v1 live-eval report. The richer evidence counts above
+        // remain the source of truth for pending/blocked/failed outcomes.
+        automated: { passed: deterministic.passed, total: deterministic.total },
+      },
+    },
+    artifacts: { shared: sortedReferences },
+    scenarios: scenarioResults,
+  };
 }
 
 export function createScenarioResult({

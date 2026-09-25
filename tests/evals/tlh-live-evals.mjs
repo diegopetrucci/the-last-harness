@@ -5,6 +5,19 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { setupPackagedCandidate } from "./tlh-live-eval-candidate.mjs";
+import {
+  ACCEPTANCE_MODEL_FORMAT,
+  ACCEPTANCE_SUITE_VERSION,
+  SUBAGENT_ACCEPTANCE_CHECKS,
+  acceptanceModelMetadata,
+  parseAcceptanceModel,
+  prepareArchitectScenario as prepareArchitectAcceptanceScenario,
+  prepareDirtyRepoScenario,
+  preparePrimaryBehaviorScenario,
+  prepareSubagentAcceptanceScenario,
+  prepareWebScoutScenario,
+} from "./tlh-acceptance-scenarios.mjs";
 import {
   createBinaryScoreCheck,
   createManualRubricCheck,
@@ -17,7 +30,6 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const tempRootPrefix = "tlh-live-evals-";
 const installTimeoutMs = 10 * 60 * 1000;
 const commandTimeoutMs = 60 * 1000;
-const gitTimeoutMs = 15 * 1000;
 const sensitiveEnvNamePattern = /(KEY|TOKEN|SECRET|PASSWORD|COOKIE|SESSION|BEARER)/i;
 const minimumSensitiveEnvValueLength = 8;
 const nonSecretSensitiveEnvValuePattern = /^(?:0|1|true|false|yes|no|on|off)$/i;
@@ -38,6 +50,8 @@ Options:
   --keep-artifacts       Keep the temp workspace even when only automated checks ran
   --artifacts-dir DIR    Create the temp workspace under parent DIR instead of the system temp root
   --results-file FILE    Write redacted JSON results to FILE outside the temp workspace
+  --candidate-ref COMMIT Run from a frozen local commit snapshot packed with npm
+  --acceptance-model M   Use explicit PROVIDER/MODEL:LEVEL for guided acceptance runs
   -h, --help             Show this help
 `;
 }
@@ -53,6 +67,8 @@ function parseArgs(argv) {
     keepArtifacts: false,
     artifactsDir: "",
     resultsFile: "",
+    candidateRef: "",
+    acceptanceModel: "",
     scenarios: [],
     help: false,
   };
@@ -89,6 +105,31 @@ function parseArgs(argv) {
       index += 1;
       if (!argv[index]) throw new Error("--results-file requires a value");
       args.resultsFile = argv[index];
+      continue;
+    }
+    if (arg === "--candidate-ref") {
+      index += 1;
+      if (!argv[index] || argv[index].startsWith("-") || argv[index].trim() === "")
+        throw new Error("--candidate-ref requires a value");
+      args.candidateRef = argv[index];
+      continue;
+    }
+    if (arg.startsWith("--candidate-ref=")) {
+      const candidateRef = arg.slice("--candidate-ref=".length);
+      if (!candidateRef.trim()) throw new Error("--candidate-ref requires a value");
+      args.candidateRef = candidateRef;
+      continue;
+    }
+    if (arg === "--acceptance-model") {
+      index += 1;
+      if (!argv[index] || argv[index].startsWith("-") || argv[index].trim() === "")
+        throw new Error(`--acceptance-model requires ${ACCEPTANCE_MODEL_FORMAT}`);
+      args.acceptanceModel = parseAcceptanceModel(argv[index]).raw;
+      continue;
+    }
+    if (arg.startsWith("--acceptance-model=")) {
+      const acceptanceModel = arg.slice("--acceptance-model=".length);
+      args.acceptanceModel = parseAcceptanceModel(acceptanceModel).raw;
       continue;
     }
     if (arg.startsWith("--results-file=")) {
@@ -302,12 +343,25 @@ export function createContext(args) {
     binDir,
     workspaceDir,
     baseEnv,
+    candidateRef: args.candidateRef || "",
+    acceptanceModel: args.acceptanceModel
+      ? parseAcceptanceModel(
+          typeof args.acceptanceModel === "string"
+            ? args.acceptanceModel
+            : args.acceptanceModel.raw,
+        )
+      : null,
     wrapperPath: join(binDir, "tlh"),
     redactions: [],
     artifactsByScenario: new Map(),
     artifactPaths: new Set(),
     installed: false,
     installBootstrapCheck: null,
+    candidate: null,
+    candidateEnv: null,
+    candidateMetadata: null,
+    candidateAttempted: false,
+    candidateFailure: null,
   };
   ctx.redactions = buildRedactions(ctx);
   return ctx;
@@ -319,6 +373,9 @@ function listScenarios(selectedScenarios) {
     console.log(`- ${scenario.id} [${scenario.mode}]`);
     console.log(`  ${scenario.summary}`);
     console.log(`  prerequisites: ${scenario.prerequisites.join("; ")}`);
+    if (scenario.acceptancePrerequisites?.length > 0) {
+      console.log(`  acceptance prerequisites: ${scenario.acceptancePrerequisites.join("; ")}`);
+    }
     console.log("");
   }
   console.log(
@@ -329,8 +386,18 @@ function listScenarios(selectedScenarios) {
   );
 }
 
-function bootstrapCheckArtifacts() {
-  return ["artifacts/install-bootstrap/install.log"];
+function bootstrapCheckArtifacts(candidateMode = false) {
+  return candidateMode
+    ? [
+        "artifacts/candidate-bootstrap/resolve-commit.log",
+        "artifacts/candidate-bootstrap/create-source-snapshot.log",
+        "artifacts/candidate-bootstrap/extract-source-snapshot.log",
+        "artifacts/candidate-bootstrap/pack-candidate.log",
+        "artifacts/candidate-bootstrap/extract-packed-package.log",
+        "artifacts/candidate-bootstrap/install-candidate.log",
+        "artifacts/candidate-bootstrap/probe-runtime.log",
+      ]
+    : ["artifacts/install-bootstrap/install.log"];
 }
 
 function createFailureOutcome(details, artifacts = [], checks = []) {
@@ -358,7 +425,105 @@ function throwOutcomeError(message, outcome) {
   throw error;
 }
 
+function candidateCommandLabel(phase) {
+  const labels = {
+    "resolve candidate commit": "resolve-commit",
+    "create candidate source snapshot": "create-source-snapshot",
+    "extract candidate source snapshot": "extract-source-snapshot",
+    "pack candidate": "pack-candidate",
+    "extract packed candidate package": "extract-packed-package",
+    "install packaged candidate": "install-candidate",
+    "probe installed upstream runtime": "probe-runtime",
+  };
+  return (
+    labels[phase] ||
+    String(phase || "candidate-command")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+  );
+}
+
+function ensureCandidateInstalled(ctx) {
+  if (ctx.candidateFailure) {
+    throwOutcomeError(ctx.candidateFailure.detail, ctx.candidateFailure.outcome);
+  }
+  if (ctx.candidate && ctx.installed && existsSync(ctx.wrapperPath)) {
+    if (!ctx.installBootstrapCheck) {
+      ctx.installBootstrapCheck = createBinaryScoreCheck({
+        id: "install-bootstrap",
+        label: "Packaged candidate install created and validated the tlh wrapper",
+        passed: true,
+        details: `frozen local commit ${ctx.candidate.commit} installed as ${ctx.candidate.packageName}@${ctx.candidate.packageVersion}; upstream runtime ${ctx.candidate.observedRuntimeVersion} matched expected ${ctx.candidate.expectedRuntimeVersion}`,
+        artifacts: bootstrapCheckArtifacts(true),
+      });
+    }
+    return ctx.installBootstrapCheck;
+  }
+  if (ctx.candidateAttempted) {
+    const detail = `packaged candidate install did not create the expected wrapper: ${ctx.wrapperPath}; cleanup: rm -rf ${quoteShellWord(ctx.rootDir)}`;
+    const outcome = createFailureOutcome(detail, bootstrapCheckArtifacts(true));
+    ctx.candidateFailure = { detail, outcome };
+    throwOutcomeError(detail, outcome);
+  }
+  ctx.candidateAttempted = true;
+  console.log("[bootstrap] Preparing a frozen local candidate snapshot and isolated install ...");
+  try {
+    const candidate = setupPackagedCandidate({
+      repoRoot,
+      candidateRef: ctx.candidateRef,
+      rootDir: ctx.rootDir,
+      homeDir: ctx.homeDir,
+      agentDir: ctx.agentDir,
+      binDir: ctx.binDir,
+      baseEnv: ctx.baseEnv,
+      commandRunner: (specification) =>
+        runCommand(ctx, {
+          scenarioId: "candidate-bootstrap",
+          label: candidateCommandLabel(specification.phase),
+          command: specification.command,
+          args: specification.args,
+          cwd: specification.cwd,
+          env: specification.env,
+          timeoutMs: specification.timeoutMs || installTimeoutMs,
+        }),
+      onMetadata: (metadata) => {
+        ctx.candidateMetadata = metadata;
+      },
+    });
+    ctx.candidate = candidate;
+    ctx.candidateMetadata = candidate.metadata;
+    ctx.candidateEnv = candidate.env;
+    ctx.baseEnv = candidate.env;
+    ctx.installed = true;
+    ctx.installBootstrapCheck = createBinaryScoreCheck({
+      id: "install-bootstrap",
+      label: "Packaged candidate install created and validated the tlh wrapper",
+      passed: true,
+      details: `frozen local commit ${candidate.commit} installed as ${candidate.packageName}@${candidate.packageVersion}; upstream runtime ${candidate.observedRuntimeVersion} matched expected ${candidate.expectedRuntimeVersion}`,
+      artifacts: bootstrapCheckArtifacts(true),
+    });
+    return ctx.installBootstrapCheck;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const cleanupPath =
+      error && typeof error === "object" && error.cleanupPath ? error.cleanupPath : ctx.rootDir;
+    const detail = `packaged candidate setup failed: ${message}; candidate diagnostics retained under ${cleanupPath}; cleanup: rm -rf ${quoteShellWord(cleanupPath)}`;
+    const outcome = createFailureOutcome(detail, bootstrapCheckArtifacts(true), [
+      createBinaryScoreCheck({
+        id: "install-bootstrap",
+        label: "Packaged candidate install created and validated the tlh wrapper",
+        passed: false,
+        details: detail,
+        artifacts: bootstrapCheckArtifacts(true),
+      }),
+    ]);
+    ctx.candidateFailure = { detail, outcome };
+    throwOutcomeError(detail, outcome);
+  }
+}
+
 function ensureInstalled(ctx) {
+  if (ctx.candidateRef) return ensureCandidateInstalled(ctx);
   if (ctx.installed && existsSync(ctx.wrapperPath)) {
     if (!ctx.installBootstrapCheck) {
       ctx.installBootstrapCheck = createBinaryScoreCheck({
@@ -437,175 +602,20 @@ function ensureInstalled(ctx) {
   return ctx.installBootstrapCheck;
 }
 
-function gitConfigEnv(ctx) {
+function scenarioHelpers(ctx) {
   return {
-    ...ctx.baseEnv,
-    GIT_AUTHOR_NAME: "TLH Live Eval",
-    GIT_AUTHOR_EMAIL: "live-evals@example.invalid",
-    GIT_COMMITTER_NAME: "TLH Live Eval",
-    GIT_COMMITTER_EMAIL: "live-evals@example.invalid",
-  };
-}
-
-function createFixtureRepo(
-  ctx,
-  scenarioId,
-  name,
-  files,
-  { dirty = false, dirtyFile = "README.md", dirtyAppend = "\nworktree change\n" } = {},
-) {
-  const repoDir = join(ctx.workspaceDir, name);
-  ensureDir(repoDir);
-  for (const [relativePath, content] of Object.entries(files)) {
-    const target = join(repoDir, relativePath);
-    ensureDir(dirname(target));
-    writeFileSync(target, content, "utf8");
-  }
-  const env = gitConfigEnv(ctx);
-  for (const [label, args] of [
-    ["git-init", ["init"]],
-    ["git-config-name", ["config", "user.name", "TLH Live Eval"]],
-    ["git-config-email", ["config", "user.email", "live-evals@example.invalid"]],
-    ["git-add", ["add", "."]],
-    ["git-commit", ["commit", "-m", "Initial fixture"]],
-  ]) {
-    const result = runCommand(ctx, {
-      scenarioId,
-      label,
-      command: "git",
-      args,
-      cwd: repoDir,
-      env,
-      timeoutMs: gitTimeoutMs,
-    });
-    if (result.status !== 0) {
-      throw new Error(`failed to prepare fixture repo '${name}' during ${label}`);
-    }
-  }
-  if (dirty) {
-    const dirtyPath = join(repoDir, dirtyFile);
-    writeFileSync(dirtyPath, `${files[dirtyFile] || ""}${dirtyAppend}`, "utf8");
-  }
-  const statusResult = runCommand(ctx, {
-    scenarioId,
-    label: "git-status",
-    command: "git",
-    args: ["status", "--short"],
-    cwd: repoDir,
-    env,
-    timeoutMs: gitTimeoutMs,
-  });
-  if (statusResult.status !== 0)
-    throw new Error(`failed to read git status for fixture repo '${name}'`);
-  return { repoDir, gitStatus: statusResult.stdout.trimEnd() };
-}
-
-function manualLaunchCommand(ctx) {
-  return `HOME=${quoteShellWord(ctx.homeDir)} PATH=${quoteShellWord(`${ctx.binDir}:${ctx.baseEnv.PATH || ""}`)} ${quoteShellWord(ctx.wrapperPath)}`;
-}
-
-function prepareArchitectScenario(ctx) {
-  ensureInstalled(ctx);
-  const fixture = createFixtureRepo(ctx, "architect-e2e", "architect-e2e-repo", {
-    "README.md":
-      "# Architect live eval fixture\n\nTiny repo for validating the TLH architect -> ticket -> developer flow.\n",
-    "package.json":
-      JSON.stringify(
-        {
-          name: "architect-e2e-fixture",
-          private: true,
-          type: "module",
-          scripts: { test: "node --test" },
-        },
-        null,
-        2,
-      ) + "\n",
-    "src/greeter.mjs":
-      'export function formatGreeting(name) {\n\tif (!name) return "Hello.";\n\treturn `Hello, ${String(name).trim()}!`;\n}\n',
-    "test/greeter.test.mjs":
-      "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { formatGreeting } from '../src/greeter.mjs';\n\ntest('formatGreeting trims names', () => {\n\tassert.equal(formatGreeting(' TLH '), 'Hello, TLH!');\n});\n",
-    "EVAL_REQUEST.md":
-      "Add a new formatGreetingList(names) helper in src/greeter.mjs and targeted tests. Use the normal architect ticketed workflow instead of editing directly in the primary session.\n",
-  });
-  const instructions = `# architect-e2e\n\nRepo: ${fixture.repoDir}\nLaunch from repo root:\n\n\tcd ${fixture.repoDir}\n\t${manualLaunchCommand(ctx)}\n\nSuggested prompt:\n\n> In this fixture repo, use the normal TLH architect workflow to implement the request in EVAL_REQUEST.md. Keep the work small, create or use the needed tk ticket flow, delegate implementation, and report back with validation.\n\nWhat to verify:\n- architect stays in orchestration mode instead of editing directly\n- ticket/developer flow happens for the small requested change\n- resulting change stays inside this fixture repo\n- cleanup is easy because everything lives under ${ctx.rootDir}\n`;
-  writeArtifact(ctx, join("artifacts", "architect-e2e", "README.md"), instructions);
-  return {
-    status: "prepared",
-    detail: `fixture repo: ${fixture.repoDir}`,
-  };
-}
-
-function preparePrimaryBehaviorScenario(ctx) {
-  ensureInstalled(ctx);
-  const fixture = createFixtureRepo(ctx, "rush-product-bug-hunter", "primary-behavior-repo", {
-    "README.md":
-      "# Primary behavior live eval fixture\n\nUse this repo to check Rush, product, and bug-hunter behavior boundaries.\n",
-    "package.json":
-      JSON.stringify(
-        {
-          name: "primary-behavior-fixture",
-          private: true,
-          type: "module",
-          scripts: { test: "node --test" },
-        },
-        null,
-        2,
-      ) + "\n",
-    "src/cart.mjs":
-      "export function totalWithTax(subtotalCents, quantity, taxRate = 0.1) {\n\tif (quantity <= 0) return subtotalCents * quantity;\n\tconst subtotal = subtotalCents * quantity;\n\treturn Math.floor(subtotal + subtotal * taxRate);\n}\n",
-    "test/cart.test.mjs":
-      "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { totalWithTax } from '../src/cart.mjs';\n\ntest('totalWithTax applies tax', () => {\n\tassert.equal(totalWithTax(500, 2, 0.1), 1100);\n});\n",
-    "BUG_REPORT.md":
-      "Users report negative totals when quantity is zero or negative, and totals are rounded down instead of to the nearest cent.\n",
-    "PRODUCT_BRIEF.md": "Draft a ticket for coupon stacking rules without editing source files.\n",
-  });
-  const instructions = `# rush-product-bug-hunter\n\nRepo: ${fixture.repoDir}\nLaunch from repo root:\n\n\tcd ${fixture.repoDir}\n\t${manualLaunchCommand(ctx)}\n\nSuggested prompts:\n\nRush\n> Switch to Rush and fix the bug described in BUG_REPORT.md. Edit directly, run narrow validation, and do not start ticket ceremony unless the task clearly outgrows Rush.\n\nProduct\n> Switch to product and turn PRODUCT_BRIEF.md into an implementation-ready tk ticket. Do not edit source files or run implementation loops.\n\nBug-hunter\n> Switch to bug-hunter and investigate the issue in BUG_REPORT.md. Explain the root cause and candidate fix, but do not modify files.\n\nWhat to verify:\n- Rush edits directly and validates narrowly\n- product stays non-implementing and hands back a ticket-shaped artifact\n- bug-hunter remains read-only and investigative\n`;
-  writeArtifact(ctx, join("artifacts", "rush-product-bug-hunter", "README.md"), instructions);
-  return {
-    status: "prepared",
-    detail: `fixture repo: ${fixture.repoDir}`,
-  };
-}
-
-function prepareWebScoutScenario(ctx) {
-  ensureInstalled(ctx);
-  const briefDir = join(ctx.workspaceDir, "web-scout-brief");
-  ensureDir(briefDir);
-  writeFileSync(
-    join(briefDir, "RESEARCH_BRIEF.md"),
-    "Research the latest upstream Pi release notes and any recent Exa-facing changes relevant to TLH web-scout usage.\n",
-    "utf8",
-  );
-  const instructions = `# web-scout-network-research\n\nWorkspace: ${briefDir}\nLaunch from that directory:\n\n\tcd ${briefDir}\n\t${manualLaunchCommand(ctx)}\n\nPrerequisites:\n- working model auth for the upstream runtime\n- network access\n- EXA_API_KEY in the environment or equivalent isolated pi-web-access config\n\nSuggested prompt:\n\n> Use the architect to delegate a web-scout research task based on RESEARCH_BRIEF.md. Return concise findings with citations, and do not write source files.\n\nWhat to verify:\n- web-scout actually performs network research instead of hallucinating\n- returned answer includes citations/sources\n- no secrets appear in saved artifacts under ${ctx.rootDir}\n`;
-  writeArtifact(ctx, join("artifacts", "web-scout-network-research", "README.md"), instructions);
-  return {
-    status: "prepared",
-    detail: `workspace: ${briefDir}`,
-  };
-}
-
-function prepareDirtyRepoScenario(ctx) {
-  ensureInstalled(ctx);
-  const fixture = createFixtureRepo(
-    ctx,
-    "dirty-repo-guard",
-    "dirty-repo-guard-repo",
-    {
-      "README.md":
-        "# Dirty repo guard fixture\n\nThis repo should remain dirty after setup so TLH can warn before session work proceeds.\n",
-      "notes.txt": "initial clean content\n",
-    },
-    { dirty: true, dirtyFile: "notes.txt", dirtyAppend: "uncommitted change\n" },
-  );
-  const instructions = `# dirty-repo-guard\n\nRepo: ${fixture.repoDir}\nCurrent git status:\n${fixture.gitStatus || "(clean unexpectedly)"}\n\nLaunch from repo root:\n\n\tcd ${fixture.repoDir}\n\t${manualLaunchCommand(ctx)}\n\nWhat to verify:\n- TLH warns or prompts before starting in this dirty worktree\n- the prompt appears before starting/switching/forking work that could hide the change\n- exiting the temp workspace is enough to undo the eval\n`;
-  writeArtifact(ctx, join("artifacts", "dirty-repo-guard", "README.md"), instructions);
-  return {
-    status: "prepared",
-    detail: `dirty fixture repo: ${fixture.repoDir}`,
+    ensureInstalled,
+    writeArtifact,
+    runCommand: (specification) => runCommand(ctx, specification),
   };
 }
 
 function runInstallUpdateSmoke(ctx) {
+  if (ctx.candidateRef) {
+    throw new Error(
+      "--candidate-ref cannot be combined with install-update-smoke; candidate mode never updates away from the frozen commit",
+    );
+  }
   const checks = [ensureInstalled(ctx)];
   const defaultsArtifact = "artifacts/install-update-smoke/defaults-list.log";
   const defaultsResult = runCommand(ctx, {
@@ -720,6 +730,11 @@ export const allScenarios = [
       ...bootstrapCommandPrerequisites,
       bootstrapNetworkPrerequisite,
     ],
+    acceptancePrerequisites: [
+      "candidate mode (--candidate-ref COMMIT)",
+      `explicit acceptance model (--acceptance-model ${ACCEPTANCE_MODEL_FORMAT})`,
+      "preparation only; missing live capabilities remain blocked",
+    ],
     rubrics: [
       {
         id: "architect-orchestration-boundary",
@@ -740,7 +755,25 @@ export const allScenarios = [
           "Check that any code changes and validation are contained to the prepared fixture repo so cleanup remains trivial.",
       },
     ],
-    run: prepareArchitectScenario,
+    run: (ctx) => prepareArchitectAcceptanceScenario(ctx, scenarioHelpers(ctx)),
+  },
+  {
+    id: "subagent-acceptance",
+    mode: "manual",
+    summary: "Prepare guided, offline-safe evidence scaffolding for all nine bundled minor roles.",
+    prerequisites: [
+      "interactive terminal",
+      "candidate mode (--candidate-ref COMMIT)",
+      `explicit acceptance model (--acceptance-model ${ACCEPTANCE_MODEL_FORMAT})`,
+      ...bootstrapCommandPrerequisites,
+      "preparation only; conditional live capabilities stay blocked when unavailable",
+    ],
+    rubrics: SUBAGENT_ACCEPTANCE_CHECKS.map((check) => ({
+      id: check.id,
+      label: check.label,
+      details: `${check.expectedSignal} ${check.captureGuidance}`,
+    })),
+    run: (ctx) => prepareSubagentAcceptanceScenario(ctx, scenarioHelpers(ctx)),
   },
   {
     id: "rush-product-bug-hunter",
@@ -773,7 +806,7 @@ export const allScenarios = [
           "Check that bug-hunter explains root cause and candidate fixes without modifying files.",
       },
     ],
-    run: preparePrimaryBehaviorScenario,
+    run: (ctx) => preparePrimaryBehaviorScenario(ctx, scenarioHelpers(ctx)),
   },
   {
     id: "web-scout-network-research",
@@ -806,7 +839,7 @@ export const allScenarios = [
           "Review the saved artifacts for accidental secret leakage before sharing them outside the temp workspace.",
       },
     ],
-    run: prepareWebScoutScenario,
+    run: (ctx) => prepareWebScoutScenario(ctx, scenarioHelpers(ctx)),
   },
   {
     id: "dirty-repo-guard",
@@ -837,7 +870,7 @@ export const allScenarios = [
           "Make sure leaving or removing the temp workspace is enough to undo the live eval fixture state.",
       },
     ],
-    run: prepareDirtyRepoScenario,
+    run: (ctx) => prepareDirtyRepoScenario(ctx, scenarioHelpers(ctx)),
   },
   {
     id: "install-update-smoke",
@@ -946,7 +979,7 @@ function writeTopLevelSummary(ctx, suiteResult) {
     "",
     "## Aggregate summary",
     `Run status: ${suiteResult.status}`,
-    `Scenarios: ${suiteResult.summary.scenarios.total} total; ${suiteResult.summary.scenarios.passed} passed; ${suiteResult.summary.scenarios.prepared} prepared; ${suiteResult.summary.scenarios.failed} failed`,
+    `Scenarios: ${suiteResult.summary.scenarios.total} total; ${suiteResult.summary.scenarios.passed} passed; ${suiteResult.summary.scenarios.prepared} prepared; ${suiteResult.summary.scenarios.failed} failed; ${suiteResult.summary.scenarios.other} blocked/other`,
     `Automated checks: ${suiteResult.summary.checks.automated.passed}/${suiteResult.summary.checks.automated.total} passed`,
     `Manual rubrics pending: ${suiteResult.summary.checks.manual.pending}/${suiteResult.summary.checks.manual.total}`,
     "",
@@ -976,7 +1009,13 @@ function printRunSummary(ctx, suiteResult, externalResultsPath = "") {
   console.log(`\nLive eval workspace: ${ctx.rootDir}`);
   for (const result of suiteResult.scenarios) {
     const prefix =
-      result.status === "passed" ? "PASS" : result.status === "prepared" ? "PREP" : "FAIL";
+      result.status === "passed"
+        ? "PASS"
+        : result.status === "prepared"
+          ? "PREP"
+          : result.status === "blocked"
+            ? "BLOCK"
+            : "FAIL";
     console.log(
       `- [${prefix}] ${result.id} — ${formatScenarioScore(result)}${result.detail ? ` (${result.detail})` : ""}`,
     );
@@ -1004,6 +1043,18 @@ export function main(argv = process.argv.slice(2)) {
       "\nskipped: live evals are opt-in. Pass --run or set TLH_RUN_LIVE_EVALS=1 to execute them.",
     );
     return;
+  }
+  if (
+    args.candidateRef &&
+    selectedScenarios.some((scenario) => scenario.id === "install-update-smoke")
+  ) {
+    const selectionHint =
+      args.scenarios.length === 0
+        ? ". The default selection includes install-update-smoke; pass --scenario <id> (for example, --scenario architect-e2e) to choose candidate-compatible scenarios"
+        : "";
+    throw new Error(
+      `--candidate-ref cannot be combined with install-update-smoke; candidate mode never updates away from the frozen commit${selectionHint}`,
+    );
   }
   const ctx = createContext(args);
   const startedAt = new Date().toISOString();
@@ -1044,6 +1095,14 @@ export function main(argv = process.argv.slice(2)) {
       selectedScenarios.map((scenario) => scenario.id),
     ),
   });
+  if (ctx.candidateMetadata) suiteResult.metadata.candidate = ctx.candidateMetadata;
+  suiteResult.metadata.acceptanceModel = ctx.acceptanceModel?.raw || "";
+  suiteResult.metadata.acceptanceModelContract = acceptanceModelMetadata(ctx.acceptanceModel);
+  suiteResult.metadata.acceptanceSuiteVersion = ACCEPTANCE_SUITE_VERSION;
+  suiteResult.metadata.candidateMode = Boolean(ctx.candidateRef);
+  suiteResult.metadata.blockedScenarioIds = suiteResult.scenarios
+    .filter((scenario) => scenario.status === "blocked")
+    .map((scenario) => scenario.id);
   writeWorkspaceOutputs(ctx, suiteResult);
   const externalResultsPath = args.resultsFile
     ? writeResultsFile({

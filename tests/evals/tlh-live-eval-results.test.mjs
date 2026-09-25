@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import {
+  createAcceptanceEvidenceScenarioResult,
+  createAcceptanceEvidenceSuiteResult,
   createBinaryScoreCheck,
+  createEvidenceScoreCheck,
   createManualRubricCheck,
   createScenarioResult,
   createSuiteResult,
@@ -124,6 +127,78 @@ test("live eval results schema aggregates detailed automated checks and manual r
     ["install-bootstrap", "defaults-list", "update", "install-state"],
   );
   assert.deepEqual(suite.artifacts.shared, ["artifacts/install-bootstrap/install.log"]);
+});
+
+test("acceptance evidence results preserve pending/blocked/failed/pass counts and precedence", () => {
+  const scenario = createAcceptanceEvidenceScenarioResult({
+    scenarioId: "acceptance-evidence",
+    mode: "acceptance-evidence",
+    summary: "offline evidence",
+    identity: { suiteId: "tlh-packaged-acceptance", candidateCommit: "candidate" },
+    checks: [
+      createEvidenceScoreCheck({ id: "pass", label: "pass", status: "passed" }),
+      createEvidenceScoreCheck({ id: "pending", label: "pending", status: "pending" }),
+      createEvidenceScoreCheck({ id: "blocked", label: "blocked", status: "blocked" }),
+      createEvidenceScoreCheck({ id: "failed", label: "failed", status: "failed" }),
+      createEvidenceScoreCheck({
+        id: "manual-pending",
+        label: "manual pending",
+        status: "pending",
+        category: "manual",
+      }),
+    ],
+  });
+  assert.equal(scenario.status, "failed");
+  assert.deepEqual(scenario.score.evidence.deterministic, {
+    passed: 1,
+    failed: 1,
+    pending: 1,
+    blocked: 1,
+    total: 4,
+  });
+  assert.deepEqual(scenario.score.evidence.manual, {
+    passed: 0,
+    failed: 0,
+    pending: 1,
+    blocked: 0,
+    total: 1,
+  });
+  const suite = createAcceptanceEvidenceSuiteResult({
+    selectedScenarios: [{ id: "acceptance-evidence", mode: "acceptance-evidence" }],
+    scenarioResults: [scenario],
+    suiteId: "tlh-packaged-acceptance",
+    suiteVersion: 1,
+    candidate: { commit: "candidate" },
+    evidenceReferences: ["artifacts/evidence.jsonl"],
+  });
+  assert.equal(suite.schemaVersion, 1);
+  assert.equal(suite.status, "failed");
+  assert.deepEqual(suite.summary.scenarios, {
+    total: 1,
+    passed: 0,
+    prepared: 0,
+    pending: 0,
+    blocked: 0,
+    failed: 1,
+    other: 0,
+  });
+  assert.deepEqual(suite.summary.checks.deterministic, {
+    passed: 1,
+    failed: 1,
+    pending: 1,
+    blocked: 1,
+    total: 4,
+  });
+  assert.deepEqual(suite.summary.checks.manual, {
+    passed: 0,
+    failed: 0,
+    pending: 1,
+    blocked: 0,
+    total: 1,
+  });
+  assert.deepEqual(suite.metadata.requestedScenarioIds, ["acceptance-evidence"]);
+  assert.equal(suite.identity.candidate.commit, "candidate");
+  assert.deepEqual(suite.metadata.evidenceReferences, ["artifacts/evidence.jsonl"]);
 });
 
 test("writeResultsFile writes redacted external results and rejects workspace paths", () => {

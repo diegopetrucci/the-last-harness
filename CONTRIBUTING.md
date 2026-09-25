@@ -64,9 +64,35 @@ Quick reference:
 
 - Default contributor/CI path: `npm run validate`
 - Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Acceptance-evidence offline checks: `node --test tests/evals/tlh-acceptance-evidence.test.mjs tests/evals/tlh-acceptance-scenarios.test.mjs tests/evals/tlh-live-eval-candidate.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs`
 - Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
 - Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
-- Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
+- Prepare a packaged manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --run --scenario architect-e2e --candidate-ref "$candidate_ref" --acceptance-model "$acceptance_model" --keep-artifacts`
+- Evaluate an owned prepared run without launching providers: `node tests/evals/tlh-acceptance-evidence.mjs --workspace "$workspace"`
+
+### Repeatable isolated acceptance capture
+
+Use a frozen candidate reference and a temporary artifacts parent; do not capture release evidence from the mutable checkout:
+
+```sh
+candidate_ref="$(git rev-parse HEAD)"
+acceptance_model="PROVIDER/MODEL:medium" # exact approved model; never substitute a fallback
+run_parent="$(mktemp -d)"
+TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs \
+  --run --scenario architect-e2e,subagent-acceptance \
+  --candidate-ref "$candidate_ref" \
+  --acceptance-model "$acceptance_model" \
+  --artifacts-dir "$run_parent" --keep-artifacts
+```
+
+Use the printed `Live eval workspace: <run-root>` as `workspace`; it is the run root containing `artifacts/`, not the nested `workspace/` fixture directory. Follow each generated `artifacts/<scenario>/README.md` and capture native parent/child records only. Candidate-mode commands use `env -i` with an allowlisted environment, so host auth variables and profile files are intentionally absent; complete authentication in the isolated candidate profile and do not replace `env -i` with a normal host environment. The offline evaluator never launches a provider or executes commands from evidence:
+
+```sh
+node tests/evals/tlh-acceptance-evidence.mjs --workspace "$workspace"
+rm -rf "$run_parent"
+```
+
+Keep raw sessions and credentials outside the repository. If auth, model capability, or a role is unavailable, preserve `blocked`/`pending` evidence instead of substituting a provider/model. See [docs/workflow-evals.md](docs/workflow-evals.md) for the native evidence schema and required correlation fields.
 
 Guardrails to remember:
 

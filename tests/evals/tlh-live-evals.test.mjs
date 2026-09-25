@@ -102,6 +102,69 @@ test("live eval runner rejects unknown scenario ids", () => {
   assert.match(combined, /Unknown scenario id: nope/);
 });
 
+test("candidate ref preserves list mode and rejects checkout update smoke", () => {
+  const listed = runLiveEval(["--candidate-ref", "HEAD", "--list", "--scenario", "architect-e2e"]);
+  assert.equal(listed.status, 0);
+  assert.match(listed.stdout, /architect-e2e/);
+  assert.equal(listed.stderr, "");
+
+  const rejected = runLiveEval([
+    "--run",
+    "--candidate-ref",
+    "HEAD",
+    "--scenario",
+    "install-update-smoke",
+  ]);
+  const combined = `${rejected.stdout}${rejected.stderr}`;
+  assert.notEqual(rejected.status, 0);
+  assert.match(combined, /cannot be combined with install-update-smoke/i);
+});
+
+test("candidate ref default selection explains how to choose a compatible scenario", () => {
+  const result = runLiveEval(["--run", "--candidate-ref", "HEAD"]);
+  const combined = `${result.stdout}${result.stderr}`;
+
+  assert.notEqual(result.status, 0);
+  assert.match(combined, /default selection includes install-update-smoke/i);
+  assert.match(combined, /pass --scenario <id>/i);
+  assert.match(combined, /--scenario architect-e2e/i);
+});
+
+test("guided acceptance input is explicit and missing packaged inputs stay blocked", () => {
+  const invalid = runLiveEval([
+    "--list",
+    "--scenario",
+    "subagent-acceptance",
+    "--acceptance-model",
+    "openai-codex/gpt-6-astra:unsupported",
+  ]);
+  assert.notEqual(invalid.status, 0);
+  assert.match(`${invalid.stdout}${invalid.stderr}`, /--acceptance-model must use/);
+
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-acceptance-runner-test-"));
+  try {
+    const resultsPath = join(tempDir, "results.json");
+    const result = runLiveEval([
+      "--run",
+      "--scenario",
+      "subagent-acceptance",
+      "--artifacts-dir",
+      tempDir,
+      "--results-file",
+      resultsPath,
+    ]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /\[BLOCK\] subagent-acceptance/);
+    const parsed = JSON.parse(readFileSync(resultsPath, "utf8"));
+    assert.equal(parsed.metadata.acceptanceModel, "");
+    assert.equal(parsed.metadata.acceptanceModelContract, null);
+    assert.equal(parsed.scenarios[0].status, "blocked");
+    assert.equal(parsed.scenarios[0].score.manual.pending > 0, true);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("manual live eval scenarios define meaningful null-scored rubric checks", () => {
   const scenario = allScenarios.find((entry) => entry.id === "architect-e2e");
   const ctx = {

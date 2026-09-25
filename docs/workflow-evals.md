@@ -27,6 +27,18 @@ Use the targeted command below when you are working specifically on workflow beh
 node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs
 ```
 
+The reusable acceptance-evidence evaluator has its own offline regression set. Run these files without providers, authentication, or installation:
+
+```sh
+node --test \
+  tests/evals/tlh-acceptance-evidence.test.mjs \
+  tests/evals/tlh-acceptance-scenarios.test.mjs \
+  tests/evals/tlh-live-eval-candidate.test.mjs \
+  tests/evals/tlh-live-evals.test.mjs \
+  tests/evals/tlh-live-eval-results.test.mjs \
+  tests/evals/trace-policy/trace-policy-evals.test.mjs
+```
+
 Deterministic boundaries for the hermetic integration test:
 
 - fake provider only; no real model/provider credentials;
@@ -126,6 +138,63 @@ node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke
 TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e
 ```
 
+### Offline acceptance-evidence evaluation
+
+The prepared packaged scenarios can be scored later without launching a provider. The evaluator is intentionally offline: it reads only an owned workspace, never executes commands found in a manifest/transcript, never refreshes credentials, and never starts a model/provider. It writes `acceptance-results.json` inside that workspace.
+
+Use a frozen packaged candidate for evidence that is meant to say anything about a release candidate. A checkout-only scaffold is useful for prompt/fixture development, but it has no frozen candidate identity and must remain pending/blocked rather than being reported as release evidence.
+
+A repeatable preparation and capture outline is:
+
+```sh
+candidate_ref="$(git rev-parse HEAD)"
+acceptance_model="PROVIDER/MODEL:medium" # choose the exact approved model; do not substitute it later
+run_parent="$(mktemp -d)"
+
+# Live preparation/capture step, only with explicit operator approval. This is
+# the only step below that can launch the installed runtime or contact a provider.
+TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs \
+  --run --scenario architect-e2e,subagent-acceptance \
+  --candidate-ref "$candidate_ref" \
+  --acceptance-model "$acceptance_model" \
+  --artifacts-dir "$run_parent" --keep-artifacts
+
+# The runner prints `Live eval workspace: <run-root>`. Pass that printed
+# run root (the directory containing artifacts/), not its nested workspace/.
+# Complete only the capture instructions in artifacts/<scenario>/README.md.
+workspace="<printed-live-eval-run-root>"
+node tests/evals/tlh-acceptance-evidence.mjs --workspace "$workspace"
+status=$?
+printf 'offline acceptance evaluator exit: %s\n' "$status"
+
+# Remove the temporary profile, fixture, captures, and report after review.
+rm -rf "$run_parent"
+```
+
+Authentication must happen only through the human-controlled login/configuration flow in the isolated candidate profile described by the generated README. Candidate-mode launch commands intentionally use `env -i` with an allowlisted environment, so host auth variables and host profile files are not inherited; complete the isolated login/configuration flow before launching and do not replace `env -i` with a normal host environment. Do not copy host auth files, refresh credentials automatically, put credentials in evidence, or use a fallback provider/model. If auth, capability metadata, or a requested role is unavailable, preserve the generated `blocked`/`pending` result. The evaluator accepts structured allowlisted records in the manifest capture locations (or `artifacts/<scenario>/evidence/evidence-records.jsonl`); each record must carry the relevant check ID and candidate/run/session identity. Manual compact-description and max-rendering records additionally require `reviewerType: "human"`, an explicit approving decision, capture reference, candidate commit, and observed run ID. An AI may collect a capture but cannot award that manual pass.
+
+### Evidence capture contract
+
+All paths below are relative to the printed live-eval run root. Keep raw sessions private; records contain only redacted fields needed for correlation. Every JSONL record carries `kind`, `checkId`, and the frozen `candidateCommit`.
+
+- Parent session: `sessions/<parent-session-id>.jsonl`; the active entry is identified by `parentSessionId`, `parentSessionPath`, `parentEntryId`, and `toolCallId`.
+- Child session: `sessions/<child-session-id>.jsonl`; native job artifacts are `jobs/<run-id>/status.json`, `jobs/<run-id>/result.json`, and `jobs/<run-id>/events.jsonl`. Status/result must agree on `runId` and role; their `sessionFile` references must resolve to the captured child session identity.
+- Successful dispatch record (one JSONL object, abbreviated native payload):
+
+  ```json
+  {"kind":"dispatch","checkId":"subagent-acceptance-developer-dispatch","candidateCommit":"<candidate-commit>","agent":"developer","parentSessionId":"<parent-session-id>","parentSessionPath":"sessions/<parent-session-id>.jsonl","parentEntryId":"<active-entry-id>","toolCallId":"<tool-call-id>","runId":"<run-id>","childSessionId":"<child-session-id>","resolvedScope":"user","childScope":"user","toolCall":{"id":"<tool-call-id>","name":"subagent","input":{"agent":"developer","cwd":"workspace/fixture","agentScope":"user","context":"fresh","model":"PROVIDER/MODEL:medium"}},"toolResult":{"content":[{"type":"text","text":"<redacted result>"}],"details":{"mode":"single","runId":"<run-id>","results":[{"agent":"developer","sessionFile":"sessions/<child-session-id>.jsonl","model":"PROVIDER/MODEL","thinking":"medium","modelIdentity":{"provider":"PROVIDER","model":"MODEL","thinking":"medium"},"attemptedModels":["PROVIDER/MODEL"],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0,"turns":0}}]}}}
+  ```
+
+  The parent session must contain the same native `subagent` call and completed tool result. Requested `toolCall.input.model` is not execution evidence: the observed model must be present on the correlated `result.results[i]` and/or `status.steps[i]` entries. More than one attempted model, a fallback resolution, or disagreeing role/step identity fails; missing observed identity remains pending. `resolvedScope` and `childScope` are required for the user-scope check; record them only from observed parent/child runtime evidence. If either value is unavailable, omit it and leave the check pending rather than inventing an observation.
+- Job record: `{"kind":"job","checkId":"<check-id>","candidateCommit":"<candidate-commit>","runId":"<run-id>","childSessionId":"<child-session-id>","statusPath":"jobs/<run-id>/status.json","resultPath":"jobs/<run-id>/result.json","eventsPath":"jobs/<run-id>/events.jsonl"}`. Lifecycle events use `runId`; child projections use `subagentRunId`; identity-less `subagent.control` and truncation diagnostics are tolerated but never prove lifecycle completion. A `subagent.events.truncated` marker leaves trace-dependent checks incomplete.
+- Denied-target record: use the active parent `subagent` call/result and the native error result `{"content":[{"type":"text","text":"<redacted error>"}],"isError":true,"details":{"mode":"single","results":[]}}`. Do not substitute `blocked:true`; a denied result must have no run identity and no matching child job.
+- Fixture test record: `{"kind":"fixture-test","checkId":"architect-independent-function-behavior","candidateCommit":"<candidate-commit>","fixturePath":"workspace/fixture","resultPath":"artifacts/architect-e2e/evidence/function-behavior.json"}`. The referenced JSON result must contain `candidateCommit`, `command`, `cwd`, integer `exitCode`, string `stdout`/`stderr`, `independent:true`, and `expectedBehaviorChecked:true`; record-level booleans without this capture remain pending.
+- Human TUI attestation: `{"kind":"human-review","checkId":"<manual-check-id>","candidateCommit":"<candidate-commit>","reviewerType":"human","decision":"passed","runId":"<observed-run-id>","captureReference":"artifacts/<scenario>/evidence/<capture>"}`. The capture file must exist inside the run root; an AI reviewer cannot award this status.
+
+The report is idempotent for the same evidence references and includes suite/candidate identity, references, separate deterministic/manual counts, and limitations. A local report is not a tamper-proof attestation and fixture git diff does not establish a sandbox guarantee. Do not copy raw transcripts, credentials, or provider output into repository fixtures/docs.
+
+If the operator must undo a run, remove the printed temporary parent (`rm -rf "$run_parent"`) and any separately chosen isolated credential/profile directory. No normal `~/.pi/agent`, `~/.the-last-harness/agent`, wrapper, or repository state is part of this workflow.
+
 ### Safety and cleanup
 
 The live runner is intentionally conservative:
@@ -167,6 +236,8 @@ The live runner writes:
 - a top-level `README.md` summarizing the run;
 - per-scenario artifacts under `artifacts/<scenario>/`.
 
+The offline evaluator writes a separate top-level `acceptance-results.json`. `results.json` describes preparation/live-runner state; it is not proof that a prepared manual scenario passed. Run the evaluator only after native job/session records and any human TUI attestations have been captured.
+
 The structured result schema includes:
 
 - one result entry per selected scenario;
@@ -182,9 +253,11 @@ If a live result matters for a release or high-confidence workflow decision, rer
 
 - Normal contributor validation: `npm run validate`
 - Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Acceptance-evidence offline checks: `node --test tests/evals/tlh-acceptance-evidence.test.mjs tests/evals/tlh-acceptance-scenarios.test.mjs tests/evals/tlh-live-eval-candidate.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs`
 - Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
 - Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
-- Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
+- Prepare a packaged manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --run --scenario architect-e2e --candidate-ref "$candidate_ref" --acceptance-model "$acceptance_model" --keep-artifacts`
+- Evaluate an owned prepared run offline: `node tests/evals/tlh-acceptance-evidence.mjs --workspace "$workspace"`
 
 ## Boundaries and non-goals
 

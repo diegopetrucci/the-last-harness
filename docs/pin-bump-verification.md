@@ -21,6 +21,31 @@ Run these checks against the packaged TLH release candidate, without creating or
 
 Record the release candidate, profile, session evidence, and outcomes on `tlh-2ej0`. Do not mark this debt complete from static validation alone.
 
+### Repeatable packaged acceptance-evidence run
+
+The current checklist has a separate offline scoring step. Use a frozen packaged snapshot, not the mutable checkout, when recording release evidence:
+
+```sh
+candidate_ref="$(git rev-parse HEAD)"
+acceptance_model="PROVIDER/MODEL:medium" # exact approved model; no fallback
+run_parent="$(mktemp -d)"
+TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs \
+  --run --scenario architect-e2e,subagent-acceptance \
+  --candidate-ref "$candidate_ref" \
+  --acceptance-model "$acceptance_model" \
+  --artifacts-dir "$run_parent" --keep-artifacts
+# Use the printed `Live eval workspace: <run-root>` value. It is the
+# directory containing artifacts/, not the nested workspace/ directory.
+workspace="<printed-live-eval-run-root>"
+# Follow artifacts/<scenario>/README.md and capture native records locally.
+node tests/evals/tlh-acceptance-evidence.mjs --workspace "$workspace"
+rm -rf "$run_parent"
+```
+
+Authentication is manual and isolated to the candidate profile. Candidate-mode launch commands use `env -i` with an allowlisted environment, so host auth variables and host profile files are not inherited; do not replace that with a normal host environment. Do not copy host credentials, refresh auth automatically, or place secrets in captures. If authentication, provider/model capability, or a role is unavailable, record blocked/pending evidence and do not substitute another provider/model. A checkout-only run can validate contributor scaffolding but lacks frozen candidate identity and is not release acceptance. The evaluator never launches providers or executes manifest/transcript commands; it rejects traversal, symlink escapes, malformed evidence, and mismatched candidate/run/session identities. Raw sessions and credentials stay outside the repository. Remove the printed temp parent and any separately created isolated credential/profile directory to undo the run.
+
+Manual compact-description and max-badge checks remain pending until an explicit human TUI review record identifies its check, candidate, run, and capture. Prepared `results.json` status is not a pass; review the evaluator's `acceptance-results.json` status and deterministic/manual aggregates.
+
 ## Pi 0.84.4 isolated verification record
 
 The 0.84.4 model/effort persistence seams were smoke-tested without a home-directory install. Both runs used isolated `HOME`, XDG, agent, and wrapper-bin directories and a PTY:
