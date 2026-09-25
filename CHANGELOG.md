@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.43.0] - 2026-09-25
+
 ### Changed
 
 - Subagent extension registration no longer walks stale runtime directories synchronously on launch, reload, or session replacement. Cleanup is now a best-effort detached Node process throttled to roughly once per 24 hours; a 10-minute lease limits redundant spawns from near-simultaneous launches, failed runs are retried after the lease expires, and occasional duplicate sweeps from near-simultaneous launches are possible and harmless.
@@ -15,6 +17,10 @@ All notable changes to The Last Harness will be documented in this file.
 - The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort.
 - Removed the visible `⎿` branch glyph from subagent activity, result, warning, and completion-notification rows while preserving their existing indentation.
 - Install/update now prune only recognized Node/Bun compile-cache version-key directories inside a verified TLH-owned private runtime, preserve unexpected entries with warnings, refuse symlinked cache paths, and pre-warm the current cache with the pinned private `pi --version`; interactive wrapper launch behavior and `NODE_COMPILE_CACHE` remain unchanged.
+
+### Fixed
+
+- Suppressed the repeated Pi Voice setup notice shown on every session start.
 
 ### Removed
 
