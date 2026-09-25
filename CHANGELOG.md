@@ -8,6 +8,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available and defaults to `idle` for TLH users, meaning it will keep the session alive for 30 minutes when eligible (subagents running, user pause, etc.).
 - Bumped the bundled `pi-anthropic-auth` extension to `3.3.2`.
+- Bumped the bundled `pi-fast` extension from `0.1.2` to `0.1.4`, adding supported direct OpenAI API models and refreshing the eligible model set.
 - In Herdr/Cmux/other terminals TLH will show up, in most cases, as `tlh` instead of `pi`.
 - The bundled `librarian`, `repo-scout`, and `web-scout` subagents now default to Anthropic Claude Sonnet 4.6 at medium effort.
 - The bundled `code-reviewer` subagent now uses OpenAI Codex GPT-5.6 Sol at medium effort.
