@@ -63,9 +63,13 @@ describe("native completion notification renderer", () => {
 			for (const testCase of cases) {
 				const collapsed = notifyRenderer(testCase.message, { expanded: false }, theme).render(200).join("\n");
 				const expanded = notifyRenderer(testCase.message, { expanded: true }, theme).render(200).join("\n");
-				const collapsedPreview = collapsed.split("⎿  ")[1]?.split("\n", 1)[0] ?? "";
-				if (!collapsedPreview.includes("Done")) throw new Error(testCase.name + " collapsed preview was not result-first: " + collapsed);
-				if (collapsedPreview.includes("Async id")) throw new Error(testCase.name + " collapsed preview exposed async metadata: " + collapsed);
+				// The first row after the headline is the collapsed preview. Inspect that
+				// row directly instead of finding whichever row happens to contain Done.
+				const collapsedRows = collapsed.split("\n");
+				const collapsedPreview = collapsedRows[1] ?? "";
+				if (collapsed.includes("⎿")) throw new Error(testCase.name + " renderer added the branch glyph: " + collapsed);
+				if (!/^ {5}Done\s*$/.test(collapsedPreview)) throw new Error(testCase.name + " collapsed preview was not the exact result-first row: " + collapsed);
+				if (collapsed.includes("Async id")) throw new Error(testCase.name + " collapsed output leaked async metadata: " + collapsed);
 				if (!collapsed.includes("full notification")) throw new Error(testCase.name + " did not show the hidden-reference expand hint: " + collapsed);
 				if (!/ctrl\+o full notification/i.test(collapsed)) throw new Error(testCase.name + " stopped using Pi's stock Ctrl+O notification expansion: " + collapsed);
 				if (collapsed.includes("Ctrl+Shift+D full notification")) throw new Error(testCase.name + " incorrectly used subagent live detail for a completed notification: " + collapsed);

@@ -281,6 +281,17 @@ describe("renderSubagentResult", () => {
     const hintIndex = lines.findIndex((line) => line.includes(liveDetailHint));
 
     assert.ok(reviewerRowIndex !== -1, "first agent row should be present");
+    assert.match(
+      lines[reviewerActivityIndex] ?? "",
+      /^ {7}read: reviewer\.ts$/,
+      "foreground parallel activity must keep the exact 7-space column",
+    );
+    assert.match(
+      lines[writerActivityIndex] ?? "",
+      /^ {7}write: writer\.ts$/,
+      "second foreground parallel activity must keep the exact 7-space column",
+    );
+    assert.doesNotMatch(text, /⎿/, "foreground parallel rendering must not add the branch glyph");
     assert.ok(reviewerTicketIndex > reviewerRowIndex, "ticket should remain under its agent row");
     assert.ok(
       reviewerActivityIndex > reviewerTicketIndex,
@@ -964,7 +975,8 @@ describe("renderSubagentResult", () => {
     const text = widget.render(120).join("\n");
     assert.match(text, /^✓ reviewer/);
     assert.doesNotMatch(text, /⟳ 2|3 tool uses|1\.2k token|1\.5s/);
-    assert.match(text, /⎿  Done/);
+    assert.match(text, /^ {5}Done \(no text output\)\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
     assert.match(text, /session: \/tmp\/session\.jsonl/);
   });
 
@@ -992,7 +1004,8 @@ describe("renderSubagentResult", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /^✗ reviewer/);
-    assert.match(text, /⎿  Error: boom/);
+    assert.match(text, /Error: boom/);
+    assert.doesNotMatch(text, /⎿/);
   });
 
   it("shows live detail hints for running single subagents without leaking paths in compact mode", () => {
@@ -1040,7 +1053,12 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(compactText, new RegExp(liveDetailHint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(compactText, /active 2s ago/);
-    assert.match(compactText, /⎿  read: package\.json \| 3\.0s/);
+    assert.match(
+      compactText,
+      /^ {5}read: package\.json \| 3\.0s(?: · active 2s ago)?\s*$/m,
+      "foreground single activity must keep the exact 5-space column",
+    );
+    assert.doesNotMatch(compactText, /⎿/);
     assert.doesNotMatch(compactText, /configured-output\.md/);
     assert.doesNotMatch(compactText, /reviewer_output\.md/);
 
@@ -1101,7 +1119,7 @@ describe("renderSubagentResult", () => {
     const compact = renderSubagentResult!(makeResult(0), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compact, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
+    assert.match(compact, new RegExp(`^ {5}${escapeRegExp(whimsicalThinkingPhrase(0))}$`, "m"));
     assert.ok(compact.indexOf(whimsicalThinkingPhrase(0)) < compact.indexOf("active now"));
     assert.doesNotMatch(compact, /3 tool uses|1\.2k token|4\.0s|⟳ 0/);
 
@@ -1114,8 +1132,9 @@ describe("renderSubagentResult", () => {
     const activeTool = renderSubagentResult!(makeResult(0, "read"), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(activeTool, /⎿  read \| 4\.0s/);
+    assert.match(activeTool, /^ {5}read \| 4\.0s(?: · active 2s ago)?\s*$/m);
     assert.match(activeTool, /active 2s ago/);
+    assert.doesNotMatch(activeTool, /⎿/);
     assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
 
     const expanded = renderSubagentResult!(makeResult(2), { expanded: true }, theme)
@@ -1133,7 +1152,8 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
     // The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
-    assert.match(warning, /⎿  needs attention/);
+    assert.match(warning, /needs attention/);
+    assert.doesNotMatch(warning, /⎿/);
   });
 
   it("keeps running compact result output stable when progress is unchanged", async () => {
@@ -1246,7 +1266,8 @@ describe("renderSubagentResult", () => {
     const compactSuccess = renderSubagentResult!(makeResult(0), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compactSuccess, /⎿  Done/);
+    assert.match(compactSuccess, /Done/);
+    assert.doesNotMatch(compactSuccess, /⎿/);
     assert.match(compactSuccess, /TRUNCATED: showing first 1 of 2 lines/);
     assert.doesNotMatch(compactSuccess, /configured-output\.md/);
     assert.doesNotMatch(compactSuccess, /reviewer_output\.md/);
@@ -1255,7 +1276,7 @@ describe("renderSubagentResult", () => {
     const compactFailure = renderSubagentResult!(makeResult(1), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compactFailure, /⎿  Error: \[TRUNCATED: showing first 1 of 2 lines/);
+    assert.match(compactFailure, /Error: \[TRUNCATED: showing first 1 of 2 lines/);
     assert.doesNotMatch(compactFailure, /reviewer_full_output\.md/);
 
     const expandedText = renderSubagentResult!(makeResult(0), { expanded: true }, theme)
@@ -1372,7 +1393,8 @@ describe("renderSubagentResult", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /^■ parallel/);
-    assert.match(text, /⎿  Paused/);
+    assert.match(text, /^ {7}Paused\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
   });
 
   it("keeps empty-output warnings visible in compact multi-result rendering", () => {
@@ -1397,7 +1419,8 @@ describe("renderSubagentResult", () => {
     );
 
     const text = widget.render(120).join("\n");
-    assert.match(text, /⎿  Done \(no text output\)/);
+    assert.match(text, /^ {7}Done \(no text output\)\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
     assert.doesNotMatch(text, /0ms/);
   });
 
