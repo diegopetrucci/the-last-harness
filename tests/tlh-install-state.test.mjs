@@ -81,6 +81,31 @@ test("tlh-install-state accepts a hyphen-leading installed commit subject", (t) 
   assert.equal(readJson(fixture.statePath).commitSubject, "-Record the installed commit subject");
 });
 
+test("tlh-install-state normalizes a full main-track commit SHA", (t) => {
+  const fixture = tempFixture(t);
+  const commitSha = "A".repeat(40);
+
+  runInstallState(fixture, ["--commit-sha", `  ${commitSha}  `]);
+
+  assert.equal(readJson(fixture.statePath).commitSha, "a".repeat(40));
+});
+
+test("tlh-install-state omits invalid or non-main commit SHAs", (t) => {
+  const cases = [
+    ["not-a-sha"],
+    ["a".repeat(39)],
+    ["g".repeat(40)],
+    ["a".repeat(40), "--ref", "feature/footer"],
+    ["a".repeat(40), "--package-source-is-default", "false"],
+  ];
+
+  for (const commitShaArgs of cases) {
+    const fixture = tempFixture(t);
+    runInstallState(fixture, ["--commit-sha", ...commitShaArgs]);
+    assert.equal(readJson(fixture.statePath).commitSha, undefined, commitShaArgs.join(" "));
+  }
+});
+
 test("tlh-install-state preserves install-state file mode when overwriting", (t) => {
   const fixture = tempFixture(t);
   mkdirSync(join(fixture.agentDir, "tlh"), { recursive: true });

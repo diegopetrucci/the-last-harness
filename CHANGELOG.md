@@ -4,11 +4,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Subagent extension registration no longer walks stale runtime directories synchronously on launch, reload, or session replacement. Cleanup is now a best-effort detached Node process throttled to roughly once per 24 hours; a 10-minute lease limits redundant spawns from near-simultaneous launches, failed runs are retried after the lease expires, and occasional duplicate sweeps from near-simultaneous launches are possible and harmless.
+- Official `main` installs now compare their persisted checkout commit with GitHub `main` once per day and show a dim singular/plural `commit(s) behind origin/main` footer suffix only when the commit is an ancestor and behind.
+
 ## [0.43.0] - 2026-09-25
 
 ### Changed
 
-- Subagent extension registration no longer walks stale runtime directories synchronously on launch, reload, or session replacement. Cleanup is now a best-effort detached Node process throttled to roughly once per 24 hours; a 10-minute lease limits redundant spawns from near-simultaneous launches, failed runs are retried after the lease expires, and occasional duplicate sweeps from near-simultaneous launches are possible and harmless.
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available and defaults to `idle` for TLH users, meaning it will keep the session alive for 30 minutes when eligible (subagents running, user pause, etc.).
 - Bumped the bundled `pi-anthropic-auth` extension to `3.3.2`.
 - Bumped the bundled `pi-fast` extension from `0.1.2` to `0.1.4`, adding supported direct OpenAI API models and refreshing the eligible model set.

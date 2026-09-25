@@ -188,19 +188,21 @@ test("formats ref install notices with the ref label", () => {
   assertNoticeLabel(notice, "main");
 });
 
-test("preserves a valid installed subject only for the main ref label", () => {
+test("preserves valid installed subject and SHA only for the official main ref label", () => {
   const mainNotice = classifyTlhInstallState({
     ...OFFICIAL_LATEST_STABLE,
     track: "ref",
     ref: "main",
     packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
     commitSubject: "  Add the main footer subject  ",
+    commitSha: `  ${"A".repeat(40)}  `,
   });
   assert.deepEqual(mainNotice, {
     kind: "ref",
     summary: "TLH follows a non-stable git ref.",
     detail: "main",
     commitSubject: "Add the main footer subject",
+    commitSha: "a".repeat(40),
   });
   assertNoticeLabel(mainNotice, "main");
 
@@ -210,11 +212,26 @@ test("preserves a valid installed subject only for the main ref label", () => {
     ref: "feature/footer",
     packageSource: "git:github.com/diegopetrucci/the-last-harness@feature/footer",
     commitSubject: "Feature commit subject",
+    commitSha: "a".repeat(40),
   });
   assert.deepEqual(otherRefNotice, {
     kind: "ref",
     summary: "TLH follows a non-stable git ref.",
     detail: "feature/footer",
+  });
+
+  const customSourceNotice = classifyTlhInstallState({
+    ...OFFICIAL_LATEST_STABLE,
+    track: "ref",
+    ref: "main",
+    packageSource: "../the-last-harness",
+    packageSourceIsDefault: false,
+    commitSha: "a".repeat(40),
+  });
+  assert.deepEqual(customSourceNotice, {
+    kind: "ref",
+    summary: "TLH follows a non-stable git ref.",
+    detail: "main",
   });
 
   for (const commitSubject of [undefined, "   ", 42]) {
@@ -224,6 +241,21 @@ test("preserves a valid installed subject only for the main ref label", () => {
       ref: "main",
       packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
       commitSubject,
+    });
+    assert.deepEqual(notice, {
+      kind: "ref",
+      summary: "TLH follows a non-stable git ref.",
+      detail: "main",
+    });
+  }
+
+  for (const commitSha of [undefined, "   ", 42, "a".repeat(39), "g".repeat(40)]) {
+    const notice = classifyTlhInstallState({
+      ...OFFICIAL_LATEST_STABLE,
+      track: "ref",
+      ref: "main",
+      packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+      commitSha,
     });
     assert.deepEqual(notice, {
       kind: "ref",
