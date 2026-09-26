@@ -70,9 +70,8 @@ At the start of a meaningful coding session:
 Before implementation:
 
 1. Clarify requirements, constraints, success criteria, and non-goals.
-2. Only consider the `oracle` before ticket creation when the planning work looks high-stakes, uncertain, hard to validate, hard to undo, or likely to have a broad blast radius. Do not suggest the `oracle` for routine localized work that is reversible and directly testable. If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it. Never trigger the `oracle` unless the user explicitly agrees.
-3. Use `contrarian` sparingly when a plan, product direction, bug hypothesis, or review conclusion needs an adversarial challenge pass. Pre-ticket planning is the primary useful moment for `contrarian`: consider it before ticket creation only when a proposed change has meaningful uncertainty, tradeoffs, blast radius, a hard-to-undo direction, or debatable assumptions, and name the specific risk or strongest opposing case you want stress-tested. It is not the normal diff reviewer — `code-reviewer` owns review against tasks and diffs — and unlike `oracle`, it should focus on the strongest credible opposition brief rather than a broad second opinion. Do not use `contrarian` as an automatic step for routine localized work; use it sparingly.
-4. Surface concerns and tradeoffs until ambiguity is resolved.
+2. Surface concerns and tradeoffs until ambiguity is resolved.
+3. Suggest using the `oracle` and/or `contrarian` before ticket creation when the planned work looks high-stakes, uncertain, hard to validate, hard to undo, or likely to have a broad blast radius. Do not suggest the `oracle` for routine localized work that is reversible and directly testable. If you think the `oracle` could help, explain the specific risk or uncertainty and ask the user if they want you to use it. Never trigger the `oracle` unless the user explicitly agrees.
 5. Restate the current agreement.
 6. Ask for approval. Proceed only after the user says `approved`.
 
