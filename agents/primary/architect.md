@@ -45,12 +45,13 @@ Use the `subagent` tool for minor agents:
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
 - `developer`: implement exactly one approved implementation task at a time and run its ticket-local validation.
 - `test-runner`: execute the exact ordered shell/MCP steps listed on an approved final-validation ticket and report pass/fail without editing.
-- For any ticket-backed dispatch, pass the approved ticket ID through the subagent `ticket` parameter (top-level for single, per task for parallel) instead of embedding `tk show <id>` in task prose; the child receives the injected ticket body as its source of truth.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
+
+For any ticket-backed dispatch, pass the approved ticket ID through the subagent `ticket` parameter (top-level for single, per task for parallel) instead of embedding `tk show <id>` in task prose; the child receives the injected ticket body as its source of truth. Exception: multi-ticket final reviews (see Final review) embed each completed ticket's full `tk show` output in the reviewer brief instead of relying on the `ticket` parameter.
 
 Do not create, update, or delete subagent definitions at runtime. Delegate only to targets permitted by the TLH Allowed Minor Subagents prompt section.
 

@@ -290,9 +290,13 @@ describe("runner lastUpdate heartbeat", () => {
       const { owner } = makeStatusOwner(asyncDir);
       const fakeTimers = makeFakeTimers();
 
-      const originalLastActivityAt = owner.statusPayload.lastActivityAt;
-      const step = owner.statusPayload.steps[0]!;
-      const originalIdleEpisodeId = step.idleEpisodeId;
+      // Seed meaningful idle state so the assertions are non-trivially satisfied.
+      const seededLastActivityAt = Date.now() - 30_000;
+      owner.statusPayload.lastActivityAt = seededLastActivityAt;
+      const seededIdleEpisodeId = "idle-episode-heartbeat-test";
+      owner.statusPayload.steps[0]!.idleEpisodeId = seededIdleEpisodeId;
+      owner.statusPayload.steps[0]!.activityState = "needs_attention";
+      owner.writeStatusPayload();
 
       owner.startHeartbeat(5_000, {
         setInterval: fakeTimers.fakeSetInterval,
@@ -300,22 +304,41 @@ describe("runner lastUpdate heartbeat", () => {
       });
       fakeTimers.tick();
 
+      // Assert against the owner's current statusPayload step (not a pre-tick capture).
+      const currentStep = owner.statusPayload.steps[0]!;
       assert.equal(
         owner.statusPayload.lastActivityAt,
-        originalLastActivityAt,
+        seededLastActivityAt,
         "heartbeat must not modify in-memory lastActivityAt",
       );
       assert.equal(
-        step.idleEpisodeId,
-        originalIdleEpisodeId,
+        currentStep.idleEpisodeId,
+        seededIdleEpisodeId,
         "heartbeat must not modify in-memory idleEpisodeId",
       );
+      assert.equal(
+        currentStep.activityState,
+        "needs_attention",
+        "heartbeat must not modify in-memory activityState",
+      );
 
+      // Assert against the persisted status.json step as well.
       const persisted = readStatus(asyncDir, { cache: false })!;
       assert.equal(
         persisted.lastActivityAt,
-        originalLastActivityAt,
+        seededLastActivityAt,
         "heartbeat must not persist a changed lastActivityAt",
+      );
+      const persistedStep = persisted.steps![0]!;
+      assert.equal(
+        persistedStep.idleEpisodeId,
+        seededIdleEpisodeId,
+        "heartbeat must not persist a changed idleEpisodeId",
+      );
+      assert.equal(
+        persistedStep.activityState,
+        "needs_attention",
+        "heartbeat must not persist a changed activityState",
       );
 
       owner.stopHeartbeat();
