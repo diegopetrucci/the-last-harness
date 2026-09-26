@@ -3,10 +3,12 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +16,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import test from "node:test";
 
-import { PYTHON_PTY_BRIDGE_FOR_TESTS } from "../scripts/check-startup-performance.mjs";
+import {
+  createWorkspace,
+  PYTHON_PTY_BRIDGE_FOR_TESTS,
+} from "../scripts/check-startup-performance.mjs";
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -487,6 +492,65 @@ test("SIGINT cleanup accepts only complete, safe temporary profile paths", () =>
     parseTemporaryWorkspace(`temporary profile: ${join(repoRoot, "agent")}\n`),
     undefined,
   );
+});
+
+test("createWorkspace filters sensitive top-level state from a symlinked profile source", (t) => {
+  const profileSourceRoot = mkdtempSync(join(tmpdir(), "tlh-startup-profile-source-test-"));
+  const profileSource = join(profileSourceRoot, "installed-agent");
+  const profileSourceLink = join(profileSourceRoot, "current-agent");
+  mkdirSync(profileSource, { recursive: true });
+  symlinkSync(profileSource, profileSourceLink, "dir");
+  t.after(() => rmSync(profileSourceRoot, { recursive: true, force: true }));
+
+  const fixtureFiles = [
+    "settings.json",
+    "trust.json",
+    "sessions/session.jsonl",
+    "auth.json",
+    "mcp-oauth/provider.json",
+    "settings.json.bak-2026-09-26T15-49-01-000Z",
+    "settings.json.backup-2026-09-26T15-49-01-000Z",
+    "packages/example/sessions/session.jsonl",
+    "packages/example/auth.json",
+    "packages/example/mcp-oauth/provider.json",
+    "packages/example/settings.json.bak-fixture",
+    "packages/example/settings.json.backup-fixture",
+    "extensions/example/index.js",
+  ];
+  for (const relativePath of fixtureFiles) {
+    const path = join(profileSource, relativePath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "fixture\n", "utf8");
+  }
+
+  const workspace = createWorkspace(profileSourceLink);
+  t.after(() => rmSync(workspace.root, { recursive: true, force: true }));
+
+  const destinationStats = lstatSync(workspace.agentDir);
+  assert.equal(destinationStats.isDirectory(), true);
+  assert.equal(destinationStats.isSymbolicLink(), false);
+
+  for (const relativePath of [
+    "settings.json",
+    "trust.json",
+    "packages/example/sessions/session.jsonl",
+    "packages/example/auth.json",
+    "packages/example/mcp-oauth/provider.json",
+    "packages/example/settings.json.bak-fixture",
+    "packages/example/settings.json.backup-fixture",
+    "extensions/example/index.js",
+  ]) {
+    assert.equal(existsSync(join(workspace.agentDir, relativePath)), true, relativePath);
+  }
+  for (const relativePath of [
+    "sessions",
+    "auth.json",
+    "mcp-oauth",
+    "settings.json.bak-2026-09-26T15-49-01-000Z",
+    "settings.json.backup-2026-09-26T15-49-01-000Z",
+  ]) {
+    assert.equal(existsSync(join(workspace.agentDir, relativePath)), false, relativePath);
+  }
 });
 
 test("direct Python PTY bridge cleans up when checker stdin reaches EOF", async (t) => {
