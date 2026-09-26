@@ -10,6 +10,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
+- Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.
 - TLH launch time should be ~25/30% faster.
 - Opus 5.5 is the default for many things, now.
 

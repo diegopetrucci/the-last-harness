@@ -7,6 +7,7 @@ export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
 export const DEFAULT_MAX_OUTPUT = {
     bytes: 200 * 1024,
     lines: 5000,
