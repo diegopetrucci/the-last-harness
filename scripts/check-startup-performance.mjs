@@ -6,6 +6,7 @@ import {
   constants as fsConstants,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -48,6 +49,8 @@ const MANAGED_WRAPPER_FIELDS = [
   ["default_wrapper_name", "wrapperName"],
   ["default_pi_cmd", "piCmd"],
 ];
+const PROFILE_CLONE_EXCLUDED_TOP_LEVEL_NAMES = new Set(["sessions", "auth.json", "mcp-oauth"]);
+const PROFILE_BACKUP_ARTIFACT_PATTERN = /\.(?:bak|backup)(?:[-.]|$)/u;
 let interruptSignal;
 const PYTHON_PTY_BRIDGE = String.raw`
 import errno
@@ -296,13 +299,23 @@ Options:
   --budget-ms N        Warm first-header budget in milliseconds (default: ${DEFAULT_BUDGET_MS})
   --timeout-ms N       Per-run timeout in milliseconds (default: ${DEFAULT_TIMEOUT_MS})
   --command PATH       Command to launch (default: ${DEFAULT_COMMAND})
-  --profile-source DIR Copy this isolated TLH profile into a temp workspace first
+  --profile-source DIR Copy startup-relevant state from this isolated TLH profile into a fresh temporary workspace (default: auto-detect installed profile)
   -h, --help           Show this help
 
 Notes:
   - Everything after -- is appended as command arguments.
   - The checker always sets PI_OFFLINE=1, TLH_SKIP_UPDATE_CHECK=1,
     and TLH_SKIP_TELEMETRY=1.
+  - By default, the checker auto-detects the installed isolated profile. If no
+    profile exists, it falls back to an empty temporary profile.
+  - Each invocation creates a fresh temporary profile. All measured runs in
+    that invocation share its stable temporary profile path; run 1 is the cold
+    sample and subsequent runs are warm samples.
+  - A profile source clone omits top-level sessions/, auth.json, mcp-oauth/,
+    and top-level .bak/.backup backup artifacts, plus unsafe, dangling, and
+    cyclic symlinks and special filesystem entries. Safe internal symlinks are
+    materialized as regular files or directories while preserving
+    startup-relevant package and extension state.
   - The default tlh command is resolved on PATH, cloned into a temporary
     managed wrapper, and pointed at the temporary cloned profile.
   - Custom --command launches directly with PI_CODING_AGENT_DIR set to the
@@ -404,17 +417,100 @@ function defaultProfileSource() {
   return undefined;
 }
 
+function isProfileBackupArtifact(name) {
+  return PROFILE_BACKUP_ARTIFACT_PATTERN.test(name);
+}
+
+function isAllowedProfilePath(profileSource, sourcePath) {
+  const relativePath = relative(profileSource, sourcePath);
+  if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    return false;
+  }
+  if (relativePath === "") {
+    return true;
+  }
+  const topLevelName = relativePath.split(sep, 1)[0];
+  return (
+    !PROFILE_CLONE_EXCLUDED_TOP_LEVEL_NAMES.has(topLevelName) &&
+    !isProfileBackupArtifact(topLevelName)
+  );
+}
+
+function isCyclicDirectorySymlink(profileSource, sourcePath, canonicalPath) {
+  try {
+    if (!lstatSync(sourcePath).isSymbolicLink() || !statSync(sourcePath).isDirectory()) {
+      return false;
+    }
+  } catch {
+    return true;
+  }
+
+  for (let ancestorPath = dirname(sourcePath); ; ancestorPath = dirname(ancestorPath)) {
+    let canonicalAncestor;
+    try {
+      canonicalAncestor = realpathSync(ancestorPath);
+    } catch {
+      return true;
+    }
+    if (canonicalAncestor === canonicalPath) {
+      return true;
+    }
+    if (ancestorPath === profileSource) {
+      return false;
+    }
+    const parentPath = dirname(ancestorPath);
+    if (parentPath === ancestorPath) {
+      return true;
+    }
+  }
+}
+
+function shouldCopyProfileEntry(profileSource, sourcePath) {
+  if (!isAllowedProfilePath(profileSource, sourcePath)) {
+    return false;
+  }
+  let canonicalPath;
+  try {
+    canonicalPath = realpathSync(sourcePath);
+  } catch {
+    return false;
+  }
+  if (!isAllowedProfilePath(profileSource, canonicalPath)) {
+    return false;
+  }
+  let canonicalStats;
+  try {
+    canonicalStats = statSync(canonicalPath);
+  } catch {
+    return false;
+  }
+  if (!canonicalStats.isFile() && !canonicalStats.isDirectory()) {
+    return false;
+  }
+  return !isCyclicDirectorySymlink(profileSource, sourcePath, canonicalPath);
+}
+
 function createWorkspace(profileSource) {
   const root = mkdtempSync(join(tmpdir(), "tlh-startup-performance-"));
-  const agentDir = join(root, "agent");
-  const wrapperBinDir = join(root, "bin");
-  if (profileSource) {
-    cpSync(resolve(profileSource), agentDir, { recursive: true });
-  } else {
-    mkdirSync(agentDir, { recursive: true });
+  try {
+    const agentDir = join(root, "agent");
+    const wrapperBinDir = join(root, "bin");
+    if (profileSource) {
+      const resolvedProfileSource = realpathSync(resolve(profileSource));
+      cpSync(resolvedProfileSource, agentDir, {
+        recursive: true,
+        dereference: true,
+        filter: (sourcePath) => shouldCopyProfileEntry(resolvedProfileSource, sourcePath),
+      });
+    } else {
+      mkdirSync(agentDir, { recursive: true });
+    }
+    mkdirSync(wrapperBinDir, { recursive: true });
+    return { root, agentDir, wrapperBinDir };
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
   }
-  mkdirSync(wrapperBinDir, { recursive: true });
-  return { root, agentDir, wrapperBinDir };
 }
 
 function commandExists(command, args) {

@@ -60,7 +60,7 @@ Then run the startup performance checker as release-tier manual validation:
 npm run check:startup-performance
 ```
 
-Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. The release objective is a steady-state first TLH header mean below `1000ms`.
+Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. All measured runs in an invocation share one stable temporary profile path; run 1 is the cold sample and later runs are warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved. The release objective is a steady-state first TLH header mean below `1000ms`.
 
 If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 
