@@ -393,7 +393,9 @@ function childState(
   return overallState === "cancelled" ? "paused" : overallState;
 }
 
-function isTerminalTelemetryOutcome(outcome: SubagentTelemetryOutcome | undefined): boolean {
+function isTerminalTelemetryOutcome(
+  outcome: SubagentTelemetryOutcome | undefined,
+): outcome is SubagentTelemetryOutcome {
   return (
     outcome?.state === "completed" ||
     outcome?.state === "failed" ||
@@ -401,6 +403,12 @@ function isTerminalTelemetryOutcome(outcome: SubagentTelemetryOutcome | undefine
     outcome?.state === "cancelled" ||
     outcome?.state === "continued"
   );
+}
+
+function copyTerminalTelemetryOutcome(
+  outcome: SubagentTelemetryOutcome | undefined,
+): SubagentTelemetryOutcome | undefined {
+  return isTerminalTelemetryOutcome(outcome) ? { ...outcome } : undefined;
 }
 
 /**
@@ -492,11 +500,13 @@ function terminalStatusFromResult(
   const repair = readResultRepairData(resultPath);
   if (!repair) return undefined;
   const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, status.telemetry);
-  const repairOutcome = resolveSubagentTelemetryOutcome({
-    state: repair.state,
-    success: repair.state === "complete",
-    terminationReason: repair.state === "failed" ? "process_exit" : undefined,
-  });
+  const runOutcome =
+    copyTerminalTelemetryOutcome(mergedTelemetry?.outcome) ??
+    resolveSubagentTelemetryOutcome({
+      state: repair.state,
+      success: repair.state === "complete",
+      terminationReason: repair.state === "failed" ? "process_exit" : undefined,
+    });
   const steps = (status.steps ?? []).map((step, index) => {
     const sanitizedStep = sanitizeStatusStep(step);
     const child = repair.results?.[index];
@@ -595,7 +605,7 @@ function terminalStatusFromResult(
         : {}),
     };
   });
-  const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, repairOutcome);
+  const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, runOutcome);
   const stepActiveRuntimeMs = steps
     .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
     .filter((value): value is number => value !== undefined);

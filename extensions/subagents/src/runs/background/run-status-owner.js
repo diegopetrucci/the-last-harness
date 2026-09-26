@@ -196,7 +196,7 @@ export function createBackgroundRunStatusOwner(input) {
     let pausedCheckpointCommitted = false;
     let interrupted = false;
     let timedOut = false;
-    let nestedCompletionEmitted = false;
+    let lastEmittedNestedTerminalState;
     let runtimeCheckpointTimer;
     function listTrackedSessionFiles(dir) {
         if (!dir)
@@ -214,26 +214,31 @@ export function createBackgroundRunStatusOwner(input) {
     function emitNestedSelfEvent(type) {
         if (!nestedRoute || !nestedSelf)
             return;
-        if (type === "subagent.nested.completed" && nestedCompletionEmitted)
-            return;
         try {
+            const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
+                id,
+                parentRunId: nestedSelf.parentRunId,
+                parentStepIndex: nestedSelf.parentStepIndex,
+                depth: nestedSelf.depth,
+                path: nestedSelf.path,
+                mode: statusPayload.mode,
+                ts: Date.now(),
+            });
+            const terminalState = type === "subagent.nested.completed" &&
+                (child.state === "complete" || child.state === "failed" || child.state === "paused")
+                ? child.state
+                : undefined;
+            if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState)
+                return;
             writeNestedEvent(nestedRoute, {
                 type,
                 ts: Date.now(),
                 parentRunId: nestedSelf.parentRunId,
                 parentStepIndex: nestedSelf.parentStepIndex,
-                child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-                    id,
-                    parentRunId: nestedSelf.parentRunId,
-                    parentStepIndex: nestedSelf.parentStepIndex,
-                    depth: nestedSelf.depth,
-                    path: nestedSelf.path,
-                    mode: statusPayload.mode,
-                    ts: Date.now(),
-                }),
+                child,
             });
-            if (type === "subagent.nested.completed")
-                nestedCompletionEmitted = true;
+            if (terminalState !== undefined)
+                lastEmittedNestedTerminalState = terminalState;
         }
         catch (error) {
             console.error("Failed to emit nested async status event:", error);
@@ -293,6 +298,8 @@ export function createBackgroundRunStatusOwner(input) {
             }
             else {
                 statusPayload.lifecycle = merged.lifecycle;
+                if (merged.lastUpdate !== undefined)
+                    statusPayload.lastUpdate = merged.lastUpdate;
                 if (merged.telemetry)
                     statusPayload.telemetry = merged.telemetry;
                 else

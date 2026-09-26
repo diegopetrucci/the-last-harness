@@ -521,11 +521,17 @@ function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
             pause: undefined,
         }
         : {};
+    const lastUpdates = [
+        parseTimestamp(inMemory.lastUpdate),
+        parseTimestamp(persisted.lastUpdate),
+    ].filter((value) => value !== undefined);
+    const lastUpdate = lastUpdates.length > 0 ? Math.max(...lastUpdates) : undefined;
     const mergedTelemetry = mergeSubagentRunTelemetry(inMemory.telemetry, persisted.telemetry, {
         persistedOutcomeWins: TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state,
     });
     const merged = {
         ...inMemory,
+        ...(lastUpdate !== undefined ? { lastUpdate } : { lastUpdate: undefined }),
         ...mergeActiveRuntimeEvidence(inMemory, persisted),
         ...terminalRunOverrides,
         state,

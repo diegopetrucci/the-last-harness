@@ -241,6 +241,9 @@ function isTerminalTelemetryOutcome(outcome) {
         outcome?.state === "cancelled" ||
         outcome?.state === "continued");
 }
+function copyTerminalTelemetryOutcome(outcome) {
+    return isTerminalTelemetryOutcome(outcome) ? { ...outcome } : undefined;
+}
 function telemetryForRepairedSteps(telemetry, repairedSteps, now, runOutcome) {
     if (!telemetry)
         return undefined;
@@ -313,11 +316,12 @@ function terminalStatusFromResult(status, resultPath, now) {
     if (!repair)
         return undefined;
     const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, status.telemetry);
-    const repairOutcome = resolveSubagentTelemetryOutcome({
-        state: repair.state,
-        success: repair.state === "complete",
-        terminationReason: repair.state === "failed" ? "process_exit" : undefined,
-    });
+    const runOutcome = copyTerminalTelemetryOutcome(mergedTelemetry?.outcome) ??
+        resolveSubagentTelemetryOutcome({
+            state: repair.state,
+            success: repair.state === "complete",
+            terminationReason: repair.state === "failed" ? "process_exit" : undefined,
+        });
     const steps = (status.steps ?? []).map((step, index) => {
         const sanitizedStep = sanitizeStatusStep(step);
         const child = repair.results?.[index];
@@ -396,7 +400,7 @@ function terminalStatusFromResult(status, resultPath, now) {
                 : {}),
         };
     });
-    const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, repairOutcome);
+    const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, runOutcome);
     const stepActiveRuntimeMs = steps
         .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
         .filter((value) => value !== undefined);

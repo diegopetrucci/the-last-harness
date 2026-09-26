@@ -16,7 +16,7 @@ import {
   createBackgroundRunStatusOwner,
   type RunnerStatusPayload,
 } from "../../src/runs/background/run-status-owner.ts";
-import { createNestedRoute } from "../../src/runs/shared/nested-events.ts";
+import { createNestedRoute, projectNestedEvents } from "../../src/runs/shared/nested-events.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 import type {
   ResolvedControlConfig,
@@ -375,13 +375,18 @@ describe("terminal persistence", () => {
     assert.deepEqual(artifact.telemetry, canonicalTelemetry);
   });
 
-  it("emits nested completion exactly once without telemetry on supervisor pause", () => {
+  it("emits one paused nested completion and keeps the parent projection stable on repeats", () => {
     const fixture = createNestedTerminalFixture();
     const pause = markNestedTerminalFixturePaused(fixture);
 
     persistNestedTerminalFixture(fixture, { pausedAwaitingSupervisor: pause });
+    fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
 
     assert.deepEqual(nestedEventTypes(fixture.route.eventSink), ["subagent.nested.completed"]);
+    const projection = projectNestedEvents(fixture.route).children.find(
+      (child) => child.id === fixture.owner.statusPayload.runId,
+    );
+    assert.equal(projection?.state, "paused");
     const artifact = JSON.parse(fs.readFileSync(fixture.resultPath, "utf8")) as {
       state: string;
       telemetry?: unknown;
@@ -441,5 +446,120 @@ describe("terminal persistence", () => {
       state: string;
     };
     assert.equal(artifact.state, "continued");
+  });
+
+  it("replaces a paused parent projection through the locked source-runner merge", () => {
+    const cases = [
+      { state: "continued" as const, projectedState: "complete" as const },
+      { state: "cancelled" as const, projectedState: "failed" as const },
+    ];
+
+    for (const testCase of cases) {
+      const fixture = createNestedTerminalFixture();
+      markNestedTerminalFixturePaused(fixture);
+      fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
+      const initialEventNames = fs
+        .readdirSync(fixture.route.eventSink)
+        .filter((name) => name.endsWith(".json"));
+      assert.equal(initialEventNames.length, 1);
+      const initialEvent = JSON.parse(
+        fs.readFileSync(path.join(fixture.route.eventSink, initialEventNames[0]!), "utf8"),
+      ) as { child: { state?: string } };
+      assert.equal(initialEvent.child.state, "paused");
+
+      // The concurrent owner may persist an adoption timestamp older than the
+      // paused checkpoint. The locked merge must retain the paused timestamp as
+      // the monotonic floor while still adopting the terminal state.
+      const adoptedAt = 110;
+      const adoptedStatus: RunnerStatusPayload = {
+        ...fixture.owner.statusPayload,
+        state: testCase.state,
+        pid: undefined,
+        pause: undefined,
+        ...(testCase.state === "cancelled"
+          ? { cancel: { summary: "cancelled by parent", cancelledAt: adoptedAt } }
+          : { cancel: undefined }),
+        endedAt: adoptedAt,
+        lastUpdate: adoptedAt,
+        steps: fixture.owner.statusPayload.steps.map((step) => ({
+          ...step,
+          status: testCase.state,
+          endedAt: adoptedAt,
+          pause: undefined,
+          ...(testCase.state === "cancelled"
+            ? { cancel: { summary: "cancelled by parent", cancelledAt: adoptedAt } }
+            : { cancel: undefined }),
+        })),
+      };
+      // Model the concurrent continuation/cancellation writer, then exercise
+      // the production source-runner write path instead of adopting directly.
+      writeNormalizedLifecycleStatus(fixture.asyncDir, adoptedStatus);
+      fixture.owner.writeStatusPayload({ lifecycleLocked: true });
+
+      const persisted = JSON.parse(
+        fs.readFileSync(path.join(fixture.asyncDir, "status.json"), "utf8"),
+      ) as RunnerStatusPayload;
+      assert.equal(persisted.state, testCase.state);
+      assert.equal(persisted.lastUpdate, 120);
+      assert.equal(fixture.owner.statusPayload.lastUpdate, 120);
+
+      const eventNames = fs
+        .readdirSync(fixture.route.eventSink)
+        .filter((name) => name.endsWith(".json"));
+      assert.equal(eventNames.length, 2);
+      const replacementName = eventNames.find((name) => !initialEventNames.includes(name));
+      assert.ok(replacementName, "locked source-runner write must emit a replacement event");
+      const replacementEvent = JSON.parse(
+        fs.readFileSync(path.join(fixture.route.eventSink, replacementName!), "utf8"),
+      ) as { child: { state?: string } };
+      assert.deepEqual(
+        [initialEvent.child.state, replacementEvent.child.state],
+        ["paused", testCase.projectedState],
+      );
+
+      // Re-emitting the adopted terminal state remains deduplicated.
+      fixture.owner.emitNestedSelfEvent("subagent.nested.completed");
+      assert.equal(
+        fs.readdirSync(fixture.route.eventSink).filter((name) => name.endsWith(".json")).length,
+        2,
+      );
+      const projection = projectNestedEvents(fixture.route).children.find(
+        (child) => child.id === fixture.owner.statusPayload.runId,
+      );
+      assert.equal(projection?.state, testCase.projectedState);
+      assert.equal(projection?.steps?.[0]?.status, testCase.projectedState);
+    }
+  });
+
+  it("synchronizes the owner clock after a locked nonterminal merge", () => {
+    const fixture = createNestedTerminalFixture();
+    const statusPath = path.join(fixture.asyncDir, "status.json");
+
+    // A concurrent writer advances the same running lifecycle state while the
+    // owner still holds its older in-memory timestamp.
+    writeNormalizedLifecycleStatus(fixture.asyncDir, {
+      ...fixture.owner.statusPayload,
+      lastUpdate: 120,
+    });
+    const persistedBeforeMerge = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
+      state: string;
+      lastUpdate: number;
+    };
+    assert.equal(persistedBeforeMerge.state, "running");
+    assert.equal(persistedBeforeMerge.lastUpdate, 120);
+
+    fixture.owner.writeStatusPayload({ lifecycleLocked: true, projectNested: false });
+
+    // The next lockless source-runner write must use the merged timestamp,
+    // rather than reintroducing the owner's stale value.
+    assert.equal(fixture.owner.statusPayload.lastUpdate, 120);
+    const merged = JSON.parse(fs.readFileSync(statusPath, "utf8")) as { lastUpdate: number };
+    assert.equal(merged.lastUpdate, 120);
+
+    fixture.owner.writeStatusPayload({ projectNested: false });
+    const persistedAfterLocklessWrite = JSON.parse(fs.readFileSync(statusPath, "utf8")) as {
+      lastUpdate: number;
+    };
+    assert.equal(persistedAfterLocklessWrite.lastUpdate, 120);
   });
 });

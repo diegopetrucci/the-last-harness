@@ -22,7 +22,7 @@ import type { ToolPair } from "../../extensions/the-last-harness/tool-pairing.js
 import {
   isCompletionBatchCandidate,
   MAX_COMPLETION_BATCH_COUNT,
-  MAX_COMPLETION_BATCH_ENTRIES,
+  MAX_COMPLETION_CHUNK_ENTRIES,
   MAX_COMPLETION_BATCH_ID_LENGTH,
   projectCompletionBatchFlushFields,
   SUBAGENT_COMPLETION_BATCH_KIND,
@@ -1047,10 +1047,10 @@ function projectCompletionBatchDetails(value: unknown): Record<string, unknown> 
   if (!Array.isArray(value.completions)) {
     invalid = true;
   } else {
-    if (value.completions.length === 0 || value.completions.length > MAX_COMPLETION_BATCH_ENTRIES)
+    if (value.completions.length === 0 || value.completions.length > MAX_COMPLETION_CHUNK_ENTRIES)
       invalid = true;
     const completions: Record<string, unknown>[] = [];
-    for (const rawEntry of value.completions.slice(0, MAX_COMPLETION_BATCH_ENTRIES)) {
+    for (const rawEntry of value.completions.slice(0, MAX_COMPLETION_CHUNK_ENTRIES)) {
       if (!isObject(rawEntry)) {
         // Preserve an entry-shaped marker so the parser can invalidate this
         // batch while still accepting independently valid sibling entries.

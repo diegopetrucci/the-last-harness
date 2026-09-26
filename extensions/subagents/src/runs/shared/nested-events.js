@@ -473,11 +473,15 @@ function mergeSummary(existing, event) {
         return incoming;
     const existingUpdate = existing.lastUpdate ?? 0;
     const incomingUpdate = incoming.lastUpdate ?? event.ts;
-    if (incomingUpdate < existingUpdate)
+    const terminalReplacement = existing.state === "paused" && (incoming.state === "complete" || incoming.state === "failed");
+    if (!terminalReplacement && incomingUpdate < existingUpdate)
         return existing;
     if (terminal(existing.state) && !terminal(incoming.state))
         return existing;
-    if (terminal(existing.state) && terminal(incoming.state) && incomingUpdate === existingUpdate)
+    if (!terminalReplacement &&
+        terminal(existing.state) &&
+        terminal(incoming.state) &&
+        incomingUpdate === existingUpdate)
         return existing;
     return {
         ...existing,

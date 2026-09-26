@@ -306,6 +306,38 @@ describe("nested event parsing and projection", () => {
     assert.equal(hasLiveNestedDescendants(registry.children), true);
   });
 
+  it("accepts canonical terminal replacement of paused state without a timestamp advance", () => {
+    const route = trackRoute();
+    for (const [index, state] of (["complete", "failed"] as const).entries()) {
+      const id = `nested-replacement-${state}`;
+      writeNestedEvent(route, {
+        type: "subagent.nested.completed",
+        ts: 100 + index * 2,
+        parentRunId: "root-run",
+        parentStepIndex: 1,
+        child: child(id, "paused", 120),
+      });
+      writeNestedEvent(route, {
+        type: "subagent.nested.completed",
+        ts: 101 + index * 2,
+        parentRunId: "root-run",
+        parentStepIndex: 1,
+        // The replacement snapshot is stale, but its canonical terminal state
+        // represents an adopted continuation/cancellation and must win.
+        child: child(id, state, 100),
+      });
+    }
+
+    const registry = projectNestedEvents(route);
+    for (const state of ["complete", "failed"] as const) {
+      const replacement = registry.children.find(
+        (item) => item.id === `nested-replacement-${state}`,
+      );
+      assert.equal(replacement?.state, state);
+      assert.equal(replacement?.lastUpdate, 120);
+    }
+  });
+
   it("detects live descendants attached to terminal step children", () => {
     assert.equal(
       hasLiveNestedDescendants([

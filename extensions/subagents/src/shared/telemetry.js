@@ -1,3 +1,4 @@
+import { splitKnownThinkingSuffix } from "./model-info.js";
 export const SUBAGENT_RUN_TELEMETRY_SCHEMA_VERSION = 1;
 const TERMINATION_REASONS = new Set([
     "completed",
@@ -55,6 +56,44 @@ function normalizeModelIdentity(value) {
         model: value.model.trim(),
         ...(nonEmptyString(value.thinking) ? { thinking: value.thinking.trim() } : {}),
     };
+}
+function modelReferenceKey(value) {
+    if (typeof value !== "string" || value.trim() === "")
+        return undefined;
+    return splitKnownThinkingSuffix(value.trim()).baseModel;
+}
+function modelReferenceMatchesIdentity(value, identity) {
+    const reference = modelReferenceKey(value);
+    if (!reference)
+        return false;
+    const separator = reference.indexOf("/");
+    return (separator > 0 &&
+        separator < reference.length - 1 &&
+        reference.slice(0, separator) === identity.provider &&
+        reference.slice(separator + 1) === identity.model);
+}
+function modelForTelemetryStep(input) {
+    const model = input.model;
+    if (!model)
+        return undefined;
+    if (input.attemptedModels === undefined && input.modelAttempts === undefined)
+        return model;
+    if (input.attemptedModels !== undefined &&
+        (input.attemptedModels.length !== 1 ||
+            !modelReferenceMatchesIdentity(input.attemptedModels[0], model))) {
+        return undefined;
+    }
+    const attemptedReference = input.attemptedModels?.length === 1 ? modelReferenceKey(input.attemptedModels[0]) : undefined;
+    if (input.modelAttempts !== undefined) {
+        if (input.modelAttempts.length !== 1)
+            return undefined;
+        const attempt = input.modelAttempts[0];
+        if (!attempt?.usage || !modelReferenceMatchesIdentity(attempt.model, model))
+            return undefined;
+        if (attemptedReference !== undefined && modelReferenceKey(attempt.model) !== attemptedReference)
+            return undefined;
+    }
+    return model;
 }
 function normalizeUsage(value) {
     if (!isRecord(value))
@@ -390,7 +429,7 @@ export function mergeSubagentRunTelemetry(currentValue, persistedValue, options 
         if (!persistedStep)
             return { ...currentStep };
         const timing = mergeTelemetryTiming(currentStep.timing, persistedStep.timing, persistedOutcomeWins);
-        return {
+        const mergedStep = {
             ...persistedStep,
             ...currentStep,
             ...(persistedOutcomeWins && persistedStep.outcome
@@ -403,6 +442,9 @@ export function mergeSubagentRunTelemetry(currentValue, persistedValue, options 
                 : {}),
             ...(timing ? { timing } : {}),
         };
+        if (currentStep.usage && !currentStep.model)
+            delete mergedStep.model;
+        return mergedStep;
     });
     const usage = current.usage ?? persisted.usage;
     const timing = mergeTelemetryTiming(current.timing, persisted.timing, persistedOutcomeWins);
@@ -731,11 +773,16 @@ export function telemetryFromSingleResults(input) {
             return {
                 index: input.stepIndexes?.[index] ?? index,
                 agent: result.agent,
-                model: result.modelIdentity,
+                model: modelForTelemetryStep({
+                    model: result.modelIdentity,
+                    attemptedModels: result.attemptedModels,
+                    modelAttempts: result.modelAttempts,
+                }),
                 usage: result.usage,
                 ...(Object.keys(activityValues).length > 0 ? { activity: activityValues } : {}),
                 ...(Object.keys(timingValues).length > 0 ? { timing: timingValues } : {}),
                 outcome: resolveSubagentTelemetryOutcome({
+                    state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
                     success: result.exitCode === 0 && !result.interrupted,
                     interrupted: result.interrupted,
                     timedOut: result.timedOut,
@@ -779,9 +826,17 @@ export function telemetryFromRunnerResults(input) {
     const steps = input.results.map((result, resultIndex) => {
         const index = result.index ?? resultIndex;
         const status = input.statusSteps?.[index];
+        const resultHasAttemptEvidence = result.attemptedModels !== undefined || result.modelAttempts !== undefined;
+        const statusHasAttemptEvidence = status?.attemptedModels !== undefined || status?.modelAttempts !== undefined;
         const usage = usageFromAttempts(result.modelAttempts);
         const telemetryUsage = usageFromSource(usage);
-        const model = normalizeModelIdentity(result.modelIdentity ?? status?.modelIdentity);
+        const model = modelForTelemetryStep({
+            model: statusHasAttemptEvidence && !resultHasAttemptEvidence
+                ? undefined
+                : normalizeModelIdentity(result.modelIdentity ?? status?.modelIdentity),
+            attemptedModels: result.attemptedModels,
+            modelAttempts: result.modelAttempts,
+        });
         const turns = usage?.turns ?? status?.turnCount;
         const toolCalls = result.toolCount ?? status?.toolCount;
         const activity = turns !== undefined || toolCalls !== undefined

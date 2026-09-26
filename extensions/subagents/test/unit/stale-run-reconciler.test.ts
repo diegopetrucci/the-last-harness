@@ -18,6 +18,25 @@ function writeStatus(asyncDir: string, status: Record<string, unknown>): void {
   fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status, null, 2), "utf-8");
 }
 
+function telemetryEnvelope(
+  runId: string,
+  outcome: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    run: { id: runId, execution: "async", mode: "single" },
+    steps: [{ index: 0, agent: "worker", outcome: { state: "running" } }],
+    outcome,
+    provenance: { tlhVersion: "test-tlh", piVersion: "test-pi", loadedAt: 1_000 },
+    controls: {
+      needsAttentionAfterMs: 5_000,
+      failedToolAttemptsBeforeAttention: 3,
+      notifyOn: ["needs_attention"],
+      notifyChannels: ["async"],
+    },
+  };
+}
+
 function errno(code: string): NodeJS.ErrnoException {
   const error = new Error(code) as NodeJS.ErrnoException;
   error.code = code;
@@ -719,6 +738,143 @@ describe("async stale-run reconciliation", () => {
         repaired.status?.telemetry?.steps.map((step) => step.outcome?.state),
         ["completed", "failed", "completed"],
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves authoritative terminal run telemetry outcomes during stale result reconciliation", () => {
+    const root = tempRoot("pi-stale-authoritative-run-outcome-");
+    try {
+      const cases = [
+        {
+          name: "completed",
+          success: true,
+          state: "complete",
+          outcome: {
+            state: "completed",
+            terminationReason: "completed",
+            acceptanceStatus: "accepted",
+          },
+        },
+        {
+          name: "failed",
+          success: false,
+          state: "failed",
+          outcome: {
+            state: "failed",
+            terminationReason: "model_error",
+            acceptanceStatus: "rejected",
+          },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const runId = `run-authoritative-${testCase.name}`;
+        const asyncDir = path.join(root, runId);
+        const resultsDir = path.join(root, "results");
+        const resultPath = path.join(resultsDir, `${runId}.json`);
+        const resultTelemetry = telemetryEnvelope(runId, { ...testCase.outcome });
+        writeStatus(asyncDir, {
+          runId,
+          mode: "single",
+          state: "running",
+          startedAt: 1_000,
+          lastUpdate: 1_000,
+          steps: [{ agent: "worker", status: "running", startedAt: 1_000 }],
+          // A stale running checkpoint must not replace the terminal result outcome.
+          telemetry: telemetryEnvelope(runId, { state: "running" }),
+        });
+        fs.mkdirSync(resultsDir, { recursive: true });
+        const resultContent = `${JSON.stringify(
+          {
+            id: runId,
+            success: testCase.success,
+            state: testCase.state,
+            results: [{ agent: "worker", success: testCase.success }],
+            telemetry: resultTelemetry,
+          },
+          null,
+          2,
+        )}\n`;
+        fs.writeFileSync(resultPath, resultContent, "utf-8");
+
+        const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2_000 });
+
+        assert.equal(repaired.repaired, true);
+        assert.equal(repaired.status?.state, testCase.state);
+        assert.deepEqual(repaired.status?.telemetry?.outcome, testCase.outcome);
+        assert.deepEqual(
+          JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).telemetry
+            .outcome,
+          testCase.outcome,
+        );
+        // Reconciliation must project a copy into status, never rewrite the source artifact.
+        assert.equal(fs.readFileSync(resultPath, "utf-8"), resultContent);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("synthesizes a repair outcome only for malformed or nonterminal merged telemetry", () => {
+    const root = tempRoot("pi-stale-outcome-fallback-");
+    try {
+      const cases = [
+        {
+          name: "malformed",
+          success: true,
+          state: "complete",
+          telemetryOutcome: {
+            state: "completed",
+            terminationReason: "not-a-termination-reason",
+            acceptanceStatus: "not-an-acceptance-status",
+          },
+          expected: { state: "completed" },
+        },
+        {
+          name: "nonterminal",
+          success: false,
+          state: "failed",
+          telemetryOutcome: {
+            state: "running",
+            terminationReason: "unknown",
+            acceptanceStatus: "claimed",
+          },
+          expected: { state: "failed", terminationReason: "process_exit" },
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const runId = `run-outcome-fallback-${testCase.name}`;
+        const asyncDir = path.join(root, runId);
+        const resultsDir = path.join(root, "results");
+        writeStatus(asyncDir, {
+          runId,
+          mode: "single",
+          state: "running",
+          startedAt: 1_000,
+          lastUpdate: 1_000,
+          steps: [{ agent: "worker", status: "running", startedAt: 1_000 }],
+        });
+        fs.mkdirSync(resultsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(resultsDir, `${runId}.json`),
+          JSON.stringify({
+            id: runId,
+            success: testCase.success,
+            state: testCase.state,
+            results: [{ agent: "worker", success: testCase.success }],
+            telemetry: telemetryEnvelope(runId, { ...testCase.telemetryOutcome }),
+          }),
+          "utf-8",
+        );
+
+        const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2_000 });
+
+        assert.equal(repaired.repaired, true);
+        assert.deepEqual(repaired.status?.telemetry?.outcome, testCase.expected);
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

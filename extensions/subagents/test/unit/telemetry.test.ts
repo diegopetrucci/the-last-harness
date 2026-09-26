@@ -16,7 +16,11 @@ import {
   type SubagentTelemetryControls,
   type SubagentTelemetryProvenance,
 } from "../../src/shared/telemetry.ts";
-import type { ResolvedControlConfig } from "../../src/shared/types.ts";
+import type {
+  AcceptanceLedgerStatus,
+  ResolvedControlConfig,
+  SingleResult,
+} from "../../src/shared/types.ts";
 import { captureSubagentTelemetryProvenance } from "../../src/extension/telemetry-provenance.ts";
 
 const provenance: SubagentTelemetryProvenance = {
@@ -46,6 +50,28 @@ function buildTelemetry(overrides: Partial<SubagentRunTelemetry> = {}): Subagent
     steps: [{ index: 0, agent: "worker", outcome: { state: "completed" } }],
     ...overrides,
   });
+}
+
+function acceptanceForTelemetry(
+  status: AcceptanceLedgerStatus,
+): NonNullable<SingleResult["acceptance"]> {
+  return {
+    status,
+    explicit: false,
+    effectiveAcceptance: {
+      level: "checked",
+      explicit: false,
+      inferredReason: [],
+      criteria: [],
+      evidence: [],
+      verify: [],
+      stopRules: [],
+    },
+    inferredReason: [],
+    criteria: [],
+    runtimeChecks: [],
+    verifyRuns: [],
+  };
 }
 
 describe("subagent run telemetry", () => {
@@ -157,6 +183,58 @@ describe("subagent run telemetry", () => {
     assert.deepEqual(resolveSubagentTelemetryOutcome({ state: "pausing" }), {
       state: "paused",
     });
+  });
+
+  it("keeps explicit cancel/pause state consistent between run and single-result step outcomes", () => {
+    const cases: Array<{
+      state: "cancelled" | "paused";
+      terminationReason?: "model_error";
+      acceptanceStatus: "accepted" | "rejected";
+      resultState: Record<string, unknown>;
+    }> = [
+      {
+        state: "cancelled",
+        terminationReason: "model_error",
+        acceptanceStatus: "accepted",
+        resultState: { cancel: { summary: "cancelled by parent", cancelledAt: 123 } },
+      },
+      {
+        state: "paused",
+        acceptanceStatus: "rejected",
+        resultState: { pause: { kind: "awaiting_supervisor", requestedAt: 123 } },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const expected = {
+        state: testCase.state,
+        ...(testCase.terminationReason ? { terminationReason: testCase.terminationReason } : {}),
+        acceptanceStatus: testCase.acceptanceStatus,
+      };
+      const telemetry = telemetryFromSingleResults({
+        runId: `foreground-${testCase.state}`,
+        mode: "single",
+        provenance,
+        controls,
+        results: [
+          {
+            agent: "worker",
+            task: "telemetry state test",
+            exitCode: 0,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+            acceptance: acceptanceForTelemetry(testCase.acceptanceStatus),
+            ...(testCase.terminationReason
+              ? { terminationReason: testCase.terminationReason }
+              : {}),
+            ...testCase.resultState,
+          },
+        ],
+        outcome: expected,
+      });
+
+      assert.deepEqual(telemetry.outcome, expected);
+      assert.deepEqual(telemetry.steps[0]?.outcome, expected);
+    }
   });
 
   it("selects aggregate termination reasons by outcome precedence, not completion order", () => {
@@ -280,8 +358,10 @@ describe("subagent run telemetry", () => {
           agent: "late-worker",
           success: true,
           modelIdentity: { provider: "anthropic", model: "claude", thinking: "high" },
+          attemptedModels: ["anthropic/claude"],
           modelAttempts: [
             {
+              model: "anthropic/claude",
               usage: {
                 input: 10,
                 output: 20,
@@ -320,6 +400,238 @@ describe("subagent run telemetry", () => {
     });
   });
 
+  it("omits aggregate model attribution for fallback attempts in foreground and async telemetry", () => {
+    const model = { provider: "anthropic", model: "claude-final" };
+    const failedUsage = {
+      input: 4,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0.2,
+      turns: 1,
+    };
+    const finalUsage = {
+      input: 10,
+      output: 20,
+      cacheRead: 3,
+      cacheWrite: 4,
+      cost: 0.5,
+      turns: 2,
+    };
+    const aggregateUsage = {
+      input: failedUsage.input + finalUsage.input,
+      output: failedUsage.output + finalUsage.output,
+      cacheRead: failedUsage.cacheRead + finalUsage.cacheRead,
+      cacheWrite: failedUsage.cacheWrite + finalUsage.cacheWrite,
+      cost: failedUsage.cost + finalUsage.cost,
+      turns: failedUsage.turns + finalUsage.turns,
+    };
+    const attemptedModels = ["anthropic/claude-failed", "anthropic/claude-final"];
+    const modelAttempts = [
+      { model: attemptedModels[0]!, success: false, usage: failedUsage },
+      { model: attemptedModels[1]!, success: true, usage: finalUsage },
+    ];
+
+    const foreground = telemetryFromSingleResults({
+      runId: "foreground-fallback",
+      mode: "single",
+      provenance,
+      controls,
+      results: [
+        {
+          agent: "worker",
+          task: "telemetry test",
+          exitCode: 0,
+          modelIdentity: model,
+          attemptedModels,
+          modelAttempts,
+          usage: aggregateUsage,
+        },
+      ],
+    });
+    assert.equal("model" in foreground.steps[0]!, false);
+    assert.deepEqual(foreground.usage, {
+      inputTokens: aggregateUsage.input,
+      outputTokens: aggregateUsage.output,
+      cacheReadTokens: aggregateUsage.cacheRead,
+      cacheWriteTokens: aggregateUsage.cacheWrite,
+      costUsd: aggregateUsage.cost,
+    });
+
+    const foregroundSingle = telemetryFromSingleResults({
+      runId: "foreground-single",
+      mode: "single",
+      provenance,
+      controls,
+      results: [
+        {
+          agent: "worker",
+          task: "telemetry test",
+          exitCode: 0,
+          modelIdentity: model,
+          attemptedModels: ["anthropic/claude-final"],
+          modelAttempts: [{ model: "anthropic/claude-final", success: true, usage: finalUsage }],
+          usage: finalUsage,
+        },
+      ],
+    });
+    assert.deepEqual(foregroundSingle.steps[0]?.model, model);
+
+    const asyncTelemetry = telemetryFromRunnerResults({
+      runId: "async-fallback",
+      mode: "single",
+      provenance,
+      controls,
+      startedAt: 100,
+      endedAt: 200,
+      results: [
+        {
+          agent: "worker",
+          success: true,
+          modelIdentity: model,
+          attemptedModels,
+          modelAttempts,
+        },
+      ],
+    });
+    assert.ok(asyncTelemetry);
+    assert.equal("model" in asyncTelemetry.steps[0]!, false);
+    assert.deepEqual(asyncTelemetry.usage, {
+      inputTokens: aggregateUsage.input,
+      outputTokens: aggregateUsage.output,
+      cacheReadTokens: aggregateUsage.cacheRead,
+      cacheWriteTokens: aggregateUsage.cacheWrite,
+      costUsd: aggregateUsage.cost,
+    });
+
+    const asyncSingle = telemetryFromRunnerResults({
+      runId: "async-single",
+      mode: "single",
+      provenance,
+      controls,
+      startedAt: 100,
+      endedAt: 200,
+      results: [
+        {
+          agent: "worker",
+          success: true,
+          modelIdentity: model,
+          attemptedModels: ["anthropic/claude-final"],
+          modelAttempts: [{ model: "anthropic/claude-final", usage: finalUsage }],
+        },
+      ],
+    });
+    assert.ok(asyncSingle);
+    assert.deepEqual(asyncSingle.steps[0]?.model, model);
+
+    const partial = telemetryFromSingleResults({
+      runId: "foreground-partial",
+      mode: "single",
+      provenance,
+      controls,
+      results: [
+        {
+          agent: "worker",
+          task: "telemetry test",
+          exitCode: 0,
+          modelIdentity: model,
+          attemptedModels: ["anthropic/claude-final"],
+          modelAttempts: [{ model: "anthropic/claude-final", success: true }],
+          usage: finalUsage,
+        },
+      ],
+    });
+    assert.equal("model" in partial.steps[0]!, false);
+  });
+
+  it("does not use planned status attempts for zero-attempt async results", () => {
+    const model = { provider: "anthropic", model: "claude-planned" };
+    const plannedUsage = {
+      input: 10,
+      output: 20,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0.5,
+      turns: 1,
+    };
+    // A checkpoint may expose the candidate selected for dispatch and stale
+    // attempt data even when the terminal result contains no model attempt.
+    const plannedStatusStep = {
+      status: "failed",
+      modelIdentity: model,
+      attemptedModels: ["anthropic/claude-planned"],
+      modelAttempts: [{ model: "anthropic/claude-planned", usage: plannedUsage }],
+    };
+    const telemetry = telemetryFromRunnerResults({
+      runId: "async-zero-attempt",
+      mode: "single",
+      provenance,
+      controls,
+      startedAt: 100,
+      endedAt: 200,
+      results: [{ agent: "worker", success: false }],
+      statusSteps: [plannedStatusStep],
+    });
+
+    assert.ok(telemetry);
+    assert.equal("model" in telemetry.steps[0]!, false);
+    assert.equal("usage" in telemetry.steps[0]!, false);
+    assert.equal("usage" in telemetry, false);
+  });
+
+  it("omits attribution for present-empty and inconsistent attempt evidence", () => {
+    const model = { provider: "anthropic", model: "claude-final" };
+    const usage = {
+      input: 10,
+      output: 20,
+      cacheRead: 3,
+      cacheWrite: 4,
+      cost: 0.5,
+      turns: 2,
+    };
+    const cases: Array<{
+      name: string;
+      attemptedModels?: string[];
+      modelAttempts?: Array<{ model: string; success: boolean; usage: typeof usage }>;
+    }> = [
+      { name: "empty attemptedModels", attemptedModels: [] },
+      { name: "empty modelAttempts", modelAttempts: [] },
+      {
+        name: "mismatched attempted model",
+        attemptedModels: ["anthropic/claude-other"],
+        modelAttempts: [{ model: "anthropic/claude-final", success: true, usage }],
+      },
+      {
+        name: "inconsistent attempt model",
+        attemptedModels: ["anthropic/claude-final"],
+        modelAttempts: [{ model: "anthropic/claude-other", success: true, usage }],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const { name, ...evidence } = testCase;
+      const telemetry = telemetryFromSingleResults({
+        runId: `foreground-inconsistent-${name}`,
+        mode: "single",
+        provenance,
+        controls,
+        results: [
+          {
+            agent: "worker",
+            task: "telemetry test",
+            exitCode: 0,
+            modelIdentity: model,
+            usage,
+            ...evidence,
+          },
+        ],
+      });
+      const step = telemetry.steps[0]!;
+      assert.equal("model" in step, false, name);
+      assert.ok(step.usage, name);
+    }
+  });
+
   it("keeps persisted provenance and controls authoritative during merges", () => {
     const persistedControls: SubagentTelemetryControls = {
       needsAttentionAfterMs: 10,
@@ -348,6 +660,67 @@ describe("subagent run telemetry", () => {
     assert.deepEqual(merged.controls, persisted.controls);
     assert.deepEqual(merged.timing, persisted.timing);
     assert.deepEqual(merged.outcome, persisted.outcome);
+  });
+
+  it("clears stale model attribution when a newer usage snapshot omits it", () => {
+    const persisted = buildTelemetry({
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          model: { provider: "anthropic", model: "claude-final" },
+          usage: {
+            inputTokens: 10,
+            outputTokens: 20,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.5,
+          },
+        },
+      ],
+    });
+    const current = buildTelemetry({
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          usage: {
+            inputTokens: 14,
+            outputTokens: 25,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.7,
+          },
+        },
+      ],
+    });
+
+    const merged = mergeSubagentRunTelemetry(current, persisted);
+    assert.ok(merged);
+    assert.equal("model" in merged.steps[0]!, false);
+    assert.deepEqual(merged.steps[0]?.usage, current.steps[0]?.usage);
+  });
+
+  it("preserves legacy model attribution when newer metadata is absent", () => {
+    const persisted = buildTelemetry({
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          model: { provider: "anthropic", model: "claude-legacy" },
+        },
+      ],
+    });
+    const current = buildTelemetry({
+      steps: [{ index: 0, agent: "worker" }],
+    });
+
+    const merged = mergeSubagentRunTelemetry(current, persisted);
+    assert.ok(merged);
+    assert.deepEqual(merged.steps[0]?.model, {
+      provider: "anthropic",
+      model: "claude-legacy",
+    });
   });
 
   it("carries continuation lineage and deduplicates source edges", () => {

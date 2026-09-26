@@ -603,9 +603,21 @@ function mergeSummary(
   if (!existing) return incoming;
   const existingUpdate = existing.lastUpdate ?? 0;
   const incomingUpdate = incoming.lastUpdate ?? event.ts;
-  if (incomingUpdate < existingUpdate) return existing;
+  // A paused source runner can publish a stale snapshot after a continuation
+  // or cancellation has already been adopted. Those lifecycle replacements are
+  // semantic terminal edges, not ordinary timestamp-ordered heartbeats, so let
+  // canonical complete/failed states replace paused regardless of their
+  // snapshot timestamp. Same-state terminal repeats remain deduplicated below.
+  const terminalReplacement =
+    existing.state === "paused" && (incoming.state === "complete" || incoming.state === "failed");
+  if (!terminalReplacement && incomingUpdate < existingUpdate) return existing;
   if (terminal(existing.state) && !terminal(incoming.state)) return existing;
-  if (terminal(existing.state) && terminal(incoming.state) && incomingUpdate === existingUpdate)
+  if (
+    !terminalReplacement &&
+    terminal(existing.state) &&
+    terminal(incoming.state) &&
+    incomingUpdate === existingUpdate
+  )
     return existing;
   return {
     ...existing,

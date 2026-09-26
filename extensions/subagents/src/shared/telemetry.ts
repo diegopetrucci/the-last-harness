@@ -1,3 +1,4 @@
+import { splitKnownThinkingSuffix } from "./model-info.ts";
 import type {
   AcceptanceLedgerStatus,
   ResolvedControlConfig,
@@ -196,6 +197,63 @@ function normalizeModelIdentity(value: unknown): SubagentModelIdentity | undefin
     model: value.model.trim(),
     ...(nonEmptyString(value.thinking) ? { thinking: value.thinking.trim() } : {}),
   };
+}
+
+type TelemetryModelAttempt = {
+  model?: string;
+  usage?: Usage;
+};
+
+function modelReferenceKey(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  return splitKnownThinkingSuffix(value.trim()).baseModel;
+}
+
+function modelReferenceMatchesIdentity(value: unknown, identity: SubagentModelIdentity): boolean {
+  const reference = modelReferenceKey(value);
+  if (!reference) return false;
+  const separator = reference.indexOf("/");
+  return (
+    separator > 0 &&
+    separator < reference.length - 1 &&
+    reference.slice(0, separator) === identity.provider &&
+    reference.slice(separator + 1) === identity.model
+  );
+}
+
+/**
+ * Keep model attribution only when attempt evidence identifies one complete,
+ * consistent contributing model. An entirely absent attempt carrier retains
+ * legacy attribution; present-but-empty or partial evidence is ambiguous.
+ */
+function modelForTelemetryStep(input: {
+  model?: SubagentModelIdentity;
+  attemptedModels?: readonly string[];
+  modelAttempts?: readonly TelemetryModelAttempt[];
+}): SubagentModelIdentity | undefined {
+  const model = input.model;
+  if (!model) return undefined;
+  if (input.attemptedModels === undefined && input.modelAttempts === undefined) return model;
+
+  if (
+    input.attemptedModels !== undefined &&
+    (input.attemptedModels.length !== 1 ||
+      !modelReferenceMatchesIdentity(input.attemptedModels[0], model))
+  ) {
+    return undefined;
+  }
+  const attemptedReference =
+    input.attemptedModels?.length === 1 ? modelReferenceKey(input.attemptedModels[0]) : undefined;
+
+  if (input.modelAttempts !== undefined) {
+    if (input.modelAttempts.length !== 1) return undefined;
+    const attempt = input.modelAttempts[0];
+    if (!attempt?.usage || !modelReferenceMatchesIdentity(attempt.model, model)) return undefined;
+    if (attemptedReference !== undefined && modelReferenceKey(attempt.model) !== attemptedReference)
+      return undefined;
+  }
+
+  return model;
 }
 
 function normalizeUsage(value: unknown): SubagentTelemetryUsage | undefined {
@@ -600,7 +658,7 @@ export function mergeSubagentRunTelemetry(
       persistedStep.timing,
       persistedOutcomeWins,
     );
-    return {
+    const mergedStep = {
       ...persistedStep,
       ...currentStep,
       ...(persistedOutcomeWins && persistedStep.outcome
@@ -613,6 +671,8 @@ export function mergeSubagentRunTelemetry(
         : {}),
       ...(timing ? { timing } : {}),
     };
+    if (currentStep.usage && !currentStep.model) delete mergedStep.model;
+    return mergedStep;
   });
   const usage = current.usage ?? persisted.usage;
   const timing = mergeTelemetryTiming(current.timing, persisted.timing, persistedOutcomeWins);
@@ -1035,11 +1095,16 @@ export function telemetryFromSingleResults(input: {
       return {
         index: input.stepIndexes?.[index] ?? index,
         agent: result.agent,
-        model: result.modelIdentity,
+        model: modelForTelemetryStep({
+          model: result.modelIdentity,
+          attemptedModels: result.attemptedModels,
+          modelAttempts: result.modelAttempts,
+        }),
         usage: result.usage,
         ...(Object.keys(activityValues).length > 0 ? { activity: activityValues } : {}),
         ...(Object.keys(timingValues).length > 0 ? { timing: timingValues } : {}),
         outcome: resolveSubagentTelemetryOutcome({
+          state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
           success: result.exitCode === 0 && !result.interrupted,
           interrupted: result.interrupted,
           timedOut: result.timedOut,
@@ -1057,7 +1122,8 @@ export type RunnerTelemetryResult = {
   index?: number;
   agent: string;
   modelIdentity?: SubagentModelIdentity;
-  modelAttempts?: Array<{ usage?: Usage }>;
+  attemptedModels?: string[];
+  modelAttempts?: TelemetryModelAttempt[];
   success?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
@@ -1112,6 +1178,9 @@ export function telemetryFromRunnerResults(input: {
     durationMs?: number;
     activeRuntimeMs?: number;
     modelIdentity?: SubagentModelIdentity;
+    /** Checkpoint-only fields; never used as terminal attempt evidence. */
+    attemptedModels?: string[];
+    modelAttempts?: TelemetryModelAttempt[];
     toolCount?: number;
     turnCount?: number;
     status?: string;
@@ -1126,9 +1195,23 @@ export function telemetryFromRunnerResults(input: {
   const steps = input.results.map((result, resultIndex) => {
     const index = result.index ?? resultIndex;
     const status = input.statusSteps?.[index];
+    // Status checkpoints can expose planned candidates before any model request
+    // runs. Only terminal result evidence is authoritative for usage and model
+    // attribution; normal results carry the completed attempt history.
+    const resultHasAttemptEvidence =
+      result.attemptedModels !== undefined || result.modelAttempts !== undefined;
+    const statusHasAttemptEvidence =
+      status?.attemptedModels !== undefined || status?.modelAttempts !== undefined;
     const usage = usageFromAttempts(result.modelAttempts);
     const telemetryUsage = usageFromSource(usage);
-    const model = normalizeModelIdentity(result.modelIdentity ?? status?.modelIdentity);
+    const model = modelForTelemetryStep({
+      model:
+        statusHasAttemptEvidence && !resultHasAttemptEvidence
+          ? undefined
+          : normalizeModelIdentity(result.modelIdentity ?? status?.modelIdentity),
+      attemptedModels: result.attemptedModels,
+      modelAttempts: result.modelAttempts,
+    });
     const turns = usage?.turns ?? status?.turnCount;
     const toolCalls = result.toolCount ?? status?.toolCount;
     const activity =

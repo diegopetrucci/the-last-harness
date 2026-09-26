@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { analyzeSubagentSessions, scanSessionFile } from "../scripts/lib/session-analysis.mjs";
 import {
+  mergeTelemetrySnapshots,
+  parseNormalizedTelemetry,
+} from "../scripts/lib/subagent-analysis-parser.mjs";
+import {
   BACKGROUND_COMPLETION_NUDGE,
   CONTROL_NOTICE_NUDGE,
 } from "../scripts/lib/subagent-analysis-wakeup.mjs";
@@ -157,6 +161,220 @@ test("subagent analysis: deduplicates telemetry and attributes only the immediat
   assert.ok(!serialized.includes("run-async"));
 });
 
+test("subagent analysis: preserves aggregate fallback usage without charging the final model", async (t) => {
+  const initialTelemetry = telemetryEnvelope("fallback-report-run", "async", {
+    agent: "fallback-agent",
+    outcome: { state: "running" },
+  });
+  const finalTelemetry = telemetryEnvelope("fallback-report-run", "async", {
+    agent: "fallback-agent",
+    outcome: { state: "completed", terminationReason: "completed" },
+  });
+  delete finalTelemetry.steps[0].model;
+
+  const olderSnapshot = parseNormalizedTelemetry(initialTelemetry);
+  const newerSnapshot = parseNormalizedTelemetry(finalTelemetry);
+  assert.ok(olderSnapshot);
+  assert.ok(newerSnapshot);
+  freezeDeep(olderSnapshot);
+  freezeDeep(newerSnapshot);
+  const mergedSnapshot = mergeTelemetrySnapshots(olderSnapshot, newerSnapshot);
+  assert.equal("model" in mergedSnapshot.steps[0], false);
+  assert.ok(olderSnapshot.steps[0]?.model);
+
+  const filePath = writeFixture(t, [
+    sessionHeader("subagent-fallback-report"),
+    messageEntry({
+      role: "assistant",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      content: [
+        {
+          type: "toolCall",
+          toolName: "subagent",
+          toolCallId: "fallback-launch",
+          arguments: { agent: "fallback-agent", task: "redacted" },
+        },
+      ],
+    }),
+    toolResultLine("2026-01-01T00:00:01.000Z", "fallback-launch", "subagent", {
+      details: { runId: "fallback-report-run", telemetry: initialTelemetry },
+    }),
+    messageEntry({
+      role: "custom",
+      customType: "subagent-notify",
+      timestamp: "2026-01-01T00:00:02.000Z",
+      details: {
+        status: "completed",
+        asyncId: "fallback-report-run",
+        telemetry: finalTelemetry,
+      },
+    }),
+  ]);
+
+  const scan = await scanSessionFile(filePath);
+  const beforeAnalysis = structuredClone(scan.entries);
+  freezeDeep(scan.entries);
+  const output = analyzeSubagentSessions([scan]);
+  assert.deepEqual(scan.entries, beforeAnalysis, "snapshot merging must not mutate evidence");
+  assert.equal(output.runs.length, 1);
+  assert.equal(output.runs[0]?.telemetryRecordCount, 2);
+  assert.equal(output.aggregates.usage.costUsd, 0.25);
+  const mergedStep = output.runs[0]?.steps[0];
+  assert.ok(mergedStep);
+  assert.equal("model" in mergedStep, false);
+  const modelAggregate = output.aggregates.byModel[JSON.stringify(["anthropic", "claude-test"])];
+  assert.ok(modelAggregate);
+  assert.equal(modelAggregate.steps, 0);
+  assert.equal(modelAggregate.usageReportedSteps, 0);
+  assert.deepEqual(modelAggregate.usage, {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  });
+});
+
+test("subagent analysis: derives duplicate coverage from frozen canonical snapshots", async (t) => {
+  const foregroundInitial = telemetryEnvelope("coverage-foreground", "foreground", {
+    agent: "foreground-agent",
+    outcome: { state: "running" },
+  });
+  const foregroundUpdate = structuredClone(foregroundInitial);
+  const initialStep = foregroundUpdate.steps[0];
+  foregroundUpdate.steps.push({
+    ...initialStep,
+    index: 1,
+    agent: "foreground-follow-up",
+    usage: {
+      ...initialStep.usage,
+      inputTokens: initialStep.usage.inputTokens + 1,
+      outputTokens: initialStep.usage.outputTokens + 1,
+    },
+  });
+  const asyncInitial = telemetryEnvelope("coverage-async", "async", {
+    agent: "async-agent",
+    outcome: { state: "completed", terminationReason: "completed" },
+  });
+  const asyncDuplicate = structuredClone(asyncInitial);
+  const invalidTelemetry = {};
+  const telemetryToolPair = (callId, timestamp, telemetry) => [
+    messageEntry({
+      role: "assistant",
+      timestamp,
+      content: [
+        {
+          type: "toolCall",
+          toolName: "subagent",
+          toolCallId: callId,
+          arguments: { agent: "coverage-agent", task: "redacted" },
+        },
+      ],
+    }),
+    toolResultLine(timestamp, callId, "subagent", { details: { telemetry } }),
+  ];
+  const filePath = writeFixture(t, [
+    sessionHeader("subagent-coverage-duplicates"),
+    ...telemetryToolPair("foreground-initial", "2026-01-01T00:00:00.000Z", foregroundInitial),
+    ...telemetryToolPair("foreground-update", "2026-01-01T00:00:01.000Z", foregroundUpdate),
+    ...telemetryToolPair("async-initial", "2026-01-01T00:00:02.000Z", asyncInitial),
+    ...telemetryToolPair("async-duplicate", "2026-01-01T00:00:03.000Z", asyncDuplicate),
+    ...telemetryToolPair("malformed", "2026-01-01T00:00:04.000Z", invalidTelemetry),
+  ]);
+
+  const scan = await scanSessionFile(filePath);
+  const beforeAnalysis = structuredClone(scan.entries);
+  freezeDeep(scan.entries);
+  const output = analyzeSubagentSessions([scan]);
+
+  assert.deepEqual(scan.entries, beforeAnalysis, "coverage analysis must not mutate evidence");
+  assert.equal(output.coverage.telemetry.recordsObserved, 5);
+  assert.equal(output.coverage.telemetry.recordsValid, 4);
+  assert.equal(output.coverage.telemetry.recordsInvalid, 1);
+  assert.equal(output.coverage.telemetry.recordsDeduplicated, 2);
+  assert.equal(output.coverage.telemetry.uniqueSourceIdentities, 3);
+  assert.deepEqual(output.coverage.telemetry.foreground, {
+    records: 2,
+    validRecords: 2,
+    invalidRecords: 0,
+    runs: 1,
+    runsWithUsage: 1,
+    steps: 2,
+    stepsWithUsage: 2,
+  });
+  assert.deepEqual(output.coverage.telemetry.async, {
+    records: 2,
+    validRecords: 2,
+    invalidRecords: 0,
+    runs: 1,
+    runsWithUsage: 1,
+    steps: 1,
+    stepsWithUsage: 1,
+  });
+  assert.deepEqual(output.coverage.telemetry.unknownExecution, {
+    records: 1,
+    validRecords: 0,
+    invalidRecords: 1,
+    runs: 0,
+    runsWithUsage: 0,
+    steps: 0,
+    stepsWithUsage: 0,
+  });
+});
+
+test("subagent analysis: counts nonduplicate telemetry coverage per execution", async (t) => {
+  const foregroundTelemetry = telemetryEnvelope("coverage-foreground-unique", "foreground", {
+    agent: "foreground-agent",
+    index: 0,
+    outcome: { state: "completed", terminationReason: "completed" },
+  });
+  const asyncTelemetry = telemetryEnvelope("coverage-async-unique", "async", {
+    agent: "async-agent",
+    index: 1,
+    outcome: { state: "completed", terminationReason: "completed" },
+  });
+  const telemetryToolPair = (callId, timestamp, telemetry) => [
+    messageEntry({
+      role: "assistant",
+      timestamp,
+      content: [
+        {
+          type: "toolCall",
+          toolName: "subagent",
+          toolCallId: callId,
+          arguments: { agent: "coverage-agent", task: "redacted" },
+        },
+      ],
+    }),
+    toolResultLine(timestamp, callId, "subagent", { details: { telemetry } }),
+  ];
+  const filePath = writeFixture(t, [
+    sessionHeader("subagent-coverage-unique"),
+    ...telemetryToolPair("foreground-unique", "2026-01-01T00:00:00.000Z", foregroundTelemetry),
+    ...telemetryToolPair("async-unique", "2026-01-01T00:00:01.000Z", asyncTelemetry),
+  ]);
+
+  const scan = await scanSessionFile(filePath);
+  const beforeAnalysis = structuredClone(scan.entries);
+  freezeDeep(scan.entries);
+  const output = analyzeSubagentSessions([scan]);
+
+  assert.deepEqual(scan.entries, beforeAnalysis, "coverage analysis must not mutate evidence");
+  assert.equal(output.coverage.telemetry.recordsObserved, 2);
+  assert.equal(output.coverage.telemetry.recordsValid, 2);
+  assert.equal(output.coverage.telemetry.recordsInvalid, 0);
+  assert.equal(output.coverage.telemetry.recordsDeduplicated, 0);
+  assert.equal(output.coverage.telemetry.uniqueSourceIdentities, 2);
+  assert.equal(output.coverage.telemetry.foreground.steps, 1);
+  assert.equal(output.coverage.telemetry.foreground.stepsWithUsage, 1);
+  assert.equal(output.coverage.telemetry.foreground.runs, 1);
+  assert.equal(output.coverage.telemetry.foreground.runsWithUsage, 1);
+  assert.equal(output.coverage.telemetry.async.steps, 1);
+  assert.equal(output.coverage.telemetry.async.stepsWithUsage, 1);
+  assert.equal(output.coverage.telemetry.async.runs, 1);
+  assert.equal(output.coverage.telemetry.async.runsWithUsage, 1);
+});
+
 test("subagent analysis: joins grouped completion chunks once and attributes all runs", async (t) => {
   const firstTelemetry = telemetryEnvelope("batch-run-one", "async", {
     agent: "batch-agent-one",
@@ -245,8 +463,9 @@ test("subagent analysis: joins grouped completion chunks once and attributes all
   assert.ok(!serialized.includes("batch-run-two"));
 });
 
-test("subagent analysis: accepts a 513-entry persisted flush across two logical batches", async (t) => {
+test("subagent analysis: keeps 512/513-entry logical batches intact", async (t) => {
   const entryCount = 513;
+  // The runtime logical-batch bound is 512; persisted parser chunks carry 8.
   const entriesPerChunk = 8;
   const logicalBatchEntries = [512, 1];
   const flushId = "persisted-flush-private-id";
@@ -325,6 +544,10 @@ test("subagent analysis: accepts a 513-entry persisted flush across two logical 
   assert.equal(output.runs.length, entryCount);
   assert.equal(output.aggregates.runs, entryCount);
   assert.equal(output.coverage.telemetry.recordsValid, entryCount);
+  assert.equal(output.coverage.telemetry.async.steps, entryCount);
+  assert.equal(output.coverage.telemetry.async.stepsWithUsage, entryCount);
+  assert.equal(output.coverage.telemetry.async.runs, entryCount);
+  assert.equal(output.coverage.telemetry.async.runsWithUsage, entryCount);
   assert.equal(output.aggregates.usage.inputTokens, 136458);
   assert.equal(output.aggregates.usage.outputTokens, 141588);
   assert.equal(output.coverage.evidence.completionBatchesObserved, 2);

@@ -13,10 +13,13 @@ export const SUBAGENT_NOTIFY_TYPE = "subagent-notify";
 export const SUBAGENT_CONTROL_TYPE = "subagent_control_notice";
 export const SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION = 1;
 export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch";
-/** Bounds mirror the runtime carrier without trusting its display payload. */
+/**
+ * Bound one persisted notification chunk; the runtime logical-batch bound is
+ * 512 entries, while each parser chunk carries at most 8 entries.
+ */
 export const MAX_COMPLETION_BATCH_ID_LENGTH = 200;
 export const MAX_COMPLETION_BATCH_COUNT = 64;
-export const MAX_COMPLETION_BATCH_ENTRIES = 8;
+export const MAX_COMPLETION_CHUNK_ENTRIES = 8;
 export const MAX_COMPLETION_BATCH_STATES = 256;
 export const BACKGROUND_COMPLETION_NUDGE = "[tlh] Background subagent completed — see notification above.";
 export const CONTROL_NOTICE_NUDGE = "[tlh] Subagent run needs attention — see notice above.";
@@ -144,7 +147,7 @@ export function parseCompletionBatchDetails(value) {
         typeof value.triggersTurn !== "boolean" ||
         !Array.isArray(value.completions) ||
         value.completions.length === 0 ||
-        value.completions.length > MAX_COMPLETION_BATCH_ENTRIES)
+        value.completions.length > MAX_COMPLETION_CHUNK_ENTRIES)
         return undefined;
     let invalid = false;
     const completions = [];
@@ -555,14 +558,17 @@ export function mergeTelemetrySnapshots(older, newer) {
         stepsByIndex.set(step.index, { ...step });
     for (const step of newer.steps) {
         const previous = stepsByIndex.get(step.index);
-        stepsByIndex.set(step.index, {
+        const mergedStep = {
             ...previous,
             ...step,
             ...(previous?.model && !step.model ? { model: { ...previous.model } } : {}),
             ...(previous?.usage && !step.usage ? { usage: { ...previous.usage } } : {}),
             ...(previous?.timing && !step.timing ? { timing: { ...previous.timing } } : {}),
             ...(previous?.outcome && !step.outcome ? { outcome: { ...previous.outcome } } : {}),
-        });
+        };
+        if (step.usage && !step.model)
+            delete mergedStep.model;
+        stepsByIndex.set(step.index, mergedStep);
     }
     const steps = [...stepsByIndex.values()].sort((a, b) => a.index - b.index);
     const timing = mergeTelemetryTiming(older.timing, newer.timing);

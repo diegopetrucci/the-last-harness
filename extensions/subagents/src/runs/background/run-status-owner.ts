@@ -479,7 +479,7 @@ export function createBackgroundRunStatusOwner(
   let pausedCheckpointCommitted = false;
   let interrupted = false;
   let timedOut = false;
-  let nestedCompletionEmitted = false;
+  let lastEmittedNestedTerminalState: "complete" | "failed" | "paused" | undefined;
   let runtimeCheckpointTimer: NodeJS.Timeout | undefined;
 
   function listTrackedSessionFiles(dir: string | undefined): string[] {
@@ -498,28 +498,35 @@ export function createBackgroundRunStatusOwner(
     type: "subagent.nested.updated" | "subagent.nested.completed",
   ): void {
     if (!nestedRoute || !nestedSelf) return;
-    // Status writes can happen more than once while a child drains, and a
-    // concurrent terminal adoption can make the final persistence path revisit
-    // the same lifecycle state. Nested completion is a lifecycle edge, not a
-    // status heartbeat, so publish it at most once per runner.
-    if (type === "subagent.nested.completed" && nestedCompletionEmitted) return;
     try {
+      const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
+        id,
+        parentRunId: nestedSelf.parentRunId,
+        parentStepIndex: nestedSelf.parentStepIndex,
+        depth: nestedSelf.depth,
+        path: nestedSelf.path,
+        mode: statusPayload.mode,
+        ts: Date.now(),
+      });
+      // Status writes can happen more than once while a child drains, and a
+      // concurrent terminal adoption can make the final persistence path revisit
+      // the same lifecycle state. Nested completion is a terminal projection
+      // edge, so suppress only repeats of the same parent-visible state; a later
+      // paused -> continued/cancelled adoption must replace the parent snapshot.
+      const terminalState =
+        type === "subagent.nested.completed" &&
+        (child.state === "complete" || child.state === "failed" || child.state === "paused")
+          ? child.state
+          : undefined;
+      if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState) return;
       writeNestedEvent(nestedRoute, {
         type,
         ts: Date.now(),
         parentRunId: nestedSelf.parentRunId,
         parentStepIndex: nestedSelf.parentStepIndex,
-        child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-          id,
-          parentRunId: nestedSelf.parentRunId,
-          parentStepIndex: nestedSelf.parentStepIndex,
-          depth: nestedSelf.depth,
-          path: nestedSelf.path,
-          mode: statusPayload.mode,
-          ts: Date.now(),
-        }),
+        child,
       });
-      if (type === "subagent.nested.completed") nestedCompletionEmitted = true;
+      if (terminalState !== undefined) lastEmittedNestedTerminalState = terminalState;
     } catch (error) {
       console.error("Failed to emit nested async status event:", error);
     }
@@ -594,6 +601,7 @@ export function createBackgroundRunStatusOwner(
         adoptConcurrentTerminalStatus();
       } else {
         statusPayload.lifecycle = merged.lifecycle;
+        if (merged.lastUpdate !== undefined) statusPayload.lastUpdate = merged.lastUpdate;
         if (merged.telemetry) statusPayload.telemetry = merged.telemetry;
         else statusPayload.telemetry = undefined;
         for (let index = 0; index < (merged.steps?.length ?? 0); index++) {

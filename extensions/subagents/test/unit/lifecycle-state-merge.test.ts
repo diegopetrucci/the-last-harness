@@ -57,9 +57,11 @@ describe("lifecycle state helpers", () => {
 
       assert.equal(merged.activeRuntimeMs, 900);
       assert.equal(merged.activeRuntimeCheckpointAt, 1_900);
+      assert.equal(merged.lastUpdate, 1_900);
       assert.equal(merged.steps?.[0]?.activeRuntimeMs, 900);
       assert.equal(merged.steps?.[0]?.activeRuntimeCheckpointAt, 1_900);
       assert.equal(readStatus(asyncDir)?.activeRuntimeMs, 900);
+      assert.equal(readStatus(asyncDir)?.lastUpdate, 1_900);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

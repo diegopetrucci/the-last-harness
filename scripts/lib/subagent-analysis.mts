@@ -275,12 +275,6 @@ export function analyzeSubagentSessions(
     }
     counters.telemetryRecordsValid++;
     telemetryBuckets[normalized.run.execution].validRecords++;
-    telemetryBuckets[normalized.run.execution].steps += normalized.steps.length;
-    telemetryBuckets[normalized.run.execution].stepsWithUsage += normalized.steps.filter(
-      (step) => step.usage !== undefined,
-    ).length;
-    if (normalized.usage || normalized.steps.some((step) => step.usage))
-      telemetryBuckets[normalized.run.execution].runsWithUsage++;
     const identityParts =
       normalized.steps.length > 0
         ? normalized.steps.map((step) => tupleKey(normalized.run.id, "step", step.index))
@@ -698,16 +692,19 @@ export function analyzeSubagentSessions(
       else bucket.withoutTelemetry++;
     }
   }
-  for (const execution of ["foreground", "async", "unknown"] as const) {
-    const telemetryRuns = [...runs.values()].filter(
-      (run) => run.execution === execution && run.telemetryRecordCount > 0,
-    );
-    telemetryBuckets[execution].runs = telemetryRuns.length;
-    telemetryBuckets[execution].runsWithUsage = telemetryRuns.filter(
-      (run) =>
-        run.telemetry?.usage !== undefined ||
-        run.telemetry?.steps.some((step) => step.usage !== undefined),
-    ).length;
+  // Coverage totals describe the canonical merged telemetry for each run, not
+  // every valid snapshot that contributed to it. Record counters above remain
+  // per-record evidence counters, while steps and usage are derived once here.
+  for (const run of runs.values()) {
+    const telemetry = run.telemetry;
+    if (!telemetry) continue;
+    const bucket = telemetryBuckets[telemetry.run.execution];
+    bucket.runs++;
+    bucket.steps += telemetry.steps.length;
+    bucket.stepsWithUsage += telemetry.steps.filter((step) => step.usage !== undefined).length;
+    if (telemetry.usage !== undefined || telemetry.steps.some((step) => step.usage !== undefined)) {
+      bucket.runsWithUsage++;
+    }
   }
 
   const attributedWakeupUsage = emptySubagentUsage();
