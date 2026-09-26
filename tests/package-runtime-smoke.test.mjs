@@ -33,6 +33,7 @@ function isolatedEnv(root, agentDir) {
     PI_OFFLINE: "1",
     TLH_SKIP_TELEMETRY: "1",
     TLH_SKIP_UPDATE_CHECK: "1",
+    TMPDIR: join(root, "tmp"),
   };
 }
 
@@ -43,8 +44,9 @@ test("packed TLH generated JavaScript resolves from profile settings and reloads
   const cwd = join(root, "workspace");
   const agentDir = join(root, "agent");
   const homeDir = join(root, "home");
+  const tmpDir = join(root, "tmp");
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const path of [packDir, extractDir, cwd, agentDir, homeDir])
+  for (const path of [packDir, extractDir, cwd, agentDir, homeDir, tmpDir])
     mkdirSync(path, { recursive: true });
 
   const env = isolatedEnv(root, agentDir);

@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 import {
   buildResumeModelResolution,
   clearForegroundMessageInbox,
@@ -39,6 +39,7 @@ import {
   type SubagentState,
   type ForegroundRunControl,
 } from "../../src/shared/types.ts";
+import { DEFAULT_SUBAGENT_MAX_RUN_TIME_MS } from "../../src/agents/execution-ceiling.ts";
 
 const routeRoots: string[] = [];
 const savedEnv = {
@@ -89,6 +90,19 @@ class CapturingForegroundControls extends Map<string, ForegroundRunControl> {
   }
 }
 
+/** Fallback session roots created when no parent session file is available; cleaned in after(). */
+const _fallbackSessionRoots: string[] = [];
+
+after(() => {
+  for (const dir of _fallbackSessionRoots) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+});
+
 function createExecutor(
   state = createState(),
   agents: Array<Record<string, unknown>> = [],
@@ -114,10 +128,17 @@ function createExecutor(
     state,
     config: { maxSubagentDepth: 2, control: {} } as any,
     tempArtifactsDir: os.tmpdir(),
-    getSubagentSessionRoot: (parentSessionFile) =>
-      parentSessionFile
-        ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
-        : os.tmpdir(),
+    getSubagentSessionRoot: (parentSessionFile) => {
+      if (parentSessionFile) {
+        return path.join(
+          path.dirname(parentSessionFile),
+          path.basename(parentSessionFile, ".jsonl"),
+        );
+      }
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-ctrl-sessions-"));
+      _fallbackSessionRoots.push(dir);
+      return dir;
+    },
     expandTilde: (value) => value,
     discoverAgents: options.discoverAgents ?? (() => ({ agents: agents as any })),
     executeAsyncSingle: options.executeAsyncSingle,
@@ -902,9 +923,25 @@ describe("nested run control behavior", () => {
       );
       const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile });
 
-      const result = await createExecutor(stateWithNestedRoute(route), [
-        { name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 },
-      ]).execute(
+      // Stub executeAsyncSingle to prevent a detached child from being spawned
+      // (a real spawn races with the finally-block cleanup and leaks temp dirs).
+      // Capture the params the executor passes so we can assert directly on the
+      // runtime-reset evidence rather than re-deriving it inside the stub.
+      let capturedAsyncSingleParams: any;
+      const result = await createExecutor(
+        stateWithNestedRoute(route),
+        [{ name: "worker", description: "Worker", prompt: "Do work", maxExecutionTimeMs: 100 }],
+        undefined,
+        {
+          executeAsyncSingle: (_id: string, params: any) => {
+            capturedAsyncSingleParams = params;
+            return {
+              content: [{ type: "text", text: `resumed ${_id}` }],
+              details: { mode: "single" as const, results: [], asyncId: _id },
+            };
+          },
+        },
+      ).execute(
         "resume",
         { action: "resume", id: runId, message: "continue" },
         new AbortController().signal,
@@ -913,7 +950,16 @@ describe("nested run control behavior", () => {
       );
 
       assert.equal(result.isError, undefined, text(result));
-      assert.equal(result.details?.timeoutMs, 100);
+      // Verify that the executor reset the persisted activeRuntimeMs (75) to 0
+      // for a terminal-successful run before handing off to the async runner.
+      // If this reset ever regresses, capturedAsyncSingleParams.activeRuntimeMs
+      // would be 75 and this assertion would fail.
+      assert.equal(capturedAsyncSingleParams?.activeRuntimeMs, 0);
+      // Verify the agent ceiling is forwarded correctly.
+      assert.equal(capturedAsyncSingleParams?.agentConfig?.maxExecutionTimeMs, 100);
+      // Verify the run-level timeout is forwarded from the default execution policy
+      // (config.execution is undefined → resolves to DEFAULT_SUBAGENT_MAX_RUN_TIME_MS).
+      assert.equal(capturedAsyncSingleParams?.timeoutMs, DEFAULT_SUBAGENT_MAX_RUN_TIME_MS);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
@@ -1077,9 +1123,24 @@ describe("nested run control behavior", () => {
         "utf-8",
       );
       const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile });
-      const result = await createExecutor(stateWithNestedRoute(route), [
-        { name: "worker", description: "Worker", prompt: "Do work" },
-      ]).execute(
+      // Stub executeAsyncSingle to prevent a detached child from being spawned.
+      // Capture params so we can assert that malformed metadata fields are
+      // sanitised away and not forwarded to the async runner.
+      let capturedMalformedModelParams: any;
+      const result = await createExecutor(
+        stateWithNestedRoute(route),
+        [{ name: "worker", description: "Worker", prompt: "Do work" }],
+        undefined,
+        {
+          executeAsyncSingle: (_id: string, params: any) => {
+            capturedMalformedModelParams = params;
+            return {
+              content: [{ type: "text", text: `resumed ${_id}` }],
+              details: { mode: "single" as const, results: [], asyncId: _id },
+            };
+          },
+        },
+      ).execute(
         "resume",
         { action: "resume", id: runId, message: "continue" },
         new AbortController().signal,
@@ -1087,6 +1148,63 @@ describe("nested run control behavior", () => {
         ctx(root, parentSessionFile),
       );
       assert.equal(result.isError, undefined, text(result));
+
+      // --- modelIdentity ---
+      // The malformed modelIdentity (empty provider) is sanitised away.
+      // The executor falls back to the model string "legacy/model" and derives
+      // { provider: "legacy", model: "model" }.
+      assert.notEqual(
+        capturedMalformedModelParams?.restoredModelIdentity?.model,
+        "discarded",
+        "empty-provider modelIdentity.model must not reach the async runner",
+      );
+      assert.notEqual(
+        capturedMalformedModelParams?.restoredModelIdentity?.provider,
+        "",
+        "empty-provider modelIdentity.provider must not reach the async runner",
+      );
+
+      // --- modelResolution (deep / strengthened) ---
+      // The persisted modelResolution has kind="fallback", a valid original
+      // (openai/gpt-5), and a malformed resumed (provider="", model="discarded").
+      // sanitizeSubagentModelResolution rejects the whole object because the
+      // resumed identity is invalid. buildResumeModelResolution then derives a
+      // "restored" resolution from the valid fallback model string ("legacy/model").
+      //
+      // Expected exact value passed to executeAsyncSingle:
+      //   { kind: "restored",
+      //     original: { provider: "legacy", model: "model" },
+      //     resumed:  { provider: "legacy", model: "model" },
+      //     reason:   "Restored persisted child selection legacy/model ..." }
+      //
+      // A deepEqual catches regressions that forward the persisted kind/original/
+      // reason/"discarded" data; a JSON-stringify check guards against unexpected
+      // nesting that might slip past field-level assertions.
+      assert.deepEqual(
+        capturedMalformedModelParams?.modelResolution,
+        {
+          kind: "restored",
+          original: { provider: "legacy", model: "model" },
+          resumed: { provider: "legacy", model: "model" },
+          reason:
+            "Restored persisted child selection legacy/model instead of the current parent model.",
+        },
+        "modelResolution must be the sanitized restored resolution derived from the model string",
+      );
+      // Defense-in-depth: the string "discarded" must not appear anywhere in the
+      // forwarded resolution (catches regressions via unexpected fields/nesting).
+      assert.ok(
+        !JSON.stringify(capturedMalformedModelParams?.modelResolution ?? {}).includes("discarded"),
+        "modelResolution must not contain the string 'discarded' anywhere",
+      );
+
+      // --- contextUsage ---
+      // Non-numeric contextUsage must not be forwarded.
+      assert.equal(
+        capturedMalformedModelParams?.contextUsage,
+        undefined,
+        "non-numeric contextUsage must not reach the async runner",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(nestedAsyncDir, { recursive: true, force: true });

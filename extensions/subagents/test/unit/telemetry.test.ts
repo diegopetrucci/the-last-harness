@@ -772,6 +772,12 @@ describe("subagent run telemetry", () => {
   it("guards every generated detached-runner import transitively", () => {
     const sourceRoot = path.resolve("extensions/subagents/src");
     const runnerPath = path.join(sourceRoot, "runs/background/subagent-runner.js");
+    // types.js intentionally shares this one generated helper with the parent
+    // extension. Keep the exception exact instead of opening the whole sibling
+    // directory or allowing arbitrary imports outside the detached-runner tree.
+    const allowedGeneratedDependency = path.resolve("extensions/shared/subagent-temp-root.js");
+    const isAllowedImport = (resolved: string): boolean =>
+      resolved.startsWith(`${sourceRoot}${path.sep}`) || resolved === allowedGeneratedDependency;
     const pending = [runnerPath];
     const visited = new Set<string>();
     const violations: string[] = [];
@@ -810,7 +816,7 @@ describe("subagent run telemetry", () => {
             continue;
           }
           const resolved = path.resolve(path.dirname(current), specifier);
-          if (!resolved.startsWith(`${sourceRoot}${path.sep}`)) {
+          if (!isAllowedImport(resolved)) {
             violations.push(
               `${path.relative(sourceRoot, current)} escapes generated source root via '${specifier}'`,
             );
@@ -822,5 +828,10 @@ describe("subagent run telemetry", () => {
     }
 
     assert.deepEqual(violations, []);
+    assert.equal(isAllowedImport(allowedGeneratedDependency), true);
+    assert.equal(
+      isAllowedImport(path.resolve("extensions/shared/project-agent-worktree.js")),
+      false,
+    );
   });
 });

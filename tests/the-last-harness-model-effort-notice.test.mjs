@@ -31,8 +31,8 @@ const architectAgent = {
   tlhModelDefaults: [
     {
       provider: "anthropic",
-      models: [{ provider: "anthropic", id: "claude-opus-5" }],
-      effort: "high",
+      models: [{ provider: "anthropic", id: "claude-opus-5-5" }],
+      effort: "medium",
     },
     {
       provider: "openai-codex",
@@ -165,7 +165,7 @@ test("getChangedOverriddenRoles: returns empty list when acknowledged snapshot m
   // byProvider snapshot matching the current packaged defaults exactly → no change.
   const snapshot = {
     architect: {
-      byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } },
+      byProvider: { anthropic: { model: "anthropic/claude-opus-5-5", thinking: "medium" } },
     },
   };
   const roles = getChangedOverriddenRoles(
@@ -476,7 +476,7 @@ test("notice not shown when packaged defaults unchanged (snapshot matches)", asy
   writeReconcileState(fixture.agent, {
     acknowledgedSnapshot: {
       architect: {
-        byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } },
+        byProvider: { anthropic: { model: "anthropic/claude-opus-5-5", thinking: "medium" } },
       },
     },
   });
@@ -494,7 +494,7 @@ test("notice not shown when packaged defaults unchanged (snapshot matches)", asy
 
 test("notice not shown in non-TUI mode (hasUI=false)", async (t) => {
   // Proves the hasUI early return in maybeNotifyModelEffortDrift suppresses an otherwise-firing
-  // notice. The byProvider snapshot is stale (claude-opus-4-5 vs current claude-opus-5), so drift
+  // notice. The byProvider snapshot is stale (claude-opus-4-5 vs current claude-opus-5-5), so drift
   // is real — a notice would fire if hasUI=false were removed. The test must fail under mutation.
   const fixture = createIsolatedProfileFixture("tlh-model-effort-notice-test-", {
     cwd: true,
@@ -670,7 +670,7 @@ test("notice suppressed after /reconcile decision updates acknowledged snapshot"
     updateReconcileAcknowledgedSnapshot(
       {
         architect: {
-          byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } },
+          byProvider: { anthropic: { model: "anthropic/claude-opus-5-5", thinking: "medium" } },
         },
       },
       new Date().toISOString(),

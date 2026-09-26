@@ -50,6 +50,8 @@ npm run test:verbose
 
 Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
 
+Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache and `node-compile-cache`), then removes the per-run root unconditionally. A non-empty leak list causes a non-zero exit code even when all tests pass. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level.
+
 ## TypeScript scope
 
 `npm run typecheck` covers production subagent sources and all subagent test files under `extensions/subagents/test` (the exclusion that previously omitted that subtree has been removed). `npm run typecheck:runtime` covers runtime-specific sources. All 142 discovered subagent test files (102 unit, 39 integration, and 1 e2e) pass strict typechecking with zero errors; the `ScaledMs` branded type enforces that wait helpers receive a scaled timeout rather than a raw literal. `npm run typecheck:subagents-test` provides a developer-convenience target for running the subagents-test typecheck in isolation.

@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import { after, test } from "node:test";
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const checkPackageVersionsScript = join(repoRoot, "scripts", "check-package-versions.mjs");
@@ -56,6 +61,7 @@ function tempFixture({
   lockfileDependencyVersions = {},
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
+  _tmpDirs.push(dir);
   const packagePath = join(dir, "package.json");
   const lockfilePath = join(dir, "package-lock.json");
   const defaultExtensionsPath = join(dir, "default-extensions.json");

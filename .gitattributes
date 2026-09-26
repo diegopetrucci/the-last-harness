@@ -48,6 +48,7 @@ extensions/shared/project-agent-guidance.js linguist-generated=true
 extensions/shared/project-agent-worktree.js linguist-generated=true
 extensions/shared/subagent-child-boundary.js linguist-generated=true
 extensions/shared/quiet-glimpse.js linguist-generated=true
+extensions/shared/subagent-temp-root.js linguist-generated=true
 extensions/shared/tlh-effective-activity.js linguist-generated=true
 extensions/the-last-harness/activity-reporters.js linguist-generated=true
 extensions/the-last-harness/activity-tracker.js linguist-generated=true

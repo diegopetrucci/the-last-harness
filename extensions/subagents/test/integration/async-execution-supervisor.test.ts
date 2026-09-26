@@ -768,6 +768,17 @@ describe("async execution utilities", () => {
         ) as any;
         assert.equal(continuedStatus.state, "continued");
         assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
+        // Wait for the continuation mock-pi call record to appear (the
+        // "continued" status is written before the continuation runner spawns
+        // mock-pi, so the call may not exist yet when waitForAsyncState returns)
+        // and then wait for all spawned mock-pi processes to exit so that
+        // afterEach's removeTempDir does not race with in-progress file writes.
+        await waitForMockPiCall(mockPi, 1, scaleTestTimeout(10_000));
+        await waitForPidsToExit(
+          startedMockPiPids(mockPi),
+          "supervisor-recover cleanup",
+          scaleTestTimeout(15_000),
+        );
       } finally {
         if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
         else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;

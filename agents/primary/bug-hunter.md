@@ -3,8 +3,8 @@ name: bug-hunter
 description: Investigates reported bugs, identifies root causes, and recommends fixes without changing code.
 tlhModelDefaults:
   - provider: anthropic
-    models: [claude-opus-5]
-    effort: high
+    models: [claude-opus-5-5]
+    effort: medium
   - provider: openai-codex
     models: [gpt-5.6-sol]
     effort: high
