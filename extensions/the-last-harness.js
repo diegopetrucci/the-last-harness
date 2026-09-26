@@ -30,7 +30,7 @@ import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.
 import { createReviewCommandHandler } from "./the-last-harness/review.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
-import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
+import { getTlhHeaderUpdate, getTlhMainTrackBehindCount, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
 const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
@@ -340,11 +340,19 @@ export default function theLastHarness(pi) {
         const headerUpdate = getTlhHeaderUpdate();
         const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
         const installNotice = readTlhInstallNotice();
+        const mainTrackFooterState = {
+            behindCount: getTlhMainTrackBehindCount(ctx.cwd, installNotice),
+        };
         const providerAuthHealthStore = createProviderAuthHealthStore();
         activeProviderAuthHealthStore = providerAuthHealthStore;
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
                 subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
+                sessionState.requestFooterRender = () => {
+                    if (activeTlhHeaderSessionToken === sessionToken) {
+                        tui.requestRender();
+                    }
+                };
                 const gitCache = new FooterGitCache({
                     cwd: () => ctx.sessionManager.getCwd(),
                     onChange: () => tui.requestRender(),
@@ -356,7 +364,7 @@ export default function theLastHarness(pi) {
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
                     shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
-                }, gitCache, installNotice, providerAuthHealthStore);
+                }, gitCache, installNotice, providerAuthHealthStore, mainTrackFooterState);
             });
         }
         if (typeof ctx.ui.setHeader === "function") {
@@ -388,6 +396,14 @@ export default function theLastHarness(pi) {
             maybeNotifyModelEffortDrift(ctx);
             void maybeNotifyAvailableTlhUpdate(ctx, {
                 canNotify: () => activeTlhHeaderSessionToken === sessionToken,
+                installNotice,
+                onMainTrackBehindCountChange: (behindCount) => {
+                    if (mainTrackFooterState.behindCount === behindCount) {
+                        return;
+                    }
+                    mainTrackFooterState.behindCount = behindCount;
+                    sessionState.requestFooterRender?.();
+                },
             }).catch(() => undefined);
             const launchContextInputs = (() => {
                 try {

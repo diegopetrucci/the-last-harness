@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,7 +11,8 @@ import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
-import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
+import { CLEANUP_MARKER_FRESH_WINDOW_MS, CLEANUP_MARKER_LEASE_OFFSET_MS, RUNTIME_CLEANUP_MARKER_NAME, } from "./runtime-cleanup-constants.js";
+import { resolveRunnerModulePath, resolveRunnerNodeCommand, } from "../runs/background/async-execution.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
@@ -27,7 +29,7 @@ import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
-import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
 export { loadConfig } from "./config.js";
@@ -78,6 +80,49 @@ function ensureAccessibleDir(dirPath) {
         }
         fs.mkdirSync(dirPath, { recursive: true });
         fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+    }
+}
+export function scheduleDetachedRuntimeCleanup(deps = {}) {
+    const nowMs = deps.now?.() ?? Date.now();
+    const markerPath = deps.markerPath ?? path.join(TEMP_ROOT_DIR, RUNTIME_CLEANUP_MARKER_NAME);
+    try {
+        const stat = fs.statSync(markerPath);
+        const age = nowMs - stat.mtimeMs;
+        if (age >= 0 && age < CLEANUP_MARKER_FRESH_WINDOW_MS)
+            return;
+    }
+    catch {
+    }
+    const leaseDate = new Date(nowMs - CLEANUP_MARKER_LEASE_OFFSET_MS);
+    try {
+        fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+        try {
+            fs.utimesSync(markerPath, leaseDate, leaseDate);
+        }
+        catch {
+            fs.writeFileSync(markerPath, "");
+            fs.utimesSync(markerPath, leaseDate, leaseDate);
+        }
+    }
+    catch {
+    }
+    const runner = resolveRunnerModulePath(import.meta.url, "runtime-cleanup-runner");
+    const nodeCommand = resolveRunnerNodeCommand();
+    const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner] : [runner];
+    const spawnFn = deps.spawnFn ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+    try {
+        const proc = spawnFn(nodeCommand, runnerArgs, {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true,
+            env: process.env,
+        });
+        proc.on("error", (err) => {
+            void err;
+        });
+        proc.unref();
+    }
+    catch {
     }
 }
 function subagentResultIsRunning(result) {
@@ -215,7 +260,7 @@ export default function registerSubagentExtension(pi) {
     }
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
-    cleanupRuntimeDirs();
+    scheduleDetachedRuntimeCleanup();
     const telemetryProvenance = captureSubagentTelemetryProvenance();
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);

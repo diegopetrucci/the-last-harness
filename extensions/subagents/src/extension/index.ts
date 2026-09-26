@@ -11,6 +11,7 @@
  * Config file: ~/.pi/agent/extensions/subagent/config.json
  */
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -46,7 +47,15 @@ import {
   externalSubagentCoexistenceWarning,
   findConfiguredExternalSubagentPackages,
 } from "./external-package-guard.ts";
-import { cleanupRuntimeDirs } from "./runtime-cleanup.ts";
+import {
+  CLEANUP_MARKER_FRESH_WINDOW_MS,
+  CLEANUP_MARKER_LEASE_OFFSET_MS,
+  RUNTIME_CLEANUP_MARKER_NAME,
+} from "./runtime-cleanup-constants.ts";
+import {
+  resolveRunnerModulePath,
+  resolveRunnerNodeCommand,
+} from "../runs/background/async-execution.ts";
 import {
   createSubagentLiveDetailController,
   SUBAGENT_LIVE_DETAIL_SHORTCUT,
@@ -89,6 +98,7 @@ import {
   ASYNC_DIR,
   RESULTS_DIR,
   SLASH_TEXT_RESULT_TYPE,
+  TEMP_ROOT_DIR,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   SUBAGENT_ASYNC_STARTED_EVENT,
   SUBAGENT_CONTROL_EVENT,
@@ -185,6 +195,81 @@ function ensureAccessibleDir(dirPath: string): void {
     }
     fs.mkdirSync(dirPath, { recursive: true });
     fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Detached runtime-cleanup scheduler
+// ---------------------------------------------------------------------------
+
+/** Minimal spawn signature used by the detached cleanup runner. */
+export type SpawnRunnerFn = (
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+) => { on(event: string, handler: (err: Error) => void): void; unref(): void };
+
+export interface DetachedRuntimeCleanupDeps {
+  now?: () => number;
+  spawnFn?: SpawnRunnerFn;
+  markerPath?: string;
+}
+
+/**
+ * Schedule a best-effort, rate-limited detached cleanup of stale runtime dirs.
+ *
+ * If a fresh marker exists the call is a no-op. Otherwise the marker is
+ * backdated as a short lease, then the runtime-cleanup-runner is spawned
+ * detached and unref()-ed. Any spawn failure is silently swallowed so that
+ * registration never throws.
+ */
+export function scheduleDetachedRuntimeCleanup(deps: DetachedRuntimeCleanupDeps = {}): void {
+  const nowMs = deps.now?.() ?? Date.now();
+  const markerPath = deps.markerPath ?? path.join(TEMP_ROOT_DIR, RUNTIME_CLEANUP_MARKER_NAME);
+
+  // Check whether an existing marker is fresh (0 <= age < 24h).
+  try {
+    const stat = fs.statSync(markerPath);
+    const age = nowMs - stat.mtimeMs;
+    if (age >= 0 && age < CLEANUP_MARKER_FRESH_WINDOW_MS) return;
+  } catch {
+    // Missing marker → treat as stale.
+  }
+
+  // Write/touch marker backdated to act as a short lease.
+  const leaseDate = new Date(nowMs - CLEANUP_MARKER_LEASE_OFFSET_MS);
+  try {
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    try {
+      fs.utimesSync(markerPath, leaseDate, leaseDate);
+    } catch {
+      fs.writeFileSync(markerPath, "");
+      fs.utimesSync(markerPath, leaseDate, leaseDate);
+    }
+  } catch {
+    // Can't persist the lease; proceed anyway — a missed write is recoverable.
+  }
+
+  // Resolve runner path (.ts in source loaders, .js in generated runtime).
+  const runner = resolveRunnerModulePath(import.meta.url, "runtime-cleanup-runner");
+  const nodeCommand = resolveRunnerNodeCommand();
+  const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner] : [runner];
+
+  const spawnFn: SpawnRunnerFn = deps.spawnFn ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+  try {
+    const proc = spawnFn(nodeCommand, runnerArgs, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: process.env,
+    });
+    proc.on("error", (err) => {
+      // Best-effort — spawn failures must not surface to the parent session.
+      void err;
+    });
+    proc.unref();
+  } catch {
+    // Sync spawn failure: silently swallow so registration never throws.
   }
 }
 
@@ -350,7 +435,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   ensureAccessibleDir(RESULTS_DIR);
   ensureAccessibleDir(ASYNC_DIR);
-  cleanupRuntimeDirs();
+  scheduleDetachedRuntimeCleanup();
 
   // This is the provenance boundary for the parent extension. Detached
   // runners receive this immutable snapshot through their config and must not
