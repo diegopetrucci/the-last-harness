@@ -12,6 +12,7 @@ import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
+import type { SubagentRunTelemetry } from "./telemetry.ts";
 
 // ============================================================================
 // Basic Types
@@ -653,6 +654,8 @@ export interface Details {
   mode: SubagentRunMode | "management";
   runId?: string;
   results: SingleResult[];
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   controlEvents?: ControlEvent[];
   asyncId?: string;
   asyncDir?: string;
@@ -843,6 +846,7 @@ export interface SubagentModelResolution {
 
 export interface AsyncStartedEvent {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   /** Safe per-child project-agent captures; no opaque capability crosses this event. */
   projectAgents?: ProjectAgentRunCapture[];
   id?: string;
@@ -860,6 +864,8 @@ export interface AsyncStartedEvent {
 
 export interface AsyncStatus {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   runId: string;
   sessionId?: string;
   mode: SubagentRunMode;
@@ -1054,6 +1060,8 @@ export interface AsyncResultArtifactResultItem {
  */
 export interface AsyncResultArtifact {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   id: string;
   agent: string;
   mode: SubagentRunMode;
@@ -1093,6 +1101,8 @@ export interface AsyncResultArtifact {
 }
 
 export interface AsyncJobState {
+  /** Optional privacy-safe run-level telemetry restored with the lifecycle. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   asyncId: string;
   asyncDir: string;
   status: AsyncLifecycleState;
@@ -1181,6 +1191,8 @@ export interface ForegroundResumeRun {
   mode: SubagentRunMode;
   cwd: string;
   updatedAt: number;
+  /** Optional privacy-safe run-level telemetry retained for continuation. */
+  telemetry?: SubagentRunTelemetry;
   children: ForegroundResumeChild[];
 }
 
@@ -1270,6 +1282,14 @@ export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export interface RunSyncOptions {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
+  /** Parent-captured provenance forwarded unchanged to foreground finalization. */
+  telemetryProvenance?: import("./telemetry.ts").SubagentTelemetryProvenance;
+  /** Canonical run start timestamp captured at dispatch. */
+  startedAt?: number;
+  /** Envelope mode for this child when runSync is used by a parallel parent. */
+  telemetryMode?: SubagentRunMode;
+  /** Existing lineage metadata, when this execution is a continuation/nested run. */
+  telemetryLineage?: import("./telemetry.ts").SubagentTelemetryLineage;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentRunCapture;
   tkTicket?: TkTicketMetadata;

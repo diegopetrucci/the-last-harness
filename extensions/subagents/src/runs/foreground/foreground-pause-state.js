@@ -168,6 +168,7 @@ export function persistPausedForegroundCohortRun(input) {
                 ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
                 ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
                 ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+                ...(input.telemetry ? { telemetry: input.telemetry } : {}),
                 pid: input.stage === "pausing" ? input.ownerPid : undefined,
                 steps,
             });
@@ -199,6 +200,7 @@ export function persistPausedForegroundCohortRun(input) {
                                 activeRuntimeCheckpointAt: Math.max(normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt) ?? 0, activeRuntimeCheckpointAt),
                             }
                             : {}),
+                        ...(input.telemetry ? { telemetry: input.telemetry } : {}),
                         steps,
                     };
                 },
@@ -358,6 +360,7 @@ export function persistPausedForegroundSingleRun(input) {
             cwd: input.cwd,
             ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
             ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+            ...(input.telemetry ? { telemetry: input.telemetry } : {}),
             ...(pause ? { pause } : {}),
             steps: [
                 {
@@ -424,6 +427,7 @@ export function persistPausedForegroundSingleRun(input) {
                 }
                 : {}),
             ...(pause ? { pause } : {}),
+            ...(input.telemetry ? { telemetry: input.telemetry } : {}),
             sessionFile: input.result.sessionFile ?? status.sessionFile,
             steps: status.steps?.map((step, index) => index === 0
                 ? {

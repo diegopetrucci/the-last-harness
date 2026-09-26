@@ -34,6 +34,10 @@ import {
 } from "./project-agent-control.ts";
 import type { SubagentState } from "../../shared/types.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
+import {
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 
 export const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(
@@ -60,6 +64,7 @@ export type NestedResumeSourceTarget = {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  telemetry?: SubagentRunTelemetry;
   asyncDir?: string;
 };
 function nestedRunSessionFile(run: NestedRunSummary): string | undefined {
@@ -126,6 +131,7 @@ type NestedResumeStatusStep = {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  telemetry?: SubagentRunTelemetry;
   projectAgentMarker?: true;
 };
 
@@ -134,11 +140,12 @@ function readNestedResumeStatusStep(
   asyncDir: string | undefined,
 ): NestedResumeStatusStep | undefined {
   if (!asyncDir) return undefined;
-  let parsed: { cwd?: unknown; steps?: unknown };
+  let parsed: { cwd?: unknown; steps?: unknown; telemetry?: unknown };
   try {
     parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as {
       cwd?: unknown;
       steps?: unknown;
+      telemetry?: unknown;
     };
   } catch (error) {
     const code =
@@ -172,6 +179,7 @@ function readNestedResumeStatusStep(
     );
   }
   const raw = step as Record<string, unknown>;
+  const telemetry = normalizeSubagentRunTelemetry(parsed.telemetry);
   const modelIdentity =
     sanitizeSubagentModelIdentity(raw.modelIdentity) ??
     canonicalSubagentModelIdentity(
@@ -199,6 +207,7 @@ function readNestedResumeStatusStep(
         }
       : {}),
     ...(malformedProjectAgentMarker ? { projectAgentMarker: true as const } : {}),
+    ...(telemetry ? { telemetry } : {}),
     ...(raw.acceptance
       ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] }
       : {}),
@@ -324,6 +333,7 @@ export function resolveNestedResumeTarget(
     ...(statusStep?.activeRuntimeCheckpointAt !== undefined
       ? { activeRuntimeCheckpointAt: statusStep.activeRuntimeCheckpointAt }
       : {}),
+    ...(statusStep?.telemetry ? { telemetry: statusStep.telemetry } : {}),
     ...(asyncDir ? { asyncDir } : {}),
     ...(run.state === "paused" ? { pauseKind: "cohort_pause" as const } : {}),
     // Ordinary nested resumes use only the validated nested storage root. A

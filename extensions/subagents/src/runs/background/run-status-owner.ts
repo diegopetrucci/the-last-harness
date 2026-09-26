@@ -119,6 +119,7 @@ export interface BackgroundStatusOwnerInput {
   toolBudget?: ResolvedToolBudget;
   tkTicket?: TkTicketMetadata;
   projectAgents?: ProjectAgentRunCapture[];
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   nestedRoute?: NestedRouteInfo;
   nestedSelf?: NestedSelf;
   timeoutMessage?: string;
@@ -329,6 +330,7 @@ export function createBackgroundRunStatusOwner(
     toolBudget,
     tkTicket,
     projectAgents,
+    telemetry,
     nestedRoute,
     nestedSelf,
     timeoutMessage,
@@ -429,6 +431,7 @@ export function createBackgroundRunStatusOwner(
     steps: initialStatusSteps,
     ...(tkTicket ? { tkTicket } : {}),
     ...(projectAgents ? { projectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
     artifactsDir,
     sessionDir,
     outputFile: path.join(asyncDir, "output-0.log"),
@@ -476,6 +479,7 @@ export function createBackgroundRunStatusOwner(
   let pausedCheckpointCommitted = false;
   let interrupted = false;
   let timedOut = false;
+  let nestedCompletionEmitted = false;
   let runtimeCheckpointTimer: NodeJS.Timeout | undefined;
 
   function listTrackedSessionFiles(dir: string | undefined): string[] {
@@ -494,6 +498,11 @@ export function createBackgroundRunStatusOwner(
     type: "subagent.nested.updated" | "subagent.nested.completed",
   ): void {
     if (!nestedRoute || !nestedSelf) return;
+    // Status writes can happen more than once while a child drains, and a
+    // concurrent terminal adoption can make the final persistence path revisit
+    // the same lifecycle state. Nested completion is a lifecycle edge, not a
+    // status heartbeat, so publish it at most once per runner.
+    if (type === "subagent.nested.completed" && nestedCompletionEmitted) return;
     try {
       writeNestedEvent(nestedRoute, {
         type,
@@ -510,6 +519,7 @@ export function createBackgroundRunStatusOwner(
           ts: Date.now(),
         }),
       });
+      if (type === "subagent.nested.completed") nestedCompletionEmitted = true;
     } catch (error) {
       console.error("Failed to emit nested async status event:", error);
     }
@@ -584,6 +594,8 @@ export function createBackgroundRunStatusOwner(
         adoptConcurrentTerminalStatus();
       } else {
         statusPayload.lifecycle = merged.lifecycle;
+        if (merged.telemetry) statusPayload.telemetry = merged.telemetry;
+        else statusPayload.telemetry = undefined;
         for (let index = 0; index < (merged.steps?.length ?? 0); index++) {
           const mergedStep = merged.steps?.[index];
           const localStep = statusPayload.steps[index];
@@ -613,7 +625,9 @@ export function createBackgroundRunStatusOwner(
     }
     if (options.projectNested !== false) {
       emitNestedSelfEvent(
-        statusPayload.state === "running" || statusPayload.state === "queued"
+        statusPayload.state === "running" ||
+          statusPayload.state === "queued" ||
+          statusPayload.state === "pausing"
           ? "subagent.nested.updated"
           : "subagent.nested.completed",
       );

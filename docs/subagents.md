@@ -257,6 +257,24 @@ The report's **Discovery** section includes a `skills:` line with the total coun
 
 The `pi-subagents` skill is filtered out of discovery output by design — it will not appear in the list even if a matching file exists on disk.
 
+## Read-only session analysis
+
+The contributor-facing `tlh sessions` command can summarize subagent activity without changing the profile or starting a run:
+
+```sh
+tlh sessions --mode subagents
+```
+
+Use `--agent-dir <dir>` to inspect a specific isolated profile. The command streams `.jsonl` session files below the active profile's `sessions/` directory, skips `run-history.jsonl`, and tolerates files that are still being written. It does not read async artifact directories or make network requests. A live-file size change, malformed line, missing result, or unavailable field is reported as a coverage gap rather than treated as complete evidence.
+
+The `subagents` JSON mode reports privacy-safe run summaries and aggregates by role, provider/model, foreground versus async execution, and outcome. It includes validated usage/cost and runtime when available, launch and management-operation counts, structured continuation/nested lineage, and synthetic wakeup records. Structured telemetry and structured completion/control details are preferred; legacy result fields and notification prose are only compatibility evidence and remain visible through coverage counters. Repeated telemetry snapshots are deduplicated by run and step identity. Run/global usage prefers the canonical envelope-level `telemetry.usage` exactly once; step usage is summed only when that aggregate is absent. Nested edges include the child run identity, so sibling children remain distinct.
+
+Only a paired assistant `subagent` call may authorize telemetry, result, or control details from a tool result. Orphan results and details attached to other tools are skipped and counted as unmatched evidence; recognized structured custom completion/control notifications remain an independent evidence source. Structured run IDs are opaque, bounded report inputs (including ordinary spaces or slashes), while legacy/tool-argument IDs use the stricter path-safe grammar.
+
+A synthetic wakeup is attributed only when a structured or recognized legacy completion/control source is followed by its exact user nudge and the immediate next assistant turn is present. Intervening non-turn custom or tool-result records may be skipped. Only that assistant turn's parseable usage and management calls targeting the same run are attached to the wakeup. Human input, a missing assistant turn, a mismatched or missing nudge, or a missing run ID remains explicitly unattributed.
+
+The scanner retains only bounded allowlisted projections needed for pairing, operation counts, and immediate-next-turn attribution; it does not retain full raw session messages across the corpus. Default output contains no raw paths, cwd values, tasks, prompts, child output, tool arguments, settings, or run identifiers. Run references are stable opaque values scoped to the report. `--include-paths` is an explicit opt-in that adds the inspected profile and sessions directory to provenance; it does not expose task, output, or identifier text. Coverage also reports bounded correlation-evidence failure counters for scan/rescan overflow and digest/generation mismatches; untrusted joins are omitted. This local diagnostic report is separate from the remote release telemetry described in [telemetry.md](telemetry.md).
+
 ## Async control, pause, and resume
 
 An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status", view: "fleet" })` for the read-only fleet view or `subagent({ action: "status", id: "..." })` for a specific model-facing status path.

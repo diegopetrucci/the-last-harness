@@ -112,6 +112,45 @@ describe("async stale-run reconciliation", () => {
     }
   });
 
+  it("repairs the termination reason on already-failed stale steps", () => {
+    const root = tempRoot("pi-stale-failed-step-reason-");
+    try {
+      const asyncDir = path.join(root, "run-failed-step-reason");
+      const resultsDir = path.join(root, "results");
+      writeStatus(asyncDir, {
+        runId: "run-failed-step-reason",
+        mode: "parallel",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        steps: [
+          { agent: "failed", status: "failed", error: "persisted failure" },
+          { agent: "running", status: "running", startedAt: 1000 },
+        ],
+      });
+
+      const repaired = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("ESRCH");
+        },
+        now: () => 2000,
+      });
+
+      assert.equal(repaired.repaired, true);
+      assert.deepEqual(
+        repaired.status?.steps?.map((step) => step.status),
+        ["failed", "failed"],
+      );
+      assert.equal(repaired.status?.steps?.[0]?.terminationReason, "process_exit");
+      assert.equal(repaired.status?.steps?.[1]?.terminationReason, "process_exit");
+      assert.equal(repaired.status?.steps?.[0]?.error, "persisted failure");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("clears only affected live health in a generated stale repair", () => {
     const root = tempRoot("pi-stale-health-repair-");
     try {
@@ -607,6 +646,79 @@ describe("async stale-run reconciliation", () => {
         peakTokens: 800,
       });
       assert.equal(result.status?.steps?.[1]?.terminationReason, "process_exit");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs mixed result-without-telemetry outcomes per child", () => {
+    const root = tempRoot("pi-stale-mixed-result-telemetry-");
+    try {
+      const asyncDir = path.join(root, "run-mixed-result-telemetry");
+      const resultsDir = path.join(root, "results");
+      const runId = "run-mixed-result-telemetry";
+      fs.mkdirSync(resultsDir, { recursive: true });
+      writeStatus(asyncDir, {
+        runId,
+        mode: "parallel",
+        state: "running",
+        startedAt: 1000,
+        lastUpdate: 1500,
+        steps: [
+          { agent: "scout", status: "running", startedAt: 1000 },
+          { agent: "worker", status: "running", startedAt: 1000 },
+          { agent: "finished", status: "complete", startedAt: 1000, endedAt: 1400 },
+        ],
+        telemetry: {
+          schemaVersion: 1,
+          run: { id: runId, execution: "async", mode: "parallel" },
+          steps: [
+            { index: 0, agent: "scout", outcome: { state: "running" } },
+            { index: 1, agent: "worker", outcome: { state: "running" } },
+            {
+              index: 2,
+              agent: "finished",
+              outcome: { state: "completed", terminationReason: "completed" },
+            },
+          ],
+          outcome: { state: "running" },
+          provenance: { tlhVersion: "0.41.0", piVersion: "0.85.1", loadedAt: 900 },
+          controls: {
+            needsAttentionAfterMs: 5000,
+            failedToolAttemptsBeforeAttention: 3,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event", "async"],
+          },
+        },
+      });
+      fs.writeFileSync(
+        path.join(resultsDir, `${runId}.json`),
+        JSON.stringify({
+          id: runId,
+          mode: "parallel",
+          success: false,
+          state: "failed",
+          results: [
+            { agent: "scout", success: true },
+            { agent: "worker", success: false, error: "worker failed" },
+            { agent: "finished", success: true },
+          ],
+        }),
+        "utf-8",
+      );
+
+      const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2000 });
+
+      assert.equal(repaired.repaired, true);
+      assert.deepEqual(
+        repaired.status?.steps?.map((step) => step.status),
+        ["complete", "failed", "complete"],
+      );
+      assert.equal(repaired.status?.telemetry?.outcome?.state, "failed");
+      assert.deepEqual(
+        repaired.status?.telemetry?.steps.map((step) => step.outcome?.state),
+        ["completed", "failed", "completed"],
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

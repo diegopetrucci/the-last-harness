@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { invalidateStatusCache } from "../../shared/utils.js";
 import { normalizeIdleEpisodeId } from "./health-transition.js";
+import { appendSubagentTelemetryContinuation, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
 export const ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS = 30_000;
@@ -330,13 +331,22 @@ function finalizeLifecycleContinuationStatus(status, index, continuation, contin
         : (status.steps?.length ?? 0) <= 1
             ? status.pause
             : undefined;
+    const nextState = remainingActionable ? "paused" : "continued";
+    const telemetry = transitionSubagentRunTelemetryLifecycle({
+        telemetry: status.telemetry,
+        runState: nextState,
+        stepIndex: index,
+        stepState: "continued",
+        endedAt: continuedAt,
+    });
     return {
         ...status,
-        state: remainingActionable ? "paused" : "continued",
+        state: nextState,
         pid: undefined,
         endedAt: continuedAt,
         lastUpdate: continuedAt,
         pause: nextRootPause,
+        ...(telemetry ? { telemetry } : {}),
         lifecycle: withLifecycleContinuation(status, index, remainingActionable
             ? undefined
             : {
@@ -380,7 +390,8 @@ export function normalizeAsyncLifecycleStatus(status) {
     const activeRuntimeMs = normalizeActiveRuntimeMs(status.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(status.activeRuntimeCheckpointAt);
     const activityState = normalizeHealthActivityState(status.activityState);
-    const { activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _checkpointAt, activityState: _activityState, ...rest } = status;
+    const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
+    const { activeRuntimeMs: _activeRuntimeMs, activeRuntimeCheckpointAt: _checkpointAt, activityState: _activityState, telemetry: _telemetry, ...rest } = status;
     const steps = status.steps?.map((step) => {
         const stepActiveRuntimeMs = normalizeActiveRuntimeMs(step.activeRuntimeMs);
         const stepCheckpointAt = normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt);
@@ -406,6 +417,7 @@ export function normalizeAsyncLifecycleStatus(status) {
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
         ...(activityState !== undefined ? { activityState } : {}),
+        ...(telemetry ? { telemetry } : {}),
         ...(typeof status.state === "string"
             ? { state: status.state }
             : { state: "failed" }),
@@ -509,12 +521,16 @@ function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
             pause: undefined,
         }
         : {};
+    const mergedTelemetry = mergeSubagentRunTelemetry(inMemory.telemetry, persisted.telemetry, {
+        persistedOutcomeWins: TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state,
+    });
     const merged = {
         ...inMemory,
         ...mergeActiveRuntimeEvidence(inMemory, persisted),
         ...terminalRunOverrides,
         state,
         ...(steps !== undefined ? { steps } : {}),
+        ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
         lifecycle,
     };
     return writeNormalizedLifecycleStatus(asyncDir, merged);
@@ -764,17 +780,21 @@ export function markLifecycleContinuationSpawned(asyncDir, index, claimToken, co
         const transitioned = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(current),
-            mutate: (status) => ({
-                ...status,
-                lastUpdate: launchedAt,
-                lifecycle: withLifecycleContinuation(status, index, {
-                    ...continuation,
-                    phase: "launched",
-                    ownerPid: undefined,
-                    launchedAt,
-                    continuationRunId,
-                }),
-            }),
+            mutate: (status) => {
+                const telemetry = appendSubagentTelemetryContinuation(status.telemetry ?? options.telemetry, { sourceStepIndex: index, continuationRunId });
+                return {
+                    ...status,
+                    lastUpdate: launchedAt,
+                    ...(telemetry ? { telemetry } : {}),
+                    lifecycle: withLifecycleContinuation(status, index, {
+                        ...continuation,
+                        phase: "launched",
+                        ownerPid: undefined,
+                        launchedAt,
+                        continuationRunId,
+                    }),
+                };
+            },
         });
         return { status: transitioned.status, transitioned: true, final: false, lost: false };
     }

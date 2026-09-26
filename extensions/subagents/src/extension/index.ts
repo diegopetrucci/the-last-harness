@@ -70,13 +70,17 @@ import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
+  isSubagentCompletionBatchDetails,
+  isSubagentNotifyDetails,
   MAX_DISPLAY_SUMMARY_CHARS,
+  type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
+import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.ts";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
@@ -348,6 +352,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   ensureAccessibleDir(ASYNC_DIR);
   cleanupRuntimeDirs();
 
+  // This is the provenance boundary for the parent extension. Detached
+  // runners receive this immutable snapshot through their config and must not
+  // reread install/runtime state when they complete.
+  const telemetryProvenance = captureSubagentTelemetryProvenance();
   const config = loadConfig();
   const artifactConfig = resolveArtifactConfig(config.artifacts);
   const executionPolicy = resolveExecutionPolicy(config.execution);
@@ -442,6 +450,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     getSubagentSessionRoot,
     expandTilde,
     discoverAgents,
+    telemetryProvenance,
     getProjectAgentAccess: (request) =>
       normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
   });
@@ -457,12 +466,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     return new Text(content, 0, 0);
   });
 
-  pi.registerMessageRenderer<SubagentNotifyDetails>(
+  pi.registerMessageRenderer<SubagentNotifyDetails | SubagentCompletionBatchDetails>(
     "subagent-notify",
     (message, options, theme) => {
       const content = typeof message.content === "string" ? message.content : "";
       const parsedContent = parseSubagentNotifyContent(content);
-      const structuredDetails = message.details as SubagentNotifyDetails | undefined;
+      const rawStructuredDetails = message.details as unknown;
+      const structuredDetails = isSubagentCompletionBatchDetails(rawStructuredDetails)
+        ? undefined
+        : isSubagentNotifyDetails(rawStructuredDetails)
+          ? rawStructuredDetails
+          : undefined;
       const parsedSession =
         parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
           ? {

@@ -22,6 +22,7 @@ export interface SubagentResultEntry {
 /** The `details` object present on tool result messages where toolName == "subagent". */
 export interface SubagentDetails {
   runId?: string | undefined;
+  mode?: "single" | "parallel" | "management" | undefined;
   results?: SubagentResultEntry[] | undefined;
 }
 
@@ -229,6 +230,13 @@ export function pairToolCalls(entries: unknown[]): PairingResult {
         details = {};
         if (typeof rawDetails["runId"] === "string") {
           details.runId = rawDetails["runId"];
+        }
+        if (
+          rawDetails["mode"] === "single" ||
+          rawDetails["mode"] === "parallel" ||
+          rawDetails["mode"] === "management"
+        ) {
+          details.mode = rawDetails["mode"];
         }
         if (Array.isArray(rawDetails["results"])) {
           const resultsArr = rawDetails["results"] as unknown[];

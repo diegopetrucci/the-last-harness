@@ -280,6 +280,8 @@ function runAsyncPath(data, deps) {
             maxSubagentDepth: currentMaxSubagentDepth,
             controlConfig,
             nestedRoute,
+            telemetryProvenance: data.telemetryProvenance,
+            telemetryLineage: data.telemetryLineage,
             timeoutMs: data.timeoutMs,
             toolBudget: data.toolBudget,
             projectAgentCaptures: data.projectAgentCaptures,
@@ -328,6 +330,8 @@ function runAsyncPath(data, deps) {
             maxSubagentDepth,
             controlConfig,
             nestedRoute,
+            telemetryProvenance: data.telemetryProvenance,
+            telemetryLineage: data.telemetryLineage,
             acceptance: params.acceptance,
             timeoutMs: data.timeoutMs,
             toolBudget: data.toolBudget,
@@ -934,6 +938,18 @@ export function createSubagentExecutor(deps) {
             ? resolveNestedParentAddressFromEnv()
             : undefined;
         const nestedRoute = inheritedNestedRoute;
+        const telemetryLineage = nestedRoute && nestedParentAddress
+            ? {
+                nested: {
+                    rootRunId: nestedRoute.rootRunId,
+                    parentRunId: nestedParentAddress.parentRunId,
+                    ...(nestedParentAddress.parentStepIndex !== undefined
+                        ? { parentStepIndex: nestedParentAddress.parentStepIndex }
+                        : {}),
+                    depth: nestedParentAddress.depth,
+                },
+            }
+            : undefined;
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
         const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
@@ -987,6 +1003,7 @@ export function createSubagentExecutor(deps) {
         };
         const onUpdateWithContext = onUpdate;
         const foregroundMode = hasTasks ? "parallel" : "single";
+        const runStartedAt = Date.now();
         const execData = {
             params: effectiveParams,
             effectiveCwd,
@@ -1011,6 +1028,9 @@ export function createSubagentExecutor(deps) {
             effectiveAsync,
             controlConfig,
             nestedRoute,
+            telemetryProvenance: deps.telemetryProvenance,
+            telemetryLineage,
+            startedAt: runStartedAt,
             timeoutMs: runTimeoutMs,
             toolBudget: runToolBudget.toolBudget,
             modelScope,
@@ -1021,8 +1041,8 @@ export function createSubagentExecutor(deps) {
             : {
                 runId,
                 mode: foregroundMode,
-                startedAt: Date.now(),
-                updatedAt: Date.now(),
+                startedAt: runStartedAt,
+                updatedAt: runStartedAt,
                 currentAgent: undefined,
                 currentIndex: undefined,
                 currentActivityState: undefined,

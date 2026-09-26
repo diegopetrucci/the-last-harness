@@ -17,6 +17,7 @@ import { attachRootChildrenToSteps, updateForegroundNestedProjection, } from "..
 import { safeTerminalDocument, safeTerminalDocumentLeaf, safeTerminalText, } from "../../shared/display-text.js";
 import { formatForegroundPauseMessage, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
 import { runSync } from "./execution.js";
+import { buildSubagentRunTelemetry, telemetryFromSingleResults, resolveParallelSubagentTelemetryOutcome, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
 import { resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, } from "../../shared/types.js";
 const MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS = 600;
 function boundedNativeForegroundSaveError(error) {
@@ -270,6 +271,37 @@ async function runForegroundParallelTasks(input) {
                 childLocation: cohortChildLocation,
             });
         });
+        const pauseTelemetry = input.telemetryProvenance
+            ? buildSubagentRunTelemetry({
+                runId: input.runId,
+                execution: "foreground",
+                mode: "parallel",
+                provenance: input.telemetryProvenance,
+                controls: input.controlConfig,
+                startedAt: input.foregroundControl?.startedAt,
+                endedAt: Date.now(),
+                outcome: { state: "paused", terminationReason: "paused" },
+                lineage: input.telemetryLineage,
+                steps: steps.map((step, index) => {
+                    const timing = {
+                        ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+                        ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                        ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+                        ...(step.activeRuntimeMs !== undefined
+                            ? { activeRuntimeMs: step.activeRuntimeMs }
+                            : {}),
+                    };
+                    return {
+                        index,
+                        agent: step.agent,
+                        model: step.modelIdentity,
+                        ...(Object.keys(timing).length > 0 ? { timing } : {}),
+                        outcome: resolveSubagentTelemetryOutcome({ state: step.status }) ??
+                            { state: "queued" },
+                    };
+                }),
+            })
+            : undefined;
         persistPausedForegroundCohortRun({
             runId: input.runId,
             cwd: input.paramsCwd,
@@ -280,6 +312,7 @@ async function runForegroundParallelTasks(input) {
             startedAt: input.foregroundControl?.startedAt,
             pause: requester.pause,
             steps,
+            telemetry: pauseTelemetry,
         });
     };
     const requestCohortPause = (requesterIndex, requester, ownerPid) => {
@@ -377,6 +410,7 @@ async function runForegroundParallelTasks(input) {
             interruptSignal: interruptController.signal,
             pauseBlockingSupervisor: supervisorBridgeActive,
             runId: input.runId,
+            startedAt: input.startedAt,
             index,
             sessionDir: input.sessionDirForIndex(index),
             sessionFile: input.sessionFileForTask(task.agent, index),
@@ -391,6 +425,9 @@ async function runForegroundParallelTasks(input) {
             onControlEvent: input.onControlEvent,
             steerInboxDir,
             nestedRoute: input.foregroundControl?.nestedRoute,
+            telemetryProvenance: input.telemetryProvenance,
+            telemetryMode: "parallel",
+            telemetryLineage: input.telemetryLineage,
             modelOverride: input.modelOverrides[index],
             providerFallbackModels: input.providerFallbackModels[index],
             modelFallbackNotice: behavior?.modelFallbackNotice,
@@ -476,7 +513,7 @@ async function runForegroundParallelTasks(input) {
     }, input.globalSemaphore);
 }
 export async function runParallelPath(data, deps) {
-    const { params, effectiveCwd, agents, ctx, signal, runId, sessionDirForIndex, sessionFileForIndex, sessionFileForTask, shareEnabled, artifactConfig, artifactsDir, onUpdate, controlConfig, } = data;
+    const { params, effectiveCwd, agents, ctx, signal, runId, sessionDirForIndex, sessionFileForIndex, sessionFileForTask, shareEnabled, artifactConfig, artifactsDir, onUpdate, controlConfig, telemetryProvenance, telemetryLineage, startedAt, } = data;
     const onControlEvent = createForegroundControlNotifier(data, deps);
     const allArtifactPaths = [];
     const tasks = params.tasks;
@@ -598,6 +635,9 @@ export async function runParallelPath(data, deps) {
         ...(tkTicket ? { tkTicket } : {}),
         ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
         projectAgentCaptures: data.projectAgentCaptures,
+        telemetryProvenance: data.telemetryProvenance,
+        telemetryLineage: data.telemetryLineage,
+        startedAt: data.startedAt,
         runSync: data.runSync,
     });
     for (const result of results) {
@@ -609,10 +649,33 @@ export async function runParallelPath(data, deps) {
         attachRootChildrenToSteps(runId, results, foregroundControl.nestedChildren);
     }
     const interrupted = results.find((result) => result.interrupted);
+    const endedAt = Date.now();
+    const telemetry = telemetryProvenance
+        ? telemetryFromSingleResults({
+            runId,
+            mode: "parallel",
+            results,
+            provenance: telemetryProvenance,
+            controls: controlConfig,
+            startedAt: startedAt ?? foregroundControl?.startedAt,
+            endedAt,
+            lineage: telemetryLineage,
+            outcome: resolveParallelSubagentTelemetryOutcome(results.map((result, index) => ({
+                index,
+                agent: result.agent,
+                state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
+                success: result.exitCode === 0 && !result.interrupted,
+                interrupted: result.interrupted,
+                timedOut: result.timedOut,
+                terminationReason: result.terminationReason,
+            }))),
+        })
+        : undefined;
     const details = compactForegroundDetails({
         mode: "parallel",
         runId,
         results,
+        ...(telemetry ? { telemetry } : {}),
         artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
         totalChildUsage: sumResultsUsage(results),
         totalCost: sumResultsCost(results),
@@ -622,6 +685,7 @@ export async function runParallelPath(data, deps) {
         mode: "parallel",
         cwd: effectiveCwd,
         results: details.results,
+        ...(telemetry ? { telemetry } : {}),
     });
     if (results.some((result) => result.pause)) {
         persistPausedForegroundCohortRun({
@@ -632,6 +696,7 @@ export async function runParallelPath(data, deps) {
             stage: "paused",
             results,
             startedAt: foregroundControl?.startedAt,
+            telemetry,
         });
     }
     if (interrupted) {
@@ -692,7 +757,7 @@ export async function runParallelPath(data, deps) {
     };
 }
 export async function runSinglePath(data, deps) {
-    const { params, effectiveCwd, agents, ctx, signal, runId, sessionDirForIndex, sessionFileForTask, shareEnabled, artifactConfig, artifactsDir, onUpdate, controlConfig, } = data;
+    const { params, effectiveCwd, agents, ctx, signal, runId, sessionDirForIndex, sessionFileForTask, shareEnabled, artifactConfig, artifactsDir, onUpdate, controlConfig, telemetryProvenance, telemetryLineage, startedAt, } = data;
     const onControlEvent = createForegroundControlNotifier(data, deps);
     const allArtifactPaths = [];
     const agentConfig = agents.find((a) => a.name === params.agent);
@@ -799,6 +864,7 @@ export async function runSinglePath(data, deps) {
             interruptSignal: interruptController.signal,
             pauseBlockingSupervisor: supervisorBridgeActive,
             runId,
+            startedAt,
             sessionDir: sessionDirForIndex(0),
             sessionFile: sessionFileForTask(params.agent, 0),
             share: shareEnabled,
@@ -813,8 +879,24 @@ export async function runSinglePath(data, deps) {
             onControlEvent,
             steerInboxDir,
             nestedRoute: foregroundControl?.nestedRoute,
+            telemetryProvenance: data.telemetryProvenance,
+            telemetryMode: "single",
+            telemetryLineage: data.telemetryLineage,
             onSupervisorPauseTransition: (transition) => {
                 const { stage, result } = transition;
+                const pauseTelemetry = telemetryProvenance
+                    ? telemetryFromSingleResults({
+                        runId,
+                        mode: "single",
+                        results: [result],
+                        provenance: telemetryProvenance,
+                        controls: controlConfig,
+                        startedAt: startedAt ?? foregroundControl?.startedAt,
+                        endedAt: Date.now(),
+                        lineage: telemetryLineage,
+                        outcome: { state: "paused", terminationReason: "paused" },
+                    })
+                    : undefined;
                 try {
                     persistPausedForegroundSingleRun({
                         runId,
@@ -823,6 +905,7 @@ export async function runSinglePath(data, deps) {
                         stage,
                         ownerPid: stage === "pausing" ? transition.ownerPid : undefined,
                         result,
+                        telemetry: pauseTelemetry,
                     });
                 }
                 catch (error) {
@@ -837,6 +920,7 @@ export async function runSinglePath(data, deps) {
                         cwd: effectiveCwd,
                         index: 0,
                         result,
+                        ...(pauseTelemetry ? { telemetry: pauseTelemetry } : {}),
                     });
             },
             index: 0,
@@ -892,10 +976,31 @@ export async function runSinglePath(data, deps) {
         updateForegroundNestedProjection(foregroundControl);
         attachRootChildrenToSteps(runId, [r], foregroundControl.nestedChildren);
     }
+    const endedAt = Date.now();
+    const telemetry = telemetryProvenance
+        ? telemetryFromSingleResults({
+            runId,
+            mode: "single",
+            results: [r],
+            provenance: telemetryProvenance,
+            controls: controlConfig,
+            startedAt: startedAt ?? foregroundControl?.startedAt,
+            endedAt,
+            lineage: telemetryLineage,
+            outcome: resolveSubagentTelemetryOutcome({
+                interrupted: Boolean(r.interrupted),
+                timedOut: r.timedOut,
+                success: r.exitCode === 0 && !r.interrupted,
+                terminationReason: r.terminationReason,
+                acceptanceStatus: r.acceptance?.status,
+            }),
+        })
+        : undefined;
     const details = compactForegroundDetails({
         mode: "single",
         runId,
         results: [r],
+        ...(telemetry ? { telemetry } : {}),
         ...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
         artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
         truncation: r.truncation,
@@ -907,6 +1012,7 @@ export async function runSinglePath(data, deps) {
         mode: "single",
         cwd: effectiveCwd,
         results: details.results,
+        ...(telemetry ? { telemetry } : {}),
     });
     if (r.pause?.kind === "awaiting_supervisor")
         enrichPersistedPausedForegroundSingleRun({ runId, result: r });

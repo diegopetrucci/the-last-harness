@@ -43,6 +43,11 @@ import {
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
+import {
+  mergeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 
 function resolvePausedContinuationAcceptance(
   runId: string,
@@ -131,6 +136,8 @@ type AsyncResumeTarget = {
   /** Selected-child success, independent of the aggregate async lifecycle state. */
   successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
+  /** Validated source-run telemetry used to seed continuation lineage. */
+  telemetry?: SubagentRunTelemetry;
   /** Present only when the persisted run carried a run-level project inventory. */
   projectAgents?: ProjectAgentRunCapture[];
 };
@@ -170,6 +177,7 @@ type AsyncResultFile = Defensive<AsyncResultArtifact> & {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   projectAgent?: ProjectAgentRunCapture;
   projectAgents?: ProjectAgentRunCapture[];
+  telemetry?: SubagentRunTelemetry;
   // Override results to add legacy per-item `thinking` field (written by
   // older runners but not part of the current canonical result item type).
   results?: Array<
@@ -288,9 +296,29 @@ interface AsyncResumeResolutionContext {
   deps: AsyncResumeDeps;
   options: AsyncResumeOptions;
   tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
+  telemetry?: SubagentRunTelemetry;
 }
 
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
+const RESUME_TERMINAL_RUN_STATES = new Set([
+  "complete",
+  "failed",
+  "paused",
+  "cancelled",
+  "continued",
+]);
+
+function resolveResumeTelemetry(
+  context: AsyncResumeResolutionContext,
+): SubagentRunTelemetry | undefined {
+  const resultTelemetry = normalizeSubagentRunTelemetry(context.result?.telemetry);
+  const statusTelemetry = normalizeSubagentRunTelemetry(context.status?.telemetry);
+  return mergeSubagentRunTelemetry(resultTelemetry, statusTelemetry, {
+    persistedOutcomeWins: Boolean(
+      context.status && RESUME_TERMINAL_RUN_STATES.has(context.status.state),
+    ),
+  });
+}
 
 export interface AsyncRunLocation {
   asyncDir: string | null;
@@ -499,6 +527,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
   const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
     data.activeRuntimeCheckpointAt,
   );
+  const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -534,6 +563,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 
@@ -716,6 +746,10 @@ function resultState(result: AsyncResultFile): AsyncStatus["state"] {
 
 function validateStatusForResume(status: AsyncStatus | null, source: string): void {
   if (!status) return;
+  // Status readers already normalize this field, but resume can also receive a
+  // reconciler snapshot. Re-validate it here so external data never crosses
+  // into continuation metadata without the schema allowlist.
+  status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   if (typeof status.runId !== "string")
     throw new Error(`Invalid async status '${source}': runId must be a string.`);
   if (status.sessionId !== undefined && typeof status.sessionId !== "string")
@@ -1002,6 +1036,7 @@ function buildLiveAsyncResumeTarget(
       : {}),
     ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+    ...(context.telemetry ? { telemetry: context.telemetry } : {}),
   };
 }
 
@@ -1148,6 +1183,7 @@ function buildTerminalAsyncResumeTarget(
       ? { claimed: true }
       : {}),
     ...(continuationAcceptance ? { continuationAcceptance } : {}),
+    ...(context.telemetry ? { telemetry: context.telemetry } : {}),
   };
   const diagnosticMetadata = resolveResumeDiagnosticMetadata(
     index,
@@ -1361,6 +1397,7 @@ export function resolveAsyncResumeTarget(
     options,
     tkTicket,
   };
+  context.telemetry = resolveResumeTelemetry(context);
   if (state === "running") {
     const liveTarget = resolveLiveAsyncResumeTarget(context);
     if (liveTarget) return liveTarget;

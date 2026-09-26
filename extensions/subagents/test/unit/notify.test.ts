@@ -4,8 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  isSubagentCompletionBatchDetails,
+  MAX_COMPLETION_BATCH_ENTRIES,
+  MAX_COMPLETION_BATCH_CHUNKS,
   MAX_COMPLETION_MESSAGE_CHARS,
   MAX_DISPLAY_SUMMARY_CHARS,
+  MAX_GROUPED_ENTRIES,
+  type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
@@ -899,10 +904,43 @@ describe("registerSubagentNotify", () => {
     assert.equal(sentUserMessages.length, 1, "exactly one nudge per flush for grouped completions");
     const groupedMessage = sentMessages[0]!.message as {
       content: string;
-      details?: SubagentNotifyDetails;
+      details?: SubagentCompletionBatchDetails;
     };
     const content = groupedMessage.content;
-    assert.equal(groupedMessage.details, undefined, "grouped message shape must remain unchanged");
+    const groupedDetails = groupedMessage.details;
+    assert.ok(groupedDetails, "grouped messages must retain structured completion metadata");
+    assert.equal(groupedDetails.schemaVersion, 1);
+    assert.equal(groupedDetails.kind, "subagent_completion_batch");
+    assert.equal(groupedDetails.batchIndex, 0);
+    assert.equal(groupedDetails.batchCount, 1);
+    assert.equal(groupedDetails.triggersTurn, true);
+    assert.equal(groupedDetails.completions.length, 3);
+    assert.deepEqual(
+      groupedDetails.completions.map(({ agent, status, asyncId }) => ({ agent, status, asyncId })),
+      [
+        { agent: "alpha", status: "completed", asyncId: "g-1" },
+        { agent: "beta", status: "completed", asyncId: "g-2" },
+        { agent: "gamma", status: "completed", asyncId: "g-3" },
+      ],
+    );
+    for (const completion of groupedDetails.completions) {
+      assert.deepEqual(Object.keys(completion).sort(), ["agent", "asyncId", "status"]);
+      for (const forbiddenField of [
+        "taskInfo",
+        "resultPreview",
+        "resumeTarget",
+        "sessionLabel",
+        "sessionValue",
+        "awaitingSupervisor",
+        "_reformatPreview",
+      ]) {
+        assert.equal(
+          forbiddenField in completion,
+          false,
+          `${forbiddenField} must stay out of batches`,
+        );
+      }
+    }
     assert.match(
       content,
       /^Background tasks completed \(3\): \*\*alpha\*\*, \*\*beta\*\*, \*\*gamma\*\*/,
@@ -918,6 +956,215 @@ describe("registerSubagentNotify", () => {
       options: { deliverAs: "followUp" },
     });
   });
+
+  it("chunks large mixed telemetry batches without dropping order or wakeups", () => {
+    const clock = createFakeClock();
+    const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
+    const telemetryFor = (runId: string) => ({
+      schemaVersion: 1,
+      run: { id: runId, execution: "async", mode: "single" },
+      steps: [{ index: 0, agent: "worker", outcome: { state: "completed" } }],
+      provenance: { tlhVersion: "0.41.0", piVersion: "0.85.1", loadedAt: 123 },
+      controls: {
+        needsAttentionAfterMs: 10_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["async"],
+      },
+    });
+
+    for (let index = 0; index < MAX_GROUPED_ENTRIES + 1; index++) {
+      events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        completionResult({
+          id: `chunk-${index}`,
+          agent: `worker-${index}`,
+          summary: `worker-${index} done`,
+          ...(index === 0 || index === MAX_GROUPED_ENTRIES + 1 - 1
+            ? { telemetry: telemetryFor(`telemetry-${index}`) }
+            : {}),
+          ...(index === 0
+            ? {
+                prompt: "prompt-secret",
+                output: "output-secret",
+                cwd: "/private/cwd",
+                args: ["args-secret"],
+                error: "error-secret",
+              }
+            : {}),
+        }),
+      );
+    }
+
+    assert.equal(sentMessages.length, 0);
+    clock.advance(150);
+
+    assert.equal(sentMessages.length, 2);
+    assert.equal(sentUserMessages.length, 1, "all chunks must share one coalesced wakeup");
+    const batches = sentMessages.map(
+      ({ message }) =>
+        message as {
+          content: string;
+          display: boolean;
+          details: SubagentCompletionBatchDetails;
+        },
+    );
+    assert.deepEqual(
+      batches.map(({ details }) => ({
+        batchId: details.batchId,
+        batchIndex: details.batchIndex,
+        batchCount: details.batchCount,
+        triggersTurn: details.triggersTurn,
+      })),
+      [
+        {
+          batchId: batches[0]!.details.batchId,
+          batchIndex: 0,
+          batchCount: 2,
+          triggersTurn: false,
+        },
+        {
+          batchId: batches[0]!.details.batchId,
+          batchIndex: 1,
+          batchCount: 2,
+          triggersTurn: true,
+        },
+      ],
+    );
+    assert.equal(batches[0]!.display, true);
+    assert.equal(batches[1]!.display, false);
+    assert.equal(batches[1]!.content, "");
+    assert.ok(batches[0]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
+    assert.ok(batches[1]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
+
+    const completions = batches.flatMap(({ details }) => details.completions);
+    assert.equal(batches[0]!.details.completions.length, MAX_GROUPED_ENTRIES);
+    assert.equal(batches[1]!.details.completions.length, 1);
+    assert.deepEqual(
+      completions.map(({ agent, asyncId }) => ({ agent, asyncId })),
+      Array.from({ length: MAX_GROUPED_ENTRIES + 1 }, (_, index) => ({
+        agent: `worker-${index}`,
+        asyncId: `chunk-${index}`,
+      })),
+    );
+    assert.equal(completions[0]!.telemetry?.run.id, "telemetry-0");
+    assert.equal(completions[MAX_GROUPED_ENTRIES]!.telemetry?.run.id, "telemetry-8");
+    assert.equal(completions[1]!.telemetry, undefined, "legacy entries retain absent telemetry");
+    const allowedFields = new Set(["agent", "status", "durationMs", "asyncId", "telemetry"]);
+    const forbiddenFields = [
+      "taskInfo",
+      "resultPreview",
+      "resumeTarget",
+      "sessionLabel",
+      "sessionValue",
+      "awaitingSupervisor",
+      "_reformatPreview",
+      "prompt",
+      "output",
+      "cwd",
+      "path",
+      "args",
+      "error",
+    ];
+    for (const completion of completions) {
+      assert.ok(Object.keys(completion).every((field) => allowedFields.has(field)));
+      for (const forbiddenField of forbiddenFields) {
+        assert.equal(
+          forbiddenField in completion,
+          false,
+          `${forbiddenField} must stay out of every batch chunk`,
+        );
+      }
+    }
+    const serialized = JSON.stringify(batches);
+    assert.doesNotMatch(
+      serialized,
+      /prompt-secret|output-secret|\/private\/cwd|args-secret|error-secret/,
+    );
+    assert.deepEqual(sentUserMessages[0], {
+      content: NUDGE_TEXT,
+      options: { deliverAs: "followUp" },
+    });
+  });
+
+  for (const entryCount of [MAX_COMPLETION_BATCH_ENTRIES, MAX_COMPLETION_BATCH_ENTRIES + 1]) {
+    it(`bounds a ${entryCount}-entry flush into coherent logical batches`, () => {
+      const clock = createFakeClock();
+      const { events, sentMessages, sentUserMessages } = createBatchingPi(clock);
+      for (let index = 0; index < entryCount; index++) {
+        events.emit(
+          SUBAGENT_ASYNC_COMPLETE_EVENT,
+          completionResult({
+            id: `boundary-${entryCount}-${index}`,
+            agent: `worker-${index}`,
+            summary: `worker-${index} done`,
+          }),
+        );
+      }
+
+      clock.advance(150);
+
+      const messages = sentMessages.map(
+        ({ message }) =>
+          message as {
+            content: string;
+            display: boolean;
+            details: SubagentCompletionBatchDetails;
+          },
+      );
+      const expectedBatchCounts =
+        entryCount === MAX_COMPLETION_BATCH_ENTRIES
+          ? [MAX_COMPLETION_BATCH_CHUNKS]
+          : [MAX_COMPLETION_BATCH_CHUNKS, 1];
+      assert.equal(messages.length, Math.ceil(entryCount / MAX_GROUPED_ENTRIES));
+      assert.equal(sentUserMessages.length, 1, "one nudge must cover the overall flush");
+      assert.equal(messages.filter(({ display }) => display).length, 1);
+      assert.equal(messages.filter(({ details }) => details.triggersTurn).length, 1);
+      assert.equal(messages[0]!.content.length > 0, true);
+      assert.ok(messages.slice(1).every(({ content }) => content === ""));
+
+      const batchIds = [...new Set(messages.map(({ details }) => details.batchId))];
+      assert.equal(batchIds.length, expectedBatchCounts.length);
+      assert.equal(new Set(batchIds).size, batchIds.length, "logical batches need unique IDs");
+      assert.deepEqual(
+        batchIds.map((batchId) => {
+          const chunks = messages.filter(({ details }) => details.batchId === batchId);
+          return {
+            batchCount: chunks[0]!.details.batchCount,
+            batchIndices: chunks.map(({ details }) => details.batchIndex),
+            flushId: chunks[0]!.details.flushId,
+            flushIndex: chunks[0]!.details.flushIndex,
+            flushCount: chunks[0]!.details.flushCount,
+          };
+        }),
+        expectedBatchCounts.map((batchCount, flushIndex) => ({
+          batchCount,
+          batchIndices: Array.from({ length: batchCount }, (_, index) => index),
+          flushId: messages[0]!.details.flushId,
+          flushIndex,
+          flushCount: expectedBatchCounts.length,
+        })),
+      );
+      assert.ok(
+        messages.every(
+          ({ details }) =>
+            details.batchCount <= MAX_COMPLETION_BATCH_CHUNKS &&
+            isSubagentCompletionBatchDetails(details),
+        ),
+      );
+
+      const completions = messages.flatMap(({ details }) => details.completions);
+      assert.deepEqual(
+        completions.map(({ asyncId }) => asyncId),
+        Array.from({ length: entryCount }, (_, index) => `boundary-${entryCount}-${index}`),
+      );
+      assert.equal(messages.at(-1)!.details.triggersTurn, true);
+      assert.deepEqual(sentUserMessages[0], {
+        content: NUDGE_TEXT,
+        options: { deliverAs: "followUp" },
+      });
+    });
+  }
 
   it("retains the owner batcher so late siblings use the shorter straggler debounce", () => {
     const clock = createFakeClock();

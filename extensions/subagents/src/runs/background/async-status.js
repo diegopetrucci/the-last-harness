@@ -17,6 +17,7 @@ import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snap
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -110,6 +111,7 @@ function deriveAsyncActivityState(asyncDir, status) {
 }
 export function validatePersistedAsyncStatus(asyncDir, status) {
     normalizePersistedHealth(status);
+    status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
         throw createAsyncStatusValidationError({
             asyncDir,
@@ -253,6 +255,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     });
     attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
     const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
+    const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     return {
         id: status.runId || path.basename(asyncDir),
         asyncDir,
@@ -298,6 +301,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.pause ? { pause: status.pause } : {}),
         ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
     };
 }
 function sortRuns(runs) {

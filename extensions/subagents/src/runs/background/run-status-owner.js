@@ -74,7 +74,7 @@ function resolveAsyncStepTranscriptPath(input) {
     return getArtifactPaths(input.artifactsDir, input.runId, input.agent, input.flatStepCount > 1 ? input.flatIndex : undefined).transcriptPath;
 }
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, telemetry, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
     for (const step of flatSteps) {
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
@@ -159,6 +159,7 @@ export function createBackgroundRunStatusOwner(input) {
         steps: initialStatusSteps,
         ...(tkTicket ? { tkTicket } : {}),
         ...(projectAgents ? { projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
         artifactsDir,
         sessionDir,
         outputFile: path.join(asyncDir, "output-0.log"),
@@ -195,6 +196,7 @@ export function createBackgroundRunStatusOwner(input) {
     let pausedCheckpointCommitted = false;
     let interrupted = false;
     let timedOut = false;
+    let nestedCompletionEmitted = false;
     let runtimeCheckpointTimer;
     function listTrackedSessionFiles(dir) {
         if (!dir)
@@ -212,6 +214,8 @@ export function createBackgroundRunStatusOwner(input) {
     function emitNestedSelfEvent(type) {
         if (!nestedRoute || !nestedSelf)
             return;
+        if (type === "subagent.nested.completed" && nestedCompletionEmitted)
+            return;
         try {
             writeNestedEvent(nestedRoute, {
                 type,
@@ -228,6 +232,8 @@ export function createBackgroundRunStatusOwner(input) {
                     ts: Date.now(),
                 }),
             });
+            if (type === "subagent.nested.completed")
+                nestedCompletionEmitted = true;
         }
         catch (error) {
             console.error("Failed to emit nested async status event:", error);
@@ -287,6 +293,10 @@ export function createBackgroundRunStatusOwner(input) {
             }
             else {
                 statusPayload.lifecycle = merged.lifecycle;
+                if (merged.telemetry)
+                    statusPayload.telemetry = merged.telemetry;
+                else
+                    statusPayload.telemetry = undefined;
                 for (let index = 0; index < (merged.steps?.length ?? 0); index++) {
                     const mergedStep = merged.steps?.[index];
                     const localStep = statusPayload.steps[index];
@@ -309,7 +319,9 @@ export function createBackgroundRunStatusOwner(input) {
             writeNormalizedLifecycleStatus(asyncDir, statusPayload);
         }
         if (options.projectNested !== false) {
-            emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued"
+            emitNestedSelfEvent(statusPayload.state === "running" ||
+                statusPayload.state === "queued" ||
+                statusPayload.state === "pausing"
                 ? "subagent.nested.updated"
                 : "subagent.nested.completed");
         }

@@ -16,6 +16,7 @@ import {
   type SubagentModelIdentity,
   type SubagentModelResolution,
 } from "../../shared/types.ts";
+import type { SubagentRunTelemetry } from "../../shared/telemetry.ts";
 import { readStatus } from "../../shared/utils.ts";
 import {
   lifecycleContinuationForIndex,
@@ -123,6 +124,7 @@ export function persistPausedForegroundCohortRun(input: {
   pause?: AsyncStatus["pause"];
   startedAt?: number;
   currentStep?: number;
+  telemetry?: SubagentRunTelemetry;
 }): void {
   const asyncDir = pausedForegroundStatusPath(input.runId);
   const now = Date.now();
@@ -241,6 +243,7 @@ export function persistPausedForegroundCohortRun(input: {
         ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+        ...(input.telemetry ? { telemetry: input.telemetry } : {}),
         pid: input.stage === "pausing" ? input.ownerPid : undefined,
         steps,
       });
@@ -279,6 +282,7 @@ export function persistPausedForegroundCohortRun(input: {
                   ),
                 }
               : {}),
+            ...(input.telemetry ? { telemetry: input.telemetry } : {}),
             steps,
           };
         },
@@ -455,6 +459,7 @@ export function persistPausedForegroundSingleRun(input: {
   stage: "pausing" | "paused";
   ownerPid?: number;
   result: SingleResult;
+  telemetry?: SubagentRunTelemetry;
 }): void {
   const asyncDir = pausedForegroundStatusPath(input.runId);
   const now =
@@ -499,6 +504,7 @@ export function persistPausedForegroundSingleRun(input: {
       cwd: input.cwd,
       ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
       ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+      ...(input.telemetry ? { telemetry: input.telemetry } : {}),
       ...(pause ? { pause } : {}),
       steps: [
         {
@@ -571,6 +577,7 @@ export function persistPausedForegroundSingleRun(input: {
           }
         : {}),
       ...(pause ? { pause } : {}),
+      ...(input.telemetry ? { telemetry: input.telemetry } : {}),
       sessionFile: input.result.sessionFile ?? status.sessionFile,
       steps: status.steps?.map((step, index) =>
         index === 0

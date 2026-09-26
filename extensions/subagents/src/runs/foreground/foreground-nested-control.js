@@ -12,6 +12,7 @@ import { deliverInterruptRequest, requestAsyncSteer } from "../background/contro
 import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { hasMalformedProjectAgentControlMarker, projectRunAuthorizationError, } from "./project-agent-control.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
+import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 export const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
 function nestedRunSessionFile(run) {
@@ -84,6 +85,7 @@ function readNestedResumeStatusStep(runId, asyncDir) {
         throw new Error(`Nested run '${runId}' persisted step activeRuntimeMs must be a non-negative finite number.`);
     }
     const raw = step;
+    const telemetry = normalizeSubagentRunTelemetry(parsed.telemetry);
     const modelIdentity = sanitizeSubagentModelIdentity(raw.modelIdentity) ??
         canonicalSubagentModelIdentity(typeof raw.model === "string" ? raw.model : undefined, typeof raw.thinking === "string" ? raw.thinking : undefined);
     const modelResolution = sanitizeSubagentModelResolution(raw.modelResolution);
@@ -105,6 +107,7 @@ function readNestedResumeStatusStep(runId, asyncDir) {
             }
             : {}),
         ...(malformedProjectAgentMarker ? { projectAgentMarker: true } : {}),
+        ...(telemetry ? { telemetry } : {}),
         ...(raw.acceptance
             ? { acceptance: raw.acceptance }
             : {}),
@@ -202,6 +205,7 @@ export function resolveNestedResumeTarget(match, trustedSessionRoots) {
         ...(statusStep?.activeRuntimeCheckpointAt !== undefined
             ? { activeRuntimeCheckpointAt: statusStep.activeRuntimeCheckpointAt }
             : {}),
+        ...(statusStep?.telemetry ? { telemetry: statusStep.telemetry } : {}),
         ...(asyncDir ? { asyncDir } : {}),
         ...(run.state === "paused" ? { pauseKind: "cohort_pause" } : {}),
         ...(cwd ? { cwd } : {}),

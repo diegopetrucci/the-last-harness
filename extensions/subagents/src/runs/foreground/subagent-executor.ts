@@ -101,7 +101,6 @@ import { resolveControlConfig } from "../shared/subagent-control.ts";
 import { resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { normalizeSingleOutputOverride } from "../shared/single-output.ts";
 import { readStatus } from "../../shared/utils.ts";
-
 import {
   resolveInheritedNestedRouteFromEnv,
   resolveNestedParentAddressFromEnv,
@@ -239,6 +238,8 @@ export interface ExecutorDeps {
     agentDiagnostics?: AgentDiscoveryDiagnostic[];
   };
   getProjectAgentAccess?: (request: ProjectAgentAccessRequest) => ProjectAgentAccess | undefined;
+  /** Provenance captured once by the parent extension load boundary. */
+  telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
   /** Narrow functional seam for exercising continuation authorization without spawning a child. */
   executeAsyncSingle?: typeof executeAsyncSingle;
   /** Narrow functional seam for foreground pause/resume tests. */
@@ -266,6 +267,9 @@ interface ExecutionContextData {
   effectiveAsync: boolean;
   controlConfig: ResolvedControlConfig;
   nestedRoute?: NestedRouteInfo;
+  telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
+  telemetryLineage?: import("../../shared/telemetry.ts").SubagentTelemetryLineage;
+  startedAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
@@ -596,6 +600,8 @@ function runAsyncPath(
         maxSubagentDepth: currentMaxSubagentDepth,
         controlConfig,
         nestedRoute,
+        telemetryProvenance: data.telemetryProvenance,
+        telemetryLineage: data.telemetryLineage,
         timeoutMs: data.timeoutMs,
         toolBudget: data.toolBudget,
         projectAgentCaptures: data.projectAgentCaptures,
@@ -656,6 +662,8 @@ function runAsyncPath(
         maxSubagentDepth,
         controlConfig,
         nestedRoute,
+        telemetryProvenance: data.telemetryProvenance,
+        telemetryLineage: data.telemetryLineage,
         acceptance: params.acceptance,
         timeoutMs: data.timeoutMs,
         toolBudget: data.toolBudget,
@@ -1372,6 +1380,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       ? resolveNestedParentAddressFromEnv()
       : undefined;
     const nestedRoute = inheritedNestedRoute;
+    const telemetryLineage =
+      nestedRoute && nestedParentAddress
+        ? {
+            nested: {
+              rootRunId: nestedRoute.rootRunId,
+              parentRunId: nestedParentAddress.parentRunId,
+              ...(nestedParentAddress.parentStepIndex !== undefined
+                ? { parentStepIndex: nestedParentAddress.parentStepIndex }
+                : {}),
+              depth: nestedParentAddress.depth,
+            },
+          }
+        : undefined;
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
@@ -1454,6 +1475,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const onUpdateWithContext = onUpdate;
 
     const foregroundMode: "single" | "parallel" = hasTasks ? "parallel" : "single";
+    const runStartedAt = Date.now();
 
     const execData: ExecutionContextData = {
       params: effectiveParams,
@@ -1479,6 +1501,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       effectiveAsync,
       controlConfig,
       nestedRoute,
+      telemetryProvenance: deps.telemetryProvenance,
+      telemetryLineage,
+      startedAt: runStartedAt,
       timeoutMs: runTimeoutMs,
       toolBudget: runToolBudget.toolBudget,
       modelScope,
@@ -1490,8 +1515,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       : {
           runId,
           mode: foregroundMode,
-          startedAt: Date.now(),
-          updatedAt: Date.now(),
+          startedAt: runStartedAt,
+          updatedAt: runStartedAt,
           currentAgent: undefined,
           currentIndex: undefined,
           currentActivityState: undefined,

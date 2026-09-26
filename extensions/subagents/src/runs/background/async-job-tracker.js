@@ -11,6 +11,7 @@ import { scanAsyncRunsForRestore } from "./async-status.js";
 import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
@@ -118,6 +119,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             asyncId: run.id,
             asyncDir: run.asyncDir,
             status: run.state,
+            ...(run.telemetry ? { telemetry: run.telemetry } : {}),
             sessionId: run.sessionId,
             activityState: run.activityState,
             lastActivityAt: run.lastActivityAt,
@@ -427,6 +429,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             startedAt: job.startedAt,
                             sessionFile: job.sessionFile,
                             projectAgents: job.projectAgents,
+                            telemetry: job.telemetry,
                         },
                     });
                     const status = reconciliation.status ?? readStatus(job.asyncDir);
@@ -488,6 +491,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
                         job.timedOut = status.timedOut ?? job.timedOut;
                         job.sessionFile = status.sessionFile ?? job.sessionFile;
+                        if (status.telemetry !== undefined)
+                            job.telemetry = status.telemetry;
                         if (status.tkTicket !== undefined)
                             job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
                         if (status.projectAgents !== undefined)
@@ -554,6 +559,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const info = data;
         if (!info.id)
             return;
+        const telemetry = normalizeSubagentRunTelemetry(info.telemetry);
         if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
             return;
         const now = Date.now();
@@ -565,6 +571,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             asyncId: info.id,
             asyncDir,
             status: "queued",
+            ...(telemetry ? { telemetry } : {}),
             pid: typeof info.pid === "number" ? info.pid : undefined,
             ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
             mode: normalizeSubagentRunMode(info.mode),
@@ -592,6 +599,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         if (!asyncId)
             return;
         const job = state.asyncJobs.get(asyncId);
+        const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
+        if (job && telemetry)
+            job.telemetry = telemetry;
         let nestedRefreshFailed = false;
         if (job) {
             job.status =

@@ -15,6 +15,13 @@ import type {
   ForegroundSupervisorRequestMetadata,
 } from "../../shared/types.ts";
 import { normalizeIdleEpisodeId } from "./health-transition.ts";
+import {
+  appendSubagentTelemetryContinuation,
+  mergeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+  transitionSubagentRunTelemetryLifecycle,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
@@ -518,13 +525,22 @@ function finalizeLifecycleContinuationStatus(
     : (status.steps?.length ?? 0) <= 1
       ? status.pause
       : undefined;
+  const nextState = remainingActionable ? "paused" : "continued";
+  const telemetry = transitionSubagentRunTelemetryLifecycle({
+    telemetry: status.telemetry,
+    runState: nextState,
+    stepIndex: index,
+    stepState: "continued",
+    endedAt: continuedAt,
+  });
   return {
     ...status,
-    state: remainingActionable ? "paused" : "continued",
+    state: nextState,
     pid: undefined,
     endedAt: continuedAt,
     lastUpdate: continuedAt,
     pause: nextRootPause,
+    ...(telemetry ? { telemetry } : {}),
     lifecycle: withLifecycleContinuation(
       status,
       index,
@@ -578,10 +594,12 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
     status.activeRuntimeCheckpointAt,
   );
   const activityState = normalizeHealthActivityState(status.activityState);
+  const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   const {
     activeRuntimeMs: _activeRuntimeMs,
     activeRuntimeCheckpointAt: _checkpointAt,
     activityState: _activityState,
+    telemetry: _telemetry,
     ...rest
   } = status;
   const steps = status.steps?.map((step) => {
@@ -619,6 +637,7 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
     ...(activityState !== undefined ? { activityState } : {}),
+    ...(telemetry ? { telemetry } : {}),
     ...(typeof status.state === "string"
       ? { state: status.state as AsyncStatus["state"] }
       : { state: "failed" as const }),
@@ -810,12 +829,17 @@ function mergeAndWriteStatus(
           pause: undefined,
         }
       : {};
+  const mergedTelemetry = mergeSubagentRunTelemetry(inMemory.telemetry, persisted.telemetry, {
+    persistedOutcomeWins:
+      TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state,
+  });
   const merged: AsyncStatus = {
     ...inMemory,
     ...mergeActiveRuntimeEvidence(inMemory, persisted),
     ...terminalRunOverrides,
     state,
     ...(steps !== undefined ? { steps } : {}),
+    ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
     lifecycle,
   };
   return writeNormalizedLifecycleStatus(asyncDir, merged);
@@ -1130,7 +1154,7 @@ export function markLifecycleContinuationSpawned(
   index: number,
   claimToken: string,
   continuationRunId: string,
-  options: { now?: () => number } = {},
+  options: { now?: () => number; telemetry?: SubagentRunTelemetry } = {},
 ): { status: AsyncStatus | null; transitioned: boolean; final: boolean; lost: boolean } {
   const current = readLifecycleStatus(asyncDir);
   if (!current) return { status: null, transitioned: false, final: false, lost: true };
@@ -1160,17 +1184,24 @@ export function markLifecycleContinuationSpawned(
     const transitioned = transitionLifecycleStatus({
       asyncDir,
       expectedGeneration: lifecycleGeneration(current),
-      mutate: (status) => ({
-        ...status,
-        lastUpdate: launchedAt,
-        lifecycle: withLifecycleContinuation(status, index, {
-          ...continuation,
-          phase: "launched",
-          ownerPid: undefined,
-          launchedAt,
-          continuationRunId,
-        }),
-      }),
+      mutate: (status) => {
+        const telemetry = appendSubagentTelemetryContinuation(
+          status.telemetry ?? options.telemetry,
+          { sourceStepIndex: index, continuationRunId },
+        );
+        return {
+          ...status,
+          lastUpdate: launchedAt,
+          ...(telemetry ? { telemetry } : {}),
+          lifecycle: withLifecycleContinuation(status, index, {
+            ...continuation,
+            phase: "launched",
+            ownerPid: undefined,
+            launchedAt,
+            continuationRunId,
+          }),
+        };
+      },
     });
     return { status: transitioned.status, transitioned: true, final: false, lost: false };
   } catch (error) {

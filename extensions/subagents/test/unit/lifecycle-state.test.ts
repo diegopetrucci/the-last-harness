@@ -8,6 +8,7 @@ import {
   createActiveRuntimeTracker,
   finalizeLifecycleContinuationLaunch,
   lifecycleGeneration,
+  markLifecycleContinuationSpawned,
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
   recoverStaleLifecycleContinuationClaim,
@@ -18,10 +19,53 @@ import {
   withLifecycleStatusLock,
   writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
+import { cancelPersistedPausedForegroundRun } from "../../src/runs/foreground/foreground-run-state.ts";
+import type { SubagentState } from "../../src/shared/types.ts";
+import { buildSubagentRunTelemetry } from "../../src/shared/telemetry.ts";
 import { readStatus } from "../../src/shared/utils.ts";
 import { expectNoSecretInError, tempRoot } from "../support/lifecycle-state-fixtures.ts";
 
 describe("lifecycle state helpers", () => {
+  function makeLifecycleTelemetry(runId: string) {
+    return buildSubagentRunTelemetry({
+      runId,
+      execution: "async",
+      mode: "parallel",
+      startedAt: 100,
+      endedAt: 200,
+      provenance: {
+        tlhVersion: "test-tlh",
+        piVersion: "test-pi",
+        installGeneration: "generation-test",
+        loadedAt: 90,
+      },
+      controls: {
+        needsAttentionAfterMs: 1_000,
+        failedToolAttemptsBeforeAttention: 2,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["async"],
+      },
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          timing: { startedAt: 100, endedAt: 180, durationMs: 80 },
+          outcome: { state: "paused", terminationReason: "paused", acceptanceStatus: "skipped" },
+        },
+        {
+          index: 1,
+          agent: "sibling",
+          timing: { startedAt: 105, endedAt: 190, durationMs: 85 },
+          outcome: { state: "failed", terminationReason: "model_error" },
+        },
+      ],
+      outcome: { state: "paused", terminationReason: "paused" },
+      lineage: {
+        continuationFrom: { sourceRunId: "parent-run", sourceStepIndex: 0 },
+      },
+    });
+  }
+
   it("normalizes runtime evidence conservatively and saturates tracker totals", () => {
     assert.equal(normalizeActiveRuntimeMs(1.5), 2);
     assert.equal(normalizeActiveRuntimeMs(Number.MAX_SAFE_INTEGER + 1), Number.MAX_SAFE_INTEGER);
@@ -993,6 +1037,128 @@ describe("lifecycle state helpers", () => {
       assert.equal(persisted?.steps?.[0]?.status, "continued");
       assert.equal(persisted?.lifecycle?.continuation?.phase, "continued");
       assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "revived-gate");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("updates only the cancelled child telemetry while retaining terminal siblings and run context", () => {
+    const root = tempRoot("pi-lifecycle-cancel-telemetry-");
+    try {
+      const runId = "run-cancel-telemetry";
+      const asyncDir = path.join(root, runId);
+      const telemetry = makeLifecycleTelemetry(runId);
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId,
+        mode: "parallel",
+        state: "paused",
+        startedAt: 100,
+        pause: { kind: "awaiting_supervisor", pausedAt: 180 },
+        telemetry,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", pausedAt: 180 },
+          },
+          { agent: "sibling", status: "failed", endedAt: 190, exitCode: 1 },
+        ],
+      });
+
+      const result = cancelPersistedPausedForegroundRun(
+        { foregroundRuns: new Map() } as SubagentState,
+        asyncDir,
+        runId,
+        0,
+      );
+      assert.equal(result.isError, undefined);
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "paused");
+      assert.equal(persisted?.steps?.[0]?.status, "cancelled");
+      assert.equal(persisted?.steps?.[1]?.status, "failed");
+      assert.equal(persisted?.telemetry?.outcome?.state, "paused");
+      assert.equal(persisted?.telemetry?.steps?.[0]?.outcome?.state, "cancelled");
+      assert.equal(persisted?.telemetry?.steps?.[1]?.outcome?.state, "failed");
+      assert.equal(persisted?.telemetry?.steps?.[0]?.timing?.endedAt, 180);
+      assert.deepEqual(persisted?.telemetry?.provenance, telemetry.provenance);
+      assert.deepEqual(persisted?.telemetry?.controls, telemetry.controls);
+      assert.deepEqual(persisted?.telemetry?.lineage, telemetry.lineage);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("finalizes claimed continuation telemetry for one child without rewriting siblings or lineage", () => {
+    const root = tempRoot("pi-lifecycle-continued-telemetry-");
+    try {
+      const runId = "run-continued-telemetry";
+      const asyncDir = path.join(root, runId);
+      const telemetry = makeLifecycleTelemetry(runId);
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId,
+        mode: "parallel",
+        state: "paused",
+        startedAt: 100,
+        pause: { kind: "awaiting_supervisor", pausedAt: 180 },
+        telemetry,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", pausedAt: 180 },
+          },
+          { agent: "sibling", status: "failed", endedAt: 190, exitCode: 1 },
+        ],
+        lifecycle: {
+          generation: 0,
+          continuation: {
+            phase: "reserved",
+            claimToken: "claim-telemetry",
+            claimedAt: 210,
+            ownerPid: 9010,
+            continuationRunId: "continued-telemetry",
+          },
+        },
+      });
+
+      const spawned = markLifecycleContinuationSpawned(
+        asyncDir,
+        0,
+        "claim-telemetry",
+        "continued-telemetry",
+        { now: () => 220 },
+      );
+      assert.equal(spawned.transitioned, true);
+      assert.deepEqual(readStatus(asyncDir)?.telemetry?.lineage?.continuations, [
+        { sourceStepIndex: 0, continuationRunId: "continued-telemetry" },
+      ]);
+
+      const finalized = finalizeLifecycleContinuationLaunch(
+        asyncDir,
+        0,
+        "claim-telemetry",
+        "continued-telemetry",
+        { now: () => 250 },
+      );
+      assert.equal(finalized.finalized, true);
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "continued");
+      assert.equal(persisted?.steps?.[0]?.status, "continued");
+      assert.equal(persisted?.steps?.[1]?.status, "failed");
+      assert.equal(persisted?.telemetry?.outcome?.state, "continued");
+      assert.equal(persisted?.telemetry?.steps?.[0]?.outcome?.state, "continued");
+      assert.equal(persisted?.telemetry?.steps?.[1]?.outcome?.state, "failed");
+      assert.equal(persisted?.telemetry?.timing?.endedAt, 200);
+      assert.equal(persisted?.telemetry?.steps?.[0]?.timing?.endedAt, 180);
+      assert.deepEqual(persisted?.telemetry?.provenance, telemetry.provenance);
+      assert.deepEqual(persisted?.telemetry?.controls, telemetry.controls);
+      assert.deepEqual(
+        persisted?.telemetry?.lineage?.continuationFrom,
+        telemetry.lineage?.continuationFrom,
+      );
+      assert.deepEqual(persisted?.telemetry?.lineage?.continuations, [
+        { sourceStepIndex: 0, continuationRunId: "continued-telemetry" },
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

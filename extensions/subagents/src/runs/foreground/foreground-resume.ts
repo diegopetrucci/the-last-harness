@@ -96,6 +96,12 @@ import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
+import {
+  appendSubagentTelemetryContinuation,
+  continuationTelemetryMetadata,
+  type SubagentTelemetryLineage,
+  type SubagentTelemetryProvenance,
+} from "../../shared/telemetry.ts";
 
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
 type ForegroundResumeSourceTarget = NonNullable<
@@ -274,6 +280,31 @@ function revivedPressureOptions(
 
 type ContinuationClaimDecision = PausedContinuationClaim | { blockedMessage: string } | undefined;
 
+function persistContinuationTelemetry(target: ResumeSourceTarget, continuationRunId: string): void {
+  try {
+    if (target.kind !== "revive" || !target.telemetry || !target.asyncDir) return;
+    const current = readStatus(target.asyncDir);
+    if (!current) return;
+    const telemetry = appendSubagentTelemetryContinuation(current.telemetry ?? target.telemetry, {
+      sourceStepIndex: target.index,
+      continuationRunId,
+    });
+    if (!telemetry) return;
+    transitionLifecycleStatus({
+      asyncDir: target.asyncDir,
+      expectedGeneration: lifecycleGeneration(current),
+      mutate: (status) => ({
+        ...status,
+        telemetry,
+        lastUpdate: Date.now(),
+      }),
+    });
+  } catch {
+    // Source lineage is observational. A continuation that already spawned must
+    // remain successful even when its source status races another lifecycle writer.
+  }
+}
+
 function claimPausedAwaitingSupervisorTarget(
   target: ResumeSourceTarget,
   continuationRunId: string,
@@ -385,6 +416,7 @@ function claimPausedAwaitingSupervisorTarget(
         target.index,
         decision.claimToken,
         continuationRunId,
+        target.telemetry ? { telemetry: target.telemetry } : {},
       );
     },
   };
@@ -950,37 +982,62 @@ function preflightResumeContextPolicy(
   return { kind: "ready", modelContextWindow };
 }
 
-export async function resumeAsyncRun(input: {
+type ResumeAsyncInput = {
   params: SubagentParamsLike;
   requestCwd: string;
   ctx: ExtensionContext;
   deps: ExecutorDeps;
   artifactConfig: ResolvedArtifactConfig;
   executionPolicy: ResolvedExecutionPolicy;
-}): Promise<SubagentToolResult<Details>> {
+};
+
+type ResumePreparation =
+  | { kind: "error"; result: SubagentToolResult<Details> }
+  | {
+      kind: "ready";
+      target: ResumeSourceTarget;
+      followUp: string;
+      parentSessionFile: string | null;
+      effectiveCwd: string;
+      agentConfig: AgentConfig;
+      modelScope: ReturnType<ExecutorDeps["discoverAgents"]>["modelScope"];
+      modelRegistrySnapshot: ReturnType<typeof readModelRegistrySnapshot>;
+      claimedPause?: PausedContinuationClaim;
+      continuationRunId: string;
+      persistedProjectAuthorization?: AuthorizedProjectAgentRun;
+      activeRuntimeMs: number;
+      activeRuntimeCheckpointAt?: number;
+      successfulCompletion: boolean;
+      runTimeoutMs?: number;
+    };
+
+function managementError(text: string): ResumePreparation {
+  return {
+    kind: "error",
+    result: {
+      content: [{ type: "text", text }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    },
+  };
+}
+
+async function prepareResume(input: ResumeAsyncInput): Promise<ResumePreparation> {
   const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
   const privateProjectLookup = lookupPrivateProjectActionReference(input.params);
   if (privateProjectLookup.status === "ambiguous") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: projectRunAuthorizationError(
-            `the requested run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
-          ).message,
-        },
-      ],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
+    return managementError(
+      projectRunAuthorizationError(
+        `the requested run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+      ).message,
+    );
   }
   const resolutionParams =
     privateProjectLookup.status === "found"
       ? { ...input.params, id: privateProjectLookup.runId }
       : input.params;
   const requestedId = resolutionParams.id;
-
   const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
   const targetResolution = await resolveResumeActionTarget({
     params: resolutionParams,
@@ -992,7 +1049,7 @@ export async function resumeAsyncRun(input: {
     requestCwd: input.requestCwd,
     parentSessionFile,
   });
-  if ("content" in targetResolution) return targetResolution;
+  if ("content" in targetResolution) return { kind: "error", result: targetResolution };
   const target = targetResolution;
 
   try {
@@ -1000,12 +1057,7 @@ export async function resumeAsyncRun(input: {
       allowFreshResume: target.kind === "revive",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text", text: message }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
+    return managementError(error instanceof Error ? error.message : String(error));
   }
 
   const followUp =
@@ -1015,13 +1067,7 @@ export async function resumeAsyncRun(input: {
     target.pauseKind === "awaiting_supervisor"
       ? UNCHANGED_SUPERVISOR_RESUME_MESSAGE
       : "");
-  if (!followUp) {
-    return {
-      content: [{ type: "text", text: "action='resume' requires message." }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
+  if (!followUp) return managementError("action='resume' requires message.");
 
   let persistedProjectAuthorization: AuthorizedProjectAgentRun | undefined;
   const targetProjectCapture = "projectAgent" in target ? target.projectAgent : undefined;
@@ -1034,29 +1080,17 @@ export async function resumeAsyncRun(input: {
         deps: input.deps,
       });
     } catch (error) {
-      return {
-        content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
+      return managementError(error instanceof Error ? error.message : String(error));
     }
   }
 
   const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
   if (blocked) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
-        },
-      ],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
+    return managementError(
+      `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
+    );
   }
 
-  input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
   const effectiveCwd =
     persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
   const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
@@ -1066,57 +1100,42 @@ export async function resumeAsyncRun(input: {
         modelScope: persistedProjectAuthorization.modelScope,
       }
     : input.deps.discoverAgents(effectiveCwd, scope);
-  const discoveredAgents = discovered.agents;
-  const modelScope = discovered.modelScope;
-  const agents = discoveredAgents;
   const agentConfig =
-    agents.find((agent) => agent.name === target.agent) ??
+    discovered.agents.find((agent) => agent.name === target.agent) ??
     persistedProjectAuthorization?.agentConfig;
   if (!agentConfig) {
     return {
-      content: [
-        {
-          type: "text",
-          text: unknownAgentMessage(
-            target.agent,
-            discovered.agentDiagnostics,
-            "Unknown agent for resume",
-          ),
-        },
-      ],
-      isError: true,
-      details: { mode: "management", results: [] },
+      kind: "error",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: unknownAgentMessage(
+              target.agent,
+              discovered.agentDiagnostics,
+              "Unknown agent for resume",
+            ),
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      },
     };
   }
 
   const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, input.executionPolicy);
-  if (runtimePolicy.kind === "error") {
-    return {
-      content: [{ type: "text", text: runtimePolicy.message }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
+  if (runtimePolicy.kind === "error") return managementError(runtimePolicy.message);
   const { activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs } =
     runtimePolicy;
-
   const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
-  const { availableModels } = modelRegistrySnapshot;
   const contextPolicy = preflightResumeContextPolicy(
     target,
     agentConfig,
     input.params.model,
     input.ctx.model,
-    availableModels,
+    modelRegistrySnapshot.availableModels,
   );
-  if (contextPolicy.kind === "error") {
-    return {
-      content: [{ type: "text", text: contextPolicy.message }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
-  const { modelContextWindow } = contextPolicy;
+  if (contextPolicy.kind === "error") return managementError(contextPolicy.message);
 
   const continuationRunId = randomUUID().slice(0, 8);
   let claimedPause: PausedContinuationClaim | undefined;
@@ -1124,26 +1143,66 @@ export async function resumeAsyncRun(input: {
     const claimDecision = claimPausedAwaitingSupervisorTarget(
       target,
       continuationRunId,
-      modelContextWindow,
+      contextPolicy.modelContextWindow,
     );
-    if (claimDecision && "blockedMessage" in claimDecision) {
-      return {
-        content: [{ type: "text", text: claimDecision.blockedMessage }],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
-    }
+    if (claimDecision && "blockedMessage" in claimDecision)
+      return managementError(claimDecision.blockedMessage);
     claimedPause = claimDecision;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text", text: message }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
+    return managementError(error instanceof Error ? error.message : String(error));
   }
 
+  return {
+    kind: "ready",
+    target,
+    followUp,
+    parentSessionFile,
+    effectiveCwd,
+    agentConfig,
+    modelScope: discovered.modelScope,
+    modelRegistrySnapshot,
+    claimedPause,
+    continuationRunId,
+    persistedProjectAuthorization,
+    activeRuntimeMs,
+    ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
+    successfulCompletion,
+    ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
+  };
+}
+
+export async function resumeAsyncRun(
+  input: ResumeAsyncInput,
+): Promise<SubagentToolResult<Details>> {
+  const preparation = await prepareResume(input);
+  if (preparation.kind === "error") return preparation.result;
+  const {
+    target,
+    followUp,
+    parentSessionFile,
+    effectiveCwd,
+    agentConfig,
+    modelScope,
+    modelRegistrySnapshot,
+    claimedPause,
+    continuationRunId,
+    persistedProjectAuthorization,
+    activeRuntimeMs,
+    activeRuntimeCheckpointAt,
+    successfulCompletion,
+    runTimeoutMs,
+  } = preparation;
+  input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+  const { availableModels } = modelRegistrySnapshot;
   const runId = continuationRunId;
+  const continuationTelemetry = continuationTelemetryMetadata(
+    target.kind === "revive" ? target.telemetry : undefined,
+    target.runId,
+    target.index,
+  );
+  const telemetryProvenance: SubagentTelemetryProvenance | undefined =
+    continuationTelemetry.provenance ?? input.deps.telemetryProvenance;
+  const telemetryLineage: SubagentTelemetryLineage | undefined = continuationTelemetry.lineage;
   const artifactsDir = getArtifactsDir(parentSessionFile);
   const resumeModelResolution = buildResumeModelResolution(target, input.params.model);
   const restoredModelIdentity =
@@ -1240,6 +1299,8 @@ export async function resumeAsyncRun(input: {
       modelRegistry: modelRegistrySnapshot.evidence,
       providerFallbackModels: providerFallbackModelsForTarget(input.params),
       modelFallbackNotice: input.params.modelFallbackNotice,
+      ...(telemetryProvenance ? { telemetryProvenance } : {}),
+      ...(telemetryLineage ? { telemetryLineage } : {}),
     });
   } catch (error) {
     claimedPause?.rollbackReserved();
@@ -1253,7 +1314,12 @@ export async function resumeAsyncRun(input: {
   }
 
   const revivedId = result.details.asyncId ?? runId;
-  claimedPause?.markSpawned();
+  try {
+    claimedPause?.markSpawned();
+  } catch {
+    // The detached continuation already exists; source lifecycle repair is best effort.
+  }
+  if (!claimedPause) persistContinuationTelemetry(target, revivedId);
   if (persistedProjectAuthorization) releaseProjectSourceAfterContinuation(target);
   if (target.source === "foreground") input.deps.state.foregroundRuns?.delete(target.runId);
 

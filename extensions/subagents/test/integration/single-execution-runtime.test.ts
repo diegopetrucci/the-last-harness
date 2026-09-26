@@ -25,12 +25,22 @@ import {
   type ExecuteAsyncSingleOverride,
   type ExecutorToolResult,
 } from "../support/single-execution-fixtures.ts";
-import { ASYNC_DIR } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  RESULTS_DIR,
+  SUBAGENT_ASYNC_STARTED_EVENT,
+  getAsyncConfigPath,
+} from "../../src/shared/types.ts";
 import type { AsyncStatus } from "../../src/shared/types.ts";
 import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
+import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
+import {
+  buildSubagentRunTelemetry,
+  type SubagentTelemetryProvenance,
+} from "../../src/shared/telemetry.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { mockAssistantMessage, readPersistedStatus } from "../support/single-execution-fixtures.ts";
@@ -87,9 +97,13 @@ describe(
       },
       runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
       executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
+      telemetryProvenance: SubagentTelemetryProvenance | undefined = undefined,
+      piOverride:
+        | { events: ReturnType<typeof createEventBus>; getSessionName: () => undefined }
+        | undefined = undefined,
     ) {
       return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
+        pi: piOverride ?? { events: createEventBus(), getSessionName: () => undefined },
         state,
         config,
         tempArtifactsDir: tempDir,
@@ -98,6 +112,7 @@ describe(
         discoverAgents: () => ({ agents }),
         runSync: runSyncOverride,
         executeAsyncSingle: executeAsyncSingleOverride,
+        telemetryProvenance,
       });
     }
     it(
@@ -282,6 +297,128 @@ describe(
           assert.equal(state.foregroundRuns.has(sourceRunId), false);
         } finally {
           fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "carries source telemetry provenance and continuation lineage through an async resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const sourceRunId = `resume-telemetry-${Date.now().toString(36)}-${process.pid}`;
+        const asyncDir = path.join(ASYNC_DIR, sourceRunId);
+        const sessionFile = path.join(asyncDir, "source-session.jsonl");
+        const sourceProvenance: SubagentTelemetryProvenance = {
+          tlhVersion: "source-tlh",
+          piVersion: "source-pi",
+          installGeneration: "source-generation",
+          loadedAt: 101,
+        };
+        const currentProvenance: SubagentTelemetryProvenance = {
+          tlhVersion: "current-tlh",
+          piVersion: "current-pi",
+          installGeneration: "current-generation",
+          loadedAt: 202,
+        };
+        const sourceTelemetry = buildSubagentRunTelemetry({
+          runId: sourceRunId,
+          execution: "async",
+          mode: "single",
+          steps: [
+            {
+              index: 0,
+              agent: "echo",
+              outcome: { state: "completed" },
+            },
+          ],
+          provenance: sourceProvenance,
+          controls: {
+            needsAttentionAfterMs: 30_000,
+            failedToolAttemptsBeforeAttention: 3,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event"],
+          },
+          startedAt: 1_000,
+          endedAt: 1_100,
+          outcome: { state: "completed" },
+        });
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${sourceRunId}"}\n`, "utf-8");
+        const status: AsyncStatus = {
+          runId: sourceRunId,
+          mode: "single",
+          state: "complete",
+          startedAt: 1_000,
+          endedAt: 1_100,
+          cwd: tempDir,
+          steps: [
+            {
+              agent: "echo",
+              status: "complete",
+              startedAt: 1_000,
+              endedAt: 1_100,
+              sessionFile,
+              exitCode: 0,
+            },
+          ],
+          telemetry: sourceTelemetry,
+        };
+        fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+
+        const pi = { events: createEventBus(), getSessionName: () => undefined };
+        let continuationRunId: string | undefined;
+        let observedConfig: SubagentRunConfig | undefined;
+        pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+          if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+          const id = (payload as { id?: unknown }).id;
+          if (typeof id !== "string") return;
+          continuationRunId = id;
+          const configPath = getAsyncConfigPath(id);
+          if (fs.existsSync(configPath)) {
+            observedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8")) as SubagentRunConfig;
+          }
+        });
+        mockPi.onCall({ output: "resumed continuation complete" });
+        try {
+          const result = await makeExecutor(
+            [makeAgent("echo")],
+            {},
+            undefined,
+            undefined,
+            undefined,
+            currentProvenance,
+            pi,
+          ).execute(
+            "resume-telemetry-call",
+            { action: "resume", id: sourceRunId, message: "Continue with telemetry context." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.ok(continuationRunId);
+          assert.ok(observedConfig);
+          assert.deepEqual(observedConfig.telemetry?.provenance, sourceProvenance);
+          assert.deepEqual(observedConfig.telemetry?.lineage, {
+            continuationFrom: { sourceRunId, sourceStepIndex: 0 },
+          });
+          const persisted = JSON.parse(
+            fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+          ) as AsyncStatus;
+          assert.deepEqual(persisted.telemetry?.provenance, sourceProvenance);
+          assert.deepEqual(persisted.telemetry?.lineage?.continuations, [
+            { sourceStepIndex: 0, continuationRunId },
+          ]);
+          await waitForAsyncResultFile(continuationRunId);
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
+            fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
+          }
         }
       },
     );

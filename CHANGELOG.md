@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added local-only schema-v1 subagent run telemetry and a read-only `tlh sessions --mode subagents` report for usage, runtime, operation, lineage, and wakeup coverage. The report is generated from the active isolated profile, does not send telemetry or modify session files, and its default output omits prompts, tasks, outputs, arguments, paths, and raw run identifiers; bounded metadata such as roles, models, usage, and costs may still be present.
+
 ### Changed
 
 - Bumped TLH's pinned Pi runtime from `0.85.1` to `0.87.1`. Pi-native prompt-cache warming is now available and defaults to `idle` for TLH users, meaning it will keep the session alive for 30 minutes when eligible (subagents running, user pause, etc.).
