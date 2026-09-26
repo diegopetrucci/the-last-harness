@@ -8,6 +8,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { readStatus } from "../../shared/utils.js";
 import {} from "../../shared/types.js";
+import { transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
 import { isClaimedPausedLifecycle, pausedForegroundStatusPath, pausedForegroundTerminationReason, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
@@ -147,6 +148,7 @@ export function rememberForegroundRun(state, input) {
         mode: input.mode,
         cwd: input.cwd,
         updatedAt,
+        ...(input.telemetry ? { telemetry: input.telemetry } : {}),
         children: input.results.map((result, index) => {
             const activeRuntimeMs = normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
                 normalizeActiveRuntimeMs(result.progress?.durationMs);
@@ -210,6 +212,8 @@ export function updateRememberedForegroundChild(state, input) {
         state.foregroundRuns.set(input.runId, run);
     }
     run.updatedAt = updatedAt;
+    if (input.telemetry)
+        run.telemetry = input.telemetry;
     const child = run.children[input.index] ?? {
         agent: input.result.agent,
         index: input.index,
@@ -388,6 +392,7 @@ export function resolveForegroundResumeTarget(params, state) {
                 activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt),
             }
             : {}),
+        ...(run.telemetry ? { telemetry: run.telemetry } : {}),
     };
 }
 function updateRememberedForegroundCancellation(state, runId, cancelledAt, summary, index = 0) {
@@ -528,9 +533,17 @@ export function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index
                     : step);
                 const remainingActionable = nextSteps?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
                 const remainingResumable = hasResumableSiblingStep(nextSteps, targetIndex);
+                const nextState = remainingActionable || remainingResumable ? "paused" : "cancelled";
+                const telemetry = transitionSubagentRunTelemetryLifecycle({
+                    telemetry: status.telemetry,
+                    runState: nextState,
+                    stepIndex: targetIndex,
+                    stepState: "cancelled",
+                    endedAt: cancelledAt,
+                });
                 return {
                     ...status,
-                    state: remainingActionable || remainingResumable ? "paused" : "cancelled",
+                    state: nextState,
                     pid: undefined,
                     ...(remainingActionable || remainingResumable
                         ? {}
@@ -541,6 +554,7 @@ export function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index
                         : undefined,
                     lastUpdate: cancelledAt,
                     endedAt: cancelledAt,
+                    ...(telemetry ? { telemetry } : {}),
                     lifecycle: withLifecycleContinuation(status, targetIndex, undefined),
                     steps: nextSteps,
                 };

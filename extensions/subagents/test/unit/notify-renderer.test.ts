@@ -296,7 +296,7 @@ describe("native completion notification renderer", () => {
 				+ "2. b\n" + "preview-b\n\n"
 				+ "3. c\n" + "preview-c\n\n"
 				+ "4. d\n" + "d".repeat(MAX_COMPLETION_MESSAGE_CHARS);
-			const groupedMessage = { content: groupedContent }; // no structuredDetails
+			const groupedMessage = { content: groupedContent }; // legacy grouped content without structuredDetails
 			const rendered = notifyRenderer(groupedMessage, { expanded: false }, theme).render(200).join("\n");
 
 			// The truncation marker must appear (content is far over the cap).
@@ -320,6 +320,29 @@ describe("native completion notification renderer", () => {
 			const renderedContentChars = rendered.replace(/ +$/gm, "").length;
 			if (renderedContentChars > MAX_DISPLAY_SUMMARY_CHARS * 10) {
 				throw new Error("grouped notice renderer fallback exposed too much content: " + renderedContentChars + " chars (limit: " + (MAX_DISPLAY_SUMMARY_CHARS * 10) + ")");
+			}
+
+			const structuredGroupedMessage = {
+				content: "Background tasks completed (2): **a**, **b**\n\n1. a\nDone\n\n2. b\nDone",
+				details: {
+					schemaVersion: 1,
+					kind: "subagent_completion_batch",
+					batchId: "batch-renderer",
+					batchIndex: 0,
+					batchCount: 1,
+					triggersTurn: true,
+					completions: [
+						{ agent: "a", status: "completed", asyncId: "render-a" },
+						{ agent: "b", status: "completed", asyncId: "render-b" },
+					],
+				},
+			};
+			const structuredGroupedRendered = notifyRenderer(structuredGroupedMessage, { expanded: false }, theme).render(200).join("\n");
+			if (!structuredGroupedRendered.includes("Background tasks completed (2)")) {
+				throw new Error("structured grouped notification was not rendered from its bounded content: " + structuredGroupedRendered);
+			}
+			if (structuredGroupedRendered.includes("undefined")) {
+				throw new Error("structured grouped notification was treated as a singular detail object: " + structuredGroupedRendered);
 			}
 		`;
     const env = { ...process.env };

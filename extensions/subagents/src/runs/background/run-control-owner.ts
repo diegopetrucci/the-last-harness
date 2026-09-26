@@ -233,8 +233,10 @@ export function createBackgroundRunControlOwner(
   function hasLiveNestedAsyncDescendants(): boolean {
     if (!nestedRoute) return false;
     try {
+      // A nested runner publishes its own lifecycle entry on the inherited route;
+      // that entry is not a descendant and must not block its own finalization.
       return [...nestedRuns(projectNestedEvents(nestedRoute).children)].some(
-        (run) => run.state === "running" || run.state === "queued",
+        (run) => run.id !== id && (run.state === "running" || run.state === "queued"),
       );
     } catch {
       return true;

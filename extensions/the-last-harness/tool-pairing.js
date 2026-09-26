@@ -80,6 +80,11 @@ export function pairToolCalls(entries) {
                 if (typeof rawDetails["runId"] === "string") {
                     details.runId = rawDetails["runId"];
                 }
+                if (rawDetails["mode"] === "single" ||
+                    rawDetails["mode"] === "parallel" ||
+                    rawDetails["mode"] === "management") {
+                    details.mode = rawDetails["mode"];
+                }
                 if (Array.isArray(rawDetails["results"])) {
                     const resultsArr = rawDetails["results"];
                     const boundedResults = [];

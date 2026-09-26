@@ -127,7 +127,7 @@ export function createBackgroundRunControlOwner(input) {
         if (!nestedRoute)
             return false;
         try {
-            return [...nestedRuns(projectNestedEvents(nestedRoute).children)].some((run) => run.state === "running" || run.state === "queued");
+            return [...nestedRuns(projectNestedEvents(nestedRoute).children)].some((run) => run.id !== id && (run.state === "running" || run.state === "queued"));
         }
         catch {
             return true;

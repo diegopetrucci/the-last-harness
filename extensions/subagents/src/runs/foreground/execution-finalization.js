@@ -3,6 +3,7 @@ import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithF
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { DEFAULT_MAX_OUTPUT, truncateOutput, } from "../../shared/types.js";
 import { buildControlEvent } from "../shared/subagent-control.js";
+import { telemetryFromSingleResults, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
 import { boundChildError, formatProtocolOutputLimit } from "../shared/child-protocol.js";
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
@@ -527,6 +528,26 @@ export function finalizeForegroundArtifacts(input) {
         }
         artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
     }
+    const artifactTelemetry = options.telemetryProvenance && options.controlConfig
+        ? telemetryFromSingleResults({
+            runId: options.runId,
+            mode: options.telemetryMode ?? "single",
+            results: [result],
+            stepIndexes: [options.index ?? 0],
+            provenance: options.telemetryProvenance,
+            controls: options.controlConfig,
+            startedAt: options.startedAt,
+            endedAt: Date.now(),
+            lineage: options.telemetryLineage,
+            outcome: resolveSubagentTelemetryOutcome({
+                interrupted: Boolean(result.interrupted),
+                timedOut: result.timedOut,
+                success: result.exitCode === 0 && !result.interrupted,
+                terminationReason: result.terminationReason,
+                acceptanceStatus: result.acceptance?.status,
+            }),
+        })
+        : undefined;
     if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
         result.artifactPaths = artifactPathsResult;
         if (options.artifactConfig?.includeOutput !== false) {
@@ -583,6 +604,7 @@ export function finalizeForegroundArtifacts(input) {
             protocolOutputLimit: result.protocolOutputLimit,
             ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
             transcriptError: result.transcriptError,
+            ...(artifactTelemetry ? { telemetry: artifactTelemetry } : {}),
             skills: result.skills,
             skillsWarning: result.skillsWarning,
             timestamp: Date.now(),

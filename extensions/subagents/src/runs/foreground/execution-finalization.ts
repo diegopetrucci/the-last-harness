@@ -28,6 +28,10 @@ import {
   truncateOutput,
 } from "../../shared/types.ts";
 import { buildControlEvent } from "../shared/subagent-control.ts";
+import {
+  telemetryFromSingleResults,
+  resolveSubagentTelemetryOutcome,
+} from "../../shared/telemetry.ts";
 import { boundChildError, formatProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
   getFinalOutput,
@@ -773,6 +777,27 @@ export function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizatio
       formatErrorWithOutput(result.error, result.finalOutput ?? ""),
     );
   }
+  const artifactTelemetry =
+    options.telemetryProvenance && options.controlConfig
+      ? telemetryFromSingleResults({
+          runId: options.runId,
+          mode: options.telemetryMode ?? "single",
+          results: [result],
+          stepIndexes: [options.index ?? 0],
+          provenance: options.telemetryProvenance,
+          controls: options.controlConfig,
+          startedAt: options.startedAt,
+          endedAt: Date.now(),
+          lineage: options.telemetryLineage,
+          outcome: resolveSubagentTelemetryOutcome({
+            interrupted: Boolean(result.interrupted),
+            timedOut: result.timedOut,
+            success: result.exitCode === 0 && !result.interrupted,
+            terminationReason: result.terminationReason,
+            acceptanceStatus: result.acceptance?.status,
+          }),
+        })
+      : undefined;
   if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
     result.artifactPaths = artifactPathsResult;
     if (options.artifactConfig?.includeOutput !== false) {
@@ -840,6 +865,7 @@ export function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizatio
       protocolOutputLimit: result.protocolOutputLimit,
       ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
       transcriptError: result.transcriptError,
+      ...(artifactTelemetry ? { telemetry: artifactTelemetry } : {}),
       skills: result.skills,
       skillsWarning: result.skillsWarning,
       timestamp: Date.now(),

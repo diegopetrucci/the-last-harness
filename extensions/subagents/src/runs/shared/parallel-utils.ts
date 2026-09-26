@@ -96,6 +96,8 @@ export type SubagentRunPlan =
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
+  /** Optional parent-captured privacy-safe telemetry envelope. */
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   /** Canonical direct single/parallel execution plan. */
   plan: SubagentRunPlan;
   resultPath: string;

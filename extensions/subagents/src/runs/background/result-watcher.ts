@@ -26,6 +26,7 @@ import {
   lookupProjectAgentRunReference,
   releaseProjectAgentRunReference,
 } from "../../agents/project-agent-snapshot.ts";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -82,6 +83,7 @@ type ResultFileData = {
   sessionFile?: string;
   asyncDir?: string;
   lifecycleArtifactVersion?: number;
+  telemetry?: unknown;
 };
 
 function sanitizeNestedResultChildren(
@@ -393,9 +395,11 @@ export function createResultWatcher(
         fsApi.unlinkSync(resultPath);
         return;
       }
+      const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
       pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
         ...data,
         runId,
+        ...(telemetry ? { telemetry } : { telemetry: undefined }),
         ...(nestedChildren?.length ? { nestedChildren } : {}),
         ...(Array.isArray(data.results)
           ? {

@@ -10,15 +10,25 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  createEventBus,
   createMockPi,
   createTempDir,
   events,
   makeAgent,
+  makeMinimalCtx,
+  makeSubagentState,
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
-import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import { createSubagentExecutor, runSync } from "../support/single-execution-fixtures.ts";
+import {
+  createNestedRoute,
+  nestedResultsPath,
+  projectNestedEvents,
+  writeNestedEvent,
+} from "../../src/runs/shared/nested-events.ts";
 import {
   lifecycleGeneration,
   transitionLifecycleStatus,
@@ -30,6 +40,7 @@ import {
   type AsyncResultPayload,
   type AsyncStatusPayload,
   RESULTS_DIR,
+  TEMP_ROOT_DIR,
   executeAsyncParallel,
   executeAsyncSingle,
   readAsyncPayload,
@@ -39,12 +50,105 @@ import {
   waitForAsyncResultFile,
   waitForAsyncState,
   waitForAsyncStatusPredicate,
+  waitForMarker,
   waitForMockPiCall,
   waitForMockPiSignal,
   waitForPidsToExit,
   writeLifecycleLock,
 } from "../support/async-execution-helpers.ts";
+import {
+  getAsyncConfigPath,
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  type ResolvedControlConfig,
+} from "../../src/shared/types.ts";
+import {
+  SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
+  SUBAGENT_PARENT_CHILD_INDEX_ENV,
+  SUBAGENT_PARENT_CONTROL_INBOX_ENV,
+  SUBAGENT_PARENT_DEPTH_ENV,
+  SUBAGENT_PARENT_EVENT_SINK_ENV,
+  SUBAGENT_PARENT_PATH_ENV,
+  SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
+  SUBAGENT_PARENT_RUN_ID_ENV,
+} from "../../src/runs/shared/pi-args.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { appendSubagentTelemetryContinuation } from "../../src/shared/telemetry.ts";
+
+const NESTED_ROUTE_ENV_KEYS = [
+  SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
+  SUBAGENT_PARENT_CHILD_INDEX_ENV,
+  SUBAGENT_PARENT_CONTROL_INBOX_ENV,
+  SUBAGENT_PARENT_DEPTH_ENV,
+  SUBAGENT_PARENT_EVENT_SINK_ENV,
+  SUBAGENT_PARENT_PATH_ENV,
+  SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
+  SUBAGENT_PARENT_RUN_ID_ENV,
+] as const;
+
+type NestedRoute = ReturnType<typeof createNestedRoute>;
+
+type NestedLifecycleEvent = {
+  type?: string;
+  child?: {
+    id?: string;
+    parentRunId?: string;
+    parentStepIndex?: number;
+    depth?: number;
+    state?: string;
+    asyncDir?: string;
+    steps?: Array<{ agent?: string; status?: string }>;
+  };
+};
+
+function setNestedRouteEnv(route: NestedRoute, parentRunId = route.rootRunId): () => void {
+  const previous = new Map(NESTED_ROUTE_ENV_KEYS.map((key) => [key, process.env[key]] as const));
+  process.env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV] = route.capabilityToken;
+  process.env[SUBAGENT_PARENT_CHILD_INDEX_ENV] = "0";
+  process.env[SUBAGENT_PARENT_CONTROL_INBOX_ENV] = route.controlInbox;
+  process.env[SUBAGENT_PARENT_DEPTH_ENV] = "1";
+  process.env[SUBAGENT_PARENT_EVENT_SINK_ENV] = route.eventSink;
+  process.env[SUBAGENT_PARENT_PATH_ENV] = JSON.stringify([{ runId: parentRunId, stepIndex: 0 }]);
+  process.env[SUBAGENT_PARENT_ROOT_RUN_ID_ENV] = route.rootRunId;
+  process.env[SUBAGENT_PARENT_RUN_ID_ENV] = parentRunId;
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+function readNestedLifecycleEvents(route: NestedRoute): NestedLifecycleEvent[] {
+  return fs
+    .readdirSync(route.eventSink)
+    .filter((name) => name.endsWith(".json") || name.endsWith(".jsonl"))
+    .sort()
+    .flatMap((name) => {
+      const content = fs.readFileSync(path.join(route.eventSink, name), "utf-8");
+      return content
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as NestedLifecycleEvent);
+    });
+}
+
+function readRunEvents(asyncDir: string): Array<Record<string, unknown>> {
+  const eventsPath = path.join(asyncDir, "events.jsonl");
+  if (!fs.existsSync(eventsPath)) return [];
+  return fs
+    .readFileSync(eventsPath, "utf-8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function waitForFile(filePath: string, label: string): Promise<void> {
+  const deadline = Date.now() + scaleTestTimeout(15_000);
+  while (!fs.existsSync(filePath)) {
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for ${label}: ${filePath}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
 
 describe("async execution utilities", () => {
   let tempDir: string;
@@ -67,6 +171,305 @@ describe("async execution utilities", () => {
   afterEach(() => {
     removeTempDir(tempDir);
   });
+
+  it(
+    "real nested supervisor pauses publish one canonical completion with and without telemetry",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process supervisor pause delivery unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const controlConfig: ResolvedControlConfig = {
+        enabled: true,
+        needsAttentionAfterMs: 2_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      };
+      const telemetryProvenance = {
+        tlhVersion: "nested-runner-test-tlh",
+        piVersion: "nested-runner-test-pi",
+        installGeneration: "nested-runner-test-generation",
+        loadedAt: 123,
+      };
+
+      for (const withTelemetry of [false, true]) {
+        const rootRunId = `nested-runner-parent-${withTelemetry ? "telemetry" : "plain"}`;
+        const id = `nested-runner-pause-${withTelemetry ? "telemetry" : "plain"}-${Date.now().toString(36)}`;
+        const nestedRoute = createNestedRoute(rootRunId);
+        const restoreNestedRouteEnv = setNestedRouteEnv(nestedRoute);
+        const asyncDir = path.join(
+          TEMP_ROOT_DIR,
+          "nested-subagent-runs",
+          nestedRoute.rootRunId,
+          id,
+        );
+        const resultPath = nestedResultsPath(nestedRoute.rootRunId, id);
+        try {
+          mockPi.onCall({
+            steps: [
+              {
+                jsonl: [
+                  events.toolStart("contact_supervisor", {
+                    reason: "need_decision",
+                    message: "Need a nested supervisor decision",
+                  }),
+                ],
+              },
+            ],
+            ignoreSigint: true,
+            keepAliveAfterFinalMessageMs: 5_000,
+          });
+
+          const started = executeAsyncSingle!(id, {
+            agent: "worker",
+            task: "Ask for a supervisor decision and stop there.",
+            agentConfig: makeAgent("worker"),
+            ctx: {
+              pi: { events: { emit() {} } },
+              cwd: tempDir,
+              currentSessionId: `nested-session-${withTelemetry ? "telemetry" : "plain"}`,
+            },
+            artifactConfig: {
+              enabled: false,
+              includeInput: false,
+              includeOutput: false,
+              includeJsonl: false,
+              includeMetadata: false,
+              cleanupDays: 7,
+            },
+            shareEnabled: false,
+            maxSubagentDepth: 2,
+            nestedRoute,
+            nestedSelf: {
+              parentRunId: nestedRoute.rootRunId,
+              parentStepIndex: 0,
+              depth: 1,
+              path: [{ runId: nestedRoute.rootRunId, stepIndex: 0 }],
+            },
+            ...(withTelemetry ? { controlConfig, telemetryProvenance } : {}),
+          });
+          assert.equal(started.isError, undefined, started.content[0]?.text ?? "");
+
+          const status = await waitForAsyncStatusPredicate(
+            asyncDir,
+            (candidate) => candidate.state === "paused",
+            `nested supervisor pause (${withTelemetry ? "telemetry" : "plain"})`,
+          );
+          await waitForFile(resultPath, "nested supervisor result");
+          const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+          const nestedEvents = readNestedLifecycleEvents(nestedRoute);
+          const nestedCompletions = nestedEvents.filter(
+            (event) => event.type === "subagent.nested.completed",
+          );
+          assert.equal(
+            nestedCompletions.length,
+            1,
+            "nested supervisor pause must publish exactly one completion edge",
+          );
+          assert.equal(nestedCompletions[0]?.child?.id, id);
+          assert.equal(nestedCompletions[0]?.child?.state, "paused");
+          assert.equal(nestedCompletions[0]?.child?.steps?.[0]?.status, "paused");
+
+          assert.equal(status.runId, id);
+          assert.equal(status.state, "paused");
+          assert.equal(status.pid, undefined);
+          assert.equal(status.pause?.kind, "awaiting_supervisor");
+          assert.equal(status.steps?.[0]?.status, "paused");
+          assert.equal(result.id, id);
+          assert.equal(result.state, "paused");
+          assert.equal(result.success, false);
+          assert.equal(result.exitCode, 0);
+          assert.equal(result.pause?.kind, "awaiting_supervisor");
+          assert.ok(result.results.length > 0);
+
+          if (withTelemetry) {
+            assert.ok(status.telemetry, "telemetry-enabled nested status must carry telemetry");
+            assert.deepEqual(result.telemetry, status.telemetry);
+            assert.deepEqual(status.telemetry?.provenance, telemetryProvenance);
+          } else {
+            assert.equal(status.telemetry, undefined);
+            assert.equal(result.telemetry, undefined);
+          }
+
+          const projection = projectNestedEvents(nestedRoute);
+          assert.equal(projection.children.length, 1);
+          const projectedChild = projection.children[0]!;
+          assert.equal(projectedChild.id, id);
+          assert.equal(projectedChild.parentRunId, nestedRoute.rootRunId);
+          assert.equal(projectedChild.parentStepIndex, 0);
+          assert.equal(projectedChild.depth, 1);
+          assert.equal(projectedChild.state, "paused");
+          assert.equal(projectedChild.mode, "single");
+          assert.equal(projectedChild.agent, "worker");
+          assert.equal(projectedChild.asyncDir, asyncDir);
+          assert.equal(projectedChild.steps?.[0]?.agent, "worker");
+          assert.equal(projectedChild.steps?.[0]?.status, "paused");
+
+          const runCompletions = readRunEvents(asyncDir).filter(
+            (event) => event.type === "subagent.run.completed",
+          );
+          assert.equal(runCompletions.length, 1);
+          assert.equal(runCompletions[0]?.status, "paused");
+        } finally {
+          restoreNestedRouteEnv();
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          fs.rmSync(resultPath, { force: true });
+          fs.rmSync(path.dirname(nestedRoute.eventSink), { recursive: true, force: true });
+        }
+      }
+    },
+  );
+
+  it(
+    "real nested supervisor terminal adoption emits one canonical completion edge",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process supervisor pause delivery unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const markerDir = path.join(tempDir, "nested-terminal-adoption-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const releaseMarker = path.join(markerDir, "child-release");
+      const rootRunId = `nested-adoption-parent-${Date.now().toString(36)}`;
+      const id = `nested-adoption-child-${Date.now().toString(36)}`;
+      const nestedRoute = createNestedRoute(rootRunId);
+      const restoreNestedRouteEnv = setNestedRouteEnv(nestedRoute);
+      const asyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId, id);
+      const resultPath = nestedResultsPath(rootRunId, id);
+      try {
+        mockPi.onCall({
+          ignoreSigint: true,
+          ignoreSigterm: true,
+          steps: [
+            {
+              jsonl: [
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need the adopted terminal decision",
+                }),
+              ],
+            },
+            { waitForMarker: releaseMarker },
+          ],
+        });
+
+        const started = executeAsyncSingle!(id, {
+          agent: "worker",
+          task: "Ask for a supervisor decision and remain interruptible.",
+          agentConfig: makeAgent("worker"),
+          ctx: {
+            pi: { events: { emit() {} } },
+            cwd: tempDir,
+            currentSessionId: "nested-adoption-session",
+          },
+          artifactConfig: {
+            enabled: false,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: false,
+            includeMetadata: false,
+            cleanupDays: 7,
+          },
+          shareEnabled: false,
+          maxSubagentDepth: 2,
+          nestedRoute,
+          nestedSelf: {
+            parentRunId: nestedRoute.rootRunId,
+            parentStepIndex: 0,
+            depth: 1,
+            path: [{ runId: nestedRoute.rootRunId, stepIndex: 0 }],
+          },
+        });
+        assert.equal(started.isError, undefined, started.content[0]?.text ?? "");
+
+        const pausingStatus = await waitForAsyncStatusPredicate(
+          asyncDir,
+          (candidate) =>
+            candidate.state === "pausing" &&
+            typeof (candidate as AsyncStatusPayload & { pid?: number }).pid === "number",
+          "nested supervisor pausing before terminal adoption",
+        );
+        const cancelledAt = Date.now();
+        transitionLifecycleStatus({
+          asyncDir,
+          expectedGeneration: lifecycleGeneration(
+            pausingStatus as Parameters<typeof lifecycleGeneration>[0],
+          ),
+          mutate: (status) => ({
+            ...status,
+            state: "cancelled" as const,
+            pid: undefined,
+            cancel: { summary: "nested terminal adoption test cancellation", cancelledAt },
+            endedAt: cancelledAt,
+            lastUpdate: cancelledAt,
+            steps: status.steps?.map((step) => ({
+              ...step,
+              status: "cancelled" as const,
+              endedAt: cancelledAt,
+              exitCode: 0,
+              pause: undefined,
+              cancel: { summary: "nested terminal adoption test cancellation", cancelledAt },
+            })),
+          }),
+        });
+
+        const adoptedStatus = JSON.parse(
+          fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+        ) as AsyncStatusPayload;
+        assert.equal(adoptedStatus.state, "cancelled");
+        assert.equal(adoptedStatus.cancel?.summary, "nested terminal adoption test cancellation");
+
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        await waitForFile(resultPath, "nested terminal adoption result");
+        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+        const finalStatus = JSON.parse(
+          fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+        ) as AsyncStatusPayload;
+        assert.equal(finalStatus.state, "cancelled");
+        assert.equal(finalStatus.steps?.[0]?.status, "cancelled");
+        assert.equal(result.id, id);
+        assert.equal(result.state, "cancelled");
+        assert.equal(result.success, false);
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.telemetry, undefined);
+
+        const nestedCompletions = readNestedLifecycleEvents(nestedRoute).filter(
+          (event) => event.type === "subagent.nested.completed",
+        );
+        assert.equal(
+          nestedCompletions.length,
+          1,
+          "concurrent terminal adoption must not duplicate the nested completion edge",
+        );
+        assert.equal(nestedCompletions[0]?.child?.id, id);
+        assert.equal(nestedCompletions[0]?.child?.state, "failed");
+        assert.equal(nestedCompletions[0]?.child?.steps?.[0]?.status, "failed");
+
+        const projection = projectNestedEvents(nestedRoute);
+        assert.equal(projection.children.length, 1);
+        assert.equal(projection.children[0]?.id, id);
+        assert.equal(projection.children[0]?.state, "failed");
+        assert.equal(projection.children[0]?.steps?.[0]?.status, "failed");
+
+        const runCompletions = readRunEvents(asyncDir).filter(
+          (event) => event.type === "subagent.run.completed",
+        );
+        assert.equal(runCompletions.length, 1);
+        assert.equal(runCompletions[0]?.status, "cancelled");
+      } finally {
+        restoreNestedRouteEnv();
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(resultPath, { force: true });
+        fs.rmSync(path.dirname(nestedRoute.eventSink), { recursive: true, force: true });
+      }
+    },
+  );
+
   it(
     "fails closed instead of publishing paused awaiting-supervisor while a nested descendant remains active",
     {
@@ -76,8 +479,12 @@ describe("async execution utilities", () => {
           : undefined,
     },
     async () => {
+      const rootRunId = `async-supervisor-nested-parent-${Date.now().toString(36)}`;
       const id = `async-supervisor-nested-active-${Date.now().toString(36)}`;
-      const nestedRoute = createNestedRoute(id);
+      const nestedRoute = createNestedRoute(rootRunId);
+      const restoreNestedRouteEnv = setNestedRouteEnv(nestedRoute);
+      const asyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId, id);
+      const resultPath = nestedResultsPath(rootRunId, id);
       try {
         mockPi.onCall({
           steps: [
@@ -93,7 +500,7 @@ describe("async execution utilities", () => {
           ignoreSigint: true,
           keepAliveAfterFinalMessageMs: 5_000,
         });
-        executeAsyncSingle!(id, {
+        const started = executeAsyncSingle!(id, {
           agent: "worker",
           task: "Ask for a supervisor decision and stop there.",
           agentConfig: makeAgent("worker"),
@@ -110,8 +517,14 @@ describe("async execution utilities", () => {
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
           nestedRoute,
+          nestedSelf: {
+            parentRunId: rootRunId,
+            parentStepIndex: 0,
+            depth: 1,
+            path: [{ runId: rootRunId, stepIndex: 0 }],
+          },
         });
-        const asyncDir = path.join(ASYNC_DIR, id);
+        assert.equal(started.isError, undefined, started.content[0]?.text ?? "");
         const pausingStatus = await waitForAsyncStatusPredicate(
           asyncDir,
           (status) =>
@@ -119,25 +532,31 @@ describe("async execution utilities", () => {
             typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
           "pausing before nested descendant gate",
         );
+        const nestedChildId = `${id}-nested-live`;
         writeNestedEvent(nestedRoute, {
           type: "subagent.nested.started",
           ts: Date.now(),
           parentRunId: id,
           parentStepIndex: 0,
           child: {
-            id: `${id}-nested-live`,
+            id: nestedChildId,
             parentRunId: id,
             parentStepIndex: 0,
-            depth: 1,
-            path: [{ runId: id, stepIndex: 0 }],
+            depth: 2,
+            path: [
+              { runId: rootRunId, stepIndex: 0 },
+              { runId: id, stepIndex: 0 },
+            ],
             asyncDir: path.join(asyncDir, "nested-live"),
+            ownerState: "live",
             state: "running",
             agent: "nested-worker",
             startedAt: Date.now(),
             lastUpdate: Date.now(),
           },
         });
-        const payload = await readAsyncPayload(id);
+        await waitForFile(resultPath, "failed async supervisor nested descendant result");
+        const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
         const persistedStatus = JSON.parse(
           fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
         ) as AsyncStatusPayload;
@@ -155,11 +574,29 @@ describe("async execution utilities", () => {
         assert.equal((persistedStatus as AsyncStatusPayload & { pid?: number }).pid, undefined);
         assert.equal(persistedStatus.pause, undefined);
         assert.equal(persistedStatus.steps?.[0]?.processCleanup?.terminated, true);
+
+        const nestedCompletions = readNestedLifecycleEvents(nestedRoute).filter(
+          (event) => event.type === "subagent.nested.completed",
+        );
+        assert.equal(
+          nestedCompletions.length,
+          1,
+          "nested supervisor failure must publish exactly one completion edge",
+        );
+        assert.equal(nestedCompletions[0]?.child?.id, id);
+        assert.equal(nestedCompletions[0]?.child?.parentRunId, rootRunId);
+        assert.equal(nestedCompletions[0]?.child?.depth, 1);
+        assert.equal(nestedCompletions[0]?.child?.state, "failed");
+        assert.equal(nestedCompletions[0]?.child?.steps?.[0]?.status, "failed");
+
         await waitForPidsToExit(
           [pausingStatus.pid as number | undefined, ...startedMockPiPids(mockPi)],
           `failed async supervisor nested descendant ${id}`,
         );
       } finally {
+        restoreNestedRouteEnv();
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(resultPath, { force: true });
         fs.rmSync(path.dirname(nestedRoute.eventSink), { recursive: true, force: true });
       }
     },
@@ -545,6 +982,359 @@ describe("async execution utilities", () => {
         "cancelled",
         "result artifact must reflect the adopted cancelled state, not stale paused",
       );
+    },
+  );
+
+  it(
+    "adopts canonical continuation telemetry when a resumed source settles concurrently",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process lifecycle race unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const markerDir = path.join(tempDir, "async-telemetry-adoption-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const readyMarker = path.join(markerDir, "source-ready");
+      const releaseMarker = path.join(markerDir, "source-release");
+      const sourceRunId = `async-telemetry-adoption-${Date.now().toString(36)}`;
+      const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+      const sourceSessionFile = path.join(tempDir, "source-session.jsonl");
+      const provenance = {
+        tlhVersion: "race-tlh",
+        piVersion: "race-pi",
+        installGeneration: "race-generation",
+        loadedAt: 123,
+      };
+      const controlConfig: ResolvedControlConfig = {
+        enabled: true,
+        needsAttentionAfterMs: 2_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      };
+
+      // Keep the source child alive after the interrupt. The real resume action
+      // can then commit the continuation edge and terminal source state before
+      // the source runner performs its post-child terminal write.
+      mockPi.onCall({
+        ignoreSigint: true,
+        ignoreSigterm: true,
+        steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+        output: "source work complete",
+      });
+      mockPi.onCall({ output: "continuation work complete" });
+
+      let continuationRunId: string | undefined;
+      try {
+        const sourceStart = executeAsyncSingle!(sourceRunId, {
+          agent: "worker",
+          task: "Source work for the telemetry race.",
+          agentConfig: makeAgent("worker"),
+          ctx: {
+            pi: { events: { emit() {} } },
+            cwd: tempDir,
+            currentSessionId: "session-123",
+          },
+          artifactConfig: {
+            enabled: false,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: false,
+            includeMetadata: false,
+            cleanupDays: 7,
+          },
+          shareEnabled: false,
+          sessionRoot: path.join(tempDir, "sessions"),
+          sessionFile: sourceSessionFile,
+          maxSubagentDepth: 2,
+          controlConfig,
+          telemetryProvenance: provenance,
+        });
+        assert.equal(sourceStart.isError, undefined, sourceStart.content[0]?.text ?? "");
+
+        await waitForMarker(readyMarker);
+        requestAsyncInterrupt(sourceAsyncDir, { source: "async-telemetry-adoption-test" });
+        await waitForAsyncState(sourceAsyncDir, "paused");
+
+        assert.ok(createSubagentExecutor, "foreground executor fixture is available");
+        assert.ok(runSync, "foreground execution fixture is available");
+        const executor = createSubagentExecutor({
+          pi: { events: createEventBus(), getSessionName: () => undefined },
+          state: makeSubagentState({ baseCwd: tempDir }),
+          config: { maxSubagentDepth: 2, control: controlConfig },
+          tempArtifactsDir: tempDir,
+          getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+          expandTilde: (value: string) => value,
+          discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+          runSync,
+          telemetryProvenance: provenance,
+        });
+        const resume = await executor.execute(
+          "async-telemetry-adoption-resume",
+          { action: "resume", id: sourceRunId, message: "Continue the source work." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(resume.isError, undefined, resume.content[0]?.text ?? "");
+        continuationRunId = resume.details?.asyncId;
+        assert.ok(continuationRunId, "resume must return the continuation run id");
+
+        const targetConfig = JSON.parse(
+          fs.readFileSync(getAsyncConfigPath(continuationRunId), "utf-8"),
+        ) as {
+          telemetry?: {
+            provenance?: typeof provenance;
+            lineage?: { continuationFrom?: { sourceRunId?: string; sourceStepIndex?: number } };
+          };
+        };
+        assert.deepEqual(targetConfig.telemetry?.provenance, provenance);
+        assert.deepEqual(targetConfig.telemetry?.lineage?.continuationFrom, {
+          sourceRunId,
+          sourceStepIndex: 0,
+        });
+
+        await waitForAsyncStatusPredicate(
+          sourceAsyncDir,
+          (status) =>
+            status.state === "continued" &&
+            status.telemetry?.lineage?.continuations?.some(
+              (continuation) => continuation.continuationRunId === continuationRunId,
+            ) === true,
+          "source continuation terminal telemetry",
+        );
+
+        // The source runner is still draining its interrupted child. Releasing
+        // it now forces the concurrent-terminal adoption path before result write.
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const resultPath = await waitForAsyncResultFile(sourceRunId);
+        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+        const status = JSON.parse(
+          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
+        ) as AsyncStatusPayload;
+
+        assert.equal(status.state, "continued");
+        assert.equal(result.state, "continued");
+        assert.ok(status.telemetry, "source status must retain canonical telemetry");
+        assert.deepEqual(result.telemetry, status.telemetry);
+        assert.deepEqual(status.telemetry?.provenance, provenance);
+        assert.deepEqual(status.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(status.telemetry?.outcome?.state, "continued");
+        assert.equal(status.telemetry?.steps[0]?.outcome?.state, "continued");
+
+        const completionEvents: unknown[] = [];
+        const completionEventsBus = createEventBus();
+        completionEventsBus.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (payload) => {
+          completionEvents.push(payload);
+        });
+        const watcher = createResultWatcher(
+          { events: completionEventsBus },
+          makeSubagentState({ currentSessionId: "session-123" }),
+          RESULTS_DIR,
+          60_000,
+        );
+        try {
+          watcher.primeExistingResults();
+          const deadline = Date.now() + scaleTestTimeout(10_000);
+          while (
+            !completionEvents.some(
+              (payload) =>
+                typeof payload === "object" &&
+                payload !== null &&
+                (payload as { runId?: unknown }).runId === sourceRunId,
+            )
+          ) {
+            if (Date.now() > deadline)
+              assert.fail("Timed out waiting for adopted source completion telemetry");
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        } finally {
+          watcher.stopResultWatcher();
+        }
+        const completion = completionEvents.find(
+          (payload): payload is AsyncResultPayload & { runId: string } =>
+            typeof payload === "object" &&
+            payload !== null &&
+            (payload as { runId?: unknown }).runId === sourceRunId,
+        );
+        assert.ok(completion, "completion notification must include the source run");
+        assert.deepEqual(completion.telemetry, status.telemetry);
+        assert.deepEqual(completion.telemetry?.provenance, provenance);
+        assert.deepEqual(completion.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(completion.telemetry?.outcome?.state, "continued");
+      } finally {
+        // Release first so an assertion failure cannot strand the blocking mock
+        // child. The normal path has already consumed both result artifacts.
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+        if (continuationRunId) {
+          fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
+        }
+        fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
+        if (continuationRunId) {
+          fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
+          fs.rmSync(getAsyncConfigPath(continuationRunId), { force: true });
+        }
+      }
+    },
+  );
+
+  it(
+    "uses post-write canonical telemetry when a resume edge arrives while the source remains paused",
+    {
+      skip:
+        process.platform === "win32"
+          ? "cross-process lifecycle race unreliable on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const markerDir = path.join(tempDir, "async-telemetry-paused-edge-markers");
+      fs.mkdirSync(markerDir, { recursive: true });
+      const readyMarker = path.join(markerDir, "source-ready");
+      const releaseMarker = path.join(markerDir, "source-release");
+      const sourceRunId = `async-telemetry-paused-edge-${Date.now().toString(36)}`;
+      const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+      const sessionId = "session-telemetry-paused-edge";
+      const provenance = {
+        tlhVersion: "paused-edge-tlh",
+        piVersion: "paused-edge-pi",
+        installGeneration: "paused-edge-generation",
+        loadedAt: 321,
+      };
+      const controlConfig: ResolvedControlConfig = {
+        enabled: true,
+        needsAttentionAfterMs: 2_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      };
+
+      mockPi.onCall({
+        ignoreSigint: true,
+        ignoreSigterm: true,
+        steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+        output: "source work complete",
+      });
+
+      try {
+        const started = executeAsyncSingle!(sourceRunId, {
+          agent: "worker",
+          task: "Source work for the paused telemetry edge race.",
+          agentConfig: makeAgent("worker"),
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+          artifactConfig: {
+            enabled: false,
+            includeInput: false,
+            includeOutput: false,
+            includeJsonl: false,
+            includeMetadata: false,
+            cleanupDays: 7,
+          },
+          shareEnabled: false,
+          sessionRoot: path.join(tempDir, "sessions"),
+          maxSubagentDepth: 2,
+          controlConfig,
+          telemetryProvenance: provenance,
+        });
+        assert.equal(started.isError, undefined, started.content[0]?.text ?? "");
+
+        await waitForMarker(readyMarker);
+        requestAsyncInterrupt(sourceAsyncDir, { source: "paused-telemetry-edge-test" });
+        const pausedStatus = await waitForAsyncStatusPredicate(
+          sourceAsyncDir,
+          (status) => status.state === "paused",
+          "paused source before resume telemetry edge",
+        );
+        const continuationRunId = `${sourceRunId}-continuation`;
+        const edge = appendSubagentTelemetryContinuation(pausedStatus.telemetry, {
+          sourceStepIndex: 0,
+          continuationRunId,
+        });
+        assert.ok(edge, "paused source status must already carry telemetry");
+        const edgeAt = Date.now();
+        const edgeTransition = transitionLifecycleStatus({
+          asyncDir: sourceAsyncDir,
+          expectedGeneration: lifecycleGeneration(pausedStatus),
+          mutate: (status) => ({
+            ...status,
+            telemetry: edge,
+            lastUpdate: edgeAt,
+          }),
+        });
+        assert.equal(edgeTransition.status.state, "paused");
+        assert.deepEqual(edgeTransition.status.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+
+        // The source is still paused: release it only after the resume actor's
+        // lineage write. Its locked terminal write must carry this edge into all
+        // terminal telemetry carriers.
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        const resultPath = await waitForAsyncResultFile(sourceRunId);
+        const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+          state?: string;
+          telemetry?: unknown;
+        };
+        const status = JSON.parse(
+          fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8"),
+        ) as AsyncStatusPayload;
+        assert.equal(status.state, "paused");
+        assert.equal(result.state, "paused");
+        assert.deepEqual(result.telemetry, status.telemetry);
+        assert.deepEqual(status.telemetry?.provenance, provenance);
+        assert.deepEqual(status.telemetry?.lineage?.continuations, [
+          { sourceStepIndex: 0, continuationRunId },
+        ]);
+        assert.equal(status.telemetry?.outcome?.state, "paused");
+
+        const completionEvents: unknown[] = [];
+        const completionEventsBus = createEventBus();
+        completionEventsBus.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (payload) => {
+          completionEvents.push(payload);
+        });
+        const watcher = createResultWatcher(
+          { events: completionEventsBus },
+          makeSubagentState({ currentSessionId: sessionId }),
+          RESULTS_DIR,
+          60_000,
+        );
+        try {
+          watcher.primeExistingResults();
+          const deadline = Date.now() + scaleTestTimeout(10_000);
+          while (
+            !completionEvents.some(
+              (payload) =>
+                typeof payload === "object" &&
+                payload !== null &&
+                (payload as { runId?: unknown }).runId === sourceRunId,
+            )
+          ) {
+            if (Date.now() > deadline)
+              assert.fail("Timed out waiting for paused resume-edge completion telemetry");
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+        } finally {
+          watcher.stopResultWatcher();
+        }
+        const completion = completionEvents.find(
+          (payload): payload is { runId: string; telemetry?: unknown } =>
+            typeof payload === "object" &&
+            payload !== null &&
+            (payload as { runId?: unknown }).runId === sourceRunId,
+        );
+        assert.ok(completion, "completion notification must include the paused source run");
+        assert.deepEqual(completion.telemetry, status.telemetry);
+      } finally {
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+        fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+        fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
+      }
     },
   );
 

@@ -1,15 +1,22 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.js";
 import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./completion-batcher.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
+import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { acceptanceRejectionReason } from "../shared/acceptance.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
-const MAX_GROUPED_ENTRIES = 8;
+export const MAX_GROUPED_ENTRIES = 8;
+export const MAX_COMPLETION_BATCH_CHUNKS = 64;
+export const MAX_COMPLETION_BATCH_ENTRIES = MAX_COMPLETION_BATCH_CHUNKS * MAX_GROUPED_ENTRIES;
+export const MAX_COMPLETION_FLUSH_BATCHES = 256;
+export const SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION = 1;
+export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch";
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
@@ -18,6 +25,93 @@ const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
+let completionBatchIdentitySequence = 0;
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isCompletionStatus(value) {
+    return value === "completed" || value === "failed" || value === "paused";
+}
+export function isSubagentNotifyDetails(value) {
+    if (!isRecord(value) ||
+        typeof value.agent !== "string" ||
+        !isCompletionStatus(value.status) ||
+        typeof value.resultPreview !== "string") {
+        return false;
+    }
+    if (value.durationMs !== undefined &&
+        (typeof value.durationMs !== "number" ||
+            !Number.isFinite(value.durationMs) ||
+            value.durationMs < 0)) {
+        return false;
+    }
+    return value.asyncId === undefined || normalizeAsyncIdentifier(value.asyncId) !== undefined;
+}
+function isCompletionBatchEntry(value) {
+    if (!isRecord(value) ||
+        typeof value.agent !== "string" ||
+        value.agent.length > MAX_LABEL_CHARS ||
+        hasUnsafeIdentifierCharacters(value.agent) ||
+        !isCompletionStatus(value.status)) {
+        return false;
+    }
+    if (value.durationMs !== undefined &&
+        (typeof value.durationMs !== "number" ||
+            !Number.isFinite(value.durationMs) ||
+            value.durationMs < 0)) {
+        return false;
+    }
+    if (value.asyncId !== undefined && normalizeAsyncIdentifier(value.asyncId) === undefined) {
+        return false;
+    }
+    return (value.telemetry === undefined || normalizeSubagentRunTelemetry(value.telemetry) !== undefined);
+}
+export function isSubagentCompletionBatchDetails(value) {
+    if (!isRecord(value))
+        return false;
+    const batchIndex = value.batchIndex;
+    const batchCount = value.batchCount;
+    const flushId = value.flushId;
+    const flushIndex = value.flushIndex;
+    const flushCount = value.flushCount;
+    const flushMetadataInvalid = (flushId === undefined) !== (flushIndex === undefined) ||
+        (flushIndex === undefined) !== (flushCount === undefined) ||
+        (flushId !== undefined &&
+            (typeof flushId !== "string" ||
+                flushId.length === 0 ||
+                flushId.length > MAX_ASYNC_ID_CHARS ||
+                hasUnsafeIdentifierCharacters(flushId))) ||
+        (flushIndex !== undefined &&
+            (typeof flushIndex !== "number" || !Number.isSafeInteger(flushIndex) || flushIndex < 0)) ||
+        (flushCount !== undefined &&
+            (typeof flushCount !== "number" ||
+                !Number.isSafeInteger(flushCount) ||
+                flushCount < 1 ||
+                flushCount > MAX_COMPLETION_FLUSH_BATCHES)) ||
+        (typeof flushIndex === "number" && typeof flushCount === "number" && flushIndex >= flushCount);
+    if (value.schemaVersion !== SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION ||
+        value.kind !== SUBAGENT_COMPLETION_BATCH_KIND ||
+        typeof value.batchId !== "string" ||
+        value.batchId.length === 0 ||
+        value.batchId.length > MAX_ASYNC_ID_CHARS ||
+        hasUnsafeIdentifierCharacters(value.batchId) ||
+        typeof batchIndex !== "number" ||
+        !Number.isSafeInteger(batchIndex) ||
+        batchIndex < 0 ||
+        typeof batchCount !== "number" ||
+        !Number.isSafeInteger(batchCount) ||
+        batchCount < 1 ||
+        batchCount > MAX_COMPLETION_BATCH_CHUNKS ||
+        batchIndex >= batchCount ||
+        flushMetadataInvalid ||
+        typeof value.triggersTurn !== "boolean" ||
+        !Array.isArray(value.completions) ||
+        value.completions.length === 0 ||
+        value.completions.length > MAX_GROUPED_ENTRIES) {
+        return false;
+    }
+    return value.completions.every(isCompletionBatchEntry);
+}
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
@@ -522,40 +616,99 @@ export function formatGroupedCompletion(details) {
     return blocks.join("\n").trimEnd();
 }
 const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
+function serializeCompletionBatchEntry(details) {
+    const asyncId = normalizeAsyncIdentifier(details.asyncId);
+    const telemetry = normalizeSubagentRunTelemetry(details.telemetry);
+    return {
+        agent: boundedLabel(details.agent),
+        status: details.status,
+        ...(typeof details.durationMs === "number" &&
+            Number.isFinite(details.durationMs) &&
+            details.durationMs >= 0
+            ? { durationMs: details.durationMs }
+            : {}),
+        ...(asyncId ? { asyncId } : {}),
+        ...(telemetry ? { telemetry } : {}),
+    };
+}
+function createCompletionBatchIdentity() {
+    const sequence = completionBatchIdentitySequence++;
+    return `${randomUUID()}-${sequence.toString(36)}`;
+}
+function sendNudge(pi, options) {
+    if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+    }
+}
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     if (details.length === 0)
         return;
     const formatted = details.length === 1 ? formatSingleCompletion(details[0]) : formatGroupedCompletion(details);
     const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
-    const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0] ?? {};
-    const structuredDetails = details.length === 1
-        ? {
-            ...serializableDetail,
-            resultPreview: boundedSummary(details[0].resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
-            ...(details[0].sessionValue
-                ? { sessionValue: boundedReference(details[0].sessionValue) }
-                : {}),
-            ...(details[0].awaitingSupervisor && details[0].resumeTarget
-                ? {
-                    resumeTarget: {
-                        ...(details[0].resumeTarget.index !== undefined
-                            ? { index: details[0].resumeTarget.index }
-                            : {}),
-                        ...(details[0].resumeTarget.childCount !== undefined
-                            ? { childCount: details[0].resumeTarget.childCount }
-                            : {}),
-                    },
-                }
-                : {}),
+    if (details.length === 1) {
+        const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0];
+        pi.sendMessage({
+            customType: "subagent-notify",
+            content,
+            display: true,
+            details: {
+                ...serializableDetail,
+                resultPreview: boundedSummary(details[0].resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
+                ...(details[0].sessionValue
+                    ? { sessionValue: boundedReference(details[0].sessionValue) }
+                    : {}),
+                ...(details[0].awaitingSupervisor && details[0].resumeTarget
+                    ? {
+                        resumeTarget: {
+                            ...(details[0].resumeTarget.index !== undefined
+                                ? { index: details[0].resumeTarget.index }
+                                : {}),
+                            ...(details[0].resumeTarget.childCount !== undefined
+                                ? { childCount: details[0].resumeTarget.childCount }
+                                : {}),
+                        },
+                    }
+                    : {}),
+            },
+        });
+        sendNudge(pi, options);
+        return;
+    }
+    const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
+    const flushId = createCompletionBatchIdentity();
+    const completions = details.map(serializeCompletionBatchEntry);
+    let triggersTurn = false;
+    for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
+        const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
+        const logicalCompletions = completions.slice(logicalStart, logicalStart + MAX_COMPLETION_BATCH_ENTRIES);
+        const batchCount = Math.ceil(logicalCompletions.length / MAX_GROUPED_ENTRIES);
+        const batchId = createCompletionBatchIdentity();
+        for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
+            const start = batchIndex * MAX_GROUPED_ENTRIES;
+            const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
+            const isFinalChunk = logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
+            triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+            const batchDetails = {
+                schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
+                kind: SUBAGENT_COMPLETION_BATCH_KIND,
+                batchId,
+                batchIndex,
+                batchCount,
+                flushId,
+                flushIndex: logicalBatchIndex,
+                flushCount: logicalBatchCount,
+                triggersTurn,
+                completions: batchCompletions,
+            };
+            pi.sendMessage({
+                customType: "subagent-notify",
+                content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
+                display: logicalBatchIndex === 0 && batchIndex === 0,
+                details: batchDetails,
+            });
         }
-        : undefined;
-    pi.sendMessage({
-        customType: "subagent-notify",
-        content,
-        display: true,
-        ...(structuredDetails ? { details: structuredDetails } : {}),
-    });
-    if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+    }
+    if (triggersTurn) {
         pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
     }
 }
@@ -605,6 +758,7 @@ export function buildCompletionDetails(result) {
                     : undefined;
     const asyncId = resolveAsyncIdentifier(result);
     const resumeTarget = resolveResumeTarget(result, asyncId);
+    const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
     return {
         agent,
         status,
@@ -619,6 +773,7 @@ export function buildCompletionDetails(result) {
             result.pause?.kind === "awaiting_supervisor"
             ? { awaitingSupervisor: true }
             : {}),
+        ...(telemetry ? { telemetry } : {}),
     };
 }
 export default function registerSubagentNotify(pi, state, options = {}) {

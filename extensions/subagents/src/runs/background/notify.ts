@@ -8,6 +8,7 @@
  * signals are never delayed.
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -23,6 +24,10 @@ import {
   type AcceptanceLedger,
   type SubagentState,
 } from "../../shared/types.ts";
+import {
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
@@ -66,7 +71,13 @@ const MAX_DISPLAYED_CHILDREN = 8;
 // Cap on simultaneous-completion entries shown in a grouped notice. Bounds both the
 // assembled message size and the reserved scaffolding so those fixed costs never
 // exceed the ceiling regardless of how many completions batch together.
-const MAX_GROUPED_ENTRIES = 8;
+export const MAX_GROUPED_ENTRIES = 8;
+// Keep each persisted logical batch within the analyzer's bounded chunk state.
+export const MAX_COMPLETION_BATCH_CHUNKS = 64;
+export const MAX_COMPLETION_BATCH_ENTRIES = MAX_COMPLETION_BATCH_CHUNKS * MAX_GROUPED_ENTRIES;
+export const MAX_COMPLETION_FLUSH_BATCHES = 256;
+export const SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION = 1 as const;
+export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch" as const;
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
@@ -75,6 +86,10 @@ const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
+
+// UUIDs provide cross-process uniqueness; the monotonic suffix also keeps IDs
+// distinct if a test or host replaces crypto.randomUUID with a deterministic stub.
+let completionBatchIdentitySequence = 0;
 
 interface NestedNotifyChild {
   id?: string;
@@ -113,6 +128,7 @@ export interface SubagentNotifyDetails {
   sessionLabel?: string;
   sessionValue?: string;
   awaitingSupervisor?: boolean;
+  telemetry?: SubagentRunTelemetry;
   /**
    * @internal Set by buildCompletionDetails for results with structured child data. Enables
    * formatSingleCompletion and formatGroupedCompletion to re-format the preview for the
@@ -121,6 +137,143 @@ export interface SubagentNotifyDetails {
    * notify.ts.
    */
   readonly _reformatPreview?: (ceilingForPreview: number) => string;
+}
+
+/**
+ * Telemetry-only grouped completion fields. Keep this allowlist intentionally
+ * narrower than SubagentNotifyDetails: grouped prose already carries display
+ * data, while structured chunks must never carry task, output, path, or error
+ * text.
+ */
+export interface SubagentCompletionBatchEntry {
+  agent: string;
+  status: SubagentNotifyDetails["status"];
+  durationMs?: number;
+  asyncId?: string;
+  telemetry?: SubagentRunTelemetry;
+}
+
+export interface SubagentCompletionBatchDetails {
+  schemaVersion: typeof SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION;
+  kind: typeof SUBAGENT_COMPLETION_BATCH_KIND;
+  batchId: string;
+  batchIndex: number;
+  batchCount: number;
+  /** Shared identity for logical batches emitted by one oversized flush. */
+  flushId?: string;
+  /** Zero-based logical-batch position within the flush. */
+  flushIndex?: number;
+  /** Number of logical batches in the flush. */
+  flushCount?: number;
+  triggersTurn: boolean;
+  completions: SubagentCompletionBatchEntry[];
+}
+
+export type SubagentNotifyMessageDetails = SubagentNotifyDetails | SubagentCompletionBatchDetails;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCompletionStatus(value: unknown): value is SubagentNotifyDetails["status"] {
+  return value === "completed" || value === "failed" || value === "paused";
+}
+
+export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
+  if (
+    !isRecord(value) ||
+    typeof value.agent !== "string" ||
+    !isCompletionStatus(value.status) ||
+    typeof value.resultPreview !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.durationMs !== undefined &&
+    (typeof value.durationMs !== "number" ||
+      !Number.isFinite(value.durationMs) ||
+      value.durationMs < 0)
+  ) {
+    return false;
+  }
+  return value.asyncId === undefined || normalizeAsyncIdentifier(value.asyncId) !== undefined;
+}
+
+function isCompletionBatchEntry(value: unknown): value is SubagentCompletionBatchEntry {
+  if (
+    !isRecord(value) ||
+    typeof value.agent !== "string" ||
+    value.agent.length > MAX_LABEL_CHARS ||
+    hasUnsafeIdentifierCharacters(value.agent) ||
+    !isCompletionStatus(value.status)
+  ) {
+    return false;
+  }
+  if (
+    value.durationMs !== undefined &&
+    (typeof value.durationMs !== "number" ||
+      !Number.isFinite(value.durationMs) ||
+      value.durationMs < 0)
+  ) {
+    return false;
+  }
+  if (value.asyncId !== undefined && normalizeAsyncIdentifier(value.asyncId) === undefined) {
+    return false;
+  }
+  return (
+    value.telemetry === undefined || normalizeSubagentRunTelemetry(value.telemetry) !== undefined
+  );
+}
+
+export function isSubagentCompletionBatchDetails(
+  value: unknown,
+): value is SubagentCompletionBatchDetails {
+  if (!isRecord(value)) return false;
+  const batchIndex = value.batchIndex;
+  const batchCount = value.batchCount;
+  const flushId = value.flushId;
+  const flushIndex = value.flushIndex;
+  const flushCount = value.flushCount;
+  const flushMetadataInvalid =
+    (flushId === undefined) !== (flushIndex === undefined) ||
+    (flushIndex === undefined) !== (flushCount === undefined) ||
+    (flushId !== undefined &&
+      (typeof flushId !== "string" ||
+        flushId.length === 0 ||
+        flushId.length > MAX_ASYNC_ID_CHARS ||
+        hasUnsafeIdentifierCharacters(flushId))) ||
+    (flushIndex !== undefined &&
+      (typeof flushIndex !== "number" || !Number.isSafeInteger(flushIndex) || flushIndex < 0)) ||
+    (flushCount !== undefined &&
+      (typeof flushCount !== "number" ||
+        !Number.isSafeInteger(flushCount) ||
+        flushCount < 1 ||
+        flushCount > MAX_COMPLETION_FLUSH_BATCHES)) ||
+    (typeof flushIndex === "number" && typeof flushCount === "number" && flushIndex >= flushCount);
+  if (
+    value.schemaVersion !== SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION ||
+    value.kind !== SUBAGENT_COMPLETION_BATCH_KIND ||
+    typeof value.batchId !== "string" ||
+    value.batchId.length === 0 ||
+    value.batchId.length > MAX_ASYNC_ID_CHARS ||
+    hasUnsafeIdentifierCharacters(value.batchId) ||
+    typeof batchIndex !== "number" ||
+    !Number.isSafeInteger(batchIndex) ||
+    batchIndex < 0 ||
+    typeof batchCount !== "number" ||
+    !Number.isSafeInteger(batchCount) ||
+    batchCount < 1 ||
+    batchCount > MAX_COMPLETION_BATCH_CHUNKS ||
+    batchIndex >= batchCount ||
+    flushMetadataInvalid ||
+    typeof value.triggersTurn !== "boolean" ||
+    !Array.isArray(value.completions) ||
+    value.completions.length === 0 ||
+    value.completions.length > MAX_GROUPED_ENTRIES
+  ) {
+    return false;
+  }
+  return value.completions.every(isCompletionBatchEntry);
 }
 
 interface SubagentResult {
@@ -142,6 +295,7 @@ interface SubagentResult {
   taskIndex?: number;
   totalTasks?: number;
   sessionId?: string | null;
+  telemetry?: unknown;
 }
 
 type NotifyTimerHandle = ReturnType<typeof setTimeout> | number;
@@ -934,6 +1088,47 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 
 const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 
+function serializeCompletionBatchEntry(
+  details: SubagentNotifyDetails,
+): SubagentCompletionBatchEntry {
+  const asyncId = normalizeAsyncIdentifier(details.asyncId);
+  const telemetry = normalizeSubagentRunTelemetry(details.telemetry);
+  return {
+    agent: boundedLabel(details.agent),
+    status: details.status,
+    ...(typeof details.durationMs === "number" &&
+    Number.isFinite(details.durationMs) &&
+    details.durationMs >= 0
+      ? { durationMs: details.durationMs }
+      : {}),
+    ...(asyncId ? { asyncId } : {}),
+    ...(telemetry ? { telemetry } : {}),
+  };
+}
+
+function createCompletionBatchIdentity(): string {
+  const sequence = completionBatchIdentitySequence++;
+  return `${randomUUID()}-${sequence.toString(36)}`;
+}
+
+function sendNudge(
+  pi: Pick<ExtensionAPI, "sendUserMessage">,
+  options: { triggerTurn: boolean; isIdle?: () => boolean },
+): void {
+  // When the parent is idle and a turn is expected, wake the agent through
+  // prompt() so before_agent_start fires and the TLH system prompt is
+  // restored. deliverAs:'followUp' is safe under a streaming race: it
+  // queues a benign followUp rather than throwing. When streaming, or during
+  // a lifecycle flush (triggerTurn:false), the custom message alone is
+  // sufficient — Pi steers a streaming turn, and the shutdown path sends no
+  // new turn. Idleness is read live at send time; when no session context
+  // has been captured yet, assume idle (the nudge degrades to a benign
+  // followUp if that assumption is wrong).
+  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+  }
+}
+
 function sendCompletion(
   pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
   details: SubagentNotifyDetails[],
@@ -947,47 +1142,80 @@ function sendCompletion(
     MAX_COMPLETION_MESSAGE_CHARS,
     "\n… [completion message truncated]",
   );
-  // Exclude the internal _reformatPreview closure from the serialised structured
-  // details — it is a non-serialisable function and must not appear in the message.
-  const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0] ?? {};
-  const structuredDetails =
-    details.length === 1
-      ? {
-          ...serializableDetail,
-          resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
-          ...(details[0]!.sessionValue
-            ? { sessionValue: boundedReference(details[0]!.sessionValue) }
-            : {}),
-          ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
-            ? {
-                resumeTarget: {
-                  ...(details[0]!.resumeTarget.index !== undefined
-                    ? { index: details[0]!.resumeTarget.index }
-                    : {}),
-                  ...(details[0]!.resumeTarget.childCount !== undefined
-                    ? { childCount: details[0]!.resumeTarget.childCount }
-                    : {}),
-                },
-              }
-            : {}),
-        }
-      : undefined;
-  pi.sendMessage({
-    customType: "subagent-notify",
-    content,
-    display: true,
-    ...(structuredDetails ? { details: structuredDetails } : {}),
-  });
-  // When the parent is idle and a turn is expected, wake the agent through
-  // prompt() so before_agent_start fires and the TLH system prompt is
-  // restored. deliverAs:'followUp' is safe under a streaming race: it
-  // queues a benign followUp rather than throwing. When streaming, or during
-  // a lifecycle flush (triggerTurn:false), the custom message alone is
-  // sufficient — Pi steers a streaming turn, and the shutdown path sends no
-  // new turn. Idleness is read live at send time; when no session context
-  // has been captured yet, assume idle (the nudge degrades to a benign
-  // followUp if that assumption is wrong).
-  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+
+  if (details.length === 1) {
+    // Exclude the internal _reformatPreview closure from the serialised structured
+    // details — it is a non-serialisable function and must not appear in the message.
+    const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0]!;
+    pi.sendMessage({
+      customType: "subagent-notify",
+      content,
+      display: true,
+      details: {
+        ...serializableDetail,
+        resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
+        ...(details[0]!.sessionValue
+          ? { sessionValue: boundedReference(details[0]!.sessionValue) }
+          : {}),
+        ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
+          ? {
+              resumeTarget: {
+                ...(details[0]!.resumeTarget.index !== undefined
+                  ? { index: details[0]!.resumeTarget.index }
+                  : {}),
+                ...(details[0]!.resumeTarget.childCount !== undefined
+                  ? { childCount: details[0]!.resumeTarget.childCount }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+    });
+    sendNudge(pi, options);
+    return;
+  }
+
+  const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
+  const flushId = createCompletionBatchIdentity();
+  const completions = details.map(serializeCompletionBatchEntry);
+  let triggersTurn = false;
+  for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
+    const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
+    const logicalCompletions = completions.slice(
+      logicalStart,
+      logicalStart + MAX_COMPLETION_BATCH_ENTRIES,
+    );
+    const batchCount = Math.ceil(logicalCompletions.length / MAX_GROUPED_ENTRIES);
+    const batchId = createCompletionBatchIdentity();
+    for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
+      const start = batchIndex * MAX_GROUPED_ENTRIES;
+      const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
+      const isFinalChunk =
+        logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
+      triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+      const batchDetails: SubagentCompletionBatchDetails = {
+        schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
+        kind: SUBAGENT_COMPLETION_BATCH_KIND,
+        batchId,
+        batchIndex,
+        batchCount,
+        flushId,
+        flushIndex: logicalBatchIndex,
+        flushCount: logicalBatchCount,
+        triggersTurn,
+        completions: batchCompletions,
+      };
+      pi.sendMessage({
+        customType: "subagent-notify",
+        // The grouped prose is persisted/displayed exactly once; subsequent chunk
+        // records carry only their bounded structured details.
+        content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
+        display: logicalBatchIndex === 0 && batchIndex === 0,
+        details: batchDetails,
+      });
+    }
+  }
+  if (triggersTurn) {
     pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
   }
 }
@@ -1040,6 +1268,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
 
   const asyncId = resolveAsyncIdentifier(result);
   const resumeTarget = resolveResumeTarget(result, asyncId);
+  const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
 
   return {
     agent,
@@ -1060,6 +1289,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
     (result as { pause?: { kind?: string } }).pause?.kind === "awaiting_supervisor"
       ? { awaitingSupervisor: true }
       : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 

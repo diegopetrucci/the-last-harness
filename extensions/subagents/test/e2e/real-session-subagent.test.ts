@@ -52,8 +52,12 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
   });
 
   it("boots the extension in a real parent session and delivers a faux child result", async () => {
-    const { routeParentThroughSubagent, runRealSubagentSession, subagentToolResults } =
-      await import("../support/real-session-runner.ts");
+    const {
+      routeParentThroughSubagent,
+      runRealSubagentSession,
+      subagentToolResults,
+      subagentToolResultDetails,
+    } = await import("../support/real-session-runner.ts");
 
     const previousEnv = new Map(ISOLATED_ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.PI_SUBAGENT_CHILD = "1";
@@ -91,6 +95,19 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
       const toolResults = subagentToolResults(run.parentSession);
       assert.equal(toolResults.length, 1);
       assert.match(toolResults[0]!, new RegExp(CHILD_MARKER));
+      const details = subagentToolResultDetails(run.parentSession)[0] as {
+        telemetry?: {
+          schemaVersion?: number;
+          run?: { execution?: string; mode?: string };
+          provenance?: Record<string, unknown>;
+          steps?: Array<Record<string, unknown>>;
+        };
+      };
+      assert.equal(details.telemetry?.run?.execution, "foreground");
+      assert.equal(details.telemetry?.run?.mode, "single");
+      assert.ok(details.telemetry?.provenance);
+      assert.ok(details.telemetry?.schemaVersion);
+      assert.doesNotMatch(JSON.stringify(details.telemetry), /CHILD_REAL_SESSION_OK/);
       assert.match(run.responseText, new RegExp(CHILD_MARKER));
       assert.doesNotMatch(run.responseText, /CHILD_MISSING/);
       assert.ok(

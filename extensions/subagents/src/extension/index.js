@@ -22,11 +22,12 @@ import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
-import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
+import registerSubagentNotify, { boundedReference, isSubagentCompletionBatchDetails, isSubagentNotifyDetails, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
+import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
@@ -260,6 +261,7 @@ export default function registerSubagentExtension(pi) {
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
     scheduleDetachedRuntimeCleanup();
+    const telemetryProvenance = captureSubagentTelemetryProvenance();
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);
     const executionPolicy = resolveExecutionPolicy(config.execution);
@@ -343,6 +345,7 @@ export default function registerSubagentExtension(pi) {
         getSubagentSessionRoot,
         expandTilde,
         discoverAgents,
+        telemetryProvenance,
         getProjectAgentAccess: (request) => normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
     });
     pi.registerMessageRenderer(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -357,7 +360,12 @@ export default function registerSubagentExtension(pi) {
     pi.registerMessageRenderer("subagent-notify", (message, options, theme) => {
         const content = typeof message.content === "string" ? message.content : "";
         const parsedContent = parseSubagentNotifyContent(content);
-        const structuredDetails = message.details;
+        const rawStructuredDetails = message.details;
+        const structuredDetails = isSubagentCompletionBatchDetails(rawStructuredDetails)
+            ? undefined
+            : isSubagentNotifyDetails(rawStructuredDetails)
+                ? rawStructuredDetails
+                : undefined;
         const parsedSession = parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
             ? {
                 sessionLabel: parsedContent.details.sessionLabel,

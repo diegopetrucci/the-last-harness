@@ -62,6 +62,7 @@ import {
   parseContextUsageDiagnostics,
   parseSubagentTerminationReason,
 } from "../../shared/context-diagnostics.ts";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 
 interface AsyncRunStepSummary {
   index: number;
@@ -152,6 +153,7 @@ export interface AsyncRunSummary {
   nestedWarnings?: string[];
   tkTicket?: TkTicketMetadata;
   projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
 }
 
 export interface AsyncRunCorruptEntryIssue {
@@ -299,6 +301,10 @@ export function validatePersistedAsyncStatus(
   status: AsyncStatus & { cwd?: string },
 ): void {
   normalizePersistedHealth(status);
+  // Telemetry is optional and independently schema-versioned. Invalid or
+  // unknown telemetry must not make an otherwise readable legacy lifecycle
+  // record unrecoverable; drop it at this persisted-data boundary.
+  status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
     throw createAsyncStatusValidationError({
       asyncDir,
@@ -460,6 +466,7 @@ function statusToSummary(
     nestedChildren,
   );
   const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
+  const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   return {
     id: status.runId || path.basename(asyncDir),
     asyncDir,
@@ -507,6 +514,7 @@ function statusToSummary(
     ...(status.pause ? { pause: status.pause } : {}),
     ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 
