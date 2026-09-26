@@ -5,6 +5,7 @@ export const TLH_PACKAGE_NAME = "The Last Harness";
 export const TLH_REPO = "diegopetrucci/the-last-harness";
 export const TLH_RELEASES_URL = `https://github.com/${TLH_REPO}/releases`;
 export const TLH_LATEST_RELEASE_API_URL = `https://api.github.com/repos/${TLH_REPO}/releases/latest`;
+export const TLH_MAIN_COMPARE_API_URL = `https://api.github.com/repos/${TLH_REPO}/compare`;
 export const TLH_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const TLH_UPDATE_CHECK_TIMEOUT_MS = 3000;
 // TelemetryDeck appID/namespace are public client analytics identifiers, not secrets.
