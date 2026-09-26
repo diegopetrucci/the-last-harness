@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.ts";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.ts";
 import { ASYNC_DIR, TEMP_ROOT_DIR, type AsyncStatus } from "../shared/types.ts";
 
@@ -56,6 +57,8 @@ interface AsyncDirInspection {
   keep: boolean;
   activeOrLive: boolean;
 }
+
+type PidRetentionState = "ownerless" | "alive" | "dead" | "unknown";
 
 interface NestedEventRouteEntry {
   dirPath: string;
@@ -144,8 +147,15 @@ function readAsyncStatus(asyncDir: string): AsyncStatusReadResult {
     return { status: null, invalid: true };
   }
   try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+    if (parsed === null) {
+      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
+    }
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+    }
     return {
-      status: JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus,
+      status: parsed as AsyncStatus,
       statusMtimeMs: stat.mtimeMs,
       invalid: false,
     };
@@ -180,15 +190,16 @@ function isSignalSafePid(pid: unknown): pid is number {
   return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
 }
 
-function isActiveOrLive(status: AsyncStatus, kill: KillFn): boolean {
-  if (status.activityState === "needs_attention") return true;
-  if (status.state === "queued" || status.state === "running" || status.state === "paused")
-    return true;
-  if (!isSignalSafePid(status.pid)) return false;
-  return checkPidLiveness(status.pid, kill) !== "dead";
+function pidRetentionState(status: AsyncStatus, kill: KillFn): PidRetentionState {
+  if (!isSignalSafePid(status.pid)) return "ownerless";
+  return checkPidLiveness(status.pid, kill);
 }
 
-function terminalReferenceMs(
+function lifecycleTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function retentionReferenceMs(
   status: AsyncStatus,
   statusMtimeMs: number | undefined,
   dirMtimeMs: number,
@@ -196,10 +207,94 @@ function terminalReferenceMs(
   return Math.max(
     dirMtimeMs,
     statusMtimeMs ?? 0,
-    status.endedAt ?? 0,
-    status.lastUpdate ?? 0,
-    status.startedAt ?? 0,
+    lifecycleTimestamp(status.endedAt),
+    lifecycleTimestamp(status.lastUpdate),
+    lifecycleTimestamp(status.startedAt),
   );
+}
+
+function isWithinRetentionWindow(
+  status: AsyncStatus,
+  statusMtimeMs: number | undefined,
+  dirMtimeMs: number,
+  now: number,
+): boolean {
+  return (
+    now - retentionReferenceMs(status, statusMtimeMs, dirMtimeMs) < TERMINAL_ASYNC_DIR_MAX_AGE_MS
+  );
+}
+
+function inspectKnownLifecycleState(
+  status: AsyncStatus,
+  statusMtimeMs: number | undefined,
+  dirMtimeMs: number,
+  now: number,
+  kill: KillFn,
+): Pick<AsyncDirInspection, "keep" | "activeOrLive"> {
+  switch (status.state) {
+    case "complete":
+    case "failed":
+    case "cancelled":
+    case "continued":
+      // Lifecycle state is authoritative: stale health metadata must not turn a
+      // terminal record back into an active one.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    case "paused":
+      // Paused runs are durable resume records and remain eligible for recovery
+      // even when their owner PID has exited or is no longer recorded.
+      return { keep: true, activeOrLive: true };
+    case "queued":
+    case "running": {
+      const pidState = pidRetentionState(status, kill);
+      if (pidState === "alive" || pidState === "unknown") {
+        return { keep: true, activeOrLive: true };
+      }
+      // A missing or dead owner may be a transient handoff/restart. Keep it for
+      // the same grace window as terminal records, then allow stale cleanup.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    }
+    case "pausing": {
+      let pidState: PidRetentionState;
+      if (isSignalSafePid(status.pid)) {
+        try {
+          const recovered = recoverStoppedLifecycleOwnership(status, {
+            kill,
+            now: () => now,
+          });
+          if (recovered.repaired) {
+            // Lifecycle recovery would finalize this checkpoint to paused. Keep
+            // the record even though cleanup itself must not rewrite its status.
+            return { keep: true, activeOrLive: true };
+          }
+          pidState = recovered.pidLiveness ?? "ownerless";
+        } catch {
+          // Malformed optional lifecycle metadata must not make best-effort
+          // cleanup fail; fall back to the existing PID retention policy.
+          pidState = pidRetentionState(status, kill);
+        }
+      } else {
+        pidState = "ownerless";
+      }
+      if (pidState === "alive" || pidState === "unknown") {
+        return { keep: true, activeOrLive: true };
+      }
+      // A missing or dead owner may be a transient handoff/restart. Keep it for
+      // the same grace window as terminal records, then allow stale cleanup.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    }
+    default:
+      // Unknown lifecycle states are not safe to classify as stale.
+      return { keep: true, activeOrLive: false };
+  }
 }
 
 function inspectAsyncDir(entry: AsyncRunDirEntry, now: number, kill: KillFn): AsyncDirInspection {
@@ -222,29 +317,10 @@ function inspectAsyncDir(entry: AsyncRunDirEntry, now: number, kill: KillFn): As
     };
   }
   const rootRunId = entry.nested ? entry.rootRunId : status.runId || entry.rootRunId;
-  if (isActiveOrLive(status, kill)) {
-    return {
-      entry,
-      rootRunId,
-      keep: true,
-      activeOrLive: true,
-    };
-  }
-  if (status.state === "complete" || status.state === "failed") {
-    return {
-      entry,
-      rootRunId,
-      keep:
-        now - terminalReferenceMs(status, statusMtimeMs, dirMtimeMs) <
-        TERMINAL_ASYNC_DIR_MAX_AGE_MS,
-      activeOrLive: false,
-    };
-  }
   return {
     entry,
     rootRunId,
-    keep: true,
-    activeOrLive: false,
+    ...inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill),
   };
 }
 
@@ -338,6 +414,11 @@ export function cleanupRuntimeDirs(
   for (const entry of inspection.asyncDirs) {
     if (entry.keep) {
       retainedRootRunIds.add(entry.rootRunId);
+      continue;
+    }
+    const latest = inspectAsyncDir(entry.entry, now, kill);
+    if (latest.keep) {
+      retainedRootRunIds.add(latest.rootRunId);
       continue;
     }
     if (!removeDir(entry.entry.asyncDir)) {
