@@ -158,6 +158,12 @@ const TELEMETRY_STATES: ReadonlySet<SubagentTelemetryState> = new Set([
   "cancelled",
   "continued",
 ]);
+const TERMINAL_STEP_OUTCOME_STATES: ReadonlySet<SubagentTelemetryState> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "continued",
+]);
 const ACCEPTANCE_STATUSES: ReadonlySet<AcceptanceLedgerStatus> = new Set([
   "not-required",
   "claimed",
@@ -631,12 +637,17 @@ function mergeTelemetryLineage(
  * Merge a source-run write with a concurrently persisted lifecycle record.
  * Lifecycle callers use `persistedOutcomeWins` when the persisted state was
  * committed through a lock/CAS transition; usage and timing remain source
- * owned while continuation edges from either side are retained.
+ * owned while continuation edges from either side are retained. The narrower
+ * `persistedTerminalStepOutcomesWin` option protects direct child outcomes from
+ * a stale source snapshot without changing the run-level outcome precedence.
  */
 export function mergeSubagentRunTelemetry(
   currentValue: unknown,
   persistedValue: unknown,
-  options: { persistedOutcomeWins?: boolean } = {},
+  options: {
+    persistedOutcomeWins?: boolean;
+    persistedTerminalStepOutcomesWin?: boolean;
+  } = {},
 ): SubagentRunTelemetry | undefined {
   const current = normalizeSubagentRunTelemetry(currentValue);
   const persisted = normalizeSubagentRunTelemetry(persistedValue);
@@ -658,12 +669,28 @@ export function mergeSubagentRunTelemetry(
       persistedStep.timing,
       persistedOutcomeWins,
     );
+    const persistedTerminalStepOutcomeWins =
+      options.persistedTerminalStepOutcomesWin === true &&
+      persistedStep.outcome !== undefined &&
+      TERMINAL_STEP_OUTCOME_STATES.has(persistedStep.outcome.state);
+    const persistedStepOutcome =
+      (persistedOutcomeWins || persistedTerminalStepOutcomeWins) && persistedStep.outcome
+        ? {
+            ...persistedStep.outcome,
+            // A lifecycle-only step merge keeps state and terminationReason from
+            // disk, but a newer acceptance result remains source-owned. The
+            // whole-outcome option intentionally retains its legacy behavior.
+            ...(persistedTerminalStepOutcomeWins &&
+            !persistedOutcomeWins &&
+            currentStep.outcome?.acceptanceStatus !== undefined
+              ? { acceptanceStatus: currentStep.outcome.acceptanceStatus }
+              : {}),
+          }
+        : undefined;
     const mergedStep = {
       ...persistedStep,
       ...currentStep,
-      ...(persistedOutcomeWins && persistedStep.outcome
-        ? { outcome: { ...persistedStep.outcome } }
-        : {}),
+      ...(persistedStepOutcome ? { outcome: persistedStepOutcome } : {}),
       ...(persistedStep.model && !currentStep.model ? { model: { ...persistedStep.model } } : {}),
       ...(persistedStep.usage && !currentStep.usage ? { usage: { ...persistedStep.usage } } : {}),
       ...(persistedStep.activity && !currentStep.activity

@@ -662,6 +662,115 @@ describe("subagent run telemetry", () => {
     assert.deepEqual(merged.outcome, persisted.outcome);
   });
 
+  it("preserves persisted terminal step outcomes without changing ordinary merge precedence", () => {
+    const terminalStates = ["completed", "failed", "cancelled", "continued"] as const;
+    for (const state of terminalStates) {
+      const persisted = buildTelemetry({
+        outcome: { state: "paused", terminationReason: "paused" },
+        steps: [
+          {
+            index: 0,
+            agent: "worker",
+            model: { provider: "persisted", model: "terminal-model" },
+            usage: {
+              inputTokens: 1,
+              outputTokens: 2,
+              cacheReadTokens: 3,
+              cacheWriteTokens: 4,
+              costUsd: 0.1,
+            },
+            activity: { turns: 1, toolCalls: 2 },
+            outcome: {
+              state,
+              terminationReason:
+                state === "completed"
+                  ? "completed"
+                  : state === "cancelled"
+                    ? "cancelled"
+                    : "model_error",
+            },
+          },
+        ],
+      });
+      const current = buildTelemetry({
+        outcome: { state: "paused", terminationReason: "paused" },
+        steps: [
+          {
+            index: 0,
+            agent: "worker",
+            model: { provider: "current", model: "source-model" },
+            usage: {
+              inputTokens: 10,
+              outputTokens: 20,
+              cacheReadTokens: 30,
+              cacheWriteTokens: 40,
+              costUsd: 0.5,
+            },
+            activity: { turns: 5, toolCalls: 6 },
+            outcome: { state: "paused", terminationReason: "paused" },
+          },
+        ],
+      });
+      const currentSnapshot = structuredClone(current);
+      const persistedSnapshot = structuredClone(persisted);
+
+      const ordinary = mergeSubagentRunTelemetry(current, persisted);
+      assert.equal(ordinary?.outcome?.state, "paused");
+      assert.equal(ordinary?.steps[0]?.outcome?.state, "paused");
+
+      const merged = mergeSubagentRunTelemetry(current, persisted, {
+        persistedTerminalStepOutcomesWin: true,
+      });
+      assert.ok(merged);
+      assert.equal(merged.outcome?.state, "paused");
+      assert.deepEqual(merged.steps[0]?.outcome, persisted.steps[0]?.outcome);
+      assert.deepEqual(merged.steps[0]?.usage, current.steps[0]?.usage);
+      assert.deepEqual(merged.steps[0]?.activity, current.steps[0]?.activity);
+      assert.deepEqual(merged.steps[0]?.model, current.steps[0]?.model);
+
+      // The merge returns an independent envelope: mutating the selected
+      // persisted outcome cannot mutate either caller-owned input.
+      merged.steps[0]!.outcome!.state = "failed";
+      assert.deepEqual(current, currentSnapshot);
+      assert.deepEqual(persisted, persistedSnapshot);
+    }
+  });
+
+  it("does not preserve paused, running, or queued persisted step outcomes", () => {
+    for (const state of ["paused", "running", "queued"] as const) {
+      const current = buildTelemetry({
+        outcome: { state: "paused", terminationReason: "paused" },
+        steps: [
+          {
+            index: 0,
+            agent: "worker",
+            outcome: {
+              state: "completed",
+              terminationReason: "completed",
+              acceptanceStatus: "attested",
+            },
+          },
+        ],
+      });
+      const persisted = buildTelemetry({
+        outcome: { state: "paused", terminationReason: "paused" },
+        steps: [
+          {
+            index: 0,
+            agent: "worker",
+            outcome: { state, acceptanceStatus: "skipped" },
+          },
+        ],
+      });
+
+      const merged = mergeSubagentRunTelemetry(current, persisted, {
+        persistedTerminalStepOutcomesWin: true,
+      });
+      assert.ok(merged);
+      assert.deepEqual(merged.steps[0]?.outcome, current.steps[0]?.outcome);
+    }
+  });
+
   it("clears stale model attribution when a newer usage snapshot omits it", () => {
     const persisted = buildTelemetry({
       steps: [

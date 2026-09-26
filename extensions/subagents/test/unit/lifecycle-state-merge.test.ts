@@ -12,6 +12,12 @@ import {
   writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
 import { readStatus } from "../../src/shared/utils.ts";
+import {
+  buildSubagentRunTelemetry,
+  type SubagentTelemetryControls,
+  type SubagentTelemetryOutcome,
+  type SubagentTelemetryProvenance,
+} from "../../src/shared/telemetry.ts";
 import { tempRoot } from "../support/lifecycle-state-fixtures.ts";
 
 describe("lifecycle state helpers", () => {
@@ -62,6 +68,169 @@ describe("lifecycle state helpers", () => {
       assert.equal(merged.steps?.[0]?.activeRuntimeCheckpointAt, 1_900);
       assert.equal(readStatus(asyncDir)?.activeRuntimeMs, 900);
       assert.equal(readStatus(asyncDir)?.lastUpdate, 1_900);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("locked lifecycle telemetry preserves terminal child outcomes on a paused run", () => {
+    const root = tempRoot("pi-lifecycle-telemetry-step-outcome-");
+    const provenance: SubagentTelemetryProvenance = {
+      tlhVersion: "test-tlh",
+      piVersion: "test-pi",
+      loadedAt: 123,
+    };
+    const controls: SubagentTelemetryControls = {
+      needsAttentionAfterMs: 1_000,
+      failedToolAttemptsBeforeAttention: 2,
+      notifyOn: ["needs_attention"],
+      notifyChannels: ["event", "async"],
+    };
+    const cases = [
+      { state: "cancelled" as const, terminationReason: "cancelled" as const },
+      { state: "continued" as const, terminationReason: "paused" as const },
+    ];
+    try {
+      for (const testCase of cases) {
+        const asyncDir = path.join(root, `run-${testCase.state}`);
+        const currentTelemetry = buildSubagentRunTelemetry({
+          runId: `run-${testCase.state}`,
+          execution: "async",
+          mode: "parallel",
+          provenance,
+          controls,
+          startedAt: 100,
+          steps: [
+            {
+              index: 0,
+              agent: "worker",
+              model: { provider: "current", model: "current-model" },
+              usage: {
+                inputTokens: 10,
+                outputTokens: 20,
+                cacheReadTokens: 30,
+                cacheWriteTokens: 40,
+                costUsd: 0.5,
+              },
+              activity: { turns: 7, toolCalls: 11 },
+              outcome: {
+                state: "paused",
+                terminationReason: "paused",
+                acceptanceStatus: "attested",
+              },
+            },
+          ],
+          outcome: { state: "paused", terminationReason: "paused" },
+        });
+        const persistedTelemetry = buildSubagentRunTelemetry({
+          runId: `run-${testCase.state}`,
+          execution: "async",
+          mode: "parallel",
+          provenance,
+          controls,
+          startedAt: 100,
+          steps: [
+            {
+              index: 0,
+              agent: "worker",
+              model: { provider: "persisted", model: "persisted-model" },
+              usage: {
+                inputTokens: 1,
+                outputTokens: 2,
+                cacheReadTokens: 3,
+                cacheWriteTokens: 4,
+                costUsd: 0.1,
+              },
+              activity: { turns: 1, toolCalls: 2 },
+              outcome: {
+                state: testCase.state,
+                terminationReason: testCase.terminationReason,
+                acceptanceStatus: "skipped",
+              } satisfies SubagentTelemetryOutcome,
+            },
+          ],
+          outcome: { state: "paused", terminationReason: "paused" },
+        });
+        const currentSnapshot = structuredClone(currentTelemetry);
+        const persistedSnapshot = structuredClone(persistedTelemetry);
+
+        const writePersistedStatus = () =>
+          writeNormalizedLifecycleStatus(asyncDir, {
+            runId: `run-${testCase.state}`,
+            mode: "parallel",
+            state: "paused",
+            startedAt: 100,
+            steps: [
+              {
+                agent: "worker",
+                status: testCase.state,
+                terminationReason: testCase.terminationReason,
+              },
+            ],
+            telemetry: persistedTelemetry,
+            lifecycle: { generation: 2 },
+          });
+        writePersistedStatus();
+        const merged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+          runId: `run-${testCase.state}`,
+          mode: "parallel",
+          state: "paused",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "paused" }],
+          telemetry: currentTelemetry,
+          lifecycle: { generation: 1 },
+        });
+
+        assert.equal(merged.state, "paused");
+        assert.equal(merged.steps?.[0]?.status, testCase.state);
+        const mergedStepTelemetry = merged.telemetry?.steps[0];
+        assert.ok(mergedStepTelemetry);
+        assert.deepEqual(mergedStepTelemetry.outcome, {
+          state: testCase.state,
+          terminationReason: testCase.terminationReason,
+          // The current source snapshot has the newer acceptance result.
+          acceptanceStatus: "attested",
+        });
+        assert.deepEqual(mergedStepTelemetry.usage, currentTelemetry.steps[0]?.usage);
+        assert.deepEqual(mergedStepTelemetry.model, currentTelemetry.steps[0]?.model);
+        assert.deepEqual(mergedStepTelemetry.activity, currentTelemetry.steps[0]?.activity);
+        assert.equal(merged.telemetry?.outcome?.state, "paused");
+
+        // Non-vacuousness: removing persistedTerminalStepOutcomesWin from the
+        // lifecycle-state call site would make this terminal outcome regress to
+        // the stale current "paused" outcome.
+        const persisted = readStatus(asyncDir);
+        assert.equal(persisted?.state, "paused");
+        assert.equal(persisted?.steps?.[0]?.status, testCase.state);
+        assert.deepEqual(persisted?.telemetry?.steps[0]?.outcome, mergedStepTelemetry.outcome);
+
+        // When the current source lacks acceptanceStatus, the persisted value
+        // remains the fallback while lifecycle-owned fields still come from disk.
+        writePersistedStatus();
+        const currentWithoutAcceptance = structuredClone(currentTelemetry);
+        currentWithoutAcceptance.steps[0]!.outcome = {
+          state: "paused",
+          terminationReason: "paused",
+        };
+        const fallbackMerged = mergeAndWriteSourceRunnerStatus(asyncDir, {
+          runId: `run-${testCase.state}`,
+          mode: "parallel",
+          state: "paused",
+          startedAt: 100,
+          steps: [{ agent: "worker", status: "paused" }],
+          telemetry: currentWithoutAcceptance,
+          lifecycle: { generation: 1 },
+        });
+        assert.deepEqual(fallbackMerged.telemetry?.steps[0]?.outcome, {
+          state: testCase.state,
+          terminationReason: testCase.terminationReason,
+          acceptanceStatus: "skipped",
+        });
+
+        mergedStepTelemetry.outcome!.acceptanceStatus = "rejected";
+        assert.deepEqual(currentTelemetry, currentSnapshot);
+        assert.deepEqual(persistedTelemetry, persistedSnapshot);
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

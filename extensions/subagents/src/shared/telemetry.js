@@ -22,6 +22,12 @@ const TELEMETRY_STATES = new Set([
     "cancelled",
     "continued",
 ]);
+const TERMINAL_STEP_OUTCOME_STATES = new Set([
+    "completed",
+    "failed",
+    "cancelled",
+    "continued",
+]);
 const ACCEPTANCE_STATUSES = new Set([
     "not-required",
     "claimed",
@@ -429,12 +435,23 @@ export function mergeSubagentRunTelemetry(currentValue, persistedValue, options 
         if (!persistedStep)
             return { ...currentStep };
         const timing = mergeTelemetryTiming(currentStep.timing, persistedStep.timing, persistedOutcomeWins);
+        const persistedTerminalStepOutcomeWins = options.persistedTerminalStepOutcomesWin === true &&
+            persistedStep.outcome !== undefined &&
+            TERMINAL_STEP_OUTCOME_STATES.has(persistedStep.outcome.state);
+        const persistedStepOutcome = (persistedOutcomeWins || persistedTerminalStepOutcomeWins) && persistedStep.outcome
+            ? {
+                ...persistedStep.outcome,
+                ...(persistedTerminalStepOutcomeWins &&
+                    !persistedOutcomeWins &&
+                    currentStep.outcome?.acceptanceStatus !== undefined
+                    ? { acceptanceStatus: currentStep.outcome.acceptanceStatus }
+                    : {}),
+            }
+            : undefined;
         const mergedStep = {
             ...persistedStep,
             ...currentStep,
-            ...(persistedOutcomeWins && persistedStep.outcome
-                ? { outcome: { ...persistedStep.outcome } }
-                : {}),
+            ...(persistedStepOutcome ? { outcome: persistedStepOutcome } : {}),
             ...(persistedStep.model && !currentStep.model ? { model: { ...persistedStep.model } } : {}),
             ...(persistedStep.usage && !currentStep.usage ? { usage: { ...persistedStep.usage } } : {}),
             ...(persistedStep.activity && !currentStep.activity

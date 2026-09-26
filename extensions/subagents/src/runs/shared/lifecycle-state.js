@@ -528,6 +528,7 @@ function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
     const lastUpdate = lastUpdates.length > 0 ? Math.max(...lastUpdates) : undefined;
     const mergedTelemetry = mergeSubagentRunTelemetry(inMemory.telemetry, persisted.telemetry, {
         persistedOutcomeWins: TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state,
+        persistedTerminalStepOutcomesWin: true,
     });
     const merged = {
         ...inMemory,
