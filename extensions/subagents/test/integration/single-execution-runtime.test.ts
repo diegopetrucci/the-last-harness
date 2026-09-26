@@ -31,7 +31,12 @@ import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
-import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import {
+  waitForAsyncResultFile,
+  waitForMockPiCall,
+  startedMockPiPids,
+  waitForPidsToExit,
+} from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { mockAssistantMessage, readPersistedStatus } from "../support/single-execution-fixtures.ts";
 
@@ -596,6 +601,16 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
         assert.ok(result.details?.deadlineAt !== undefined);
+        // The resume action spawns a continuation async runner (fire-and-forget).
+        // Wait for the continuation mock-pi call to appear and then for all mock-pi
+        // processes to exit so that afterEach's removeTempDir does not race with
+        // in-progress file writes inside tempDir.
+        await waitForMockPiCall(mockPi, 1, scaleTestTimeout(10_000));
+        await waitForPidsToExit(
+          startedMockPiPids(mockPi),
+          "resume-timeout-forwarding cleanup",
+          scaleTestTimeout(15_000),
+        );
       },
     );
 

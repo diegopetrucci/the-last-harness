@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
+
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
+  _tmpDirs.push(dir);
   const defaults = join(dir, "settings.defaults.json");
   const extensions = join(dir, "default-extensions.json");
   const settings = join(dir, "settings.json");

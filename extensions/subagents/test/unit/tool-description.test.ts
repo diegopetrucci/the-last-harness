@@ -65,21 +65,30 @@ describe("registered subagent tool description", () => {
     const defaultAgentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"),
     );
-    assert.equal(readRegisteredDescription(defaultAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-
     const legacyFullAgentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-full-"),
     );
-    writeExtensionConfig(legacyFullAgentDir, { toolDescriptionMode: "full" });
-    assert.equal(readRegisteredDescription(legacyFullAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-
     const legacyInvalidAgentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-invalid-"),
     );
-    writeExtensionConfig(legacyInvalidAgentDir, { toolDescriptionMode: "tiny" });
-    assert.equal(
-      readRegisteredDescription(legacyInvalidAgentDir),
-      COMPACT_SUBAGENT_TOOL_DESCRIPTION,
-    );
+    try {
+      assert.equal(readRegisteredDescription(defaultAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+
+      writeExtensionConfig(legacyFullAgentDir, { toolDescriptionMode: "full" });
+      assert.equal(
+        readRegisteredDescription(legacyFullAgentDir),
+        COMPACT_SUBAGENT_TOOL_DESCRIPTION,
+      );
+
+      writeExtensionConfig(legacyInvalidAgentDir, { toolDescriptionMode: "tiny" });
+      assert.equal(
+        readRegisteredDescription(legacyInvalidAgentDir),
+        COMPACT_SUBAGENT_TOOL_DESCRIPTION,
+      );
+    } finally {
+      fs.rmSync(defaultAgentDir, { recursive: true, force: true });
+      fs.rmSync(legacyFullAgentDir, { recursive: true, force: true });
+      fs.rmSync(legacyInvalidAgentDir, { recursive: true, force: true });
+    }
   });
 });

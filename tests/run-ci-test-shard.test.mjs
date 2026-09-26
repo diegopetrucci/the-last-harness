@@ -1,19 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import test from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildLanes, parseShard } from "../scripts/run-ci-test-shard.mjs";
+import { buildLanes, parseShard, registerTmpdirCleanup } from "../scripts/run-ci-test-shard.mjs";
 import { runLane, runLanes, spawnBuffered } from "../scripts/run-lane.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const runLanePath = resolve(testDir, "../scripts/run-lane.mjs");
+const runCiShardPath = resolve(testDir, "../scripts/run-ci-test-shard.mjs");
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 function tempDir() {
-  return mkdtempSync(join(tmpdir(), "tlh-run-lane-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tlh-run-lane-test-"));
+  _tmpDirs.push(dir);
+  return dir;
 }
 
 /** Capture stream output into a buffer. */
@@ -538,6 +546,208 @@ test("runLanes: creates per-lane HOME subdirectories", async () => {
   assert.ok(existsSync(join(base, "lane-x")), "lane-x HOME dir should exist");
   assert.ok(existsSync(join(base, "lane-y")), "lane-y HOME dir should exist");
 });
+
+// ---------------------------------------------------------------------------
+// CI shard temporary-root cleanup
+// ---------------------------------------------------------------------------
+
+test("registerTmpdirCleanup removes a shard root idempotently", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-ci-shard-run-"));
+  const baselineExitListeners = process.listenerCount("exit");
+  const cleanup = registerTmpdirCleanup(root);
+
+  try {
+    assert.equal(process.listenerCount("exit"), baselineExitListeners + 1);
+
+    cleanup();
+    assert.equal(
+      process.listenerCount("exit"),
+      baselineExitListeners,
+      "cleanup should remove its exit listener",
+    );
+    assert.equal(existsSync(root), false, "cleanup should remove the shard root");
+
+    mkdirSync(root);
+    cleanup();
+    assert.equal(
+      existsSync(root),
+      true,
+      "a second cleanup should not remove a root recreated after the first cleanup",
+    );
+  } finally {
+    cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test(
+  "registerTmpdirCleanup removes a shard root when run-lane exits on SIGTERM",
+  { timeout: 8000 },
+  async () => {
+    const base = tempDir();
+    const rootMarker = join(base, "child-root.txt");
+    const readyMarker = join(base, "child-ready.txt");
+    const commandReadyMarker = join(base, "command-ready.txt");
+    const commandTermMarker = join(base, "command-term.txt");
+    const commandPidMarker = join(base, "command-pid.txt");
+    const completedMarker = join(base, "child-completed.txt");
+    const exitMarker = join(base, "child-exit.txt");
+    const crashMarker = join(base, "child-crash.txt");
+    let root;
+    let commandPid;
+    const longLivedCommand = [
+      `import { writeFileSync } from "node:fs";`,
+      `process.on("SIGTERM", () => {`,
+      `  writeFileSync(process.env.TLH_CI_SHARD_COMMAND_TERM_MARKER, "term");`,
+      `});`,
+      `writeFileSync(process.env.TLH_CI_SHARD_COMMAND_PID_MARKER, String(process.pid));`,
+      `writeFileSync(process.env.TLH_CI_SHARD_COMMAND_READY_MARKER, "ready");`,
+      `setInterval(() => {}, 100000);`,
+    ].join("\n");
+    const childCode = [
+      `import { existsSync, mkdtempSync, writeFileSync } from "node:fs";`,
+      `import { tmpdir } from "node:os";`,
+      `import { join } from "node:path";`,
+      `import { spawnBuffered } from ${JSON.stringify(runLanePath)};`,
+      `import { registerTmpdirCleanup } from ${JSON.stringify(runCiShardPath)};`,
+      `process.on("uncaughtExceptionMonitor", (error) => {`,
+      `  writeFileSync(process.env.TLH_CI_SHARD_CRASH_MARKER, String(error));`,
+      `});`,
+      `process.on("exit", (code) => {`,
+      `  writeFileSync(process.env.TLH_CI_SHARD_EXIT_MARKER, String(code));`,
+      `});`,
+      `const root = mkdtempSync(join(tmpdir(), "tlh-ci-shard-run-"));`,
+      `writeFileSync(process.env.TLH_CI_SHARD_ROOT_MARKER, root);`,
+      `registerTmpdirCleanup(root);`,
+      `const command = spawnBuffered(`,
+      `  [process.execPath, "--input-type=module", "-e", ${JSON.stringify(longLivedCommand)}],`,
+      `  process.env,`,
+      `  { label: "long-lived cleanup command" },`,
+      `);`,
+      `const deadline = Date.now() + 5000;`,
+      `while (!existsSync(process.env.TLH_CI_SHARD_COMMAND_READY_MARKER)) {`,
+      `  if (Date.now() > deadline) {`,
+      `    writeFileSync(process.env.TLH_CI_SHARD_COMPLETED_MARKER, "command never became ready");`,
+      `    process.exit(2);`,
+      `  }`,
+      `  await new Promise((resolve) => setTimeout(resolve, 10));`,
+      `}`,
+      `writeFileSync(process.env.TLH_CI_SHARD_READY_MARKER, "ready");`,
+      `const result = await command;`,
+      `writeFileSync(process.env.TLH_CI_SHARD_COMPLETED_MARKER, result.ok ? "ok" : "failed");`,
+    ].join("\n");
+    const child = spawn(process.execPath, ["--input-type=module", "-e", childCode], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        TLH_CI_SHARD_ROOT_MARKER: rootMarker,
+        TLH_CI_SHARD_READY_MARKER: readyMarker,
+        TLH_CI_SHARD_COMMAND_READY_MARKER: commandReadyMarker,
+        TLH_CI_SHARD_COMMAND_TERM_MARKER: commandTermMarker,
+        TLH_CI_SHARD_COMMAND_PID_MARKER: commandPidMarker,
+        TLH_CI_SHARD_COMPLETED_MARKER: completedMarker,
+        TLH_CI_SHARD_EXIT_MARKER: exitMarker,
+        TLH_CI_SHARD_CRASH_MARKER: crashMarker,
+      },
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    const closePromise = new Promise((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+
+    try {
+      const deadline = Date.now() + 5000;
+      while (!existsSync(readyMarker)) {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          const result = await closePromise;
+          throw new Error(
+            `helper exited before ready marker (code=${result.code}, signal=${result.signal}); ` +
+              `stderr: ${Buffer.concat(stderr)}`,
+          );
+        }
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for ready marker; stderr: ${Buffer.concat(stderr)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      root = readFileSync(rootMarker, "utf8").trim();
+      _tmpDirs.push(root);
+      commandPid = Number.parseInt(readFileSync(commandPidMarker, "utf8"), 10);
+      const killed = child.kill("SIGTERM");
+      if (!killed) {
+        const result = await closePromise;
+        throw new Error(
+          `helper exited before SIGTERM could be sent (code=${result.code}, signal=${result.signal}); ` +
+            `stderr: ${Buffer.concat(stderr)}`,
+        );
+      }
+
+      const result = await closePromise;
+      const output = Buffer.concat(stdout).toString("utf8");
+      const errorOutput = Buffer.concat(stderr).toString("utf8");
+      const exitEvidence = existsSync(exitMarker) ? readFileSync(exitMarker, "utf8") : "missing";
+      const evidence = [
+        `ready=${existsSync(readyMarker)}`,
+        `commandReady=${existsSync(commandReadyMarker)}`,
+        `commandTerm=${existsSync(commandTermMarker)}`,
+        `completed=${existsSync(completedMarker)}`,
+        `exit=${exitEvidence}`,
+        `crash=${existsSync(crashMarker)}`,
+        `code=${result.code}`,
+        `signal=${result.signal}`,
+        `stdout=${output}`,
+        `stderr=${errorOutput}`,
+      ].join("; ");
+
+      assert.equal(result.signal, null, `helper should exit via run-lane; ${evidence}`);
+      assert.equal(result.code, 1, `helper should exit with run-lane's code; ${evidence}`);
+      assert.equal(existsSync(crashMarker), false, `helper should not crash; ${evidence}`);
+      assert.equal(
+        exitEvidence,
+        "1",
+        `helper exit evidence should record process.exit(1); ${evidence}`,
+      );
+      assert.equal(
+        existsSync(commandTermMarker),
+        true,
+        `run-lane should forward SIGTERM to the active command; ${evidence}`,
+      );
+      assert.equal(
+        existsSync(completedMarker),
+        false,
+        `signal path should preempt the await; ${evidence}`,
+      );
+      assert.equal(
+        existsSync(root),
+        false,
+        `exit cleanup should remove the shard root; ${evidence}`,
+      );
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await closePromise;
+      }
+      if (commandPid === undefined && existsSync(commandPidMarker)) {
+        commandPid = Number.parseInt(readFileSync(commandPidMarker, "utf8"), 10);
+      }
+      if (Number.isInteger(commandPid) && commandPid > 0) {
+        try {
+          process.kill(commandPid, "SIGKILL");
+        } catch {
+          // The command already exited during normal signal cleanup.
+        }
+      }
+      if (root === undefined && existsSync(rootMarker)) {
+        root = readFileSync(rootMarker, "utf8").trim();
+      }
+      if (root) rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 // ---------------------------------------------------------------------------
 // parseShard
