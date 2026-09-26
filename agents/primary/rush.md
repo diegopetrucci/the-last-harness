@@ -3,7 +3,7 @@ name: rush
 description: Implements small bounded changes directly with narrow validation and optional review when warranted.
 tlhModelDefaults:
   - provider: anthropic
-    models: [claude-sonnet-4-6]
+    models: [claude-opus-5-5]
     effort: low
   - provider: openai-codex
     models: [gpt-5.6-luna]

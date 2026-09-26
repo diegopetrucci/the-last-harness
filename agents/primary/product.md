@@ -3,8 +3,8 @@ name: product
 description: Guides product strategy, decisions, product docs, and implementation ticket shaping without changing source.
 tlhModelDefaults:
   - provider: anthropic
-    models: [claude-opus-5]
-    effort: high
+    models: [claude-opus-5-5]
+    effort: medium
   - provider: openai-codex
     models: [gpt-5.6-sol]
     effort: high
