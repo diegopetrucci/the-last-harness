@@ -7,8 +7,8 @@ tlhModelDefaults:
     models: [gpt-6-astra]
     effort: medium
   - provider: anthropic
-    models: [claude-fable-5-1]
-    effort: medium
+    models: [claude-opus-5-5]
+    effort: high
   - provider: xai
     models: [grok-4.6]
     effort: xhigh
