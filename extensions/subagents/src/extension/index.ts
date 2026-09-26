@@ -100,6 +100,7 @@ import {
   SLASH_TEXT_RESULT_TYPE,
   TEMP_ROOT_DIR,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
   SUBAGENT_ASYNC_STARTED_EVENT,
   SUBAGENT_CONTROL_EVENT,
   WIDGET_KEY,
@@ -112,6 +113,7 @@ import {
   type SubagentControlMessageDetails,
 } from "./control-notices.ts";
 import { registerCacheWarmingDecision } from "./cache-warming-decision.ts";
+import { announceBundledSubagentRestoreProvider } from "../../../shared/subagent-restore-contract.ts";
 
 export { loadConfig } from "./config.ts";
 
@@ -806,28 +808,50 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     }
   };
 
-  const resetSessionState = (ctx: ExtensionContext) => {
-    toolResultBridge.clear();
-    state.baseCwd = ctx.cwd;
-    state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-    // Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
-    // Only set in the root session (the interactive UI session), not in
-    // child subagent processes — children inherit the parent's value
-    // through the process environment at spawn time and must not overwrite
-    // it with their own session identity.
-    if (!process.env[SUBAGENT_CHILD_ENV]) {
-      const sessionId = ctx.sessionManager.getSessionId();
-      if (sessionId) {
-        process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
-      }
+  const emitRestoreFailureSnapshot = (): void => {
+    const sessionId = state.currentSessionId;
+    if (!sessionId) return;
+    try {
+      pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, { sessionId, jobs: [] });
+    } catch (error) {
+      console.error("Failed to publish the async restore failure snapshot:", error);
     }
-    state.lastUiContext = ctx;
-    cleanupSessionArtifacts(ctx);
-    clearPendingForegroundControlNotices(state);
-    liveDetailController.clearToolRows();
-    resetJobs(ctx);
-    restoreActiveJobs(ctx);
-    primeExistingResults();
+  };
+
+  const resetSessionState = (ctx: ExtensionContext) => {
+    let restoreAttempted = false;
+    try {
+      toolResultBridge.clear();
+      state.baseCwd = ctx.cwd;
+      // Do not retain a prior session identity if resolving the new one fails.
+      state.currentSessionId = null;
+      state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+      // Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
+      // Only set in the root session (the interactive UI session), not in
+      // child subagent processes — children inherit the parent's value
+      // through the process environment at spawn time and must not overwrite
+      // it with their own session identity.
+      if (!process.env[SUBAGENT_CHILD_ENV]) {
+        const sessionId = ctx.sessionManager.getSessionId();
+        if (sessionId) {
+          process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+        }
+      }
+      state.lastUiContext = ctx;
+      cleanupSessionArtifacts(ctx);
+      clearPendingForegroundControlNotices(state);
+      liveDetailController.clearToolRows();
+      resetJobs(ctx);
+      restoreAttempted = true;
+      restoreActiveJobs(ctx);
+      primeExistingResults();
+    } catch (error) {
+      // restoreActiveJobs publishes its own empty snapshot for scan/restore
+      // failures. This covers only earlier local setup failures, preserving the
+      // original exception while giving TLH a session-scoped failure handoff.
+      if (!restoreAttempted) emitRestoreFailureSnapshot();
+      throw error;
+    }
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -883,4 +907,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       if (!isStaleExtensionContextError(error)) throw error;
     }
   });
+
+  // TLH loads first and resets this marker. Announce only after every
+  // registration step above succeeds, so a partial factory failure leaves TLH
+  // free to use its fallback artifact scan.
+  announceBundledSubagentRestoreProvider();
 }

@@ -29,9 +29,10 @@ import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
-import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
+import { announceBundledSubagentRestoreProvider } from "../../../shared/subagent-restore-contract.js";
 export { loadConfig } from "./config.js";
 export function createSubagentToolResultBridge() {
     const failedResults = new Map();
@@ -559,23 +560,44 @@ export default function registerSubagentExtension(pi) {
         catch {
         }
     };
-    const resetSessionState = (ctx) => {
-        toolResultBridge.clear();
-        state.baseCwd = ctx.cwd;
-        state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        if (!process.env[SUBAGENT_CHILD_ENV]) {
-            const sessionId = ctx.sessionManager.getSessionId();
-            if (sessionId) {
-                process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
-            }
+    const emitRestoreFailureSnapshot = () => {
+        const sessionId = state.currentSessionId;
+        if (!sessionId)
+            return;
+        try {
+            pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, { sessionId, jobs: [] });
         }
-        state.lastUiContext = ctx;
-        cleanupSessionArtifacts(ctx);
-        clearPendingForegroundControlNotices(state);
-        liveDetailController.clearToolRows();
-        resetJobs(ctx);
-        restoreActiveJobs(ctx);
-        primeExistingResults();
+        catch (error) {
+            console.error("Failed to publish the async restore failure snapshot:", error);
+        }
+    };
+    const resetSessionState = (ctx) => {
+        let restoreAttempted = false;
+        try {
+            toolResultBridge.clear();
+            state.baseCwd = ctx.cwd;
+            state.currentSessionId = null;
+            state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+            if (!process.env[SUBAGENT_CHILD_ENV]) {
+                const sessionId = ctx.sessionManager.getSessionId();
+                if (sessionId) {
+                    process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+                }
+            }
+            state.lastUiContext = ctx;
+            cleanupSessionArtifacts(ctx);
+            clearPendingForegroundControlNotices(state);
+            liveDetailController.clearToolRows();
+            resetJobs(ctx);
+            restoreAttempted = true;
+            restoreActiveJobs(ctx);
+            primeExistingResults();
+        }
+        catch (error) {
+            if (!restoreAttempted)
+                emitRestoreFailureSnapshot();
+            throw error;
+        }
     };
     pi.on("session_start", (_event, ctx) => {
         controlNoticeSessionContext = ctx;
@@ -629,4 +651,5 @@ export default function registerSubagentExtension(pi) {
                 throw error;
         }
     });
+    announceBundledSubagentRestoreProvider();
 }
