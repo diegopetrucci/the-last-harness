@@ -106,6 +106,120 @@ describe("runtime cleanup", () => {
     }
   });
 
+  it("reinspects stale async dirs before deleting a run that becomes paused", () => {
+    const root = tempRoot("pi-runtime-cleanup-reinspect-");
+    const now = Date.now();
+    const staleAt = now - (SEVEN_DAYS_MS + ONE_DAY_MS);
+    const paths = createPaths(root);
+    const runDir = path.join(paths.asyncDir, "pausing-run");
+    try {
+      writeStatus(runDir, {
+        runId: "pausing-run",
+        mode: "single",
+        state: "pausing",
+        pid: 12345,
+        startedAt: staleAt,
+        lastUpdate: staleAt,
+      });
+      setTreeMtime(runDir, staleAt);
+
+      let livenessChecks = 0;
+      const result = cleanupRuntimeDirs(paths, {
+        now: () => now,
+        kill: () => {
+          livenessChecks += 1;
+          if (livenessChecks === 1) {
+            writeStatus(runDir, {
+              runId: "pausing-run",
+              mode: "single",
+              state: "paused",
+              startedAt: staleAt,
+              lastUpdate: now,
+            });
+          }
+          throw Object.assign(new Error("dead"), { code: "ESRCH" });
+        },
+      });
+
+      assert.equal(result.removedAsyncDirs, 0);
+      assert.equal(fs.existsSync(runDir), true);
+      assert.equal(
+        JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state,
+        "paused",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains stale pausing runs with a valid resume checkpoint", () => {
+    const root = tempRoot("pi-runtime-cleanup-pausing-checkpoint-");
+    const now = Date.now();
+    const staleAt = now - (SEVEN_DAYS_MS + ONE_DAY_MS);
+    const paths = createPaths(root);
+    const runDir = path.join(paths.asyncDir, "recoverable-pausing-run");
+    const sessionFile = path.join(runDir, "child-session.jsonl");
+    try {
+      writeStatus(runDir, {
+        runId: "recoverable-pausing-run",
+        mode: "single",
+        state: "pausing",
+        pid: 12345,
+        pause: { kind: "awaiting_supervisor", requestedAt: staleAt },
+        sessionFile,
+        startedAt: staleAt,
+        lastUpdate: staleAt,
+      });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      setTreeMtime(runDir, staleAt);
+
+      const result = cleanupRuntimeDirs(paths, {
+        now: () => now,
+        kill: () => {
+          throw Object.assign(new Error("dead"), { code: "ESRCH" });
+        },
+      });
+
+      assert.equal(result.removedAsyncDirs, 0);
+      assert.equal(fs.existsSync(runDir), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes stale pausing metadata without top-level or step session files", () => {
+    const root = tempRoot("pi-runtime-cleanup-unrecoverable-pausing-");
+    const now = 10 * ONE_DAY_MS;
+    const staleAt = now - (SEVEN_DAYS_MS + ONE_DAY_MS);
+    const paths = createPaths(root);
+    const runDir = path.join(paths.asyncDir, "unrecoverable-pausing-run");
+    try {
+      writeStatus(runDir, {
+        runId: "unrecoverable-pausing-run",
+        mode: "single",
+        state: "pausing",
+        pid: 12345,
+        pause: { kind: "awaiting_supervisor", requestedAt: staleAt },
+        steps: [{ agent: "worker", status: "pausing" }],
+        startedAt: staleAt,
+        lastUpdate: staleAt,
+      });
+      setTreeMtime(runDir, staleAt);
+
+      const result = cleanupRuntimeDirs(paths, {
+        now: () => now,
+        kill: () => {
+          throw Object.assign(new Error("dead"), { code: "ESRCH" });
+        },
+      });
+
+      assert.equal(result.removedAsyncDirs, 1);
+      assert.equal(fs.existsSync(runDir), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("treats JSON null as missing status but retains invalid primitive and array status", () => {
     const root = tempRoot("pi-runtime-cleanup-status-shapes-");
     const now = 3 * ONE_DAY_MS;

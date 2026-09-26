@@ -11,7 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
-- Stale subagent runtime directories now apply the seven-day retention window to complete, failed, cancelled, and continued runs; terminal lifecycle state takes precedence over stale `needs_attention` metadata. Paused runs remain resumable and are always retained, while queued, running, and pausing runs with live or indeterminate owners are retained and dead or ownerless records receive the same grace window before becoming stale.
+- Stale subagent runtime directories now apply the seven-day retention window to complete, failed, cancelled, and continued runs; terminal lifecycle state takes precedence over stale `needs_attention` metadata. Paused runs remain resumable and are always retained; pausing runs with recoverable resume checkpoints are also retained, while queued, running, and pausing runs with live or indeterminate owners are retained and unrecoverable dead or ownerless active records receive the same seven-day grace period before becoming stale.
 
 ## [0.43.0] - 2026-09-25
 

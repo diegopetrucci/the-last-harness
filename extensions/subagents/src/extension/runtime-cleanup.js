@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.js";
+import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.js";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.js";
 import { ASYNC_DIR, TEMP_ROOT_DIR } from "../shared/types.js";
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -160,9 +161,36 @@ function inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill
         case "paused":
             return { keep: true, activeOrLive: true };
         case "queued":
-        case "running":
-        case "pausing": {
+        case "running": {
             const pidState = pidRetentionState(status, kill);
+            if (pidState === "alive" || pidState === "unknown") {
+                return { keep: true, activeOrLive: true };
+            }
+            return {
+                keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+                activeOrLive: false,
+            };
+        }
+        case "pausing": {
+            let pidState;
+            if (isSignalSafePid(status.pid)) {
+                try {
+                    const recovered = recoverStoppedLifecycleOwnership(status, {
+                        kill,
+                        now: () => now,
+                    });
+                    if (recovered.repaired) {
+                        return { keep: true, activeOrLive: true };
+                    }
+                    pidState = recovered.pidLiveness ?? "ownerless";
+                }
+                catch {
+                    pidState = pidRetentionState(status, kill);
+                }
+            }
+            else {
+                pidState = "ownerless";
+            }
             if (pidState === "alive" || pidState === "unknown") {
                 return { keep: true, activeOrLive: true };
             }
@@ -272,6 +300,11 @@ export function cleanupRuntimeDirs(paths, deps = {}) {
     for (const entry of inspection.asyncDirs) {
         if (entry.keep) {
             retainedRootRunIds.add(entry.rootRunId);
+            continue;
+        }
+        const latest = inspectAsyncDir(entry.entry, now, kill);
+        if (latest.keep) {
+            retainedRootRunIds.add(latest.rootRunId);
             continue;
         }
         if (!removeDir(entry.entry.asyncDir)) {

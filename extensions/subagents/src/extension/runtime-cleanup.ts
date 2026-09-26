@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.ts";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.ts";
 import { ASYNC_DIR, TEMP_ROOT_DIR, type AsyncStatus } from "../shared/types.ts";
 
@@ -246,9 +247,40 @@ function inspectKnownLifecycleState(
       // even when their owner PID has exited or is no longer recorded.
       return { keep: true, activeOrLive: true };
     case "queued":
-    case "running":
-    case "pausing": {
+    case "running": {
       const pidState = pidRetentionState(status, kill);
+      if (pidState === "alive" || pidState === "unknown") {
+        return { keep: true, activeOrLive: true };
+      }
+      // A missing or dead owner may be a transient handoff/restart. Keep it for
+      // the same grace window as terminal records, then allow stale cleanup.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    }
+    case "pausing": {
+      let pidState: PidRetentionState;
+      if (isSignalSafePid(status.pid)) {
+        try {
+          const recovered = recoverStoppedLifecycleOwnership(status, {
+            kill,
+            now: () => now,
+          });
+          if (recovered.repaired) {
+            // Lifecycle recovery would finalize this checkpoint to paused. Keep
+            // the record even though cleanup itself must not rewrite its status.
+            return { keep: true, activeOrLive: true };
+          }
+          pidState = recovered.pidLiveness ?? "ownerless";
+        } catch {
+          // Malformed optional lifecycle metadata must not make best-effort
+          // cleanup fail; fall back to the existing PID retention policy.
+          pidState = pidRetentionState(status, kill);
+        }
+      } else {
+        pidState = "ownerless";
+      }
       if (pidState === "alive" || pidState === "unknown") {
         return { keep: true, activeOrLive: true };
       }
@@ -382,6 +414,11 @@ export function cleanupRuntimeDirs(
   for (const entry of inspection.asyncDirs) {
     if (entry.keep) {
       retainedRootRunIds.add(entry.rootRunId);
+      continue;
+    }
+    const latest = inspectAsyncDir(entry.entry, now, kill);
+    if (latest.keep) {
+      retainedRootRunIds.add(latest.rootRunId);
       continue;
     }
     if (!removeDir(entry.entry.asyncDir)) {
