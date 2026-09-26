@@ -418,6 +418,45 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
   }
 });
 
+test("tracker rehydrates from the PI_SUBAGENTS_TEMP_ROOT override by default", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-tracker-override-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = `  ${tempRoot}  `;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "run-override");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      `${JSON.stringify(
+        {
+          runId: "run-override",
+          state: "running",
+          pid: process.pid,
+          cwd: process.cwd(),
+          sessionId: "session-override",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+    tracker.rehydrateFromArtifacts({
+      cwd: process.cwd(),
+      sessionManager: { getSessionId: () => "session-override" },
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-override"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("tracker notifies snapshot listeners only when effective state changes", () => {
   const timers = createFakeTimers();
   const tracker = createTlhEffectiveActivityTracker({
