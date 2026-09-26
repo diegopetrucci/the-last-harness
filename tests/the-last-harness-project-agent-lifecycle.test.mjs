@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { createJiti } from "jiti";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
@@ -51,6 +51,20 @@ const {
 } = await import("../extensions/the-last-harness/project-agent-access.mjs");
 const { loadProjectAgentSnapshot } =
   await import("../extensions/the-last-harness/project-agent-loader-bridge.mjs");
+// Redirect the subagents temp root away from the shared live runtime dir
+// before any jiti import of shared/types.ts resolves TEMP_ROOT_DIR.
+const _previousSubagentsTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+const _subagentsTmpDir = mkdtempSync(join(tmpdir(), "tlh-project-agent-lifecycle-subagents-tmp-"));
+process.env.PI_SUBAGENTS_TEMP_ROOT = _subagentsTmpDir;
+after(() => {
+  rmSync(_subagentsTmpDir, { recursive: true, force: true });
+  if (_previousSubagentsTempRoot === undefined) {
+    delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+  } else {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = _previousSubagentsTempRoot;
+  }
+});
+
 const { ASYNC_DIR } = await jiti.import("../extensions/subagents/src/shared/types.ts");
 const { createSubagentExecutor } = await jiti.import(
   "../extensions/subagents/src/runs/foreground/subagent-executor.ts",

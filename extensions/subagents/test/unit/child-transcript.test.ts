@@ -2,14 +2,28 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import {
   createChildTranscriptWriter,
   CHILD_TRANSCRIPT_ARTIFACT_VERSION,
 } from "../../src/shared/child-transcript.ts";
 
+const _tempDirs: string[] = [];
+
+after(() => {
+  for (const dir of _tempDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+});
+
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "child-transcript-test-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "child-transcript-test-"));
+  _tempDirs.push(dir);
+  return dir;
 }
 
 function readRecords(file: string): Record<string, unknown>[] {

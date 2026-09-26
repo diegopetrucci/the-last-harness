@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
-import test from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildLanes, parseShard } from "../scripts/run-ci-test-shard.mjs";
 import { runLane, runLanes, spawnBuffered } from "../scripts/run-lane.mjs";
@@ -12,8 +12,15 @@ import { runLane, runLanes, spawnBuffered } from "../scripts/run-lane.mjs";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const runLanePath = resolve(testDir, "../scripts/run-lane.mjs");
 
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
+
 function tempDir() {
-  return mkdtempSync(join(tmpdir(), "tlh-run-lane-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tlh-run-lane-test-"));
+  _tmpDirs.push(dir);
+  return dir;
 }
 
 /** Capture stream output into a buffer. */

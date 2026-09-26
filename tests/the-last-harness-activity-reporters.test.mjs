@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { createHerdrActivityReporter, createCmuxActivityReporter } = await jiti.import(
   "../extensions/the-last-harness/activity-reporters.ts",
 );
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 function createFakeTimers() {
   let now = 0;
@@ -103,6 +108,7 @@ test("Herdr reporter no-ops without required env and when official reporter is i
   assert.deepEqual(calls, []);
 
   const agentDir = mkdtempSync(join(tmpdir(), "tlh-herdr-agent-dir-"));
+  _tmpDirs.push(agentDir);
   mkdirSync(join(agentDir, "extensions"), { recursive: true });
   writeFileSync(join(agentDir, "extensions", "herdr-agent-state.ts"), "// installed by herdr\n");
   const singleWriterCalls = [];

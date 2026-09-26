@@ -23,7 +23,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
@@ -39,6 +39,19 @@ import { resolveForegroundResumeTarget } from "../../src/runs/foreground/foregro
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Session roots created by makeExecutor(); cleaned up in the after() hook. */
+const _sessionRoots: string[] = [];
+
+after(() => {
+  for (const dir of _sessionRoots) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+});
 
 const parentCwd = os.tmpdir();
 // A child cwd that is guaranteed to differ from parentCwd.
@@ -188,7 +201,11 @@ function makeExecutor(
         : {}),
     } as any,
     tempArtifactsDir: os.tmpdir(),
-    getSubagentSessionRoot: () => os.tmpdir(),
+    getSubagentSessionRoot: () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-dispatch-sessions-"));
+      _sessionRoots.push(dir);
+      return dir;
+    },
     expandTilde: (v: string) => v,
     discoverAgents: (_cwd: string) => ({ agents: [agent] }),
     runSync: runSync as any,
@@ -538,7 +555,11 @@ describe("child-location pause round-trip (ITEM 2)", () => {
       state,
       config: { maxSubagentDepth: 2, control: {} } as any,
       tempArtifactsDir: os.tmpdir(),
-      getSubagentSessionRoot: () => os.tmpdir(),
+      getSubagentSessionRoot: () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-dispatch-sessions-"));
+        _sessionRoots.push(dir);
+        return dir;
+      },
       expandTilde: (v: string) => v,
       discoverAgents: (_cwd: string) => ({
         agents: [
@@ -674,7 +695,11 @@ describe("queued-task pause result carries childLocation into final persisted st
       // when task 0 triggers the supervisor pause.
       config: { maxSubagentDepth: 2, control: {}, parallel: { concurrency: 1 } } as any,
       tempArtifactsDir: os.tmpdir(),
-      getSubagentSessionRoot: () => os.tmpdir(),
+      getSubagentSessionRoot: () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-dispatch-sessions-"));
+        _sessionRoots.push(dir);
+        return dir;
+      },
       expandTilde: (v: string) => v,
       discoverAgents: (_cwd: string) => ({
         agents: [

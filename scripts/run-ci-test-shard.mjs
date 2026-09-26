@@ -12,9 +12,12 @@
  * All environment variables (CI, GITHUB_TOKEN, etc.) pass through unchanged.
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runLanes } from "./run-lane.mjs";
+import { findLeaks } from "./run-test-tmpdir-guard.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "..");
@@ -90,9 +93,30 @@ export async function main(argv = process.argv.slice(2)) {
 
   const { shard, shardStr } = parsed;
   const baseHomeDir = process.env.HOME ?? join(repoRoot, ".tmp-ci-home");
-  const lanes = buildLanes(shard, shardStr);
 
-  return runLanes(lanes, { baseHomeDir, cwd: repoRoot });
+  // Isolate each lane's temp output under a fresh per-run root so temp-dir
+  // leaks are detectable and do not pollute the shared system TMPDIR.
+  const tmpdirRoot = mkdtempSync(join(tmpdir(), "tlh-ci-shard-run-"));
+  const tmpdirEnv = { TMPDIR: tmpdirRoot, TMP: tmpdirRoot, TEMP: tmpdirRoot };
+  const lanes = buildLanes(shard, shardStr).map((lane) => ({
+    ...lane,
+    env: { ...lane.env, ...tmpdirEnv },
+  }));
+
+  let exitCode;
+  try {
+    exitCode = await runLanes(lanes, { baseHomeDir, cwd: repoRoot });
+    const leaks = findLeaks(tmpdirRoot);
+    if (leaks.length > 0) {
+      process.stderr.write(
+        `[tlh] temp-dir leaks detected in CI shard:\n${leaks.map((n) => `  ${n}`).join("\n")}\n`,
+      );
+      if (exitCode === 0) exitCode = 1;
+    }
+  } finally {
+    rmSync(tmpdirRoot, { recursive: true, force: true });
+  }
+  return exitCode;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {

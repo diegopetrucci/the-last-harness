@@ -7,18 +7,25 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeKeybindingsScript = join(repoRoot, "scripts", "merge-keybindings.mjs");
 
 function tempFixture() {
   const agentDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-test-"));
+  _tmpDirs.push(agentDir);
   const keybindings = join(agentDir, "keybindings.json");
   return { agentDir, keybindings };
 }
@@ -90,6 +97,7 @@ test("merge preserves keybindings and backup file modes when rewriting keybindin
 test("merge rejects symlinked keybindings targets before creating backups", () => {
   const fixture = tempFixture();
   const externalDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-symlink-target-"));
+  _tmpDirs.push(externalDir);
   const externalKeybindings = join(externalDir, "keybindings.json");
   writeFileSync(externalKeybindings, JSON.stringify({ "app.open": ["ctrl+o"] }, null, 2));
   symlinkFile(externalKeybindings, fixture.keybindings);
@@ -146,6 +154,7 @@ test("dry-run reports changes without writing keybindings", () => {
 test("merge with multiple custom defaults preserves user-owned keys and adds missing ones", () => {
   const fixture = tempFixture();
   const defaultsDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-defaults-"));
+  _tmpDirs.push(defaultsDir);
   const customDefaultsPath = join(defaultsDir, "keybindings.defaults.json");
   const customDefaults = {
     "app.foo": ["ctrl+f"],
@@ -206,6 +215,7 @@ test("merge fails with clear error when keybindings file contains a JSON array",
 test("merge fails with clear error when defaults file is not a JSON object", () => {
   const fixture = tempFixture();
   const defaultsDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-defaults-"));
+  _tmpDirs.push(defaultsDir);
   const badDefaultsPath = join(defaultsDir, "bad-defaults.json");
   writeFileSync(badDefaultsPath, "42");
 
@@ -223,6 +233,7 @@ test("merge fails with clear error when defaults file is not a JSON object", () 
 test("no backup when all custom defaults are already present in keybindings", () => {
   const fixture = tempFixture();
   const defaultsDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-defaults-"));
+  _tmpDirs.push(defaultsDir);
   const customDefaultsPath = join(defaultsDir, "keybindings.defaults.json");
   const customDefaults = { "app.foo": ["ctrl+f"], "app.bar": ["ctrl+b"] };
   writeFileSync(customDefaultsPath, JSON.stringify(customDefaults, null, 2));
@@ -241,6 +252,7 @@ test("no backup when all custom defaults are already present in keybindings", ()
 test("dry-run creates no backup even when changes are pending and the keybindings file exists", () => {
   const fixture = tempFixture();
   const defaultsDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-defaults-"));
+  _tmpDirs.push(defaultsDir);
   const customDefaultsPath = join(defaultsDir, "keybindings.defaults.json");
   const customDefaults = { "app.newkey": ["ctrl+n"] };
   writeFileSync(customDefaultsPath, JSON.stringify(customDefaults, null, 2));
@@ -260,6 +272,7 @@ test("dry-run creates no backup even when changes are pending and the keybinding
 test("exactly one backup is created when an existing keybindings file is rewritten with changes", () => {
   const fixture = tempFixture();
   const defaultsDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-defaults-"));
+  _tmpDirs.push(defaultsDir);
   const customDefaultsPath = join(defaultsDir, "keybindings.defaults.json");
   const customDefaults = { "app.alpha": ["ctrl+a"], "app.beta": ["ctrl+b"] };
   writeFileSync(customDefaultsPath, JSON.stringify(customDefaults, null, 2));

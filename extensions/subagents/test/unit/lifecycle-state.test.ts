@@ -330,7 +330,8 @@ describe("lifecycle state helpers", () => {
 
   it("rejects re-entrant lifecycle transitions before a second mutation can enter", () => {
     const secret = "SECRET-LOCK-ROOT-12345";
-    const root = path.join(tempRoot("pi-lifecycle-lock-"), secret, "private-runspace");
+    const tempRootDir = tempRoot("pi-lifecycle-lock-");
+    const root = path.join(tempRootDir, secret, "private-runspace");
     try {
       const asyncDir = path.join(root, "run-locked");
       writeNormalizedLifecycleStatus(asyncDir, {
@@ -379,13 +380,14 @@ describe("lifecycle state helpers", () => {
       assert.equal(transitioned.status.state, "pausing");
       assert.equal(readStatus(asyncDir)?.lifecycle?.generation, 1);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
   });
 
   it("uses the shared lifecycle lock for read-only canonical checks", () => {
     const secret = "SECRET-LOCK-READ-24680";
-    const root = path.join(tempRoot("pi-lifecycle-read-lock-"), secret, "private-runspace");
+    const tempRootDir = tempRoot("pi-lifecycle-read-lock-");
+    const root = path.join(tempRootDir, secret, "private-runspace");
     try {
       const asyncDir = path.join(root, "run-read-locked");
       writeNormalizedLifecycleStatus(asyncDir, {
@@ -410,13 +412,14 @@ describe("lifecycle state helpers", () => {
         /status lock/,
       );
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
   });
 
   it("reports stale generations after the lock holder commits", () => {
     const secret = "SECRET-STALE-ROOT-67890";
-    const root = path.join(tempRoot("pi-lifecycle-stale-"), secret, "private-runspace");
+    const tempRootDir = tempRoot("pi-lifecycle-stale-");
+    const root = path.join(tempRootDir, secret, "private-runspace");
     try {
       const asyncDir = path.join(root, "run-stale");
       writeNormalizedLifecycleStatus(asyncDir, {
@@ -446,7 +449,7 @@ describe("lifecycle state helpers", () => {
         /expected generation 0, found 1/,
       );
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(tempRootDir, { recursive: true, force: true });
     }
   });
 
