@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -551,6 +552,134 @@ test("createWorkspace filters sensitive top-level state from a symlinked profile
   ]) {
     assert.equal(existsSync(join(workspace.agentDir, relativePath)), false, relativePath);
   }
+});
+
+test("createWorkspace materializes safe nested symlinks without copying unsafe targets", (t) => {
+  const profileSourceRoot = mkdtempSync(join(tmpdir(), "tlh-startup-profile-symlink-test-"));
+  const profileSource = join(profileSourceRoot, "installed-agent");
+  const nestedSource = join(profileSource, "packages", "example", "nested");
+  const externalSource = join(profileSourceRoot, "external");
+  const internalTarget = join(nestedSource, "target.txt");
+  const internalDirectoryTarget = join(nestedSource, "target-directory");
+  const internalDirectoryContent = join(internalDirectoryTarget, "nested", "content.txt");
+  const excludedTarget = join(profileSource, "sessions", "session.jsonl");
+  const externalTarget = join(externalSource, "target.txt");
+  const danglingLink = join(nestedSource, "dangling-link.txt");
+  mkdirSync(nestedSource, { recursive: true });
+  mkdirSync(dirname(internalDirectoryContent), { recursive: true });
+  mkdirSync(join(profileSource, "sessions"), { recursive: true });
+  mkdirSync(externalSource, { recursive: true });
+  writeFileSync(internalTarget, "internal source\n", "utf8");
+  writeFileSync(internalDirectoryContent, "internal directory source\n", "utf8");
+  writeFileSync(excludedTarget, "excluded source\n", "utf8");
+  writeFileSync(externalTarget, "external source\n", "utf8");
+  symlinkSync("target.txt", join(nestedSource, "internal-link.txt"));
+  symlinkSync("internal-link.txt", join(nestedSource, "nested-internal-link.txt"));
+  symlinkSync("target-directory", join(nestedSource, "internal-directory-link"), "dir");
+  symlinkSync("../../../sessions/session.jsonl", join(nestedSource, "excluded-link.txt"));
+  symlinkSync(externalTarget, join(nestedSource, "external-link.txt"));
+  symlinkSync("missing-target.txt", danglingLink);
+  symlinkSync("packages/example/nested/target.txt", join(profileSource, "auth.json"));
+  t.after(() => rmSync(profileSourceRoot, { recursive: true, force: true }));
+
+  const workspace = createWorkspace(profileSource);
+  t.after(() => rmSync(workspace.root, { recursive: true, force: true }));
+
+  const clonedNestedSource = join(workspace.agentDir, "packages", "example", "nested");
+  const clonedInternalLink = join(clonedNestedSource, "internal-link.txt");
+  const clonedNestedInternalLink = join(clonedNestedSource, "nested-internal-link.txt");
+  const clonedInternalDirectoryLink = join(clonedNestedSource, "internal-directory-link");
+  const clonedInternalDirectoryContent = join(clonedInternalDirectoryLink, "nested", "content.txt");
+  for (const path of [clonedInternalLink, clonedNestedInternalLink]) {
+    assert.equal(lstatSync(path).isSymbolicLink(), false, path);
+    assert.equal(readFileSync(path, "utf8"), "internal source\n", path);
+  }
+  const clonedDirectoryStats = lstatSync(clonedInternalDirectoryLink);
+  assert.equal(clonedDirectoryStats.isDirectory(), true);
+  assert.equal(clonedDirectoryStats.isSymbolicLink(), false);
+  assert.equal(readFileSync(clonedInternalDirectoryContent, "utf8"), "internal directory source\n");
+  assert.equal(existsSync(join(clonedNestedSource, "excluded-link.txt")), false);
+  assert.equal(existsSync(join(clonedNestedSource, "external-link.txt")), false);
+  assert.equal(existsSync(join(clonedNestedSource, "dangling-link.txt")), false);
+  assert.equal(existsSync(join(workspace.agentDir, "auth.json")), false);
+
+  writeFileSync(clonedNestedInternalLink, "clone-only\n", "utf8");
+  writeFileSync(clonedInternalDirectoryContent, "clone-only directory\n", "utf8");
+  assert.equal(readFileSync(internalTarget, "utf8"), "internal source\n");
+  assert.equal(readFileSync(internalDirectoryContent, "utf8"), "internal directory source\n");
+  assert.equal(readFileSync(excludedTarget, "utf8"), "excluded source\n");
+  assert.equal(readFileSync(externalTarget, "utf8"), "external source\n");
+  assert.equal(lstatSync(danglingLink).isSymbolicLink(), true);
+});
+
+test("createWorkspace omits FIFO entries before cpSync processes them", (t) => {
+  if (process.platform === "win32") {
+    t.skip("FIFO entries are not supported on Windows");
+    return;
+  }
+
+  const profileSourceRoot = mkdtempSync(join(tmpdir(), "tlh-startup-profile-fifo-test-"));
+  const profileSource = join(profileSourceRoot, "installed-agent");
+  const fifoPath = join(profileSource, "runtime.fifo");
+  mkdirSync(profileSource, { recursive: true });
+  t.after(() => rmSync(profileSourceRoot, { recursive: true, force: true }));
+
+  const mkfifo = spawnSync("mkfifo", [fifoPath], { stdio: "ignore" });
+  if (mkfifo.error || mkfifo.status !== 0) {
+    t.skip("requires a working mkfifo command");
+    return;
+  }
+  writeFileSync(join(profileSource, "settings.json"), "{}\n", "utf8");
+
+  const workspace = createWorkspace(profileSource);
+  t.after(() => rmSync(workspace.root, { recursive: true, force: true }));
+
+  assert.equal(readFileSync(join(workspace.agentDir, "settings.json"), "utf8"), "{}\n");
+  assert.equal(existsSync(join(workspace.agentDir, "runtime.fifo")), false);
+  assert.equal(lstatSync(fifoPath).isFIFO(), true);
+});
+
+test("createWorkspace omits internal ancestor cycles without mutating the source", (t) => {
+  const profileSourceRoot = mkdtempSync(join(tmpdir(), "tlh-startup-profile-cycle-test-"));
+  const profileSource = join(profileSourceRoot, "installed-agent");
+  const nestedSource = join(profileSource, "packages", "example", "nested");
+  const cyclePath = join(nestedSource, "ancestor-cycle");
+  const sourceFile = join(nestedSource, "source.txt");
+  mkdirSync(nestedSource, { recursive: true });
+  writeFileSync(sourceFile, "source content\n", "utf8");
+  symlinkSync("..", cyclePath, "dir");
+  const sourceEntries = readdirSync(nestedSource).sort();
+  t.after(() => rmSync(profileSourceRoot, { recursive: true, force: true }));
+
+  const workspace = createWorkspace(profileSource);
+  t.after(() => rmSync(workspace.root, { recursive: true, force: true }));
+
+  const clonedNestedSource = join(workspace.agentDir, "packages", "example", "nested");
+  assert.equal(existsSync(join(clonedNestedSource, "ancestor-cycle")), false);
+  assert.equal(readFileSync(join(clonedNestedSource, "source.txt"), "utf8"), "source content\n");
+  assert.deepEqual(readdirSync(nestedSource).sort(), sourceEntries);
+  assert.equal(lstatSync(cyclePath).isSymbolicLink(), true);
+
+  rmSync(workspace.root, { recursive: true, force: true });
+  assert.equal(existsSync(workspace.root), false);
+});
+
+test("createWorkspace cleans its temporary root when profile setup fails", (t) => {
+  const profileSourceRoot = mkdtempSync(join(tmpdir(), "tlh-startup-profile-failure-test-"));
+  t.after(() => rmSync(profileSourceRoot, { recursive: true, force: true }));
+  const workspaceNamesBefore = readdirSync(tmpdir())
+    .filter((name) => name.startsWith("tlh-startup-performance-"))
+    .sort();
+
+  assert.throws(
+    () => createWorkspace(join(profileSourceRoot, "missing-agent")),
+    (error) => error?.code === "ENOENT",
+  );
+
+  const workspaceNamesAfter = readdirSync(tmpdir())
+    .filter((name) => name.startsWith("tlh-startup-performance-"))
+    .sort();
+  assert.deepEqual(workspaceNamesAfter, workspaceNamesBefore);
 });
 
 test("direct Python PTY bridge cleans up when checker stdin reaches EOF", async (t) => {
