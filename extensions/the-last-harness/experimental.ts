@@ -15,7 +15,6 @@ export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
   "ci-failure-investigation";
 export const SESSION_MIRROR_OBSERVER_FEATURE: TlhExperimentalFeatureId = "session-mirror-observer";
-export const SESSION_MIRROR_REPLIES_FEATURE: TlhExperimentalFeatureId = "session-mirror-replies";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -102,14 +101,7 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
   {
     id: SESSION_MIRROR_OBSERVER_FEATURE,
     description:
-      "Opt-in aggregate-only in-process session source observation with deferred snapshots; changes apply on the next session.",
-    telemetry: false,
-    nextSessionOnly: true,
-  },
-  {
-    id: SESSION_MIRROR_REPLIES_FEATURE,
-    description:
-      "Opt-in bounded local session-mirror text replies; requires session-mirror-observer and applies on the next session.",
+      "Opt-in aggregate-only in-process session source observation with deferred snapshots; reply channel is enabled automatically with the observer.",
     telemetry: false,
     nextSessionOnly: true,
   },

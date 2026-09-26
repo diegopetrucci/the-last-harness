@@ -15,7 +15,6 @@ const {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
   SESSION_MIRROR_OBSERVER_FEATURE,
-  SESSION_MIRROR_REPLIES_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -89,7 +88,6 @@ test(
           `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
           `enable ${SESSION_MIRROR_OBSERVER_FEATURE}`,
-          `enable ${SESSION_MIRROR_REPLIES_FEATURE}`,
         ],
       );
       assert.deepEqual(
@@ -99,7 +97,6 @@ test(
           `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
           `status ${SESSION_MIRROR_OBSERVER_FEATURE}`,
-          `status ${SESSION_MIRROR_REPLIES_FEATURE}`,
         ],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -123,7 +120,7 @@ test(
         /\/experimental enable ci-failure-investigation/,
       );
       assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
-      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-replies/);
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /session-mirror-replies/);
       assert.match(notifications.at(-1)?.message ?? "", /changes apply on the next session/i);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /embedded-subagents/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
@@ -345,7 +342,13 @@ test(
   "experimental stale settings fail closed and do not rebuild retired or promoted guidance",
   SERIAL_TEST,
   async (t) => {
-    for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE], ["contrarian"]]) {
+    for (const enabledFeatures of [
+      true,
+      [123],
+      [RETIRED_RUN_TESTS_LAST_FEATURE],
+      ["contrarian"],
+      ["session-mirror-replies"],
+    ]) {
       const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
       const settingsPath = join(fixture.agent, "settings.json");
       const malformedOrStaleSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`;
@@ -406,6 +409,46 @@ test(
         );
       });
     }
+  },
+);
+
+test(
+  "legacy session-mirror-replies in enabledFeatures is tolerated without error and without rewriting settings",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const legacySettings = `${JSON.stringify(
+      {
+        tlh: {
+          experimental: {
+            enabledFeatures: ["session-mirror-replies", DELTA_FOLLOW_UP_REVIEWS_FEATURE],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+    writeFileSync(settingsPath, legacySettings);
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const config = getTlhExperimentalConfig(fixture.dir);
+
+      // Legacy flag treated as unknown/ignored — no error raised
+      assert.equal(isTlhExperimentalFeatureEnabled(config, "session-mirror-replies"), false);
+      // Known flag in the same array still works
+      assert.equal(isTlhExperimentalFeatureEnabled(config, DELTA_FOLLOW_UP_REVIEWS_FEATURE), true);
+
+      // List shows known features only, no error output
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+      await command.handler("list", ctx);
+      assert.equal(notifications.at(-1)?.type, "info");
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /session-mirror-replies/);
+
+      // Settings are not rewritten
+      assert.equal(readFileSync(settingsPath, "utf8"), legacySettings);
+    });
   },
 );
 

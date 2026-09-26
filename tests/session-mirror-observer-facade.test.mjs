@@ -23,7 +23,7 @@ const { attestSessionMirrorSession } = await jiti.import(
 );
 const { default: theLastHarness } = await jiti.import("../extensions/the-last-harness.ts");
 
-function makeFixture(t, enabled = false, replies = false) {
+function makeFixture(t, enabled = false) {
   const root = mkdtempSync(join(tmpdir(), "tlh-session-mirror-facade-"));
   const agent = join(root, "agent");
   const cwd = join(root, "workspace");
@@ -32,10 +32,7 @@ function makeFixture(t, enabled = false, replies = false) {
   mkdirSync(sessions, { recursive: true });
   mkdirSync(cwd, { recursive: true });
   writeFileSync(sessionFile, "synthetic session marker\n", "utf8");
-  const enabledFeatures = [
-    ...(enabled ? ["session-mirror-observer"] : []),
-    ...(replies ? ["session-mirror-replies"] : []),
-  ];
+  const enabledFeatures = enabled ? ["session-mirror-observer"] : [];
   writeFileSync(
     join(agent, "settings.json"),
     `${JSON.stringify(
@@ -199,11 +196,8 @@ function drain(scheduled) {
   while (scheduled.length > 0) scheduled.shift()();
 }
 
-function writeFeatureSetting(fixture, enabled, replies = false) {
-  const enabledFeatures = [
-    ...(enabled ? ["session-mirror-observer"] : []),
-    ...(replies ? ["session-mirror-replies"] : []),
-  ];
+function writeFeatureSetting(fixture, enabled) {
+  const enabledFeatures = enabled ? ["session-mirror-observer"] : [];
   writeFileSync(
     join(fixture.agent, "settings.json"),
     `${JSON.stringify(
@@ -785,8 +779,9 @@ test("directory-only persisted sessions activate provisionally and publish after
   });
 });
 
-test("reply activation requires both feature flags and a callable runtime seam", async (t) => {
-  const fixture = makeFixture(t, true, true);
+test("reply activation requires session-mirror-observer and a callable runtime seam", async (t) => {
+  // Observer enabled + sendUserMessage seam = reply channel is active
+  const fixture = makeFixture(t, true);
   const calls = [];
   const probeModule = createProbeFactory({ calls });
   const notifications = [];
@@ -834,9 +829,12 @@ test("reply activation requires both feature flags and a callable runtime seam",
         .map((call) => call.type),
       ["input", "messageStart", "sessionBeforeTree", "sessionBeforeCompact"],
     );
+    // Replies are enabled whenever the observer is active
+    assert.equal(facade.getStatus(context).sessionConfigured, true);
   });
 
-  const noReplySeam = makeFixture(t, true, true);
+  // Observer enabled but no sendUserMessage seam: no reply lifecycle registered
+  const noReplySeam = makeFixture(t, true);
   const noReplySeamPi = createPi();
   registerSessionMirrorObserverFacade(noReplySeamPi, {
     loadProbe: async () => createProbeFactory(),
@@ -847,33 +845,40 @@ test("reply activation requires both feature flags and a callable runtime seam",
     assert.equal((noReplySeamPi.handlers.get("input") ?? []).length, 0);
   });
 
-  const observerOnly = makeFixture(t, true, false);
-  const observerOnlyCalls = [];
-  const observerOnlyPi = createPi();
-  registerSessionMirrorObserverFacade(observerOnlyPi, {
-    loadProbe: async () => createProbeFactory({ calls: observerOnlyCalls }),
-    attest: () => ({ ok: true, phase: "session-file" }),
-    sendUserMessage: () => {},
-  });
-  await withFixtureEnv(observerOnly, async () => {
-    await start(observerOnlyPi, createContext(observerOnly));
-    assert.equal((observerOnlyPi.handlers.get("input") ?? []).length, 0);
-  });
-
-  const replyOnly = makeFixture(t, false, false);
-  writeFeatureSetting(replyOnly, false, true);
-  const replyOnlyPi = createPi();
-  registerSessionMirrorObserverFacade(replyOnlyPi, {
+  // Observer disabled: no reply activation even with sendUserMessage seam
+  const observerDisabled = makeFixture(t, false);
+  const observerDisabledPi = createPi();
+  registerSessionMirrorObserverFacade(observerDisabledPi, {
     loadProbe: async () => createProbeFactory(),
     attest: () => ({ ok: true, phase: "session-file" }),
     sendUserMessage: () => {},
   });
-  await withFixtureEnv(replyOnly, async () => {
-    await start(replyOnlyPi, createContext(replyOnly));
-    assert.equal((replyOnlyPi.handlers.get("input") ?? []).length, 0);
+  await withFixtureEnv(observerDisabled, async () => {
+    await start(observerDisabledPi, createContext(observerDisabled));
+    assert.equal((observerDisabledPi.handlers.get("input") ?? []).length, 0);
   });
 
-  assert.equal(facade.getStatus(context).repliesConfigured, true);
+  // Legacy session-mirror-replies in settings without observer: still disabled (ignored, no error)
+  const legacyRepliesOnly = makeFixture(t, false);
+  writeFileSync(
+    join(legacyRepliesOnly.agent, "settings.json"),
+    `${JSON.stringify({ tlh: { experimental: { enabledFeatures: ["session-mirror-replies"] } } }, null, 2)}\n`,
+  );
+  const legacyRepliesOnlyPi = createPi();
+  registerSessionMirrorObserverFacade(legacyRepliesOnlyPi, {
+    loadProbe: async () => createProbeFactory(),
+    attest: () => ({ ok: true, phase: "session-file" }),
+    sendUserMessage: () => {},
+  });
+  await withFixtureEnv(legacyRepliesOnly, async () => {
+    await start(legacyRepliesOnlyPi, createContext(legacyRepliesOnly));
+    assert.equal((legacyRepliesOnlyPi.handlers.get("input") ?? []).length, 0);
+    assert.equal(
+      facade.getStatus(context).sessionConfigured,
+      true,
+      "unrelated facade still active",
+    );
+  });
 });
 
 test("enabled isolated sessions snapshot the flag and apply changes only on the next session", async (t) => {

@@ -14,7 +14,6 @@ import {
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
   SESSION_MIRROR_OBSERVER_FEATURE,
-  SESSION_MIRROR_REPLIES_FEATURE,
 } from "./experimental.js";
 import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
 import type {
@@ -67,12 +66,8 @@ type SessionMirrorObserverActivationSnapshot = {
 const SESSION_MIRROR_OBSERVER_ACTIVATION_SNAPSHOT_KEY = Symbol.for(
   "the-last-harness.session-mirror-observer-activation-snapshot",
 );
-const SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY = Symbol.for(
-  "the-last-harness.session-mirror-replies-activation-snapshot",
-);
 const SESSION_MIRROR_OBSERVER_GLOBAL = globalThis as typeof globalThis & {
   [SESSION_MIRROR_OBSERVER_ACTIVATION_SNAPSHOT_KEY]?: SessionMirrorObserverActivationSnapshot;
-  [SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY]?: unknown;
 };
 
 function closedActivationSnapshotValue(value: unknown): boolean | undefined {
@@ -182,78 +177,6 @@ function writeActivationSnapshot(sessionConfigured: boolean, isCurrent: () => bo
   }
 }
 
-function readReplyActivationSnapshot(): boolean | undefined {
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(
-      SESSION_MIRROR_OBSERVER_GLOBAL,
-      SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY,
-    );
-    if (!allowedActivationSnapshotDescriptor(descriptor)) return undefined;
-    const value = descriptor.value;
-    if (
-      value === null ||
-      typeof value !== "object" ||
-      Array.isArray(value) ||
-      Object.getPrototypeOf(value) !== Object.prototype
-    ) {
-      return undefined;
-    }
-    const keys = Reflect.ownKeys(value);
-    if (keys.length !== 1 || keys[0] !== "repliesConfigured") return undefined;
-    const property = Object.getOwnPropertyDescriptor(value, "repliesConfigured");
-    return property && Object.hasOwn(property, "value") && typeof property.value === "boolean"
-      ? property.value
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function writeReplyActivationSnapshot(
-  repliesConfigured: boolean,
-  isCurrent: () => boolean,
-): boolean {
-  try {
-    if (!isCurrent()) return false;
-    const existing = Object.getOwnPropertyDescriptor(
-      SESSION_MIRROR_OBSERVER_GLOBAL,
-      SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY,
-    );
-    if (
-      existing &&
-      (!allowedActivationSnapshotDescriptor(existing) ||
-        readReplyActivationSnapshot() === undefined)
-    ) {
-      return false;
-    }
-    if (!isCurrent()) return false;
-    const snapshot = Object.freeze({ repliesConfigured });
-    if (!isCurrent()) return false;
-    const defined = Reflect.defineProperty(
-      SESSION_MIRROR_OBSERVER_GLOBAL,
-      SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY,
-      {
-        value: snapshot,
-        writable: true,
-        enumerable: existing?.enumerable ?? false,
-        configurable: true,
-      },
-    );
-    if (!defined || !isCurrent()) return false;
-    const verification = Object.getOwnPropertyDescriptor(
-      SESSION_MIRROR_OBSERVER_GLOBAL,
-      SESSION_MIRROR_REPLIES_ACTIVATION_SNAPSHOT_KEY,
-    );
-    return (
-      allowedActivationSnapshotDescriptor(verification) &&
-      verification.value === snapshot &&
-      readReplyActivationSnapshot() === repliesConfigured
-    );
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Injectable seams keep facade tests on synthetic/temp fixtures while the
  * production default remains a retryable native dynamic import.
@@ -280,8 +203,6 @@ export interface SessionMirrorObserverFacadeStatus {
   readonly configured: boolean;
   readonly sessionConfigured: boolean | undefined;
   readonly nextSessionConfigured: boolean;
-  readonly repliesConfigured: boolean | undefined;
-  readonly nextSessionRepliesConfigured: boolean;
   readonly active: FacadeActiveState;
   readonly load: FacadeLoadState;
   readonly attestation: FacadeAttestationState;
@@ -335,7 +256,6 @@ export interface SessionMirrorObserverFacade {
 type InternalState = {
   generation: number;
   sessionConfigured: boolean | undefined;
-  repliesConfigured: boolean | undefined;
   load: FacadeLoadState;
   attestation: FacadeAttestationState;
   attestationReason: SessionMirrorAttestationReason | undefined;
@@ -379,7 +299,6 @@ function initialState(): InternalState {
   return {
     generation: 0,
     sessionConfigured: undefined,
-    repliesConfigured: undefined,
     load: "not-loaded",
     attestation: "not-run",
     attestationReason: undefined,
@@ -400,28 +319,9 @@ function configuredForCwd(cwd: string): boolean {
   }
 }
 
-function repliesConfiguredForCwd(cwd: string): boolean {
-  try {
-    return isTlhExperimentalFeatureEnabled(
-      getTlhExperimentalConfig(cwd),
-      SESSION_MIRROR_REPLIES_FEATURE,
-    );
-  } catch {
-    return false;
-  }
-}
-
 function configuredForContext(ctx: ExtensionContext | ExtensionCommandContext): boolean {
   try {
     return configuredForCwd(ctx.cwd);
-  } catch {
-    return false;
-  }
-}
-
-function repliesConfiguredForContext(ctx: ExtensionContext | ExtensionCommandContext): boolean {
-  try {
-    return repliesConfiguredForCwd(ctx.cwd);
   } catch {
     return false;
   }
@@ -738,8 +638,6 @@ export function formatSessionMirrorObserverStatus(
     `session-configured=${status.sessionConfigured === undefined ? "none" : formatValue(status.sessionConfigured)}`,
     `active=${status.active}`,
     `next-session=${formatValue(status.nextSessionConfigured)}`,
-    `replies=${status.repliesConfigured === undefined ? "none" : formatValue(status.repliesConfigured)}`,
-    `next-session-replies=${formatValue(status.nextSessionRepliesConfigured)}`,
     "changes=next-session-only",
     `load=${status.load}`,
     `attestation=${status.attestation}${formatReason(status.attestationReason)}`,
@@ -1047,41 +945,25 @@ export function createSessionMirrorObserverFacade(
     if (!isCurrent(nextState)) return Promise.resolve();
 
     const previousActivation = reason === "reload" ? readActivationSnapshot() : undefined;
-    const previousRepliesActivation =
-      reason === "reload" ? readReplyActivationSnapshot() : undefined;
     if (!isCurrent(nextState)) return Promise.resolve();
     if (reason === "reload" && previousActivation === undefined) {
       nextState.sessionConfigured = false;
-      nextState.repliesConfigured = false;
       return Promise.resolve();
     }
     const configured = previousActivation ?? configuredForCwd(cwd);
-    const repliesConfigured =
-      configured &&
-      (reason === "reload" ? previousRepliesActivation === true : repliesConfiguredForCwd(cwd));
+    // Replies are enabled whenever the observer is active; no separate feature flag required.
+    const repliesConfigured = configured;
     if (!isCurrent(nextState)) return Promise.resolve();
     if (reason !== "reload" || previousActivation === undefined) {
       const stored = writeActivationSnapshot(configured, () => isCurrent(nextState));
       if (!isCurrent(nextState)) return Promise.resolve();
       if (!stored) {
         nextState.sessionConfigured = false;
-        nextState.repliesConfigured = false;
         return Promise.resolve();
-      }
-      const repliesStored = writeReplyActivationSnapshot(repliesConfigured, () =>
-        isCurrent(nextState),
-      );
-      if (!isCurrent(nextState)) return Promise.resolve();
-      if (!repliesStored) {
-        // The observer remains independently usable if its optional reply
-        // snapshot cannot be retained safely.
-        nextState.repliesConfigured = false;
       }
     }
     if (!isCurrent(nextState)) return Promise.resolve();
     nextState.sessionConfigured = configured;
-    nextState.repliesConfigured =
-      reason === "reload" ? repliesConfigured : (nextState.repliesConfigured ?? repliesConfigured);
     if (!configured) return Promise.resolve();
     if (!sessionManager) {
       nextState.attestation = "failed";
@@ -1144,7 +1026,7 @@ export function createSessionMirrorObserverFacade(
       isIdle,
       bridgeDirectory: usableBridgeDirectory,
       sink: injectedSink,
-      repliesConfigured: nextState.repliesConfigured === true,
+      repliesConfigured,
       sendUserMessage:
         typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
       replyChannelFactory: options.replyChannelFactory,
@@ -1217,7 +1099,6 @@ export function createSessionMirrorObserverFacade(
     const metrics = probeState ?? noProbeMetrics();
     const observerState = probeState;
     const configured = configuredForContext(ctx);
-    const nextSessionRepliesConfigured = configured && repliesConfiguredForContext(ctx);
     const attestation = observerState ? observerState.attestation : state.attestation;
     const attestationState: FacadeAttestationState =
       attestation === "pending" ||
@@ -1236,8 +1117,6 @@ export function createSessionMirrorObserverFacade(
       configured,
       sessionConfigured: state.sessionConfigured,
       nextSessionConfigured: configured,
-      repliesConfigured: state.repliesConfigured,
-      nextSessionRepliesConfigured,
       active: observerActiveState(state.load, observerState),
       load: state.load,
       attestation: attestationState,
@@ -1328,7 +1207,7 @@ export function registerSessionMirrorObserverFacade(
   const registerReplyLifecycle = (ctx: ExtensionContext): void => {
     if (replyLifecycleRegistered || typeof options.sendUserMessage !== "function") return;
     try {
-      if (facade.getStatus(ctx).repliesConfigured !== true) return;
+      if (facade.getStatus(ctx).sessionConfigured !== true) return;
     } catch {
       return;
     }
