@@ -48,6 +48,10 @@ test("TMPDIR_ALLOWLIST includes jiti", () => {
   assert.ok(TMPDIR_ALLOWLIST.includes("jiti"));
 });
 
+test("TMPDIR_ALLOWLIST includes node-compile-cache", () => {
+  assert.ok(TMPDIR_ALLOWLIST.includes("node-compile-cache"));
+});
+
 // ---------------------------------------------------------------------------
 // findLeaks
 // ---------------------------------------------------------------------------
@@ -60,6 +64,7 @@ test("findLeaks returns empty array for an empty directory", () => {
 test("findLeaks returns empty array when only allowlisted entries are present", () => {
   const dir = tempDir();
   mkdirSync(join(dir, "jiti"));
+  mkdirSync(join(dir, "node-compile-cache"));
   assert.deepEqual(findLeaks(dir), []);
 });
 

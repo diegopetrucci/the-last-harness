@@ -50,7 +50,7 @@ npm run test:verbose
 
 Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
 
-Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache), then removes the per-run root unconditionally. A non-empty leak list causes a non-zero exit code even when all tests pass. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level.
+Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache and `node-compile-cache`), then removes the per-run root unconditionally. A non-empty leak list causes a non-zero exit code even when all tests pass. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level.
 
 ## TypeScript scope
 

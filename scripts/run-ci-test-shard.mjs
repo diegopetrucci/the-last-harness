@@ -23,6 +23,31 @@ const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "..");
 
 /**
+ * Register synchronous, idempotent cleanup for a CI shard's temporary root.
+ *
+ * The returned cleanup function is used by the normal `finally` path. The
+ * process-exit handler covers interruption paths where run-lane exits the
+ * process before that `finally` block can run.
+ *
+ * @param {string} tmpdirRoot
+ * @returns {() => void}
+ */
+export function registerTmpdirCleanup(tmpdirRoot) {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    rmSync(tmpdirRoot, { recursive: true, force: true });
+  };
+
+  process.once("exit", cleanup);
+  return () => {
+    cleanup();
+    process.off("exit", cleanup);
+  };
+}
+
+/**
  * Parse and validate the shard argument (must be "<N>/2" with N in 1..2).
  *
  * @param {string | undefined} shardArg
@@ -97,6 +122,7 @@ export async function main(argv = process.argv.slice(2)) {
   // Isolate each lane's temp output under a fresh per-run root so temp-dir
   // leaks are detectable and do not pollute the shared system TMPDIR.
   const tmpdirRoot = mkdtempSync(join(tmpdir(), "tlh-ci-shard-run-"));
+  const cleanupTmpdir = registerTmpdirCleanup(tmpdirRoot);
   const tmpdirEnv = { TMPDIR: tmpdirRoot, TMP: tmpdirRoot, TEMP: tmpdirRoot };
   const lanes = buildLanes(shard, shardStr).map((lane) => ({
     ...lane,
@@ -114,7 +140,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (exitCode === 0) exitCode = 1;
     }
   } finally {
-    rmSync(tmpdirRoot, { recursive: true, force: true });
+    cleanupTmpdir();
   }
   return exitCode;
 }

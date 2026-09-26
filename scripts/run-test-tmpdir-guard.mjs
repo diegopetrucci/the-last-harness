@@ -48,9 +48,11 @@ const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
  * - "jiti": jiti's transform cache directory. jiti compiles TypeScript test
  *   support files at runtime and stores the results in a directory named
  *   "jiti" directly inside TMPDIR.
+ * - "node-compile-cache": Node's module compile cache directory.
  */
 export const TMPDIR_ALLOWLIST = [
   "jiti", // jiti transform cache
+  "node-compile-cache", // Node module compile cache
 ];
 
 /**
