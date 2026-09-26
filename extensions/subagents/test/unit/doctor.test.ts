@@ -56,6 +56,7 @@ describe("buildDoctorReport", () => {
             runId: "run-active",
             mode: "single",
             state: "running",
+            pid: process.pid,
             startedAt: 1000,
             lastUpdate: 1500,
           },
