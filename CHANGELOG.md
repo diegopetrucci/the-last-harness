@@ -4,10 +4,6 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
-### Added
-
-- Added local-only schema-v1 subagent run telemetry and a read-only `tlh sessions --mode subagents` report for usage, runtime, operation, lineage, and wakeup coverage. The report is generated from the active isolated profile, does not send telemetry or modify session files, and its default output omits prompts, tasks, outputs, arguments, paths, and raw run identifiers; bounded metadata such as roles, models, usage, and costs may still be present.
-
 ### Changed
 
 - Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
