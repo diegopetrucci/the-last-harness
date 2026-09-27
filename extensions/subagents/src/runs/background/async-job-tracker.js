@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderWidget, widgetRenderKey } from "../../tui/render.js";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
-import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
+import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -665,18 +665,47 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             rerenderWidget(ctx, []);
         }
     };
+    const emitRestoredSnapshot = (sessionId, runs) => {
+        const snapshotSessionId = sessionId ?? "";
+        const jobs = sessionId === null
+            ? []
+            : runs.map((run) => {
+                const pid = typeof run.pid === "number" && Number.isInteger(run.pid) && run.pid > 0
+                    ? run.pid
+                    : undefined;
+                return {
+                    runId: run.id,
+                    asyncDir: run.asyncDir,
+                    sessionId: snapshotSessionId,
+                    ...(pid !== undefined ? { pid } : {}),
+                };
+            });
+        const payload = {
+            sessionId: snapshotSessionId,
+            jobs,
+        };
+        try {
+            pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, payload);
+        }
+        catch (error) {
+            console.error("Failed to publish the async restore snapshot:", error);
+        }
+    };
     const restoreActiveJobs = (ctx) => {
         if (ctx?.hasUI)
             state.lastUiContext = ctx;
-        if (!state.currentSessionId)
-            return;
+        const sessionId = state.currentSessionId;
         restoreControlEventProbeFailures.clear();
+        if (!sessionId) {
+            emitRestoredSnapshot(null, []);
+            return;
+        }
         let runs;
         let issues;
         try {
             ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
                 states: ["queued", "running"],
-                sessionId: state.currentSessionId,
+                sessionId,
                 resultsDir,
                 kill: options.kill,
                 now: options.now,
@@ -684,51 +713,59 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         catch (error) {
             console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
+            emitRestoredSnapshot(sessionId, []);
             return;
         }
-        const quarantined = { jsonParse: 0, persistedValidation: 0 };
-        const deferred = { jsonParse: 0, persistedValidation: 0 };
-        const failed = { jsonParse: 0, persistedValidation: 0 };
-        for (const issue of issues) {
-            const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
-            if (result.outcome === "quarantined") {
-                if (result.kind === "json_parse")
-                    quarantined.jsonParse += 1;
-                else
-                    quarantined.persistedValidation += 1;
-                continue;
+        try {
+            const quarantined = { jsonParse: 0, persistedValidation: 0 };
+            const deferred = { jsonParse: 0, persistedValidation: 0 };
+            const failed = { jsonParse: 0, persistedValidation: 0 };
+            for (const issue of issues) {
+                const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
+                if (result.outcome === "quarantined") {
+                    if (result.kind === "json_parse")
+                        quarantined.jsonParse += 1;
+                    else
+                        quarantined.persistedValidation += 1;
+                    continue;
+                }
+                if ((result.outcome === "deferred" || result.outcome === "failed") &&
+                    !restoreWarningDedupe.has(result.dedupeKey)) {
+                    restoreWarningDedupe.add(result.dedupeKey);
+                    const bucket = result.outcome === "deferred" ? deferred : failed;
+                    if (result.kind === "json_parse")
+                        bucket.jsonParse += 1;
+                    else
+                        bucket.persistedValidation += 1;
+                }
             }
-            if ((result.outcome === "deferred" || result.outcome === "failed") &&
-                !restoreWarningDedupe.has(result.dedupeKey)) {
-                restoreWarningDedupe.add(result.dedupeKey);
-                const bucket = result.outcome === "deferred" ? deferred : failed;
-                if (result.kind === "json_parse")
-                    bucket.jsonParse += 1;
-                else
-                    bucket.persistedValidation += 1;
+            const warnings = [formatRestoredActiveJobsCount(runs.length)];
+            const quarantinedSummary = formatRestoreIssueCounts(quarantined);
+            if (quarantinedSummary)
+                warnings.push(`quarantined ${quarantinedSummary}`);
+            const deferredSummary = formatRestoreIssueCounts(deferred);
+            if (deferredSummary)
+                warnings.push(`deferred ${deferredSummary}`);
+            const failedSummary = formatRestoreIssueCounts(failed);
+            if (failedSummary)
+                warnings.push(`left ${failedSummary} in place`);
+            if (warnings.length > 1)
+                warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
+            for (const run of runs) {
+                state.asyncJobs.set(run.id, summaryToJob(run));
+            }
+            if (restoreControlEventProbeFailures.size > 0 &&
+                !restoreWarningDedupe.has("control-event-probe-failure")) {
+                restoreWarningDedupe.add("control-event-probe-failure");
+                const count = restoreControlEventProbeFailures.size;
+                warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);
             }
         }
-        const warnings = [formatRestoredActiveJobsCount(runs.length)];
-        const quarantinedSummary = formatRestoreIssueCounts(quarantined);
-        if (quarantinedSummary)
-            warnings.push(`quarantined ${quarantinedSummary}`);
-        const deferredSummary = formatRestoreIssueCounts(deferred);
-        if (deferredSummary)
-            warnings.push(`deferred ${deferredSummary}`);
-        const failedSummary = formatRestoreIssueCounts(failed);
-        if (failedSummary)
-            warnings.push(`left ${failedSummary} in place`);
-        if (warnings.length > 1)
-            warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
-        for (const run of runs) {
-            state.asyncJobs.set(run.id, summaryToJob(run));
+        catch (error) {
+            emitRestoredSnapshot(sessionId, []);
+            throw error;
         }
-        if (restoreControlEventProbeFailures.size > 0 &&
-            !restoreWarningDedupe.has("control-event-probe-failure")) {
-            restoreWarningDedupe.add("control-event-probe-failure");
-            const count = restoreControlEventProbeFailures.size;
-            warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);
-        }
+        emitRestoredSnapshot(sessionId, runs);
         if (runs.length === 0)
             return;
         ensurePoller();

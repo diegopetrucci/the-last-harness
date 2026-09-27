@@ -233,12 +233,102 @@ describe(
 
         await new Promise((resolve) => setTimeout(resolve, 30));
         assert.equal(
-          recorder.events.length,
+          recorder.events.filter((event) => event.channel === "subagent:control-event").length,
           0,
           "historical control events should not be replayed during restore",
         );
       } finally {
         removeTempDir(asyncRoot);
+      }
+    });
+
+    it("publishes a session-scoped restored snapshot with pid metadata", () => {
+      const asyncRoot = createTempDir("pi-async-job-restore-snapshot-");
+      try {
+        const runDir = path.join(asyncRoot, "run-restored-snapshot");
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-restored-snapshot",
+            mode: "single",
+            state: "running",
+            sessionId: "session-restored-snapshot",
+            pid: process.pid,
+            startedAt: Date.now(),
+            steps: [{ agent: "worker", status: "running" }],
+          }),
+          "utf-8",
+        );
+
+        const state = createState();
+        state.currentSessionId = "session-restored-snapshot";
+        const recorder = createEventRecorder();
+        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot);
+        tracker.restoreActiveJobs();
+
+        assert.deepEqual(
+          recorder.events.filter((event) => event.channel === "subagent:async-restored"),
+          [
+            {
+              channel: "subagent:async-restored",
+              data: {
+                sessionId: "session-restored-snapshot",
+                jobs: [
+                  {
+                    runId: "run-restored-snapshot",
+                    asyncDir: runDir,
+                    sessionId: "session-restored-snapshot",
+                    pid: process.pid,
+                  },
+                ],
+              },
+            },
+          ],
+        );
+      } finally {
+        removeTempDir(asyncRoot);
+      }
+    });
+
+    it("publishes an empty restored snapshot for empty and failed restores", () => {
+      const emptyRoot = createTempDir("pi-async-job-restore-empty-");
+      const failureRoot = path.join(emptyRoot, "not-a-directory");
+      fs.writeFileSync(failureRoot, "not a directory", "utf-8");
+      try {
+        const emptyState = createState();
+        emptyState.currentSessionId = "session-empty";
+        const emptyRecorder = createEventRecorder();
+        const emptyTracker = trackerMod!.createAsyncJobTracker(
+          emptyRecorder.pi,
+          emptyState as never,
+          emptyRoot,
+        );
+        emptyTracker.restoreActiveJobs();
+        assert.deepEqual(emptyRecorder.events, [
+          {
+            channel: "subagent:async-restored",
+            data: { sessionId: "session-empty", jobs: [] },
+          },
+        ]);
+
+        const failureState = createState();
+        failureState.currentSessionId = "session-failed";
+        const failureRecorder = createEventRecorder();
+        const failureTracker = trackerMod!.createAsyncJobTracker(
+          failureRecorder.pi,
+          failureState as never,
+          failureRoot,
+        );
+        failureTracker.restoreActiveJobs();
+        assert.deepEqual(failureRecorder.events, [
+          {
+            channel: "subagent:async-restored",
+            data: { sessionId: "session-failed", jobs: [] },
+          },
+        ]);
+      } finally {
+        removeTempDir(emptyRoot);
       }
     });
 

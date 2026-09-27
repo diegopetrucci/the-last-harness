@@ -118,6 +118,7 @@ export interface AsyncRunSummary {
   id: string;
   asyncDir: string;
   sessionId?: string;
+  pid?: number;
   state: AsyncStatus["state"];
   error?: string;
   activityState?: ActivityState;
@@ -471,6 +472,7 @@ function statusToSummary(
     id: status.runId || path.basename(asyncDir),
     asyncDir,
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
+    ...(typeof status.pid === "number" ? { pid: status.pid } : {}),
     state: status.state,
     ...(status.error ? { error: status.error } : {}),
     activityState,

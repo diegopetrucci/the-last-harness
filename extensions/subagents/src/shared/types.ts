@@ -1274,6 +1274,21 @@ export interface SubagentEventBus {
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+// Keep this literal local to the subagents shared types module so detached
+// runtime imports never cross out of the generated subagents source root.
+export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
+
+export type SubagentAsyncRestoredJob = {
+  runId: string;
+  asyncDir: string;
+  sessionId: string;
+  pid?: number;
+};
+
+export type SubagentAsyncRestoredEvent = {
+  sessionId: string;
+  jobs: readonly SubagentAsyncRestoredJob[];
+};
 
 // ============================================================================
 // Execution Options

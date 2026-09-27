@@ -12,6 +12,8 @@ import {
   POLL_INTERVAL_MS,
   RESULTS_DIR,
   SUBAGENT_CONTROL_EVENT,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
+  type SubagentAsyncRestoredEvent,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
@@ -766,66 +768,115 @@ export function createAsyncJobTracker(
     }
   };
 
+  const emitRestoredSnapshot = (
+    sessionId: string | null,
+    runs: readonly AsyncRunSummary[],
+  ): void => {
+    const snapshotSessionId = sessionId ?? "";
+    const jobs =
+      sessionId === null
+        ? []
+        : runs.map((run) => {
+            const pid =
+              typeof run.pid === "number" && Number.isInteger(run.pid) && run.pid > 0
+                ? run.pid
+                : undefined;
+            return {
+              runId: run.id,
+              asyncDir: run.asyncDir,
+              sessionId: snapshotSessionId,
+              ...(pid !== undefined ? { pid } : {}),
+            };
+          });
+    const payload: SubagentAsyncRestoredEvent = {
+      sessionId: snapshotSessionId,
+      jobs,
+    };
+    try {
+      pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, payload);
+    } catch (error) {
+      console.error("Failed to publish the async restore snapshot:", error);
+    }
+  };
+
   const restoreActiveJobs = (ctx?: ExtensionContext) => {
     if (ctx?.hasUI) state.lastUiContext = ctx;
-    if (!state.currentSessionId) return;
+    const sessionId = state.currentSessionId;
     restoreControlEventProbeFailures.clear();
+    if (!sessionId) {
+      emitRestoredSnapshot(null, []);
+      return;
+    }
+
     let runs: AsyncRunSummary[];
     let issues: ReturnType<typeof scanAsyncRunsForRestore>["issues"];
     try {
       ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
         states: ["queued", "running"],
-        sessionId: state.currentSessionId,
+        sessionId,
         resultsDir,
         kill: options.kill,
         now: options.now,
       }));
     } catch (error) {
       console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
+      // Even a failed scan is a producer attempt; keep TLH from starting a
+      // second scan and let it replace the prior restored set with empty.
+      emitRestoredSnapshot(sessionId, []);
       return;
     }
-    const quarantined = { jsonParse: 0, persistedValidation: 0 };
-    const deferred = { jsonParse: 0, persistedValidation: 0 };
-    const failed = { jsonParse: 0, persistedValidation: 0 };
-    for (const issue of issues) {
-      const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
-      if (result.outcome === "quarantined") {
-        if (result.kind === "json_parse") quarantined.jsonParse += 1;
-        else quarantined.persistedValidation += 1;
-        continue;
+
+    try {
+      const quarantined = { jsonParse: 0, persistedValidation: 0 };
+      const deferred = { jsonParse: 0, persistedValidation: 0 };
+      const failed = { jsonParse: 0, persistedValidation: 0 };
+      for (const issue of issues) {
+        const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
+        if (result.outcome === "quarantined") {
+          if (result.kind === "json_parse") quarantined.jsonParse += 1;
+          else quarantined.persistedValidation += 1;
+          continue;
+        }
+        if (
+          (result.outcome === "deferred" || result.outcome === "failed") &&
+          !restoreWarningDedupe.has(result.dedupeKey)
+        ) {
+          restoreWarningDedupe.add(result.dedupeKey);
+          const bucket = result.outcome === "deferred" ? deferred : failed;
+          if (result.kind === "json_parse") bucket.jsonParse += 1;
+          else bucket.persistedValidation += 1;
+        }
+      }
+      const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
+      const quarantinedSummary = formatRestoreIssueCounts(quarantined);
+      if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
+      const deferredSummary = formatRestoreIssueCounts(deferred);
+      if (deferredSummary) warnings.push(`deferred ${deferredSummary}`);
+      const failedSummary = formatRestoreIssueCounts(failed);
+      if (failedSummary) warnings.push(`left ${failedSummary} in place`);
+      if (warnings.length > 1)
+        warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
+      for (const run of runs) {
+        state.asyncJobs.set(run.id, summaryToJob(run));
       }
       if (
-        (result.outcome === "deferred" || result.outcome === "failed") &&
-        !restoreWarningDedupe.has(result.dedupeKey)
+        restoreControlEventProbeFailures.size > 0 &&
+        !restoreWarningDedupe.has("control-event-probe-failure")
       ) {
-        restoreWarningDedupe.add(result.dedupeKey);
-        const bucket = result.outcome === "deferred" ? deferred : failed;
-        if (result.kind === "json_parse") bucket.jsonParse += 1;
-        else bucket.persistedValidation += 1;
+        restoreWarningDedupe.add("control-event-probe-failure");
+        const count = restoreControlEventProbeFailures.size;
+        warnRestoreIssues(
+          `Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`,
+        );
       }
+    } catch (error) {
+      emitRestoredSnapshot(sessionId, []);
+      throw error;
     }
-    const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
-    const quarantinedSummary = formatRestoreIssueCounts(quarantined);
-    if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
-    const deferredSummary = formatRestoreIssueCounts(deferred);
-    if (deferredSummary) warnings.push(`deferred ${deferredSummary}`);
-    const failedSummary = formatRestoreIssueCounts(failed);
-    if (failedSummary) warnings.push(`left ${failedSummary} in place`);
-    if (warnings.length > 1)
-      warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
-    for (const run of runs) {
-      state.asyncJobs.set(run.id, summaryToJob(run));
-    }
-    if (
-      restoreControlEventProbeFailures.size > 0 &&
-      !restoreWarningDedupe.has("control-event-probe-failure")
-    ) {
-      restoreWarningDedupe.add("control-event-probe-failure");
-      const count = restoreControlEventProbeFailures.size;
-      warnRestoreIssues(
-        `Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`,
-      );
-    }
+
+    // Emit even for an empty restore. TLH uses this as the authoritative handoff
+    // and must not start a second directory scan after the producer ran.
+    emitRestoredSnapshot(sessionId, runs);
     if (runs.length === 0) return;
     ensurePoller();
     if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);

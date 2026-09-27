@@ -11,6 +11,39 @@ const {
   registerTlhEffectiveActivityTracker,
   TLH_EFFECTIVE_ACTIVITY_EVENT,
 } = await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { announceBundledSubagentRestoreProvider } = await jiti.import(
+  "../extensions/shared/subagent-restore-contract.ts",
+);
+
+function createEventPiHarness() {
+  const eventHandlers = new Map();
+  const channelHandlers = new Map();
+  const pi = {
+    on(event, handler) {
+      eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+    },
+    events: {
+      on(channel, handler) {
+        channelHandlers.set(channel, [...(channelHandlers.get(channel) ?? []), handler]);
+        return () => {
+          channelHandlers.set(
+            channel,
+            (channelHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler),
+          );
+        };
+      },
+      emit(channel, payload) {
+        for (const handler of channelHandlers.get(channel) ?? []) handler(payload);
+      },
+    },
+  };
+  return {
+    pi,
+    fire(event, payload = {}, ctx) {
+      for (const handler of eventHandlers.get(event) ?? []) handler(payload, ctx);
+    },
+  };
+}
 
 function createFakeTimers() {
   let now = 0;
@@ -347,7 +380,7 @@ test("tracker ignores foreground control notices and only tracks safe async cont
   }
 });
 
-test("tracker rehydrates only matching running async jobs and ignores malformed artifacts", () => {
+test("tracker rehydrates only matching-session active jobs and ignores malformed artifacts", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-activity-tracker-"));
   const asyncDir = join(tempDir, "async-subagent-runs");
   mkdirSync(asyncDir, { recursive: true });
@@ -358,24 +391,26 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
   };
 
   try {
+    const sessionFile = "/sessions/session-1.jsonl";
     // run-1: the only job that should be rehydrated. Includes pid so the drain can
-    // verify it is alive via the injected checkPidLiveness.
+    // verify it is alive via the injected checkPidLiveness. The session file must
+    // win over the different UUID, matching subagents' restore identity.
     writeStatus("run-1", {
       runId: "run-1",
       state: "running",
       pid: 12300,
       cwd: "/repo",
-      sessionId: "session-1",
+      sessionId: sessionFile,
       mode: "single",
       startedAt: 1,
     });
-    // run-2: wrong cwd, excluded by rehydrate filter.
+    // run-2: cwd differs, but exact-session restore intentionally ignores cwd.
     writeStatus("run-2", {
       runId: "run-2",
       state: "running",
       pid: 12301,
       cwd: "/elsewhere",
-      sessionId: "session-1",
+      sessionId: sessionFile,
       mode: "single",
       startedAt: 1,
     });
@@ -385,11 +420,11 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
       state: "running",
       pid: 12302,
       cwd: "/repo",
-      sessionId: "session-2",
+      sessionId: "/sessions/session-2.jsonl",
       mode: "single",
       startedAt: 1,
     });
-    // run-4: terminal state, excluded by readRunningAsyncJob filter.
+    // run-4: terminal state, excluded by the active-state filter.
     writeStatus("run-4", {
       runId: "run-4",
       state: "complete",
@@ -410,9 +445,12 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
     });
     tracker.rehydrateFromArtifacts({
       cwd: "/repo",
-      sessionManager: { getSessionId: () => "session-1" },
+      sessionManager: {
+        getSessionFile: () => sessionFile,
+        getSessionId: () => "session-1-uuid",
+      },
     });
-    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-1"]);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-1", "run-2"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -434,7 +472,7 @@ test("tracker rehydrates from the PI_SUBAGENTS_TEMP_ROOT override by default", (
           state: "running",
           pid: process.pid,
           cwd: process.cwd(),
-          sessionId: "session-override",
+          sessionId: "session-override-uuid",
         },
         null,
         2,
@@ -446,7 +484,10 @@ test("tracker rehydrates from the PI_SUBAGENTS_TEMP_ROOT override by default", (
     });
     tracker.rehydrateFromArtifacts({
       cwd: process.cwd(),
-      sessionManager: { getSessionId: () => "session-override" },
+      sessionManager: {
+        getSessionFile: () => null,
+        getSessionId: () => "session-override-uuid",
+      },
     });
     assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-override"]);
   } finally {
@@ -454,6 +495,299 @@ test("tracker rehydrates from the PI_SUBAGENTS_TEMP_ROOT override by default", (
     if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
     else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker skips artifact rehydration in child processes", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-child-activity-tracker-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let childTracker;
+  let parentTracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "run-1");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      `${JSON.stringify(
+        {
+          runId: "run-1",
+          state: "running",
+          pid: process.pid,
+          cwd: process.cwd(),
+          sessionId: "session-1",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const makePi = () => {
+      const eventHandlers = new Map();
+      return {
+        pi: {
+          on(event, handler) {
+            eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+          },
+        },
+        fireSessionStart() {
+          for (const handler of eventHandlers.get("session_start") ?? []) {
+            handler(
+              {},
+              {
+                cwd: process.cwd(),
+                sessionManager: { getSessionId: () => "session-1" },
+              },
+            );
+          }
+        },
+      };
+    };
+
+    const childPi = makePi();
+    childTracker = registerTlhEffectiveActivityTracker(childPi.pi, {
+      env: { PI_SUBAGENT_CHILD: "1" },
+    });
+    childPi.fireSessionStart();
+    assert.deepEqual(childTracker.getSnapshot().activeAsyncJobIds, []);
+
+    const parentPi = makePi();
+    parentTracker = registerTlhEffectiveActivityTracker(parentPi.pi, { env: {} });
+    parentPi.fireSessionStart();
+    assert.deepEqual(parentTracker.getSnapshot().activeAsyncJobIds, ["run-1"]);
+  } finally {
+    childTracker?.dispose();
+    parentTracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker falls back to one exact-session scan when bundled restore is absent", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-fallback-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "fallback-run");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: "fallback-run",
+        state: "running",
+        pid: process.pid,
+        cwd: "/not-the-session-cwd",
+        sessionId: "fallback-session",
+      }),
+    );
+
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    harness.fire(
+      "session_start",
+      {},
+      {
+        cwd: "/repo",
+        sessionManager: { getSessionId: () => "fallback-session" },
+      },
+    );
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["fallback-run"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker loading first waits for bundled restore and applies its snapshot", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-restored-event-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "restored-run");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: "restored-run",
+        state: "running",
+        pid: process.pid,
+        sessionId: "restored-session",
+      }),
+    );
+
+    const harness = createEventPiHarness();
+    // Register TLH first, then let the bundled producer announce at registration.
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    announceBundledSubagentRestoreProvider();
+    harness.fire(
+      "session_start",
+      {},
+      {
+        cwd: "/repo",
+        sessionManager: { getSessionId: () => "restored-session" },
+      },
+    );
+    assert.deepEqual(
+      tracker.getSnapshot().activeAsyncJobIds,
+      [],
+      "producer presence must suppress TLH's fallback scan",
+    );
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "restored-session",
+      jobs: [{ runId: "restored-run", asyncDir, pid: process.pid, sessionId: "restored-session" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["restored-run"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("restored snapshots replace old restored jobs without erasing live jobs or emptying late", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-replace-"));
+  let tracker;
+  try {
+    const oldDir = makeAsyncDir(root, "old-run", {
+      runId: "old-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const liveDir = makeAsyncDir(root, "live-run", {
+      runId: "live-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const newDir = makeAsyncDir(root, "new-run", {
+      runId: "new-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    announceBundledSubagentRestoreProvider();
+    const session = (id) => ({
+      cwd: "/repo",
+      sessionManager: { getSessionId: () => id },
+    });
+    harness.fire("session_start", {}, session("session-1"));
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-1",
+      jobs: [{ runId: "old-run", asyncDir: oldDir, sessionId: "session-1" }],
+    });
+    harness.pi.events.emit("subagent:async-started", {
+      id: "live-run",
+      asyncDir: liveDir,
+      pid: process.pid,
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run", "old-run"]);
+
+    harness.fire("session_start", {}, session("session-2"));
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-2",
+      jobs: [{ runId: "new-run", asyncDir: newDir, sessionId: "session-2" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run", "new-run"]);
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-2",
+      jobs: [],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run"]);
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("late restored snapshots do not revive completed async jobs", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-tombstone-"));
+  let tracker;
+  try {
+    const asyncDir = makeAsyncDir(root, "completed-run", {
+      runId: "completed-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    tracker.beginSession({
+      cwd: "/repo",
+      sessionManager: { getSessionId: () => "session-1" },
+    });
+
+    harness.pi.events.emit("subagent:async-started", {
+      id: "completed-run",
+      asyncDir,
+      pid: process.pid,
+      sessionId: "session-1",
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["completed-run"]);
+
+    harness.pi.events.emit("subagent:async-complete", { id: "completed-run" });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-1",
+      jobs: [{ runId: "completed-run", asyncDir, sessionId: "session-1", pid: process.pid }],
+    });
+    assert.deepEqual(
+      tracker.getSnapshot().activeAsyncJobIds,
+      [],
+      "a late restore snapshot must not revive a completed job",
+    );
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("restored queued jobs are bounded even when subagents keeps them authoritative", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-queued-"));
+  const timers = createFakeTimers();
+  let tracker;
+  try {
+    const asyncDir = makeAsyncDir(root, "queued-run", {
+      runId: "queued-run",
+      state: "queued",
+      startedAt: 0,
+      sessionId: "queued-session",
+    });
+    tracker = createTlhEffectiveActivityTracker({
+      now: timers.now,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+      livenessIntervalMs: 5_000,
+    });
+    tracker.beginSession({
+      cwd: "/repo",
+      sessionManager: {
+        getSessionFile: () => "queued-session-file",
+        getSessionId: () => "queued-session-uuid",
+      },
+    });
+    tracker.handleAsyncRestored({
+      sessionId: "queued-session-file",
+      jobs: [{ runId: "queued-run", asyncDir, sessionId: "queued-session-file" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["queued-run"]);
+
+    // TLH intentionally bounds its activity projection independently of the
+    // subagents restore poller, which may continue treating this queue as live.
+    timers.advance(30_000);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["queued-run"]);
+    timers.advance(1);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
