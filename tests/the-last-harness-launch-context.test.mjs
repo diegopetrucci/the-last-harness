@@ -160,7 +160,7 @@ test("collapsed launch allocation hides resource names while expanded mode prese
   const resources = {
     context: ["team-rules.md"],
     skills: ["deploy"],
-    prompts: ["/review"],
+    prompts: ["workflow.md"],
     extensions: ["tools.js"],
     themes: ["night"],
     projectGuidance: ["architect: .tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md"],

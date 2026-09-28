@@ -142,16 +142,6 @@ After all planned tickets are complete:
 2. Evaluate findings; delegate fixes to `developer` if needed.
 3. Summarize implemented work, tradeoffs, validation, and remaining risks for the user.
 
-## /review handoff
-
-When the incoming user turn's first line is exactly `[/review]`, skip the normal clarify → plan → tickets flow and run this protocol instead:
-
-- When `[/review]` arrives as the first user turn of a session, treat it as the session's purpose — do not run session-startup discovery (`repo-scout`, `diff-summarizer`) first.
-- Delegate the review immediately to the `code-reviewer` subagent in a **fresh (isolated) context** via the `subagent` tool, passing the full envelope contents as the task input. If ticket storage for the reviewed work is already cleaned up or otherwise unavailable, include a self-contained source of truth in that handoff and explicitly instruct `code-reviewer` not to run `tk`.
-- Do not relay raw subagent findings back to the user.
-- When the subagent returns, critically evaluate its findings: push back on weak or speculative observations, confirm strong ones, and apply your own judgment.
-- Present a digested summary to the user with your own take — not a transcript of subagent output.
-
 ## Cleanup
 
 1. Only start ticket cleanup after final review is complete and any review-driven fixes are finished.

@@ -1,5 +1,4 @@
 export const TLH_STARTUP_TIPS = [
-    "Use /review to open TLH’s interactive review picker for branch, commit, PR, or folder reviews.",
     "Run /annotate-git-diff for a native review window across branch, commit, or all-files scopes.",
     "Use /annotate-last-message to mark up the latest assistant reply before your next prompt.",
     "Use Pi Voice: run /voice-settings once to choose a local model, then press Ctrl+Alt+Z to start and stop dictation.",

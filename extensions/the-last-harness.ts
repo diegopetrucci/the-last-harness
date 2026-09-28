@@ -39,7 +39,6 @@ import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-set
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
-import { createReviewCommandHandler } from "./the-last-harness/review.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import {
   getCachedTlhUsageWeeklyVisibility,
@@ -59,7 +58,6 @@ import type {
   TlhUsageRefreshOptions,
 } from "./the-last-harness/types.js";
 
-const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION =
   "Generate and open a local TLH session-limit usage report across all in-window sessions";
@@ -264,7 +262,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
   installTlhPackageUpdateNotificationOverride();
   installTlhNewVersionNotificationOverride();
   registerToggleTlhGitAttributionCommand(pi);
-  const reviewCommandHandler = createReviewCommandHandler(pi);
   const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
   const loadSessionLimitReportModule = createRetryableLazyImport(
     () => import("./the-last-harness/session-limit-report.js"),
@@ -360,11 +357,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
   registerReconcileCommand(pi, primaryAgentRuntime);
   registerSubagentSettingsCommand(pi);
   registerLazyTlhTicketWorkflowUi(pi);
-  pi.registerCommand("review", {
-    description: REVIEW_COMMAND_DESCRIPTION,
-    getArgumentCompletions: () => null,
-    handler: reviewCommandHandler,
-  });
   pi.registerCommand("tlh-changelog", {
     description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
     handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
