@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled `mcporter` extension (`@diegopetrucci/pi-mcp-adapter`) from `2.11.0` to `2.36.0`. It adds MCP Tasks with progress and cancellation, enabling and disabling servers from the `/mcp` panel, more reliable OAuth and bearer-token reconnection with secure credential storage, and a faster, ~150MB smaller default-extension install because it no longer bundles its own copies of Pi's libraries.
 - Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
 - Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.
 - TLH launch time should be ~25/30% faster.
