@@ -13,7 +13,7 @@ Two core ideas drive it:
 
 It achieves this [via a custom orchestration workflow](https://www.stavros.io/posts/how-i-write-software-with-llms/) — you only interface with an architect, whom you engage as a senior peer, and once you're satisfied with the discussion and plan, it takes over until everything is done. Work is pre-reviewed too, often multiple times, so that your time is not wasted in minutiae, freeing you to focus on the bigger picture.
 
-You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger `/review`". Your time is worth more.
+You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger a review". Your time is worth more.
 
 `tlh` is also slow by default, and relatively token-expensive: it is designed to be used as a long-running, reliable, and predictable tool. You spend time preparing the work, and once it's off, it's off. No babysitting.
 
@@ -40,7 +40,7 @@ At times, the architect might seem eager to ask you to `approve` the plan. Do no
 The architect has access to a few subagents, which can be divided in three big categories:
 
 - Single-purpose, automatically-invoked ones to keep its context smaller: the librarian to check git repos, web-scout for the internet, etc.
-- Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
+- Core: as the agent does not write code, 1+ developer(s) are tasked to. The reviewer works the same way, so reviews happen automatically rather than requiring a manual command.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
 Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Direct Anthropic sessions try OpenAI Codex first, then xAI; direct OpenAI/Codex sessions try Anthropic first, then xAI; direct xAI sessions try Anthropic first, then OpenAI Codex. OpenRouter sessions use the same three-family vendor-aware order with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.

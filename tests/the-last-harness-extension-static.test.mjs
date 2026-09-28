@@ -224,7 +224,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const embeddedProjectAgentMarker = /embedded\.xyz/;
   const projectAgentPathMarker = /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
-  const reviewHandoffHeader = /## \/review handoff/;
+  const finalReviewWorkflow = /## Final review[\s\S]*code-reviewer/;
 
   const architectPrompt = buildTlhSystemPrompt(architect, subagents, true);
   assert.match(architectPrompt, sectionHeader);
@@ -232,13 +232,13 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(architectPrompt, embeddedProjectAgentMarker);
   assert.match(architectPrompt, projectAgentPathMarker);
   assert.match(architectPrompt, USER_SCOPE_MARKER);
+  assert.match(architectPrompt, finalReviewWorkflow);
 
   for (const primary of [rush, product, bugHunter]) {
     const label = primary?.name ?? "unknown";
     const prompt = buildTlhSystemPrompt(primary, subagents, true);
     assert.match(prompt, sectionHeader, `${label}: section header present`);
     assert.doesNotMatch(prompt, embeddedTargetMarker, `${label}: no embedded guidance`);
-    assert.doesNotMatch(prompt, reviewHandoffHeader, `${label}: no review handoff`);
   }
 
   const disabledPrompt = buildTlhSystemPrompt(undefined, subagents, false);
@@ -247,6 +247,5 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.doesNotMatch(disabledPrompt, embeddedProjectAgentMarker);
   assert.match(disabledPrompt, projectAgentPathMarker);
   assert.match(disabledPrompt, USER_SCOPE_MARKER);
-  assert.match(disabledPrompt, /## \/review handoff[\s\S]*code-reviewer/);
   assert.doesNotMatch(disabledPrompt, /You are the TLH architect/);
 });

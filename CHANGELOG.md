@@ -11,6 +11,10 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH launch time should be ~25/30% faster.
 - Opus 5.5 is the default for many things, now.
 
+### Removed
+
+- Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
+
 ## [0.43.0] - 2026-09-25
 
 ### Changed
