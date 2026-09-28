@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Async status reads now reject non-regular artifacts without blocking or following path replacements.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
 
 ### Changed

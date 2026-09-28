@@ -47,6 +47,20 @@ const statusCache = new Map<
   { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }
 >();
 
+/** Keep status reads bounded before persisted JSON is trusted. */
+export const MAX_ASYNC_STATUS_BYTES = 16 * 1024 * 1024;
+const STATUS_READ_CHUNK_BYTES = 64 * 1024;
+
+type OptionalOpenConstants = {
+  readonly O_NONBLOCK?: number;
+  readonly O_NOFOLLOW?: number;
+};
+
+const optionalOpenConstants: OptionalOpenConstants = fs.constants;
+const STATUS_NONBLOCK_FLAG = optionalOpenConstants.O_NONBLOCK ?? 0;
+const STATUS_NOFOLLOW_FLAG = optionalOpenConstants.O_NOFOLLOW ?? 0;
+const STATUS_OPEN_FLAGS = fs.constants.O_RDONLY | STATUS_NONBLOCK_FLAG | STATUS_NOFOLLOW_FLAG;
+
 export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
   const statusPath =
     path.basename(asyncDirOrStatusPath) === "status.json"
@@ -57,6 +71,12 @@ export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function statusReadError(statusPath: string, error: unknown): Error {
+  return new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
+    cause: error,
+  });
 }
 
 /**
@@ -82,70 +102,133 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
+function isStatusObject(value: unknown): value is AsyncStatus {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function readBoundedStatusContent(fd: number): string {
+  const chunks: Buffer[] = [];
+  let bytesRead = 0;
+
+  while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
+    const bytesRemaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
+    const buffer = Buffer.allocUnsafe(Math.min(STATUS_READ_CHUNK_BYTES, bytesRemaining));
+    const chunkSize = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
+    if (chunkSize === 0) break;
+    chunks.push(buffer.subarray(0, chunkSize));
+    bytesRead += chunkSize;
+  }
+
+  if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
+    throw new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+  }
+  return Buffer.concat(chunks, bytesRead).toString("utf-8");
+}
+
 /**
- * Read async job status from disk (with mtime-based caching)
+ * Read async job status from disk through one nonblocking, no-follow
+ * descriptor. The descriptor is validated with fstat before it is read so a
+ * path replacement cannot redirect the content read to another artifact.
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
   const statusPath = path.join(asyncDir, "status.json");
 
-  let stat: fs.Stats;
+  // On platforms without one of these flags, lstat avoids opening an already
+  // known non-regular path. POSIX platforms use both flags below, so the open
+  // itself remains the race-safe authority for metadata and content.
+  if (STATUS_NONBLOCK_FLAG === 0 || STATUS_NOFOLLOW_FLAG === 0) {
+    let pathStat: fs.Stats;
+    try {
+      pathStat = fs.lstatSync(statusPath);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw new Error(
+        `Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`,
+        {
+          cause: error,
+        },
+      );
+    }
+    if (!pathStat.isFile()) {
+      throw statusReadError(statusPath, new Error("status path is not a regular file"));
+    }
+  }
+
+  let fd: number;
   try {
-    stat = fs.statSync(statusPath);
+    fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
   } catch (error) {
     if (isNotFoundError(error)) return null;
-    throw new Error(
-      `Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`,
-      {
+    throw statusReadError(statusPath, error);
+  }
+
+  try {
+    let stat: fs.Stats;
+    try {
+      stat = fs.fstatSync(fd);
+    } catch (error) {
+      throw statusReadError(statusPath, error);
+    }
+    if (!stat.isFile()) {
+      throw statusReadError(statusPath, new Error("status path is not a regular file"));
+    }
+    if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
+      throw statusReadError(
+        statusPath,
+        new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`),
+      );
+    }
+
+    const cached = statusCache.get(statusPath);
+    if (
+      cached &&
+      cached.mtime === stat.mtimeMs &&
+      cached.ctime === stat.ctimeMs &&
+      cached.size === stat.size &&
+      cached.ino === stat.ino
+    ) {
+      return cached.status;
+    }
+
+    let content: string;
+    try {
+      content = readBoundedStatusContent(fd);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw statusReadError(statusPath, error);
+    }
+
+    let status: AsyncStatus;
+    try {
+      const parsed: unknown = JSON.parse(content);
+      if (!isStatusObject(parsed)) throw new Error("status must be a valid JSON object");
+      status = normalizeAsyncLifecycleStatus(parsed);
+    } catch (error) {
+      throw createAsyncStatusJsonParseError({
+        asyncDir,
+        statusPath,
+        content,
         cause: error,
-      },
-    );
-  }
+      });
+    }
 
-  const cached = statusCache.get(statusPath);
-  if (
-    cached &&
-    cached.mtime === stat.mtimeMs &&
-    cached.ctime === stat.ctimeMs &&
-    cached.size === stat.size &&
-    cached.ino === stat.ino
-  ) {
-    return cached.status;
-  }
-
-  let content: string;
-  try {
-    content = fs.readFileSync(statusPath, "utf-8");
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-      cause: error,
+    statusCache.set(statusPath, {
+      mtime: stat.mtimeMs,
+      ctime: stat.ctimeMs,
+      size: stat.size,
+      ino: stat.ino,
+      status,
     });
+    if (statusCache.size > 50) {
+      const firstKey = statusCache.keys().next().value;
+      if (firstKey) statusCache.delete(firstKey);
+    }
+    return status;
+  } finally {
+    fs.closeSync(fd);
   }
-
-  let status: AsyncStatus;
-  try {
-    status = normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
-  } catch (error) {
-    throw createAsyncStatusJsonParseError({
-      asyncDir,
-      statusPath,
-      content,
-      cause: error,
-    });
-  }
-
-  statusCache.set(statusPath, {
-    mtime: stat.mtimeMs,
-    ctime: stat.ctimeMs,
-    size: stat.size,
-    ino: stat.ino,
-    status,
-  });
-  if (statusCache.size > 50) {
-    const firstKey = statusCache.keys().next().value;
-    if (firstKey) statusCache.delete(firstKey);
-  }
-  return status;
 }
 
 /**
