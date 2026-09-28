@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
+
 ### Changed
 
 - Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.

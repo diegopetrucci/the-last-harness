@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, rmSync, writeFileSync, realpathSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,11 +39,19 @@ export function makeDefaultExtensionInstallConfig(
     fakeGitBody = "",
     fakeNpmBody = "",
     fakeCloudSyncBody = "",
+    symlinkedAgentAncestor = false,
   },
 ) {
   const root = makeTempDir();
   const homeDir = join(root, "home");
-  const agentDir = join(root, "agent");
+  let agentDir;
+  if (symlinkedAgentAncestor) {
+    mkdirSync(join(root, "real"), { recursive: true });
+    symlinkSync(join(root, "real"), join(root, "link"));
+    agentDir = join(root, "link", "agent");
+  } else {
+    agentDir = join(root, "agent");
+  }
   const binDir = join(root, "bin");
   const fakebin = join(root, "fakebin");
   const piLog = join(root, "pi.log");
