@@ -72,8 +72,12 @@ function prepareSingleStepSetup(step, ctx) {
         (step.timeoutOwner !== "run" &&
             stepDeadlineAt !== undefined &&
             (ctx.deadlineAt === undefined || stepDeadlineAt <= ctx.deadlineAt));
+    const stepTimeoutMessage = stepOwnsDeadline
+        ? `Subagent timed out after ${step.timeoutMs}ms.`
+        : ctx.timeoutMessage;
     const stepTimeoutTimer = childDeadlineAt !== undefined
         ? scheduleDeadline(childDeadlineAt, () => {
+            ctx.onTimeout?.(stepTimeoutMessage);
             runtimeTracker.freeze(Date.now());
             stepTimeoutController.abort();
             activeTimeoutInterrupt?.();
@@ -83,9 +87,7 @@ function prepareSingleStepSetup(step, ctx) {
     const stepContext = {
         ...ctx,
         timeoutSignal: stepTimeoutController.signal,
-        timeoutMessage: stepOwnsDeadline
-            ? `Subagent timed out after ${step.timeoutMs}ms.`
-            : ctx.timeoutMessage,
+        timeoutMessage: stepTimeoutMessage,
         registerTimeout: (interrupt) => {
             activeTimeoutInterrupt = interrupt;
             parentRegisterTimeout?.(interrupt);

@@ -255,8 +255,12 @@ describe("async execution utilities", () => {
 
           const status = await waitForAsyncStatusPredicate(
             asyncDir,
-            (candidate) => candidate.state === "paused",
-            `nested supervisor pause (${withTelemetry ? "telemetry" : "plain"})`,
+            (candidate) =>
+              candidate.state === "paused" &&
+              (withTelemetry
+                ? candidate.telemetry?.outcome?.state === "paused"
+                : candidate.telemetry === undefined),
+            `coherent nested supervisor pause (${withTelemetry ? "telemetry" : "plain"})`,
           );
           await waitForFile(resultPath, "nested supervisor result");
           const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -293,8 +297,11 @@ describe("async execution utilities", () => {
               finalStatus.telemetry,
               "telemetry-enabled nested status must carry telemetry",
             );
+            assert.equal(finalStatus.telemetry.outcome?.state, "paused");
+            assert.equal(finalStatus.telemetry.steps[0]?.outcome?.state, "paused");
+            assert.equal(finalStatus.telemetry.steps[0]?.outcome?.terminationReason, "paused");
             assert.deepEqual(result.telemetry, finalStatus.telemetry);
-            assert.deepEqual(finalStatus.telemetry?.provenance, telemetryProvenance);
+            assert.deepEqual(finalStatus.telemetry.provenance, telemetryProvenance);
           } else {
             assert.equal(finalStatus.telemetry, undefined);
             assert.equal(result.telemetry, undefined);

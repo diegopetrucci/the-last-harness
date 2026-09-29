@@ -421,6 +421,9 @@ describe("terminal persistence", () => {
   it("emits nested completion once after concurrent terminal adoption", () => {
     const fixture = createNestedTerminalFixture();
     const { owner, asyncDir } = fixture;
+    // Keep stale step timeout evidence in the adopted terminal envelope. It must
+    // not reclassify a concurrent continuation as a top-level timeout.
+    owner.statusPayload.steps[0]!.timedOut = true;
     const canonicalStatus: RunnerStatusPayload = {
       ...owner.statusPayload,
       state: "continued",
@@ -444,8 +447,10 @@ describe("terminal persistence", () => {
     assert.deepEqual(nestedEventTypes(fixture.route.eventSink), ["subagent.nested.completed"]);
     const artifact = JSON.parse(fs.readFileSync(fixture.resultPath, "utf8")) as {
       state: string;
+      timedOut?: boolean;
     };
     assert.equal(artifact.state, "continued");
+    assert.equal(artifact.timedOut, undefined);
   });
 
   it("replaces a paused parent projection through the locked source-runner merge", () => {

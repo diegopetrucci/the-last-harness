@@ -149,6 +149,72 @@ interface ContinuationGateRejectionInput {
   sourceIndex: number;
 }
 
+/**
+ * Build the telemetry carried by the single atomic pausing -> paused snapshot.
+ *
+ * A supervisor pause is observable as soon as that lifecycle transition is
+ * written. Build its terminal-looking telemetry from the same projected step
+ * rows before writing the transition, so readers never observe state: paused
+ * paired with the launch-time state: running envelope.
+ */
+export function buildPausedRunnerTelemetry(input: {
+  config: SubagentRunConfig;
+  plan: SubagentRunPlan;
+  results: RunnerStepResult[];
+  controlConfig: NonNullable<SubagentRunConfig["controlConfig"]>;
+  overallStartTime: number;
+  endedAt: number;
+  activeRuntimeMs?: number;
+  statusSteps: RunnerStatusStep[];
+}): SubagentRunTelemetry | undefined {
+  const provenance = input.config.telemetry?.provenance;
+  if (!provenance) return undefined;
+  return telemetryFromRunnerResults({
+    runId: input.config.id,
+    mode: input.plan.kind,
+    results: input.results,
+    provenance,
+    controls: input.controlConfig,
+    startedAt: input.overallStartTime,
+    endedAt: input.endedAt,
+    activeRuntimeMs: input.activeRuntimeMs,
+    statusSteps: input.statusSteps,
+    lineage: input.config.telemetry?.lineage,
+    outcome: { state: "paused", terminationReason: "paused" },
+  });
+}
+
+/** Combined timeout evidence across the run and its child steps/results. */
+function canonicalTimedOut(input: TerminalPersistenceInput): boolean {
+  return (
+    input.statusPayload.timedOut === true ||
+    input.statusOwner.timedOut ||
+    input.statusPayload.steps.some((step) => step.timedOut === true) ||
+    input.results.some((result) => result.timedOut === true)
+  );
+}
+
+/** Whether timeout is the terminal run classification, not merely step evidence. */
+function timeoutWonRun(input: TerminalPersistenceInput): boolean {
+  const reason = input.statusOwner.terminalReason.reason;
+  if (
+    input.statusOwner.concurrentTerminalStatusAdopted &&
+    (input.statusPayload.state === "cancelled" ||
+      input.statusPayload.state === "continued" ||
+      input.statusPayload.state === "complete")
+  )
+    return false;
+  return (
+    canonicalTimedOut(input) &&
+    input.statusPayload.state !== "paused" &&
+    input.statusPayload.state !== "pausing" &&
+    !input.statusOwner.interrupted &&
+    reason !== "output_limit" &&
+    reason !== "interrupted" &&
+    reason !== "paused"
+  );
+}
+
 function buildRunnerTelemetry(
   input: TerminalPersistenceInput,
   state: string,
@@ -168,10 +234,11 @@ function buildRunnerTelemetry(
     lineage: input.config.telemetry?.lineage,
     outcome: resolveSubagentTelemetryOutcome({
       state,
-      timedOut: input.statusOwner.timedOut,
+      timedOut: timeoutWonRun(input),
       interrupted: input.statusOwner.interrupted,
       success,
-      terminationReason: input.statusOwner.terminalReason.reason,
+      terminationReason:
+        input.statusOwner.terminalReason.reason ?? (timeoutWonRun(input) ? "timed_out" : undefined),
     }),
   });
 }
@@ -181,15 +248,17 @@ function terminalStatus(input: TerminalPersistenceInput): AsyncStatus["state"] {
   if (input.statusOwner.supervisorPauseTransitionFailed) return "failed";
   if (input.statusOwner.timedOut) return "failed";
   if (input.statusOwner.interrupted) return "paused";
+  if (canonicalTimedOut(input)) return "failed";
   return input.results.every((result) => result.success) ? "complete" : "failed";
 }
 
 function applyTerminalStatus(input: TerminalPersistenceInput): SubagentRunTelemetry | undefined {
   const { statusPayload } = input;
+  const timedOut = timeoutWonRun(input);
   statusPayload.state = terminalStatus(input);
   statusPayload.activityState = undefined;
+  if (timedOut) statusPayload.timedOut = true;
   if (input.statusOwner.timedOut) {
-    statusPayload.timedOut = true;
     statusPayload.error = input.timeoutMessage ?? "Subagent timed out.";
   }
   if (input.statusOwner.supervisorPauseTransitionFailed && statusPayload.state === "failed") {
@@ -208,6 +277,8 @@ function applyTerminalStatus(input: TerminalPersistenceInput): SubagentRunTeleme
     const failedStep = statusPayload.steps.find((step) => step.status === "failed");
     if (failedStep?.agent)
       statusPayload.error = failedStep.error ?? `Step failed: ${failedStep.agent}`;
+    else if (timeoutWonRun(input))
+      statusPayload.error = input.timeoutMessage ?? "Subagent timed out.";
   }
   const telemetry = buildRunnerTelemetry(
     input,
@@ -241,6 +312,7 @@ function resultState(
   )
     return input.statusPayload.state;
   if (input.statusOwner.interrupted) return "paused";
+  if (canonicalTimedOut(input)) return "failed";
   return input.results.every((result) => result.success) ? "complete" : "failed";
 }
 
@@ -249,11 +321,7 @@ function resultSummary(
   state: AsyncStatus["state"],
   paused: AsyncStatus["pause"] | undefined,
 ): string {
-  if (
-    state === "failed" &&
-    (input.statusPayload.timedOut ||
-      (!input.statusOwner.concurrentTerminalStatusAdopted && input.statusOwner.timedOut))
-  )
+  if (state === "failed" && timeoutWonRun(input))
     return input.statusPayload.error ?? input.timeoutMessage ?? "Subagent timed out.";
   if (paused) {
     const requesterIndex = input.statusOwner.supervisorPauseRequest?.requesterIndex ?? 0;
@@ -356,9 +424,7 @@ function writeResultArtifact(
   startedAt: number,
   endedAt: number,
 ): void {
-  const timedOut =
-    input.statusPayload.timedOut ||
-    (!input.statusOwner.concurrentTerminalStatusAdopted && input.statusOwner.timedOut);
+  const timedOut = timeoutWonRun(input);
   const deadlineAt = canonicalStatusValue(
     input,
     input.statusPayload.deadlineAt,
@@ -405,18 +471,15 @@ function writeResultArtifact(
     ...(deadlineAt !== undefined ? { deadlineAt } : {}),
     ...(input.statusPayload.toolBudget ? { toolBudget: input.statusPayload.toolBudget } : {}),
     ...(input.statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-    ...(timedOut && state === "failed"
+    ...(timedOut ? { timedOut: true } : {}),
+    ...(state === "failed"
       ? {
-          timedOut: true,
-          error: input.statusPayload.error ?? input.timeoutMessage ?? "Subagent timed out.",
+          error: timeoutWonRun(input)
+            ? (input.statusPayload.error ?? input.timeoutMessage ?? "Subagent timed out.")
+            : (input.statusPayload.error ??
+              "Async supervisor lifecycle update failed. The run was stopped safely and marked failed."),
         }
-      : state === "failed"
-        ? {
-            error:
-              input.statusPayload.error ??
-              "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.",
-          }
-        : {}),
+      : {}),
     ...(paused ? { pause: paused } : {}),
     ...(normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) !== undefined
       ? { activeRuntimeMs: normalizeActiveRuntimeMs(input.statusPayload.activeRuntimeMs) }

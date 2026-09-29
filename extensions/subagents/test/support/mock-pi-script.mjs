@@ -66,12 +66,15 @@ function appendSignalRecord(signal) {
   );
 }
 
-function spawnStubbornDescendants() {
+async function spawnStubbornDescendants() {
   const grandchildCode = [
     'import fs from "node:fs";',
     "const [recordPath, childPid] = process.argv.slice(1);",
     'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
-    "fs.writeFileSync(recordPath, JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid }));",
+    "const record = JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid });",
+    "const tempPath = `${recordPath}.tmp-${process.pid}`;",
+    "fs.writeFileSync(tempPath, record);",
+    "fs.renameSync(tempPath, recordPath);",
     "setInterval(() => {}, 1000);",
   ].join("");
   const childCode = [
@@ -85,6 +88,10 @@ function spawnStubbornDescendants() {
   spawn(process.execPath, ["--input-type=module", "-e", childCode, recordPath], {
     stdio: "ignore",
   });
+  // Do not publish the mock call until the process-discovery record is ready.
+  // Otherwise a supervisor pause can reap the group before the grandchild has
+  // published the metadata that the cleanup assertions use.
+  await waitForMarkerFile(recordPath);
 }
 
 function readPendingResponse(filePath) {
@@ -473,7 +480,7 @@ async function main() {
       appendSignalRecord("SIGINT");
     });
   }
-  if (response.spawnStubbornDescendants === true) spawnStubbornDescendants();
+  if (response.spawnStubbornDescendants === true) await spawnStubbornDescendants();
   writeSessionFile(args);
   const callPrefix = staleInvocation ? STALE_CALL_PREFIX : "call-";
   fs.writeFileSync(

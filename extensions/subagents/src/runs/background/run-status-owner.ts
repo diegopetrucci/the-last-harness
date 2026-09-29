@@ -183,6 +183,7 @@ export interface BackgroundRunStatusOwner {
   endStepCompaction(flatIndex: number, options?: { publish?: boolean }): void;
   endAllStepCompactions(options?: { publish?: boolean }): void;
   syncTopLevelHealthProjection(): boolean;
+  recordStepTimeout(flatIndex: number, message?: string): void;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
   pausedAcceptanceLedger(
     acceptance: SubagentStep["effectiveAcceptance"],
@@ -904,6 +905,28 @@ export function createBackgroundRunStatusOwner(
     return persisted;
   }
 
+  function recordStepTimeout(flatIndex: number, message?: string): void {
+    if (
+      concurrentTerminalStatusAdopted ||
+      statusPayload.state !== "running" ||
+      timedOut ||
+      interrupted
+    )
+      return;
+    const now = Date.now();
+    const timeoutError = message ?? timeoutMessage ?? "Subagent timed out.";
+    const step = statusPayload.steps[flatIndex];
+    if (!step) return;
+    // A step-owned deadline is durable evidence for the canonical result, but it
+    // is not a run-wide terminal transition: sibling interrupt/pause/output
+    // signals must still be able to claim the run if they end this segment.
+    step.timedOut = true;
+    step.error ??= timeoutError;
+    step.terminationReason = "timed_out";
+    statusPayload.lastUpdate = now;
+    writeStatusPayload();
+  }
+
   function onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void {
     if (
       concurrentTerminalStatusAdopted ||
@@ -954,11 +977,17 @@ export function createBackgroundRunStatusOwner(
       : undefined;
   }
 
+  function hasNonTimedOutActiveStep(): boolean {
+    return statusPayload.steps.some(
+      (step) => step.timedOut !== true && (step.status === "running" || step.status === "pending"),
+    );
+  }
+
   function pauseMetadataForIndex(
     index: number,
     pausedAt?: number,
   ): AsyncStatus["pause"] | undefined {
-    if (!supervisorPauseRequest) return undefined;
+    if (!supervisorPauseRequest || statusPayload.steps[index]?.timedOut === true) return undefined;
     if (index === supervisorPauseRequest.requesterIndex) {
       return {
         ...supervisorPauseRequest.pause,
@@ -977,7 +1006,14 @@ export function createBackgroundRunStatusOwner(
     requesterIndex: number,
     pause: NonNullable<AsyncStatus["pause"]>,
   ): void {
-    if (supervisorPauseRequest || interrupted || timedOut || statusPayload.state !== "running")
+    if (
+      supervisorPauseRequest ||
+      interrupted ||
+      timedOut ||
+      statusPayload.state !== "running" ||
+      statusPayload.steps[requesterIndex]?.timedOut === true ||
+      !hasNonTimedOutActiveStep()
+    )
       return;
     if (!claimChildTerminalReason(terminalReason, "paused")) return;
     supervisorPauseRequest = {
@@ -1016,7 +1052,7 @@ export function createBackgroundRunStatusOwner(
           lastUpdate: now,
           sessionFile: requesterSessionFile ?? status.sessionFile,
           steps: status.steps?.map((step, index) => {
-            if (step.status !== "running") return step;
+            if (step.status !== "running" || step.timedOut === true) return step;
             const stepSessionFile = refreshTrackedSessionFile(index);
             const activeRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
             return {
@@ -1072,6 +1108,7 @@ export function createBackgroundRunStatusOwner(
 
   function interrupt(): void {
     if (interrupted || statusPayload.state !== "running") return;
+    if (!hasNonTimedOutActiveStep()) return;
     if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
     interrupted = true;
     const now = Date.now();
@@ -1086,7 +1123,7 @@ export function createBackgroundRunStatusOwner(
     statusPayload.lastUpdate = now;
     for (let flatIndex = 0; flatIndex < statusPayload.steps.length; flatIndex++) {
       const step = statusPayload.steps[flatIndex]!;
-      if (step.status !== "running") continue;
+      if (step.status !== "running" || step.timedOut === true) continue;
       step.status = "paused";
       step.activityState = undefined;
       step.idleEpisodeId = undefined;
@@ -1237,7 +1274,7 @@ export function createBackgroundRunStatusOwner(
 
   function applyPausedStepMetadata(flatIndex: number, endedAt: number): void {
     const step = statusPayload.steps[flatIndex];
-    if (!step) return;
+    if (!step || step.timedOut === true) return;
     const sessionFile = refreshTrackedSessionFile(flatIndex);
     if (sessionFile) step.sessionFile = sessionFile;
     step.pause = pauseMetadataForIndex(flatIndex, endedAt);
@@ -1333,6 +1370,7 @@ export function createBackgroundRunStatusOwner(
     endStepCompaction,
     endAllStepCompactions,
     syncTopLevelHealthProjection,
+    recordStepTimeout,
     onChildProtocolOutputLimit,
     pausedAcceptanceLedger,
     pausedStepResult,
