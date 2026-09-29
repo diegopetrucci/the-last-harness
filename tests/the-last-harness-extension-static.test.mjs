@@ -212,7 +212,7 @@ test("primary prompt exposes stable minor-agent delegation markers", () => {
   assert.match(primaryPrompt, /- contrarian:/i);
 });
 
-test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {
+test("allowed-subagents prompt gives every enabled primary the explicit embedded exception", () => {
   const primaryAgents = loadPrimaryAgents();
   const architect = primaryAgents.get("architect");
   const rush = primaryAgents.get("rush");
@@ -234,11 +234,24 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(architectPrompt, USER_SCOPE_MARKER);
   assert.match(architectPrompt, finalReviewWorkflow);
 
+  for (const primary of [product, bugHunter]) {
+    const label = primary?.name ?? "unknown";
+    assert.ok(primary, `${label}: packaged prompt should load`);
+    assert.match(primary.systemPrompt, /explicitly naming or asking.*embedded\.<slug>/i);
+  }
+
   for (const primary of [rush, product, bugHunter]) {
     const label = primary?.name ?? "unknown";
     const prompt = buildTlhSystemPrompt(primary, subagents, true);
     assert.match(prompt, sectionHeader, `${label}: section header present`);
-    assert.doesNotMatch(prompt, embeddedTargetMarker, `${label}: no embedded guidance`);
+    assert.match(prompt, embeddedTargetMarker, `${label}: embedded target guidance present`);
+    assert.match(prompt, embeddedProjectAgentMarker, `${label}: embedded mapping guidance present`);
+    assert.match(prompt, projectAgentPathMarker, `${label}: project path guidance present`);
+    assert.match(
+      prompt,
+      /explicitly names or asks/i,
+      `${label}: explicit-user-request guidance present`,
+    );
   }
 
   const disabledPrompt = buildTlhSystemPrompt(undefined, subagents, false);

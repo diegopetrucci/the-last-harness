@@ -138,6 +138,8 @@ export function makeExecutor(
   active: {
     capability: ProjectAgentSnapshotCapability;
     architect?: boolean;
+    canManage?: boolean;
+    canInitiate?: boolean;
     reauthorize?: () => Promise<boolean>;
     rebind?: ProjectAgentRebind;
   },
@@ -167,7 +169,9 @@ export function makeExecutor(
     getProjectAgentAccess: () => ({
       capability: active.capability,
       expected: getProjectAgentSnapshotProvenance(active.capability),
-      architect: active.architect ?? true,
+      architect: active.architect ?? false,
+      canManage: active.canManage ?? active.architect ?? true,
+      canInitiate: active.canInitiate ?? active.canManage ?? active.architect ?? true,
       reauthorize: active.reauthorize ?? (async () => true),
       ...(active.rebind ? { rebind: active.rebind } : {}),
     }),

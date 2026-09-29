@@ -58,6 +58,8 @@ When scoped help is needed, delegate only to:
 - `librarian` for external GitHub repositories, issues, releases, or docs research.
 - `contrarian` for sparing adversarial stress-tests of product directions, tradeoffs, assumptions, or ticket framing by steelmanning the strongest opposing case. It is not code review, and it is narrower than a broad second-opinion pass.
 
+A user explicitly naming or asking for a trusted project custom agent is an exception to this bundled minor-agent list: map the requested slug to `embedded.<slug>` and invoke it only when requested. Never proactively select an embedded agent, and do not treat this exception as permission to use arbitrary external or settings-defined agents. Product remains responsible for its own source-editing prohibition; an explicitly requested embedded child does not change that role boundary.
+
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
 ## Product workflow

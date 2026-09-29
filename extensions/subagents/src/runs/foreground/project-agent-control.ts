@@ -109,14 +109,18 @@ function isProjectAgentExpected(
 export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess | undefined {
   if (!isRecordValue(value)) return undefined;
   if (!isRecordValue(value.capability) || !isRecordValue(value.expected)) return undefined;
-  if (!isProjectAgentExpected(value.expected) || typeof value.architect !== "boolean") {
+  if (!isProjectAgentExpected(value.expected)) {
     return undefined;
   }
-  const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : value.architect;
+  const architect = typeof value.architect === "boolean" ? value.architect : undefined;
+  const canManage = typeof value.canManage === "boolean" ? value.canManage : architect;
+  if (canManage === undefined) return undefined;
+  const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : canManage;
   return {
     capability: asProjectAgentCapability(value.capability),
     expected: value.expected,
-    architect: value.architect,
+    architect: architect ?? false,
+    canManage,
     canInitiate,
     ...(typeof value.reauthorize === "function"
       ? { reauthorize: value.reauthorize as () => Promise<boolean> }
@@ -270,7 +274,7 @@ export function resolveProjectAgentExecution(
 
   if (access.canInitiate !== true) {
     return projectExecutionError(
-      `TLH project-agent execution requires the architect or disabled primary mode. Target(s): ${embeddedTargets.join(", ")}.`,
+      `TLH project-agent execution is not authorized for the current primary-agent mode. Target(s): ${embeddedTargets.join(", ")}.`,
     );
   }
   if (sessionId === null || sessionId !== manifest.provenance.sessionId) {
@@ -633,8 +637,10 @@ async function authorizeRetainedProjectAgentRun(input: {
   if (!activeAccess) {
     throw projectRunAuthorizationError("the current trusted project snapshot is unavailable.");
   }
-  if (!activeAccess.architect) {
-    throw projectRunAuthorizationError("the current primary agent is not the architect.");
+  if (activeAccess.canManage !== true) {
+    throw projectRunAuthorizationError(
+      "the current primary agent cannot manage project-agent runs.",
+    );
   }
   let activeManifest: ProjectAgentSnapshotManifest;
   try {
@@ -786,8 +792,10 @@ export async function authorizePersistedProjectAgentRun(input: {
   if (!activeAccess) {
     throw projectRunAuthorizationError("the current trusted project snapshot is unavailable.");
   }
-  if (!activeAccess.architect) {
-    throw projectRunAuthorizationError("the current primary agent is not the architect.");
+  if (activeAccess.canManage !== true) {
+    throw projectRunAuthorizationError(
+      "the current primary agent cannot manage project-agent runs.",
+    );
   }
   let activeManifest: ProjectAgentSnapshotManifest;
   try {

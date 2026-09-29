@@ -199,9 +199,11 @@ export interface ProjectAgentRebindResult {
 export interface ProjectAgentAccess {
   capability: ProjectAgentSnapshotCapability;
   expected: ProjectAgentSnapshotExpected;
-  /** True only while the architect is active; retained controls require this. */
+  /** Retained project-agent controls require an enabled primary agent. */
+  canManage?: boolean;
+  /** True only while the architect is active; retained for compatibility diagnostics. */
   architect: boolean;
-  /** Architect and disabled mode may initiate a new project-agent execution. */
+  /** Enabled primaries and disabled mode may initiate a new project-agent execution. */
   canInitiate?: boolean;
   /** Process-private current-trust reauthorization; never serializable. */
   reauthorize?: () => Promise<boolean>;

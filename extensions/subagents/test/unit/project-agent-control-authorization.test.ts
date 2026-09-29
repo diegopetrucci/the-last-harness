@@ -70,6 +70,9 @@ describe("project-agent control authorization and rebind", () => {
         get capability() {
           return active.capability;
         },
+        architect: false,
+        canManage: true,
+        canInitiate: true,
         rebind: async () => {
           rebindCalls++;
           return second;
@@ -121,6 +124,127 @@ describe("project-agent control authorization and rebind", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+  it("rejects retained controls when disabled mode has initiation-only access", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-disabled-control-")),
+    );
+    execFileSync("git", ["init", "--quiet", root]);
+    const generation = createProjectGeneration(
+      root,
+      "session-project",
+      "generation-disabled-control",
+    );
+    const runId = `project-disabled-control-${Date.now().toString(36)}`;
+    retainProjectAgentRunReference(generation.capability, runId, [generation.capture]);
+    writeStatus(runId, root, generation.capture);
+    let dispatchCalls = 0;
+    const executor = makeExecutor(
+      root,
+      createState(),
+      {
+        capability: generation.capability,
+        architect: false,
+        canManage: false,
+        canInitiate: true,
+      },
+      {
+        executeAsyncSingle: () => {
+          dispatchCalls++;
+          return { content: [{ type: "text", text: "must not dispatch" }] };
+        },
+      },
+    );
+    try {
+      const result = await executor.execute(
+        "disabled-control",
+        { action: "resume", id: runId, message: "Continue." },
+        new AbortController().signal,
+        undefined,
+        makeContext(root),
+      );
+      assert.equal(result.isError, true);
+      assert.match(text(result), /cannot manage project-agent runs|manage project-agent/i);
+      assert.equal(dispatchCalls, 0);
+    } finally {
+      cleanupRun(runId);
+      revokeIfRegistered(generation.capability);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an ordinary sibling from a mixed persisted run before rebind fallback", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-mixed-rebind-")),
+    );
+    execFileSync("git", ["init", "--quiet", root]);
+    const generation = createProjectGeneration(root, "session-project", "generation-mixed-rebind");
+    const runId = `project-mixed-rebind-${Date.now().toString(36)}`;
+    const persisted = {
+      ...generation.capture,
+      provenance: {
+        ...generation.capture.provenance,
+        processInstanceId: "prior-process",
+      },
+    } as ProjectAgentRunCapture;
+    const embeddedSessionFile = path.join(runAsyncDir(runId), "embedded.jsonl");
+    const ordinarySessionFile = path.join(runAsyncDir(runId), "ordinary.jsonl");
+    writeStatus(runId, root, persisted, {
+      steps: [
+        {
+          agent: persisted.provenance.agent,
+          status: "complete",
+          sessionFile: embeddedSessionFile,
+          projectAgent: persisted,
+        },
+        {
+          agent: "worker",
+          status: "complete",
+          sessionFile: ordinarySessionFile,
+        },
+      ],
+    });
+    fs.writeFileSync(embeddedSessionFile, "", "utf8");
+    fs.writeFileSync(ordinarySessionFile, "", "utf8");
+    let dispatchCalls = 0;
+    const executor = makeExecutor(
+      root,
+      createState(),
+      {
+        capability: generation.capability,
+        architect: false,
+        canManage: true,
+        canInitiate: true,
+        rebind: async () => ({
+          capability: generation.capability,
+          expected: getProjectAgentSnapshotProvenance(generation.capability),
+          capture: generation.capture,
+        }),
+      },
+      {
+        executeAsyncSingle: () => {
+          dispatchCalls++;
+          return { content: [{ type: "text", text: "must not dispatch" }] };
+        },
+      },
+    );
+    try {
+      const result = await executor.execute(
+        "mixed-rebind-ordinary",
+        { action: "resume", id: runId, index: 1, message: "Resume the ordinary sibling." },
+        new AbortController().signal,
+        undefined,
+        makeContext(root),
+      );
+      assert.equal(result.isError, true);
+      assert.match(text(result), /project-agent marker|ordinary sibling|fallback/i);
+      assert.equal(dispatchCalls, 0);
+    } finally {
+      cleanupRun(runId);
+      revokeIfRegistered(generation.capability);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rebinds a project definition in a new process and reports an old-to-new digest change", async () => {
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-rebind-")),

@@ -177,7 +177,13 @@ function createControlState() {
   };
 }
 
-function createControlExecutor(root, state, snapshot, kill) {
+function createControlExecutor(
+  root,
+  state,
+  snapshot,
+  kill,
+  { getProjectAgentAccess, executeAsyncSingle } = {},
+) {
   return createSubagentExecutor({
     pi: {
       events: {
@@ -194,12 +200,15 @@ function createControlExecutor(root, state, snapshot, kill) {
     getSubagentSessionRoot: () => root,
     expandTilde: (value) => value,
     discoverAgents: () => ({ agents: [] }),
-    getProjectAgentAccess: () => ({
-      capability: snapshot.capability,
-      expected: getProjectAgentSnapshotProvenance(snapshot.capability),
-      architect: true,
-      reauthorize: async () => true,
-    }),
+    getProjectAgentAccess:
+      getProjectAgentAccess ??
+      (() => ({
+        capability: snapshot.capability,
+        expected: getProjectAgentSnapshotProvenance(snapshot.capability),
+        architect: true,
+        reauthorize: async () => true,
+      })),
+    executeAsyncSingle,
     kill,
   });
 }
@@ -1461,7 +1470,7 @@ test("primary tool_call reads the live project snapshot after deferred lookup ac
   assert.match(afterShutdown?.reason ?? "", /private|snapshot|fallback/i);
 });
 
-test("primary tool authorization gates retained project controls while leaving status and interrupt available", async (t) => {
+test("primary tool authorization allows enabled primaries to control retained embedded runs while keeping disabled initiation-only", async (t) => {
   const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-control-gates-"));
   const home = join(fixture, "home");
   const agentDir = join(fixture, "agent");
@@ -1504,20 +1513,28 @@ test("primary tool authorization gates retained project controls while leaving s
     createContext(projectRoot, "lifecycle-session", primaryBranch(selection));
   await runtime.applySessionStart(contextFor("architect"));
 
-  for (const selection of ["disabled", "rush", "product", "bug-hunter"]) {
+  const disabledContext = contextFor("disabled");
+  for (const action of ["resume", "steer"]) {
+    const blocked = await toolCall(
+      { toolName: "subagent", input: { action, id: runId, message: "Continue." } },
+      disabledContext,
+    );
+    assert.equal(blocked?.block, true, `disabled ${action} should be blocked`);
+    assert.match(blocked?.reason ?? "", /enabled primary|project-agent/i);
+  }
+
+  for (const selection of ["architect", "rush", "product", "bug-hunter"]) {
     const context = contextFor(selection);
     const branch = await toolCall(
       { toolName: "subagent", input: { action: "resume", id: runId, message: "Continue." } },
       context,
     );
-    assert.equal(branch?.block, true, `${selection} resume should be blocked`);
-    assert.match(branch?.reason ?? "", /architect|project-agent|Rush/);
+    assert.equal(branch, undefined, `${selection} resume should reach the executor`);
     const steer = await toolCall(
       { toolName: "subagent", input: { action: "steer", id: runId, message: "Focus." } },
       context,
     );
-    assert.equal(steer?.block, true, `${selection} steer should be blocked`);
-    assert.match(steer?.reason ?? "", /architect|project-agent|Rush/);
+    assert.equal(steer, undefined, `${selection} steer should reach the executor`);
   }
   assert.equal(
     await toolCall(
@@ -1740,7 +1757,126 @@ test("primary hook denies persisted project markers after private registry loss 
   await runtime.applySessionStart(contextFor("architect"));
 });
 
-test("primary tool authorization permits disabled initiation, blocks non-architect calls, and rejects unsafe cwd paths", async (t) => {
+test("Rush revives a persisted embedded run through the trusted rebind path", async (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-rush-rebind-"));
+  const home = join(fixture, "home");
+  const agentDir = join(fixture, "agent");
+  const projectRoot = join(fixture, "project");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(projectRoot, { recursive: true });
+  execFileSync("git", ["init", "--quiet", projectRoot], { stdio: "ignore" });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  new ProjectTrustStore(agentDir).set(projectRoot, true);
+  const snapshot = makeSnapshot(projectRoot, "primary-rush-rebind-generation");
+  const capture = createProjectAgentRunCapture(
+    snapshot.manifest,
+    snapshot.manifest.entries[0].agent,
+  );
+  const persistedCapture = {
+    ...capture,
+    provenance: { ...capture.provenance, processInstanceId: "prior-process" },
+  };
+  const runId = `primary-rush-rebind-${Date.now().toString(36)}`;
+  const runDirectories = [join(ASYNC_DIR, runId)];
+  const writePersistedStatus = (id, steps) => {
+    const asyncDir = join(ASYNC_DIR, id);
+    mkdirSync(asyncDir, { recursive: true });
+    for (const step of steps) {
+      mkdirSync(join(asyncDir, "sessions"), { recursive: true });
+      writeFileSync(step.sessionFile, "", "utf8");
+    }
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: id,
+        mode: "parallel",
+        state: "complete",
+        sessionId: "lifecycle-session",
+        cwd: projectRoot,
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: Date.now(),
+        steps,
+        projectAgents: steps.flatMap((step) => (step.projectAgent ? [step.projectAgent] : [])),
+      }),
+      "utf8",
+    );
+  };
+  writePersistedStatus(runId, [
+    {
+      agent: persistedCapture.provenance.agent,
+      status: "complete",
+      sessionFile: join(ASYNC_DIR, runId, "embedded.jsonl"),
+      projectAgent: persistedCapture,
+    },
+  ]);
+  t.after(() => {
+    setTlhProjectAgentAccessProvider(undefined);
+    for (const asyncDir of runDirectories) rmSync(asyncDir, { recursive: true, force: true });
+    revokeSnapshotSafely(snapshot.capability);
+    rmSync(fixture, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+  });
+
+  const pi = createPiHarness();
+  const runtime = registerTlhPrimaryAgentRuntime(pi, {
+    env: {},
+    primaryAgents: primaryAgents(),
+    subagentMetadata: [],
+    projectAgentLoader: async () => snapshot,
+  });
+  const toolCall = pi.events.find((entry) => entry.name === "tool_call")?.handler;
+  assert.equal(typeof toolCall, "function");
+  const rushContext = createContext(projectRoot, "lifecycle-session", primaryBranch("rush"));
+  await runtime.applySessionStart(rushContext);
+
+  const reviveInput = {
+    action: "resume",
+    id: runId,
+    index: 0,
+    message: "Continue the explicitly requested embedded run.",
+  };
+  assert.equal(
+    await toolCall({ toolName: "subagent", input: reviveInput }, rushContext),
+    undefined,
+    "Rush should reach executor reauthorization for a persisted embedded target",
+  );
+  let dispatchCalls = 0;
+  const executor = createControlExecutor(projectRoot, createControlState(), snapshot, () => true, {
+    getProjectAgentAccess: () =>
+      getTlhProjectAgentAccess({
+        cwd: projectRoot,
+        sessionId: "lifecycle-session",
+        targetNames: ["embedded.xyz"],
+      }),
+    executeAsyncSingle: (continuedId, params) => {
+      dispatchCalls++;
+      return {
+        content: [{ type: "text", text: "continued" }],
+        details: { asyncId: continuedId, params, results: [] },
+      };
+    },
+  });
+  const revived = await executor.execute(
+    "rush-persisted-rebind",
+    reviveInput,
+    new AbortController().signal,
+    undefined,
+    rushContext,
+  );
+  assert.equal(revived.isError, undefined, revived.content?.[0]?.text ?? "");
+  assert.equal(dispatchCalls, 1);
+});
+
+test("primary tool authorization permits every primary to dispatch embedded runs and rejects unsafe cwd paths", async (t) => {
   const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-gates-"));
   const home = join(fixture, "home");
   const agentDir = join(fixture, "agent");
@@ -1792,22 +1928,51 @@ test("primary tool authorization permits disabled initiation, blocks non-archite
   await runtime.applySessionStart(
     createContext(projectRoot, "lifecycle-session", primaryBranch("disabled")),
   );
-  const disabledRequest = projectRequest();
-  const disabledResult = await toolCall(
-    disabledRequest,
-    createContext(projectRoot, "lifecycle-session", primaryBranch("disabled")),
+  const disabledContext = createContext(
+    projectRoot,
+    "lifecycle-session",
+    primaryBranch("disabled"),
   );
+  const disabledRequest = projectRequest();
+  const disabledResult = await toolCall(disabledRequest, disabledContext);
   assert.equal(disabledResult, undefined, "disabled mode may initiate an explicit project run");
   assert.equal(disabledRequest.input.agentScope, "project");
   assert.equal(Object.hasOwn(disabledRequest.input, "context"), false);
+  const disabledAccess = getTlhProjectAgentAccess({
+    cwd: projectRoot,
+    sessionId: "lifecycle-session",
+    targetNames: ["embedded.xyz"],
+  });
+  assert.equal(disabledAccess?.canManage, false);
+  assert.equal(disabledAccess?.architect, false);
+  assert.equal(disabledAccess?.canInitiate, true);
 
-  for (const selection of ["rush", "product", "bug-hunter"]) {
-    const nonArchitectResult = await toolCall(
-      projectRequest(),
-      createContext(projectRoot, "lifecycle-session", primaryBranch(selection)),
+  for (const selection of ["architect", "rush", "product", "bug-hunter"]) {
+    const primaryContext = createContext(
+      projectRoot,
+      "lifecycle-session",
+      primaryBranch(selection),
     );
-    assert.equal(nonArchitectResult?.block, true, `${selection} should be blocked`);
-    assert.match(nonArchitectResult?.reason ?? "", /may not delegate to embedded|architect/);
+    const directRequest = projectRequest();
+    const directResult = await toolCall(directRequest, primaryContext);
+    assert.equal(directResult, undefined, `${selection} should dispatch an embedded run`);
+    assert.equal(directRequest.input.agentScope, "project");
+    const access = getTlhProjectAgentAccess({
+      cwd: projectRoot,
+      sessionId: "lifecycle-session",
+      targetNames: ["embedded.xyz"],
+    });
+    assert.equal(access?.canManage, true, `${selection} can manage retained runs`);
+    assert.equal(access?.architect, selection === "architect", `${selection} architect diagnostic`);
+    assert.equal(access?.canInitiate, true, `${selection} can initiate runs`);
+
+    const parallelRequest = {
+      toolName: "subagent",
+      input: { tasks: [{ agent: "embedded.xyz", task: "use project agent in parallel" }] },
+    };
+    const parallelResult = await toolCall(parallelRequest, primaryContext);
+    assert.equal(parallelResult, undefined, `${selection} should dispatch an embedded batch`);
+    assert.equal(parallelRequest.input.agentScope, "project");
   }
 
   const architectContext = createContext(
