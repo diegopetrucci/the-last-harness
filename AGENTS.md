@@ -86,6 +86,7 @@ git diff --cached
 
 ## Miscellaneous
 
+- Contributor-only TelemetryDeck MCP access is governed by [docs/local-development.md#telemetrydeck-mcp-contributors-only](docs/local-development.md#telemetrydeck-mcp-contributors-only): keep queries aggregate-only with at least 10 distinct `clientUser` values; never use `Tlh.User.mark`, individual identifiers, or cross-system linking.
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
 - For TypeScript boundary parsing or open-object decisions, load `.pi/skills/tlh-typescript-boundaries/SKILL.md`.
