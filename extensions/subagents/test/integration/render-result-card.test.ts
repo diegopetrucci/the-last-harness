@@ -1175,6 +1175,141 @@ describe("renderSubagentResult", () => {
     assert.doesNotMatch(warning, /⎿/);
   });
 
+  it("advances phrase via live now - startedAt clock while durationMs is unchanged", () => {
+    // Simulates the idle case: durationMs stays fixed but now advances.
+    const startedAt = 0;
+    const makeIdleResult = () => ({
+      content: [{ type: "text" as const, text: "(running...)" }],
+      details: {
+        mode: "single" as const,
+        results: [
+          {
+            agent: "idle-worker",
+            task: "idle task",
+            exitCode: 0,
+            messages: [],
+            usage: emptyUsage,
+            progress: {
+              index: 0,
+              agent: "idle-worker",
+              status: "running" as const,
+              task: "idle task",
+              lastActivityAt: startedAt,
+              recentTools: [],
+              recentOutput: [],
+              toolCount: 0,
+              tokens: 0,
+              // durationMs deliberately frozen at 0 to simulate no progress events.
+              durationMs: 0,
+              turnCount: 0,
+              startedAt,
+            },
+          },
+        ],
+      },
+    });
+
+    // Slot 0: now = 4 s (within first 8 s window).
+    const slot0Phrase = whimsicalThinkingPhrase(0, 0, 0, 0); // elapsedMs=0 → slot 0
+    const at4s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      4_000,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at4s,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "phrase must be slot 0 when now - startedAt < 8 s",
+    );
+
+    // Stable within window: same now, same phrase despite turnCount staying 0.
+    const at6s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      6_000,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at6s,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "phrase must remain slot 0 at 6 s (still within first window)",
+    );
+
+    // Advances at boundary: now = 8 s crosses into slot 1.
+    const slot1Phrase = whimsicalThinkingPhrase(0, 0, 0, PHRASE_HOLD_MS);
+    assert.notEqual(slot1Phrase, slot0Phrase, "slot 1 phrase must differ from slot 0");
+    const at8s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      PHRASE_HOLD_MS,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at8s,
+      new RegExp(`^ {5}${escapeRegExp(slot1Phrase)}$`, "m"),
+      "phrase must advance to slot 1 when now - startedAt reaches the 8 s boundary",
+    );
+    assert.doesNotMatch(
+      at8s,
+      new RegExp(escapeRegExp(slot0Phrase)),
+      "old phrase must not appear after window boundary",
+    );
+
+    // Fallback: when startedAt is absent, durationMs is used.
+    const noStartedAt = {
+      content: [{ type: "text" as const, text: "(running...)" }],
+      details: {
+        mode: "single" as const,
+        results: [
+          {
+            agent: "idle-worker",
+            task: "idle task",
+            exitCode: 0,
+            messages: [],
+            usage: emptyUsage,
+            progress: {
+              index: 0,
+              agent: "idle-worker",
+              status: "running" as const,
+              task: "idle task",
+              lastActivityAt: startedAt,
+              recentTools: [],
+              recentOutput: [],
+              toolCount: 0,
+              tokens: 0,
+              durationMs: 0,
+              turnCount: 0,
+            },
+          },
+        ],
+      },
+    };
+    const fallback = renderSubagentResult!(
+      noStartedAt,
+      { expanded: false },
+      theme,
+      undefined,
+      PHRASE_HOLD_MS * 2, // now is far ahead but startedAt is missing → fall back to durationMs=0 → slot 0
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      fallback,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "must fall back to durationMs when startedAt is absent",
+    );
+  });
+
   it("keeps running compact result output stable when progress is unchanged", async () => {
     const result = {
       content: [{ type: "text" as const, text: "(running...)" }],
