@@ -91,4 +91,4 @@ git diff --cached
 - For TypeScript boundary parsing or open-object decisions, load `.pi/skills/tlh-typescript-boundaries/SKILL.md`.
 - This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
 - If the human links you a PR comments, or pastes you one, do not take it at face value — instead, investigate if valid and report back first. Do not start fixing it immediately.
-- If the human asks you to open a PR, after creating it check CI/status checks and investigate PR comments/review comments. Address valid findings; resolve or dismiss invalid or non-actionable comments with rationale.
+- If the human asks you to open a PR, once it's opened, check CI and comments after 5 minutes. Do not delegate this check to subagents. If there are comments, or CI fails, investigate them immediately and report your findings. Do not start any work to address them without approval.
