@@ -49,6 +49,7 @@ All notable changes to The Last Harness will be documented in this file.
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
 - The primary/non-child context cap is raised from 300k to 350k so auto-compaction triggers at about 301k with the 49,152 `compaction.reserveTokens` default; the developer child 272k ceiling is unchanged.
 - Removed the unused `tasks[].count` parameter from the subagent tool; passing it is now rejected with an error. List each parallel task explicitly.
+- All enabled primary agents (Architect, Rush, Product, Bug-Hunter) can now start and manage explicitly requested trusted `embedded.<slug>` project agents; disabled mode can start them but not resume or steer them. [#330](https://github.com/diegopetrucci/the-last-harness/issues/330)
 
 ### Internal
 

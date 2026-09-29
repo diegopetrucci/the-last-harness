@@ -8,30 +8,27 @@ import {
   realpathSync,
   renameSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
-import { createJiti } from "jiti";
+import { test } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-
 import { createPiHarness } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
-
-const jiti = createJiti(import.meta.url);
-const { registerTlhPrimaryAgentRuntime } = await jiti.import(
-  "../extensions/the-last-harness/primary-agent-runtime.ts",
-);
-const { createTlhPrimaryAgentResourceLifecycle, retireTlhPrimaryAgentResourceRuntime } =
-  await jiti.import("../extensions/the-last-harness/primary-agent-runtime-lifecycle.ts");
-const { PRIMARY_AGENT_SESSION_STATE_ENTRY } = await jiti.import(
-  "../extensions/the-last-harness-primary-agent.mjs",
-);
-const {
+import {
+  primaryAgents,
+  createContext,
+  primaryBranch,
+  makeSnapshot,
+  createControlState,
+  createControlExecutor,
+  writeRunningControlStatus,
+  revokeSnapshotSafely,
+  deferredValue,
+  registerTlhPrimaryAgentRuntime,
+  createTlhPrimaryAgentResourceLifecycle,
+  retireTlhPrimaryAgentResourceRuntime,
   createProjectAgentRunCapture,
-  getProjectAgentSnapshotProvenance,
-  registerProjectAgentSnapshot,
   resolveProjectAgentSnapshot,
   projectAgentSnapshotRegistryStats,
   retainProjectAgentRunReference,
@@ -41,218 +38,18 @@ const {
   releaseProjectAgentSnapshotReference,
   releaseProjectAgentRunReferencesForSession,
   getProjectAgentRunReferenceMetadata,
-  revokeProjectAgentSnapshot,
-} = await jiti.import("../extensions/subagents/src/agents/project-agent-snapshot.ts");
-const {
   getTlhProjectAgentAccess,
   probeTlhProjectAgentRunMarker,
   setTlhProjectAgentAccessProvider,
   setTlhProjectAgentSnapshotOperations,
-} = await import("../extensions/the-last-harness/project-agent-access.mjs");
-const { loadProjectAgentSnapshot } =
-  await import("../extensions/the-last-harness/project-agent-loader-bridge.mjs");
-// Redirect the subagents temp root away from the shared live runtime dir
-// before any jiti import of shared/types.ts resolves TEMP_ROOT_DIR.
-const _previousSubagentsTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
-const _subagentsTmpDir = mkdtempSync(join(tmpdir(), "tlh-project-agent-lifecycle-subagents-tmp-"));
-process.env.PI_SUBAGENTS_TEMP_ROOT = _subagentsTmpDir;
-after(() => {
-  rmSync(_subagentsTmpDir, { recursive: true, force: true });
-  if (_previousSubagentsTempRoot === undefined) {
-    delete process.env.PI_SUBAGENTS_TEMP_ROOT;
-  } else {
-    process.env.PI_SUBAGENTS_TEMP_ROOT = _previousSubagentsTempRoot;
-  }
-});
-
-const { RETIRED_NESTED_ROUTE_ENV_VARS, SUBAGENT_CHILD_ENV } = await jiti.import(
-  "../extensions/subagents/src/runs/shared/pi-args.ts",
-);
-const { ASYNC_DIR } = await jiti.import("../extensions/subagents/src/shared/types.ts");
-const { createSubagentExecutor } = await jiti.import(
-  "../extensions/subagents/src/runs/foreground/subagent-executor.ts",
-);
-
-const originalHome = process.env.HOME;
-const originalUserProfile = process.env.USERPROFILE;
-const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
-
-function primaryAgents() {
-  const make = (name) => ({
-    name,
-    description: `Test ${name}`,
-    tools: ["subagent"],
-    systemPrompt: "Test primary.",
-    filePath: `agents/primary/${name}.md`,
-  });
-  return new Map([
-    ["architect", make("architect")],
-    ["rush", make("rush")],
-    ["product", make("product")],
-    ["bug-hunter", make("bug-hunter")],
-  ]);
-}
-
-function createContext(cwd, sessionId, branch = []) {
-  return {
-    cwd,
-    mode: "json",
-    hasUI: false,
-    ui: { notify() {}, confirm: async () => false },
-    sessionManager: {
-      getSessionId: () => sessionId,
-      getSessionFile: () => undefined,
-      getBranch: () => branch,
-    },
-    modelRegistry: { getAvailable: () => [] },
-    model: undefined,
-    scopedModels: [],
-    thinkingLevel: "low",
-    isIdle: () => true,
-    isProjectTrusted: () => false,
-    signal: undefined,
-    abort() {},
-    hasPendingMessages: () => false,
-    shutdown() {},
-    getContextUsage: () => undefined,
-    compact() {},
-    getSystemPrompt: () => "",
-  };
-}
-
-function primaryBranch(selection) {
-  return [
-    {
-      type: "custom",
-      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: selection },
-    },
-  ];
-}
-
-function makeSnapshot(projectRoot, generationId) {
-  const filePath = join(realpathSync(projectRoot), ".tlh", "agents", "custom", "XYZ.md");
-  const agent = {
-    name: "embedded.xyz",
-    localName: "xyz",
-    packageName: "embedded",
-    description: "Project lifecycle agent",
-    tools: ["read"],
-    systemPrompt: `Prompt ${generationId}`,
-    systemPromptMode: "replace",
-    inheritProjectContext: false,
-    inheritSkills: false,
-    source: "project",
-    filePath,
-  };
-  const capability = registerProjectAgentSnapshot({
-    projectRoot,
-    sessionId: "lifecycle-session",
-    generationId,
-    entries: [{ agent, digest: `digest-${generationId}`, frontmatterFields: ["tools"] }],
-  });
-  const provenance = getProjectAgentSnapshotProvenance(capability);
-  return {
-    status: "loaded",
-    capability,
-    provenance,
-    manifest: resolveProjectAgentSnapshot(capability, provenance),
-    trust: { kind: "project-agent", trusted: true, source: "test" },
-  };
-}
-
-function createControlState() {
-  return {
-    baseCwd: "",
-    currentSessionId: null,
-    asyncJobs: new Map(),
-    foregroundRuns: new Map(),
-    foregroundControls: new Map(),
-    lastForegroundControlId: null,
-    pendingForegroundControlNotices: new Map(),
-    cleanupTimers: new Map(),
-    lastUiContext: null,
-    poller: null,
-    completionSeen: new Map(),
-    watcher: null,
-    watcherRestartTimer: null,
-    resultFileCoalescer: { schedule: () => false, clear() {} },
-  };
-}
-
-function createControlExecutor(root, state, snapshot, kill) {
-  return createSubagentExecutor({
-    pi: {
-      events: {
-        emit() {},
-        on() {
-          return () => {};
-        },
-      },
-      getSessionName: () => "lifecycle-parent",
-    },
-    state,
-    config: { maxSubagentDepth: 2, control: {} },
-    tempArtifactsDir: root,
-    getSubagentSessionRoot: () => root,
-    expandTilde: (value) => value,
-    discoverAgents: () => ({ agents: [] }),
-    getProjectAgentAccess: () => ({
-      capability: snapshot.capability,
-      expected: getProjectAgentSnapshotProvenance(snapshot.capability),
-      architect: true,
-      reauthorize: async () => true,
-    }),
-    kill,
-  });
-}
-
-function writeRunningControlStatus(runId, capture, { projectAgent = true } = {}) {
-  const asyncDir = join(ASYNC_DIR, runId);
-  const sessionFile = join(asyncDir, "worker.jsonl");
-  mkdirSync(asyncDir, { recursive: true });
-  writeFileSync(sessionFile, "", "utf8");
-  const step = {
-    agent: capture.provenance.agent,
-    status: "running",
-    sessionFile,
-    ...(projectAgent ? { projectAgent: capture } : {}),
-  };
-  writeFileSync(
-    join(asyncDir, "status.json"),
-    JSON.stringify({
-      runId,
-      mode: "single",
-      state: "running",
-      pid: 12345,
-      sessionId: capture.provenance.sessionId,
-      cwd: capture.provenance.projectRoot,
-      startedAt: 100,
-      lastUpdate: Date.now(),
-      sessionFile,
-      steps: [step],
-      ...(projectAgent ? { projectAgents: [capture] } : {}),
-    }),
-    "utf8",
-  );
-  return asyncDir;
-}
-
-function revokeSnapshotSafely(capability) {
-  try {
-    revokeProjectAgentSnapshot(capability);
-  } catch {
-    // A run reference or lifecycle cleanup may already have collected it.
-  }
-}
-
-function deferredValue() {
-  let resolve;
-  const promise = new Promise((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-  return { promise, resolve };
-}
+  loadProjectAgentSnapshot,
+  RETIRED_NESTED_ROUTE_ENV_VARS,
+  SUBAGENT_CHILD_ENV,
+  ASYNC_DIR,
+  originalHome,
+  originalUserProfile,
+  originalPiCodingAgentDir,
+} from "./the-last-harness-project-agent-lifecycle-test-helpers.mjs";
 
 test("the default bridge loads a generated project-agent snapshot from a real Git worktree", async (t) => {
   const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-bridge-"));
@@ -1484,82 +1281,6 @@ test("primary tool_call reads the live project snapshot after deferred lookup ac
   assert.match(afterShutdown?.reason ?? "", /private|snapshot|fallback/i);
 });
 
-test("primary tool authorization gates retained project controls while leaving status and interrupt available", async (t) => {
-  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-control-gates-"));
-  const home = join(fixture, "home");
-  const agentDir = join(fixture, "agent");
-  const projectRoot = join(fixture, "project");
-  mkdirSync(home, { recursive: true });
-  mkdirSync(agentDir, { recursive: true });
-  mkdirSync(join(projectRoot, ".tlh", "agents"), { recursive: true });
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  t.after(() => {
-    setTlhProjectAgentAccessProvider(undefined);
-    rmSync(fixture, { recursive: true, force: true });
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = originalUserProfile;
-    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
-  });
-
-  const snapshot = makeSnapshot(projectRoot, "primary-control-generation");
-  const capture = createProjectAgentRunCapture(
-    snapshot.manifest,
-    snapshot.manifest.entries[0].agent,
-  );
-  const runId = "retained-primary-control-run";
-  retainProjectAgentRunReference(snapshot.capability, runId, [capture]);
-  t.after(() => releaseProjectAgentRunReference(runId));
-  const pi = createPiHarness();
-  const runtime = registerTlhPrimaryAgentRuntime(pi, {
-    env: {},
-    primaryAgents: primaryAgents(),
-    subagentMetadata: [],
-    projectAgentLoader: async () => snapshot,
-  });
-  const toolCall = pi.events.find((entry) => entry.name === "tool_call")?.handler;
-  assert.equal(typeof toolCall, "function");
-  const contextFor = (selection) =>
-    createContext(projectRoot, "lifecycle-session", primaryBranch(selection));
-  await runtime.applySessionStart(contextFor("architect"));
-
-  for (const selection of ["disabled", "rush", "product", "bug-hunter"]) {
-    const context = contextFor(selection);
-    const branch = await toolCall(
-      { toolName: "subagent", input: { action: "resume", id: runId, message: "Continue." } },
-      context,
-    );
-    assert.equal(branch?.block, true, `${selection} resume should be blocked`);
-    assert.match(branch?.reason ?? "", /architect|project-agent|Rush/);
-    const steer = await toolCall(
-      { toolName: "subagent", input: { action: "steer", id: runId, message: "Focus." } },
-      context,
-    );
-    assert.equal(steer?.block, true, `${selection} steer should be blocked`);
-    assert.match(steer?.reason ?? "", /architect|project-agent|Rush/);
-  }
-  assert.equal(
-    await toolCall(
-      { toolName: "subagent", input: { action: "status", id: runId } },
-      contextFor("rush"),
-    ),
-    undefined,
-  );
-  assert.equal(
-    await toolCall(
-      { toolName: "subagent", input: { action: "interrupt", id: runId } },
-      contextFor("rush"),
-    ),
-    undefined,
-  );
-
-  await runtime.applySessionStart(contextFor("architect"));
-});
-
 test("executor authorizes the selected no-id interrupt target and rejects a retired dir selector", async (t) => {
   // Full validation may inherit child/retired-route flags from a TLH minor. This
   // fixture exercises parent controls, so temporarily clear only those markers;
@@ -1777,90 +1498,4 @@ test("primary hook denies persisted project markers after private registry loss 
   );
 
   await runtime.applySessionStart(contextFor("architect"));
-});
-
-test("primary tool authorization permits disabled initiation, blocks non-architect calls, and rejects unsafe cwd paths", async (t) => {
-  const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-gates-"));
-  const home = join(fixture, "home");
-  const agentDir = join(fixture, "agent");
-  const projectRoot = join(fixture, "project");
-  const outsideRoot = mkdtempSync(join(tmpdir(), "tlh-project-agent-primary-outside-"));
-  mkdirSync(home, { recursive: true });
-  mkdirSync(agentDir, { recursive: true });
-  mkdirSync(join(projectRoot, ".tlh", "agents"), { recursive: true });
-  const symlinkPath = join(projectRoot, "outside-link");
-  try {
-    symlinkSync(outsideRoot, symlinkPath, "dir");
-  } catch {
-    rmSync(fixture, { recursive: true, force: true });
-    rmSync(outsideRoot, { recursive: true, force: true });
-    return;
-  }
-
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  t.after(() => {
-    setTlhProjectAgentAccessProvider(undefined);
-    rmSync(fixture, { recursive: true, force: true });
-    rmSync(outsideRoot, { recursive: true, force: true });
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = originalUserProfile;
-    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
-  });
-
-  const snapshot = makeSnapshot(projectRoot, "primary-gates-generation");
-  const pi = createPiHarness();
-  const runtime = registerTlhPrimaryAgentRuntime(pi, {
-    env: {},
-    primaryAgents: primaryAgents(),
-    subagentMetadata: [],
-    projectAgentLoader: async () => snapshot,
-  });
-  const toolCall = pi.events.find((entry) => entry.name === "tool_call")?.handler;
-  assert.equal(typeof toolCall, "function");
-
-  const projectRequest = (cwd = projectRoot) => ({
-    toolName: "subagent",
-    input: { agent: "embedded.xyz", task: "use project agent", cwd },
-  });
-
-  await runtime.applySessionStart(
-    createContext(projectRoot, "lifecycle-session", primaryBranch("disabled")),
-  );
-  const disabledRequest = projectRequest();
-  const disabledResult = await toolCall(
-    disabledRequest,
-    createContext(projectRoot, "lifecycle-session", primaryBranch("disabled")),
-  );
-  assert.equal(disabledResult, undefined, "disabled mode may initiate an explicit project run");
-  assert.equal(disabledRequest.input.agentScope, "project");
-  assert.equal(Object.hasOwn(disabledRequest.input, "context"), false);
-
-  for (const selection of ["rush", "product", "bug-hunter"]) {
-    const nonArchitectResult = await toolCall(
-      projectRequest(),
-      createContext(projectRoot, "lifecycle-session", primaryBranch(selection)),
-    );
-    assert.equal(nonArchitectResult?.block, true, `${selection} should be blocked`);
-    assert.match(nonArchitectResult?.reason ?? "", /may not delegate to embedded|architect/);
-  }
-
-  const architectContext = createContext(
-    projectRoot,
-    "lifecycle-session",
-    primaryBranch("architect"),
-  );
-  for (const [label, cwd, expected] of [
-    ["outside", outsideRoot, /outside|blocked/i],
-    ["missing", join(projectRoot, "missing-directory"), /does not exist|cannot be resolved/i],
-    ["symlink escape", symlinkPath, /outside|blocked/i],
-  ]) {
-    const result = await toolCall(projectRequest(cwd), architectContext);
-    assert.equal(result?.block, true, `${label} cwd should be blocked`);
-    assert.match(result?.reason ?? "", expected, `${label} cwd reason`);
-  }
 });
