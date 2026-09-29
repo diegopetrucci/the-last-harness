@@ -177,7 +177,10 @@ function compactProgressActivityLines(progress, width, firstPrefix, continuation
     if (toolLines) {
         return fitCompactToolStatus(toolLines, liveStatus, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix));
     }
-    const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
+    const elapsedMs = progress.durationMs !== undefined && Number.isFinite(progress.durationMs)
+        ? progress.durationMs
+        : undefined;
+    const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount, snapshotNow, undefined, elapsedMs);
     return [phrase, liveStatus].filter((line) => Boolean(line));
 }
 function isRenderableResult(value) {

@@ -118,7 +118,7 @@ function widgetInlineThinkingActivity(job) {
     if (!freshness)
         return undefined;
     return {
-        phrase: compactThinkingPhrase(activityState, job.turnCount ?? runningStep?.turnCount),
+        phrase: compactThinkingPhrase(activityState, job.turnCount ?? runningStep?.turnCount, job.updatedAt, job.startedAt ?? runningStep?.startedAt),
         freshness,
     };
 }
@@ -147,6 +147,7 @@ function widgetActivityLines(job, expanded = false) {
     const lastActivityAt = job.lastActivityAt ?? activityStep?.lastActivityAt;
     const activityState = widgetActivityState(job, runningStep);
     const turnCount = job.turnCount ?? activityStep?.turnCount;
+    const startedAt = job.startedAt ?? activityStep?.startedAt;
     const facts = [];
     if (currentTool && currentToolStartedAt !== undefined && job.updatedAt !== undefined)
         facts.push(`${currentTool} ${formatDuration(Math.max(0, job.updatedAt - currentToolStartedAt))}`);
@@ -164,7 +165,11 @@ function widgetActivityLines(job, expanded = false) {
     }
     const activity = buildLiveStatusLine({ activityState, lastActivityAt }, job.updatedAt);
     if (!currentTool && !expanded && job.status === "running") {
-        return [compactThinkingPhrase(activityState, turnCount), activity, ...facts].filter((line) => Boolean(line));
+        return [
+            compactThinkingPhrase(activityState, turnCount, job.updatedAt, startedAt),
+            activity,
+            ...facts,
+        ].filter((line) => Boolean(line));
     }
     if (activity && facts.length)
         return [`${activity} · ${facts.join(" · ")}`];
@@ -174,7 +179,10 @@ function widgetActivityLines(job, expanded = false) {
         return [facts.join(" · ")];
     if (job.status === "running")
         return [
-            expanded ? "thinking…" : (compactThinkingPhrase(activityState, turnCount) ?? "thinking…"),
+            expanded
+                ? "thinking…"
+                : (compactThinkingPhrase(activityState, turnCount, job.updatedAt, startedAt) ??
+                    "thinking…"),
         ];
     if (job.status === "queued")
         return ["queued…"];
@@ -286,7 +294,11 @@ function widgetStepActivity(step, snapshotNow, expanded = false) {
     }
     const activity = buildLiveStatusLine(step, snapshotNow);
     if (!step.currentTool && !expanded && step.status === "running") {
-        return [compactThinkingPhrase(step.activityState, step.turnCount), activity, ...facts]
+        return [
+            compactThinkingPhrase(step.activityState, step.turnCount, snapshotNow, step.startedAt),
+            activity,
+            ...facts,
+        ]
             .filter(Boolean)
             .join(" · ");
     }
@@ -299,7 +311,8 @@ function widgetStepActivity(step, snapshotNow, expanded = false) {
     return step.status === "running"
         ? expanded
             ? "thinking…"
-            : (compactThinkingPhrase(step.activityState, step.turnCount) ?? "thinking…")
+            : (compactThinkingPhrase(step.activityState, step.turnCount, snapshotNow, step.startedAt) ??
+                "thinking…")
         : "";
 }
 function widgetParallelAgentDetails(job, theme, expanded = false, width = getTermWidth()) {
@@ -334,7 +347,7 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
             lines.push(...fitInlineActivity(prefix, healthWarning, theme, Math.max(1, width - 6)));
         }
         else if (freshness) {
-            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(displayStep.activityState, displayStep.turnCount), freshness, theme, Math.max(1, width - 6)));
+            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(displayStep.activityState, displayStep.turnCount, job.updatedAt, displayStep.startedAt), freshness, theme, Math.max(1, width - 6)));
         }
         else {
             lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
@@ -410,7 +423,7 @@ function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, 
     }
     if (!expanded && step.status === "running")
         return [
-            compactThinkingPhrase(step.activityState, step.turnCount),
+            compactThinkingPhrase(step.activityState, step.turnCount, snapshotNow, step.startedAt),
             ...(activity ? [activity] : []),
         ].filter((line) => Boolean(line));
     if (activity)
@@ -479,7 +492,11 @@ function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded
     }
     const activity = buildLiveStatusLine(input, snapshotNow);
     if (!input.currentTool && !expanded && state === "running") {
-        return [compactThinkingPhrase(input.activityState, input.turnCount), activity, ...facts]
+        return [
+            compactThinkingPhrase(input.activityState, input.turnCount, snapshotNow, input.startedAt),
+            activity,
+            ...facts,
+        ]
             .filter(Boolean)
             .join(" · ");
     }
@@ -492,7 +509,7 @@ function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded
     if (state === "running")
         return expanded
             ? "thinking…"
-            : (compactThinkingPhrase(input.activityState, input.turnCount) ?? "thinking…");
+            : (compactThinkingPhrase(input.activityState, input.turnCount, snapshotNow, input.startedAt) ?? "thinking…");
     if (state === "queued" || state === "pending")
         return "queued…";
     if (state === "paused")

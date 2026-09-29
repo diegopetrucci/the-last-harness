@@ -283,7 +283,17 @@ function compactProgressActivityLines(
       width - visibleWidth(continuationPrefix),
     );
   }
-  const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
+  const elapsedMs =
+    progress.durationMs !== undefined && Number.isFinite(progress.durationMs)
+      ? progress.durationMs
+      : undefined;
+  const phrase = compactThinkingPhrase(
+    progress.activityState,
+    progress.turnCount,
+    snapshotNow,
+    undefined,
+    elapsedMs,
+  );
   return [phrase, liveStatus].filter((line): line is string => Boolean(line));
 }
 type RenderResult = Details["results"][number];

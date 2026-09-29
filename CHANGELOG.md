@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
+- Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
 
 ### Changed
 

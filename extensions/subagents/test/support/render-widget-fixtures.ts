@@ -15,6 +15,7 @@ export { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget };
 export { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 export { createSubagentLiveDetailController } from "../../src/shared/subagent-shortcuts.ts";
 export {
+  PHRASE_HOLD_MS,
   WHIMSICAL_THINKING_PHRASES,
   whimsicalThinkingPhrase,
 } from "../../src/tui/whimsical-phrases.ts";
