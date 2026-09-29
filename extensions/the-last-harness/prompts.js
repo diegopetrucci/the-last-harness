@@ -399,11 +399,8 @@ function formatAllowedSubagents(primary, subagents, options = {}) {
     if (options.neutral) {
         return `## TLH Allowed Minor Subagents\n\nThe subagent tool may delegate to these bundled TLH minor agents:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted \`embedded.<slug>\` agents may also be used only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves them only from \`.tlh/agents/custom/<UPPERCASE-SLUG>.md\`.`;
     }
-    const isArchitect = primary?.name === "architect";
-    if (isArchitect) {
-        return `## TLH Allowed Minor Subagents\n\nYou may delegate to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted project agents are intentionally omitted from management \`list\`/\`get\` output. After the user asks for the \`xyz\` project subagent, map it to \`embedded.xyz\`; this trusted project-agent exception may be invoked even though management output omits it. You may also delegate to a trusted \`embedded.<slug>\` agent only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from \`.tlh/agents/custom/<UPPERCASE-SLUG>.md\`.`;
-    }
-    return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list.`;
+    const projectAgentGuidance = "Trusted `embedded.<slug>` project agents are intentionally omitted from management `list`/`get` output. After the user asks for the `xyz` project subagent, map it to `embedded.xyz`; enabled primary roles may start and manage this trusted project-agent exception, while disabled mode may start a fresh run. Use it only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from `.tlh/agents/custom/<UPPERCASE-SLUG>.md`.";
+    return `## TLH Allowed Minor Subagents\n\nYou may delegate${primary ? " only" : ""} to these bundled TLH minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} ${projectAgentGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list except for the explicitly requested trusted project-agent exception.`;
 }
 export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, projectAgentGuidanceInventory) {
     const prompts = [HARNESS_PROMPT.trim()];

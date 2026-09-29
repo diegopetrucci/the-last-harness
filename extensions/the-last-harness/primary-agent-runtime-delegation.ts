@@ -6,7 +6,7 @@ import {
   collectSubagentTargets,
   isEmbeddedSubagentTarget,
 } from "../the-last-harness-subagent-safety.mjs";
-import type { AgentPrompt, SubagentMetadata, TlhPrimaryAgentSelection } from "./types.js";
+import type { AgentPrompt, SubagentMetadata } from "./types.js";
 
 export type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
@@ -138,27 +138,4 @@ export function applyOpenRouterModelToProjectTargets(
 
 export function isOpaqueSubagentManagementActionInput(input: unknown): boolean {
   return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
-}
-
-export function embeddedDelegationBlockedReason(
-  selection: TlhPrimaryAgentSelection,
-  input: unknown,
-): string | undefined {
-  // Opaque management actions (including resume) stay exempt from embedded-target checks.
-  if (isOpaqueSubagentManagementActionInput(input)) {
-    return undefined;
-  }
-  if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
-    return undefined;
-  }
-  if (selection === "rush") {
-    return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
-  }
-  if (selection === "product") {
-    return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
-  }
-  if (selection === "bug-hunter") {
-    return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
-  }
-  return undefined;
 }

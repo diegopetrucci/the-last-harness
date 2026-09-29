@@ -118,6 +118,7 @@ function makeExecutor(
   discoverCalls: { count: number },
   architect = true,
   options: {
+    canManage?: boolean;
     canInitiate?: boolean;
     runSync?: (
       runtimeCwd: string,
@@ -149,6 +150,7 @@ function makeExecutor(
       capability,
       expected,
       architect,
+      canManage: options.canManage ?? architect,
       ...(options.canInitiate !== undefined ? { canInitiate: options.canInitiate } : {}),
     }),
     runSync: options.runSync as never,
@@ -565,7 +567,10 @@ Profile developer prompt.
       makeContext(projectRoot),
     );
     assert.equal(nonArchitectResult.isError, true);
-    assert.match(resultText(nonArchitectResult), /architect/i);
+    assert.match(
+      resultText(nonArchitectResult),
+      /not authorized for the current primary-agent mode/i,
+    );
 
     const forgedExecutor = makeExecutor(
       projectRoot,

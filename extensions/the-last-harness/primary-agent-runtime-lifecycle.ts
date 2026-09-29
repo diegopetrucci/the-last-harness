@@ -10,14 +10,12 @@ import {
   type ExtensionUIDialogOptions,
 } from "@earendil-works/pi-coding-agent";
 
-import {
-  DISABLED_PRIMARY_AGENT,
-  isEnabledPrimaryAgentSelection,
-} from "../the-last-harness-primary-agent.mjs";
+import { DISABLED_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { isRecord } from "./common.js";
 import { defaultProjectTrustForCwd } from "./primary-agent-runtime-settings.js";
 import {
   isPersistedProjectAgentTrustDenial,
+  isProjectPrimaryAgentName,
   normalizeActiveProjectAgentSnapshot,
   normalizeProjectDefaultsResult,
   pathWithinProjectRoot,
@@ -243,18 +241,18 @@ export function createTlhPrimaryAgentResourceLifecycle(options: {
     const snapshot = activeProjectAgentSnapshot;
     if (!snapshot) return undefined;
     const selection = getPrimaryAgentSelection();
-    const architect =
-      selection === "architect" &&
-      isEnabledPrimaryAgentSelection(selection) &&
-      hasActivePrimaryAgent();
+    const canManage = isProjectPrimaryAgentName(selection) && hasActivePrimaryAgent();
+    const architect = selection === "architect" && canManage;
     return {
       capability: snapshot.capability,
       expected: snapshot.provenance,
+      canManage,
       architect,
       // Disabled mode keeps the TLH safety plane active but intentionally has
       // no primary persona. It may still initiate an explicitly requested
-      // project custom run; retained controls remain architect-only.
-      canInitiate: architect || selection === DISABLED_PRIMARY_AGENT,
+      // project custom run; retained controls remain reserved for enabled
+      // primary agents.
+      canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
       ...(snapshot.reauthorizeTrust ? { reauthorize: snapshot.reauthorizeTrust } : {}),
       ...(snapshot.rebindProjectAgent ? { rebind: snapshot.rebindProjectAgent } : {}),
     };

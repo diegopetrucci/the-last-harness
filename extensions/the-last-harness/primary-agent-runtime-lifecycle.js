@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { hasTrustRequiringProjectResources, ProjectTrustStore, getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { DISABLED_PRIMARY_AGENT, isEnabledPrimaryAgentSelection, } from "../the-last-harness-primary-agent.mjs";
+import { DISABLED_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { isRecord } from "./common.js";
 import { defaultProjectTrustForCwd } from "./primary-agent-runtime-settings.js";
-import { isPersistedProjectAgentTrustDenial, normalizeActiveProjectAgentSnapshot, normalizeProjectDefaultsResult, pathWithinProjectRoot, projectDefaultsWarningKey, sessionIdForContext, truncateProjectDefaultsWarning, validatePrimaryProjectAgentCwdContainment, } from "./primary-agent-runtime-boundaries.js";
+import { isPersistedProjectAgentTrustDenial, isProjectPrimaryAgentName, normalizeActiveProjectAgentSnapshot, normalizeProjectDefaultsResult, pathWithinProjectRoot, projectDefaultsWarningKey, sessionIdForContext, truncateProjectDefaultsWarning, validatePrimaryProjectAgentCwdContainment, } from "./primary-agent-runtime-boundaries.js";
 import { loadProjectAgentSnapshot, reauthorizeTlhProjectAgentTrust, } from "./project-agent-loader-bridge.mjs";
 import { loadProjectDefaults } from "./project-defaults-loader-bridge.mjs";
 import { releaseTlhProjectAgentRunReferencesForSession, releaseTlhProjectAgentSnapshotReference, retainTlhProjectAgentSnapshotReference, setTlhProjectAgentAccessProvider, } from "./project-agent-access.mjs";
@@ -74,14 +74,14 @@ export function createTlhPrimaryAgentResourceLifecycle(options) {
         if (!snapshot)
             return undefined;
         const selection = getPrimaryAgentSelection();
-        const architect = selection === "architect" &&
-            isEnabledPrimaryAgentSelection(selection) &&
-            hasActivePrimaryAgent();
+        const canManage = isProjectPrimaryAgentName(selection) && hasActivePrimaryAgent();
+        const architect = selection === "architect" && canManage;
         return {
             capability: snapshot.capability,
             expected: snapshot.provenance,
+            canManage,
             architect,
-            canInitiate: architect || selection === DISABLED_PRIMARY_AGENT,
+            canInitiate: canManage || selection === DISABLED_PRIMARY_AGENT,
             ...(snapshot.reauthorizeTrust ? { reauthorize: snapshot.reauthorizeTrust } : {}),
             ...(snapshot.rebindProjectAgent ? { rebind: snapshot.rebindProjectAgent } : {}),
         };

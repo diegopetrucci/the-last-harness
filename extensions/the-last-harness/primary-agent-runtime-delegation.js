@@ -80,21 +80,3 @@ export function applyOpenRouterModelToProjectTargets(input, projectTargets, curr
 export function isOpaqueSubagentManagementActionInput(input) {
     return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
-export function embeddedDelegationBlockedReason(selection, input) {
-    if (isOpaqueSubagentManagementActionInput(input)) {
-        return undefined;
-    }
-    if (!subagentCallTargetsMatching(input, isEmbeddedSubagentTarget)) {
-        return undefined;
-    }
-    if (selection === "rush") {
-        return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
-    }
-    if (selection === "product") {
-        return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
-    }
-    if (selection === "bug-hunter") {
-        return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
-    }
-    return undefined;
-}

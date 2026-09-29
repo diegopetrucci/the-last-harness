@@ -55,7 +55,6 @@ import {
   applyOpenRouterModelToProjectTargets,
   applyProviderAwareModelsToNonProjectTargets,
   collectSubagentCallTargetsMatching,
-  embeddedDelegationBlockedReason,
   isOpaqueSubagentManagementActionInput,
   isSubagentResumeAction,
   isSubagentSteerAction,
@@ -551,12 +550,15 @@ function createTlhPrimaryAgentRuntime(
       const targetNames = [
         ...new Set(
           (Array.isArray(lookup.captures) ? lookup.captures : [])
+            .map((entry) =>
+              isRecord(entry) && isRecord(entry.provenance) ? entry.provenance : entry,
+            )
             .filter(
               (entry): entry is { source?: unknown; agent?: unknown } =>
                 isRecord(entry) && entry.source === "project",
             )
             .map((entry) => (typeof entry.agent === "string" ? entry.agent : ""))
-            .filter(Boolean),
+            .filter(isEmbeddedSubagentTarget),
         ),
       ];
       if (lookup.status === "found" && typeof lookup.runId === "string") {
@@ -1658,6 +1660,14 @@ function createTlhPrimaryAgentRuntime(
       const projectControlAction =
         projectControlRequest &&
         (retainedProjectAction.status !== "missing" || persistedProjectMarker);
+      // Rush's opaque resume/steer restriction still protects ordinary and
+      // unknown runs. Bypass it only after the retained lookup identifies a
+      // project capture, or a persisted marker has an active trusted rebind
+      // path whose executor will revalidate the exact child identity.
+      const embeddedProjectControlAction =
+        projectControlRequest &&
+        ((retainedProjectAction.status === "found" && retainedProjectTargets.length > 0) ||
+          (persistedProjectMarker && Boolean(activeProjectAgentSnapshot?.rebindProjectAgent)));
       const retainedProjectLabel = retainedProjectTargets.length
         ? retainedProjectTargets.join(", ")
         : persistedProjectMarker
@@ -1676,34 +1686,38 @@ function createTlhPrimaryAgentRuntime(
         if (projectControlAction) {
           return {
             block: true,
-            reason: `TLH project-agent ${String(event.input.action)} requires the architect primary agent. Target(s): ${retainedProjectLabel}.`,
+            reason: `TLH project-agent ${String(event.input.action)} requires an enabled primary agent. Target(s): ${retainedProjectLabel}.`,
           };
         }
         // Disabled mode retains the TLH safety plane and may initiate an
         // explicitly requested project-agent execution. Retained project
-        // controls remain architect-only and are handled above.
+        // controls remain reserved for enabled primary agents.
       }
-      if (selection === "rush" && isSubagentResumeAction(event.input)) {
+      if (
+        selection === "rush" &&
+        isSubagentResumeAction(event.input) &&
+        !embeddedProjectControlAction
+      ) {
         return { block: true, reason: rushResumeDelegationReason() };
       }
-      if (selection === "rush" && isSubagentSteerAction(event.input)) {
+      if (
+        selection === "rush" &&
+        isSubagentSteerAction(event.input) &&
+        !embeddedProjectControlAction
+      ) {
         return { block: true, reason: rushSteerDelegationReason() };
       }
-      if (projectControlAction && selection !== "architect") {
+      if (projectControlAction && !embeddedProjectControlAction && selection !== "architect") {
         return {
           block: true,
-          reason: `TLH ${selection} may not control a project-agent run; resume/steer is reserved for the architect primary agent. Target(s): ${retainedProjectLabel}.`,
+          reason: `TLH ${selection} may not control this retained project-agent run without an authorized embedded target. Target(s): ${retainedProjectLabel}.`,
         };
       }
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-      if (embeddedBlockReason) {
-        return { block: true, reason: embeddedBlockReason };
-      }
       const allowEmbeddedTargets =
-        selection === "architect" || selection === DISABLED_PRIMARY_AGENT;
+        isProjectPrimaryAgentName(selection) || selection === DISABLED_PRIMARY_AGENT;
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
         allowEmbeddedTargets,
@@ -1733,7 +1747,7 @@ function createTlhPrimaryAgentRuntime(
           const authorizationSubject =
             selection === DISABLED_PRIMARY_AGENT
               ? "TLH primary-agent infrastructure"
-              : "TLH architect";
+              : `TLH ${selection} primary agent`;
           return {
             block: true,
             reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition exists at the validated Git-root path .tlh/agents/custom/<UPPERCASE-SLUG>.md. Persist project trust with /trust, then retry. Unauthorized target(s): ${requestedProfileTargets.join(", ")}.`,

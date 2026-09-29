@@ -94,6 +94,39 @@ test("embedded subagents: disabled mode allows authorized targets and blocks una
   });
 });
 
+test("embedded subagents: non-architect missing targets use role-accurate denial text", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart, toolCall } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "rush" },
+        },
+      ],
+      undefined,
+      { cwd: fixture.cwd },
+    );
+    await applySessionStart(ctx);
+
+    const missingEvent = {
+      toolName: "subagent",
+      input: { agent: "embedded.missing-tool", task: "blocked" },
+    };
+    const missingResult = await toolCall(missingEvent, ctx);
+    assert.equal(missingResult?.block, true);
+    assert.match(missingResult?.reason ?? "", /TLH rush primary agent may delegate/i);
+    assert.doesNotMatch(missingResult?.reason ?? "", /TLH architect/i);
+    assert.match(missingResult?.reason ?? "", /embedded\.missing-tool/);
+  });
+});
+
 test("embedded subagents: architect delegates authorized targets without the retired experimental gate", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -188,7 +221,7 @@ test("embedded subagents: architect injects the current OpenRouter session model
   });
 });
 
-test("embedded subagents: non-architect primary agents remain blocked regardless of stale settings", async (t) => {
+test("embedded subagents: every enabled primary may dispatch authorized targets regardless of stale settings", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -196,7 +229,12 @@ test("embedded subagents: non-architect primary agents remain blocked regardless
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
     );
-    for (const selected of ["rush", "product", "bug-hunter"]) {
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
+    );
+    for (const selected of ["architect", "rush", "product", "bug-hunter"]) {
       const { applySessionStart, toolCall } = registerRuntimeHarness({
         primaryAgents: selectablePrimaryAgents(),
         subagentMetadata: [],
@@ -208,23 +246,14 @@ test("embedded subagents: non-architect primary agents remain blocked regardless
       );
       await applySessionStart(ctx);
 
-      const embeddedEvent = {
-        toolName: "subagent",
-        input: { agent: "embedded.my-tool", task: "do something" },
-      };
-      const result = await toolCall(embeddedEvent, ctx);
-      assert.equal(result?.block, true, `expected block for ${selected}`);
-      assert.match(
-        result?.reason ?? "",
-        new RegExp(
-          `${selected === "bug-hunter" ? "Bug-Hunter" : selected[0].toUpperCase() + selected.slice(1)} may not delegate to embedded`,
-          "i",
-        ),
-      );
-      assert.match(
-        result?.reason ?? "",
-        /available only while architect or disabled mode is active|Rush must edit directly/i,
-      );
+      for (const input of [
+        { agent: "embedded.my-tool", task: "do something" },
+        { tasks: [{ agent: "embedded.my-tool", task: "do something in parallel" }] },
+      ]) {
+        const result = await toolCall({ toolName: "subagent", input }, ctx);
+        assert.equal(result, undefined, `${selected} should dispatch authorized embedded targets`);
+        assert.equal(input.agentScope, "project");
+      }
     }
   });
 });
@@ -295,13 +324,18 @@ test("embedded subagents: architect allows only root-authorized embedded targets
   });
 });
 
-test("embedded subagents: rush blocks embedded targets with rush-specific reason; management actions exempt", async (t) => {
+test("embedded subagents: Rush may dispatch authorized targets while preserving ordinary management restrictions", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+    );
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
     );
     const { applySessionStart, toolCall } = registerRuntimeHarness({
       primaryAgents: selectablePrimaryAgents(),
@@ -325,23 +359,23 @@ test("embedded subagents: rush blocks embedded targets with rush-specific reason
       input: { agent: "embedded.my-tool", task: "do something" },
     };
     const result = await toolCall(embeddedEvent, ctx);
-    assert.equal(result?.block, true);
-    assert.match(result?.reason ?? "", /Rush may not delegate to embedded/i);
+    assert.equal(result, undefined);
+    assert.equal(embeddedEvent.input.agentScope, "project");
 
-    // Management actions are exempt
+    const ordinaryResume = {
+      toolName: "subagent",
+      input: { action: "resume", id: "run-123", message: "Continue." },
+    };
+    const resumeResult = await toolCall(ordinaryResume, ctx);
+    assert.match(resumeResult?.reason ?? "", /Rush may not use subagent action=resume/i);
+
     const listEvent = { toolName: "subagent", input: { action: "list" } };
     const listResult = await toolCall(listEvent, ctx);
-    // Rush resume is already blocked; management actions other than resume should not be blocked by embedded check
-    // (list/get/status/interrupt/doctor should pass through normally)
-    assert.notEqual(
-      listResult?.reason,
-      result?.reason,
-      "management action should not hit embedded block",
-    );
+    assert.notEqual(listResult?.reason, resumeResult?.reason);
   });
 });
 
-test("embedded subagents: opaque resume keeps issue #330 behavior for product and bug-hunter", async (t) => {
+test("embedded subagents: product and bug-hunter may retain ordinary opaque resume behavior", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -376,13 +410,18 @@ test("embedded subagents: opaque resume keeps issue #330 behavior for product an
   });
 });
 
-test("embedded subagents: product blocks embedded targets with product-specific reason", async (t) => {
+test("embedded subagents: product may dispatch authorized single and parallel targets", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+    );
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
     );
     const { applySessionStart, toolCall } = registerRuntimeHarness({
       primaryAgents: selectablePrimaryAgents(),
@@ -406,22 +445,24 @@ test("embedded subagents: product blocks embedded targets with product-specific 
       { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
-      assert.equal(result?.block, true);
-      assert.equal(
-        result?.reason,
-        "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.",
-      );
+      assert.equal(result, undefined);
+      assert.equal(input.agentScope, "project");
     }
   });
 });
 
-test("embedded subagents: bug-hunter blocks embedded targets with bug-hunter-specific reason", async (t) => {
+test("embedded subagents: bug-hunter may dispatch authorized single and parallel targets", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+    );
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
     );
     const { applySessionStart, toolCall } = registerRuntimeHarness({
       primaryAgents: selectablePrimaryAgents(),
@@ -445,11 +486,8 @@ test("embedded subagents: bug-hunter blocks embedded targets with bug-hunter-spe
       { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
-      assert.equal(result?.block, true);
-      assert.equal(
-        result?.reason,
-        "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.",
-      );
+      assert.equal(result, undefined);
+      assert.equal(input.agentScope, "project");
     }
   });
 });
