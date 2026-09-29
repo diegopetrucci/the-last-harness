@@ -1419,18 +1419,20 @@ describe(
       });
       const agents = makeAgentConfigs(["slow"]);
 
+      const timeoutMs = scaleTestTimeout(150);
+      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
       const start = Date.now();
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-single",
-        timeoutMs: 150,
+        timeoutMs,
       });
       const elapsed = Date.now() - start;
 
       assert.ok(elapsed < 5000, `should time out early, took ${elapsed}ms`);
       assert.notEqual(result.exitCode, 0);
       assert.equal(result.timedOut, true);
-      assert.equal(result.error, "Subagent timed out after 150ms.");
-      assert.match(result.finalOutput ?? "", /Subagent timed out after 150ms\./);
+      assert.equal(result.error, expectedTimeoutText);
+      assert.ok((result.finalOutput ?? "").includes(expectedTimeoutText));
       assert.match(result.finalOutput ?? "", /Run id: timeout-single/);
       assert.match(result.finalOutput ?? "", /Current tool: read/);
       assert.match(result.finalOutput ?? "", /Current path: README\.md/);
@@ -1495,9 +1497,11 @@ describe(
       const sessionFile = path.join(tempDir, "child-session.jsonl");
       const artifactsDir = path.join(tempDir, "artifacts");
 
+      const timeoutMs = scaleTestTimeout(150);
+      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-artifact-metadata",
-        timeoutMs: 150,
+        timeoutMs,
         sessionFile,
         artifactsDir,
         artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
@@ -1507,7 +1511,7 @@ describe(
       assert.equal(result.sessionFile, sessionFile);
       assert.ok(result.artifactPaths, "should have artifact paths");
       const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
-      assert.match(artifactText, /Subagent timed out after 150ms\./);
+      assert.ok(artifactText.includes(expectedTimeoutText));
       assert.match(artifactText, /Run id: timeout-artifact-metadata/);
       assert.match(
         artifactText,
