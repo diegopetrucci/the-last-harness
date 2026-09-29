@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -784,6 +784,35 @@ test("parseShard: rejects zero shard (0/2)", () => {
 // ---------------------------------------------------------------------------
 // buildLanes
 // ---------------------------------------------------------------------------
+
+test("buildLanes: projects adaptive local and explicit GitHub concurrency", () => {
+  const [localLaneA] = buildLanes(1, "1/2", {});
+  assert.match(localLaneA.commands[0].join(" "), /--test-concurrency=[1-9]\d*/);
+
+  const [githubLaneA] = buildLanes(1, "1/2", { GITHUB_ACTIONS: "true" });
+  assert.doesNotMatch(githubLaneA.commands[0].join(" "), /--test-concurrency=/);
+
+  const [overriddenLaneA] = buildLanes(1, "1/2", {
+    GITHUB_ACTIONS: "true",
+    TLH_TEST_CONCURRENCY: "3",
+  });
+  assert.match(overriddenLaneA.commands[0].join(" "), /--test-concurrency=3/);
+});
+
+test("CI shard runner reports invalid concurrency overrides without a stack", () => {
+  const result = spawnSync(process.execPath, [runCiShardPath, "1/2"], {
+    cwd: resolve(testDir, ".."),
+    env: { ...process.env, TLH_TEST_CONCURRENCY: "invalid" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(
+    result.stderr,
+    'Error: TLH_TEST_CONCURRENCY must be a positive integer or unset it; received "invalid".\n',
+  );
+  assert.doesNotMatch(result.stderr, /\bat /u);
+});
 
 test("buildLanes: shard 1 includes e2e at end of lane A", () => {
   const [laneA, laneB] = buildLanes(1, "1/2");
