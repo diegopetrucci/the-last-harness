@@ -20,6 +20,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testConcurrencyArgs } from "./test-concurrency.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const repoRoot = resolve(dirname(scriptPath), "..");
@@ -115,6 +116,14 @@ export async function runWithTmpdirGuard({
   env = process.env,
   spawn = nodeSpawn,
 } = {}) {
+  let concurrencyArgs;
+  try {
+    concurrencyArgs = testConcurrencyArgs({ env });
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+
   const root = mkdtempSync(join(tmpdir(), "tlh-test-run-"));
   const guardEnv = { ...env, TMPDIR: root, TMP: root, TEMP: root };
 
@@ -149,11 +158,15 @@ export async function runWithTmpdirGuard({
     // 1. Root Node tests
     if (!pendingSignal) {
       const reporterArgs = dot ? ["--test-reporter=dot"] : [];
-      const child1 = spawn(process.execPath, ["--test", ...reporterArgs, testGlob], {
-        cwd: repoRoot,
-        env: guardEnv,
-        stdio: "inherit",
-      });
+      const child1 = spawn(
+        process.execPath,
+        ["--test", ...reporterArgs, ...concurrencyArgs, testGlob],
+        {
+          cwd: repoRoot,
+          env: guardEnv,
+          stdio: "inherit",
+        },
+      );
       currentChild = child1;
       const r1 = await childClose(child1);
       currentChild = null;
