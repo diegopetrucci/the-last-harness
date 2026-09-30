@@ -260,6 +260,9 @@ describe("async execution utilities", () => {
           );
           await waitForFile(resultPath, "nested supervisor result");
           const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+          const finalStatus = JSON.parse(
+            fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+          ) as AsyncStatusPayload;
           const nestedEvents = readNestedLifecycleEvents(nestedRoute);
           const nestedCompletions = nestedEvents.filter(
             (event) => event.type === "subagent.nested.completed",
@@ -286,11 +289,14 @@ describe("async execution utilities", () => {
           assert.ok(result.results.length > 0);
 
           if (withTelemetry) {
-            assert.ok(status.telemetry, "telemetry-enabled nested status must carry telemetry");
-            assert.deepEqual(result.telemetry, status.telemetry);
-            assert.deepEqual(status.telemetry?.provenance, telemetryProvenance);
+            assert.ok(
+              finalStatus.telemetry,
+              "telemetry-enabled nested status must carry telemetry",
+            );
+            assert.deepEqual(result.telemetry, finalStatus.telemetry);
+            assert.deepEqual(finalStatus.telemetry?.provenance, telemetryProvenance);
           } else {
-            assert.equal(status.telemetry, undefined);
+            assert.equal(finalStatus.telemetry, undefined);
             assert.equal(result.telemetry, undefined);
           }
 
