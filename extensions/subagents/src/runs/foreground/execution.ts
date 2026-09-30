@@ -550,6 +550,7 @@ async function runSingleAttempt(
     tokens: 0,
     durationMs: 0,
     lastActivityAt: startTime,
+    startedAt: startTime,
   };
   applyHealthProgressProjection(progress, shared.healthState.value);
   const applyHealthTransition = (action: HealthTransitionAction): HealthTransitionResult =>

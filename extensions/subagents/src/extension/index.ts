@@ -722,6 +722,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
         { expanded },
         theme,
         frame,
+        Date.now(),
       );
     },
   });

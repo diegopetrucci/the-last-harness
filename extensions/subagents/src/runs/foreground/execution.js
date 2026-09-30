@@ -333,6 +333,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         tokens: 0,
         durationMs: 0,
         lastActivityAt: startTime,
+        startedAt: startTime,
     };
     applyHealthProgressProjection(progress, shared.healthState.value);
     const applyHealthTransition = (action) => transitionHealthForProgress(shared.healthState, progress, action);

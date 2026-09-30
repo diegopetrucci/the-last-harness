@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
+import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/render.ts";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.ts";
 import {
   type AsyncJobState,
@@ -307,6 +307,7 @@ export function createAsyncJobTracker(
         }
       }
       state.asyncJobs.delete(asyncId);
+      lastPhraseSlotKeys.delete(asyncId);
       if (state.lastUiContext) {
         rerenderWidget(state.lastUiContext);
       }
@@ -445,6 +446,31 @@ export function createAsyncJobTracker(
     }
   };
 
+  // Tracks the phrase-slot key from the previous tick for each running job.
+  // A slot change (driven by live time rather than status updates) marks
+  // widgetChanged so the widget rerenders at phrase boundaries.
+  const lastPhraseSlotKeys = new Map<string, string>();
+
+  const nowMs = (): number => options.now?.() ?? Date.now();
+
+  const updatePhraseSlot = (asyncId: string, job: AsyncJobState, now: number): boolean => {
+    const before = lastPhraseSlotKeys.get(asyncId);
+    const after = widgetPhraseSlotKey(job, now);
+    lastPhraseSlotKeys.set(asyncId, after);
+    return before !== after;
+  };
+
+  const renderOrPhraseChanged = (
+    renderKeyBefore: string,
+    asyncId: string,
+    job: AsyncJobState,
+    now: number,
+  ): boolean => {
+    const renderChanged = widgetRenderKey(job) !== renderKeyBefore;
+    const phraseChanged = updatePhraseSlot(asyncId, job, now);
+    return renderChanged || phraseChanged;
+  };
+
   const ensurePoller = () => {
     if (state.poller) return;
     state.poller = setInterval(() => {
@@ -458,6 +484,7 @@ export function createAsyncJobTracker(
       }
 
       let widgetChanged = false;
+      const phraseSlotNow = nowMs();
       for (const job of state.asyncJobs.values()) {
         const widgetStateBefore = widgetRenderKey(job);
         let nestedRefreshFailed = false;
@@ -602,7 +629,8 @@ export function createAsyncJobTracker(
             ) {
               scheduleCleanup(job.asyncId);
             }
-            if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
+            if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
+              widgetChanged = true;
             continue;
           }
           const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
@@ -637,7 +665,8 @@ export function createAsyncJobTracker(
             scheduleCleanup(job.asyncId);
           }
         }
-        if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
+        if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
+          widgetChanged = true;
       }
 
       if (widgetChanged && state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
@@ -656,7 +685,7 @@ export function createAsyncJobTracker(
     const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
     const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
     const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
-    state.asyncJobs.set(info.id, {
+    const newJob: AsyncJobState = {
       asyncId: info.id,
       asyncDir,
       status: "queued",
@@ -674,7 +703,9 @@ export function createAsyncJobTracker(
       controlEventCursor: 0,
       tkTicket: normalizedTkTicket,
       projectAgents: info.projectAgents,
-    });
+    };
+    state.asyncJobs.set(info.id, newJob);
+    lastPhraseSlotKeys.set(info.id, widgetPhraseSlotKey(newJob, nowMs()));
     ensurePoller();
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
@@ -759,6 +790,7 @@ export function createAsyncJobTracker(
       }
     }
     state.asyncJobs.clear();
+    lastPhraseSlotKeys.clear();
     state.foregroundControls?.clear();
     state.lastForegroundControlId = null;
     state.resultFileCoalescer.clear();
