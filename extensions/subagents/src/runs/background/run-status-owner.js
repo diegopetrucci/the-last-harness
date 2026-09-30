@@ -538,6 +538,23 @@ export function createBackgroundRunStatusOwner(input) {
         controlHooks.interruptActiveChildren();
         return persisted;
     }
+    function recordStepTimeout(flatIndex, message) {
+        if (concurrentTerminalStatusAdopted ||
+            statusPayload.state !== "running" ||
+            timedOut ||
+            interrupted)
+            return;
+        const now = Date.now();
+        const timeoutError = message ?? timeoutMessage ?? "Subagent timed out.";
+        const step = statusPayload.steps[flatIndex];
+        if (!step)
+            return;
+        step.timedOut = true;
+        step.error ??= timeoutError;
+        step.terminationReason = "timed_out";
+        statusPayload.lastUpdate = now;
+        writeStatusPayload();
+    }
     function onChildProtocolOutputLimit(limit) {
         if (concurrentTerminalStatusAdopted ||
             statusPayload.state !== "running" ||
@@ -576,8 +593,11 @@ export function createBackgroundRunStatusOwner(input) {
             })
             : undefined;
     }
+    function hasNonTimedOutActiveStep() {
+        return statusPayload.steps.some((step) => step.timedOut !== true && (step.status === "running" || step.status === "pending"));
+    }
     function pauseMetadataForIndex(index, pausedAt) {
-        if (!supervisorPauseRequest)
+        if (!supervisorPauseRequest || statusPayload.steps[index]?.timedOut === true)
             return undefined;
         if (index === supervisorPauseRequest.requesterIndex) {
             return {
@@ -593,7 +613,12 @@ export function createBackgroundRunStatusOwner(input) {
         };
     }
     function requestSupervisorPause(requesterIndex, pause) {
-        if (supervisorPauseRequest || interrupted || timedOut || statusPayload.state !== "running")
+        if (supervisorPauseRequest ||
+            interrupted ||
+            timedOut ||
+            statusPayload.state !== "running" ||
+            statusPayload.steps[requesterIndex]?.timedOut === true ||
+            !hasNonTimedOutActiveStep())
             return;
         if (!claimChildTerminalReason(terminalReason, "paused"))
             return;
@@ -629,7 +654,7 @@ export function createBackgroundRunStatusOwner(input) {
                     lastUpdate: now,
                     sessionFile: requesterSessionFile ?? status.sessionFile,
                     steps: status.steps?.map((step, index) => {
-                        if (step.status !== "running")
+                        if (step.status !== "running" || step.timedOut === true)
                             return step;
                         const stepSessionFile = refreshTrackedSessionFile(index);
                         const activeRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
@@ -680,6 +705,8 @@ export function createBackgroundRunStatusOwner(input) {
     function interrupt() {
         if (interrupted || statusPayload.state !== "running")
             return;
+        if (!hasNonTimedOutActiveStep())
+            return;
         if (!claimChildTerminalReason(terminalReason, "interrupted"))
             return;
         interrupted = true;
@@ -693,7 +720,7 @@ export function createBackgroundRunStatusOwner(input) {
         statusPayload.lastUpdate = now;
         for (let flatIndex = 0; flatIndex < statusPayload.steps.length; flatIndex++) {
             const step = statusPayload.steps[flatIndex];
-            if (step.status !== "running")
+            if (step.status !== "running" || step.timedOut === true)
                 continue;
             step.status = "paused";
             step.activityState = undefined;
@@ -814,7 +841,7 @@ export function createBackgroundRunStatusOwner(input) {
     }
     function applyPausedStepMetadata(flatIndex, endedAt) {
         const step = statusPayload.steps[flatIndex];
-        if (!step)
+        if (!step || step.timedOut === true)
             return;
         const sessionFile = refreshTrackedSessionFile(flatIndex);
         if (sessionFile)
@@ -911,6 +938,7 @@ export function createBackgroundRunStatusOwner(input) {
         endStepCompaction,
         endAllStepCompactions,
         syncTopLevelHealthProjection,
+        recordStepTimeout,
         onChildProtocolOutputLimit,
         pausedAcceptanceLedger,
         pausedStepResult,

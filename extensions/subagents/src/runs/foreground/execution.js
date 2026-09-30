@@ -333,6 +333,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         tokens: 0,
         durationMs: 0,
         lastActivityAt: startTime,
+        startedAt: startTime,
     };
     applyHealthProgressProjection(progress, shared.healthState.value);
     const applyHealthTransition = (action) => transitionHealthForProgress(shared.healthState, progress, action);
@@ -352,7 +353,24 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             tokens: progress.tokens,
             durationMs: progress.durationMs,
         };
-        return result;
+        cleanupTempDir(tempDir);
+        return finalizeSingleAttempt({
+            result,
+            progress,
+            startTime,
+            agent,
+            task,
+            options,
+            sessionEnabled: shared.sessionEnabled,
+            originalTask: shared.originalTask,
+            outputSnapshot: shared.outputSnapshot,
+            supervisorPauseRequested: false,
+            interruptedByControl: false,
+            observedMutationAttempt: false,
+            allControlEvents,
+            emitControlEvent,
+            healthState: shared.healthState,
+        });
     }
     const spawnEnv = buildSubagentSpawnEnv(process.env, sharedEnv, getSubagentDepthEnv(options.maxSubagentDepth));
     let observedMutationAttempt = false;

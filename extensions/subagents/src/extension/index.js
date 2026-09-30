@@ -484,7 +484,7 @@ export default function registerSubagentExtension(pi) {
             }
             const frame = context.state?.frame ?? 0;
             const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame);
+            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame, Date.now());
         },
     });
     pi.registerTool(tool);

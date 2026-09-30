@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn as childSpawn } from "node:child_process";
+import { spawn as childSpawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
@@ -13,6 +13,11 @@ import {
   TMPDIR_ALLOWLIST,
   runWithTmpdirGuard,
 } from "../scripts/run-test-tmpdir-guard.mjs";
+import {
+  parseTestConcurrency,
+  resolveTestConcurrency,
+  testConcurrencyArgs,
+} from "../scripts/test-concurrency.mjs";
 
 // Absolute path to the guard script — used by subprocess signal tests to
 // construct harness code that imports it by absolute path.
@@ -34,6 +39,63 @@ function tempDir() {
   _tmpDirs.push(dir);
   return dir;
 }
+
+// ---------------------------------------------------------------------------
+// Shared test concurrency policy
+// ---------------------------------------------------------------------------
+
+test("test concurrency policy projects an explicit override", () => {
+  assert.deepEqual(
+    testConcurrencyArgs({
+      env: { GITHUB_ACTIONS: "true", TLH_TEST_CONCURRENCY: "7" },
+    }),
+    ["--test-concurrency=7"],
+  );
+});
+
+test("test concurrency policy rejects invalid explicit overrides", () => {
+  for (const value of ["", "0", "-1", "1.5", "2x", "9007199254740992"]) {
+    assert.throws(
+      () => parseTestConcurrency(value),
+      /TLH_TEST_CONCURRENCY must be a positive integer or unset it/,
+      `expected ${JSON.stringify(value)} to be rejected`,
+    );
+  }
+  assert.equal(parseTestConcurrency("3"), 3);
+});
+
+test("test concurrency policy adapts local limits and protects low-core hosts", () => {
+  assert.equal(
+    resolveTestConcurrency({ env: {}, availableParallelism: () => 8 }),
+    4,
+    "local runs use half of available parallelism",
+  );
+  assert.equal(
+    resolveTestConcurrency({ env: {}, availableParallelism: () => 1 }),
+    1,
+    "one-core hosts must still run tests",
+  );
+  assert.equal(
+    resolveTestConcurrency({ env: {}, availableParallelism: () => 3 }),
+    1,
+    "odd low-core hosts use the floored half with a minimum of one",
+  );
+});
+
+test("test concurrency policy leaves GitHub Actions unbounded by default", () => {
+  assert.equal(
+    resolveTestConcurrency({ env: { GITHUB_ACTIONS: "true" }, availableParallelism: () => 8 }),
+    undefined,
+  );
+  assert.equal(
+    resolveTestConcurrency({
+      env: { GITHUB_ACTIONS: "true", TLH_TEST_CONCURRENCY: "2" },
+      availableParallelism: () => 8,
+    }),
+    2,
+    "an explicit override still applies on GitHub Actions",
+  );
+});
 
 // ---------------------------------------------------------------------------
 // TMPDIR_ALLOWLIST
@@ -188,6 +250,16 @@ test("runWithTmpdirGuard omits --test-reporter=dot when dot flag is not set", as
   assert.ok(!mainCall.args.includes("--test-reporter=dot"));
 });
 
+test("runWithTmpdirGuard projects the shared concurrency override to root tests", async () => {
+  const spawn = fakeSpawn([{ code: 0 }, { code: 0 }]);
+  await runWithTmpdirGuard({
+    env: { GITHUB_ACTIONS: "true", TLH_TEST_CONCURRENCY: "5" },
+    spawn,
+  });
+  const [mainCall] = spawn.calls;
+  assert.ok(mainCall.args.includes("--test-concurrency=5"));
+});
+
 test("runWithTmpdirGuard sets TMPDIR/TMP/TEMP in child env", async () => {
   /** @type {Array<{ cmd: string; args: string[]; env?: Record<string, string | undefined> }>} */
   const calls = [];
@@ -287,6 +359,20 @@ test("main omits --test-reporter=dot when --dot is absent", async () => {
     !mainCall.args.includes("--test-reporter=dot"),
     "no --dot should omit --test-reporter=dot",
   );
+});
+
+test("tmpdir guard reports invalid concurrency overrides without a stack", () => {
+  const result = spawnSync(process.execPath, [guardScriptPath, "--dot"], {
+    env: { ...process.env, TLH_TEST_CONCURRENCY: "invalid" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(
+    result.stderr,
+    'TLH_TEST_CONCURRENCY must be a positive integer or unset it; received "invalid".\n',
+  );
+  assert.doesNotMatch(result.stderr, /\bat /u);
 });
 
 // ---------------------------------------------------------------------------

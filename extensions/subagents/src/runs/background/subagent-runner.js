@@ -30,7 +30,7 @@ import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution
 import { appendUnexpectedLifecycleTransitionDiagnostic, createBackgroundRunStatusOwner, } from "./run-status-owner.js";
 import { finalizeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { createBackgroundRunControlOwner } from "./run-control-owner.js";
-import { persistContinuationGateRejection, persistRunnerTerminalRun, } from "./terminal-persistence.js";
+import { buildPausedRunnerTelemetry, persistContinuationGateRejection, persistRunnerTerminalRun, } from "./terminal-persistence.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const DEFAULT_MAX_ASYNC_EVENTS_BYTES = 50 * 1024 * 1024;
@@ -249,6 +249,18 @@ function writeRunLog(logPath, input) {
 }
 function isPausedStepStatus(status) {
     return status === "paused";
+}
+function normalizeTimedOutStepResult(step, result, timeoutMessage) {
+    if (!step?.timedOut && !result.timedOut)
+        return result;
+    return {
+        ...result,
+        interrupted: false,
+        timedOut: true,
+        exitCode: 1,
+        error: step?.error ?? result.error ?? timeoutMessage ?? "Subagent timed out.",
+        terminationReason: "timed_out",
+    };
 }
 function normalizeFailedSupervisorPauseResults(results, steps, requesterIndex, fallbackAgent) {
     for (const result of results) {
@@ -619,22 +631,23 @@ async function runSubagentWithInput(config, plan) {
         for (let t = 0; t < parallelResults.length; t++) {
             const pr = parallelResults[t];
             const fi = groupStartFlatIndex + t;
+            const prTimedOut = pr.timedOut === true;
             results.push({
                 index: fi,
                 agent: pr.agent,
                 ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
                 tkTicketId: pr.tkTicketId,
-                output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
+                output: pr.interrupted && !prTimedOut ? pausedOutputForIndex(fi, pr.agent) : pr.output,
                 error: pr.error,
                 stderr: pr.stderr,
                 stderrTruncated: pr.stderrTruncated,
                 protocolOutputLimit: pr.protocolOutputLimit,
-                success: pr.interrupted !== true && pr.exitCode === 0,
-                exitCode: pr.interrupted === true ? 0 : pr.exitCode,
+                success: !prTimedOut && pr.interrupted !== true && pr.exitCode === 0,
+                exitCode: prTimedOut ? 1 : pr.interrupted === true ? 0 : pr.exitCode,
                 exitSignal: pr.exitSignal,
                 skipped: pr.skipped,
-                interrupted: pr.interrupted,
-                timedOut: pr.timedOut,
+                interrupted: prTimedOut ? undefined : pr.interrupted,
+                timedOut: prTimedOut ? true : undefined,
                 toolBudget: pr.toolBudget,
                 toolBudgetBlocked: pr.toolBudgetBlocked,
                 contextUsage: pr.contextUsage,
@@ -654,7 +667,7 @@ async function runSubagentWithInput(config, plan) {
                 transcriptPath: pr.transcriptPath,
                 transcriptError: pr.transcriptError,
                 acceptance: pr.acceptance,
-                pause: pr.interrupted
+                pause: pr.interrupted && !prTimedOut
                     ? statusOwner.pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
                     : undefined,
                 activeRuntimeMs: pr.activeRuntimeMs,
@@ -667,6 +680,12 @@ async function runSubagentWithInput(config, plan) {
         }
     };
     const settleSingleStep = (seqStep, stepStartTime, singleResult) => {
+        singleResult = normalizeTimedOutStepResult(statusPayload.steps[flatIndex], singleResult, timeoutMessage);
+        const stepTimedOut = statusPayload.steps[flatIndex]?.timedOut === true || singleResult.timedOut === true;
+        const timeoutOutput = statusPayload.steps[flatIndex]?.error ??
+            singleResult.error ??
+            timeoutMessage ??
+            "Subagent timed out.";
         const resolvedSeqSessionFile = statusOwner.resolveTrackedSessionFile(flatIndex, singleResult.sessionFile ?? seqStep.sessionFile);
         if (resolvedSeqSessionFile) {
             statusPayload.steps[flatIndex].sessionFile = resolvedSeqSessionFile;
@@ -677,23 +696,17 @@ async function runSubagentWithInput(config, plan) {
             agent: singleResult.agent,
             ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
             tkTicketId: singleResult.tkTicketId,
-            output: statusOwner.timedOut
-                ? (timeoutMessage ?? "Subagent timed out.")
+            output: stepTimedOut
+                ? timeoutOutput
                 : singleResult.interrupted
                     ? pausedOutputForIndex(flatIndex, singleResult.agent)
                     : singleResult.output,
-            error: statusOwner.timedOut
-                ? boundChildError(timeoutMessage ?? "Subagent timed out.")
-                : singleResult.error,
+            error: stepTimedOut ? boundChildError(timeoutOutput) : singleResult.error,
             stderr: singleResult.stderr,
             stderrTruncated: singleResult.stderrTruncated,
             protocolOutputLimit: singleResult.protocolOutputLimit,
-            success: !statusOwner.timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
-            exitCode: statusOwner.timedOut
-                ? 1
-                : singleResult.interrupted === true
-                    ? 0
-                    : singleResult.exitCode,
+            success: !stepTimedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
+            exitCode: stepTimedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
             exitSignal: singleResult.exitSignal,
             sessionFile: resolvedSeqSessionFile,
             model: singleResult.model,
@@ -708,9 +721,11 @@ async function runSubagentWithInput(config, plan) {
             transcriptPath: singleResult.transcriptPath,
             transcriptError: singleResult.transcriptError,
             acceptance: singleResult.acceptance,
-            pause: singleResult.interrupted ? statusOwner.pauseMetadataForIndex(flatIndex) : undefined,
-            interrupted: singleResult.interrupted,
-            timedOut: statusOwner.timedOut || singleResult.timedOut ? true : undefined,
+            pause: singleResult.interrupted && !stepTimedOut
+                ? statusOwner.pauseMetadataForIndex(flatIndex)
+                : undefined,
+            interrupted: stepTimedOut ? undefined : singleResult.interrupted,
+            timedOut: stepTimedOut ? true : undefined,
             toolBudget: singleResult.toolBudget,
             toolBudgetBlocked: singleResult.toolBudgetBlocked,
             contextUsage: singleResult.contextUsage,
@@ -755,12 +770,12 @@ async function runSubagentWithInput(config, plan) {
             settledResult.activeRuntimeMs = settledActiveRuntimeMs;
             settledResult.activeRuntimeCheckpointAt = stepEndTime;
         }
-        const childInterrupted = singleResult.interrupted === true;
+        const childInterrupted = !stepTimedOut && singleResult.interrupted === true;
         if (childInterrupted)
             statusOwner.interrupted = true;
         const priorStepStatus = statusPayload.steps[flatIndex].status;
-        const pausedStep = childInterrupted || isPausedStepStatus(priorStepStatus);
-        statusPayload.steps[flatIndex].status = statusOwner.timedOut
+        const pausedStep = !stepTimedOut && (childInterrupted || isPausedStepStatus(priorStepStatus));
+        statusPayload.steps[flatIndex].status = stepTimedOut
             ? "failed"
             : pausedStep
                 ? "paused"
@@ -771,14 +786,13 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
         statusPayload.steps[flatIndex].activeRuntimeMs = normalizeActiveRuntimeMs(singleResult.activeRuntimeMs);
         statusPayload.steps[flatIndex].activeRuntimeCheckpointAt = stepEndTime;
-        statusPayload.steps[flatIndex].exitCode = statusOwner.timedOut
+        statusPayload.steps[flatIndex].exitCode = stepTimedOut
             ? 1
             : childInterrupted
                 ? 0
                 : singleResult.exitCode;
         statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
-        statusPayload.steps[flatIndex].timedOut =
-            statusOwner.timedOut || singleResult.timedOut ? true : undefined;
+        statusPayload.steps[flatIndex].timedOut = stepTimedOut ? true : undefined;
         statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
         statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
         statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
@@ -801,8 +815,8 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
         statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
         statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
-        statusPayload.steps[flatIndex].error = statusOwner.timedOut
-            ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+        statusPayload.steps[flatIndex].error = stepTimedOut
+            ? boundChildError(timeoutOutput)
             : singleResult.error;
         statusPayload.steps[flatIndex].stderr = singleResult.stderr
             ? boundChildStderrError(singleResult.stderr, singleResult.stderrTruncated === true, MAX_CHILD_ERROR_BYTES)
@@ -825,7 +839,7 @@ async function runSubagentWithInput(config, plan) {
         const completionGuardActive = singleResult.completionGuardTriggered === true &&
             !singleResult.interrupted &&
             !singleResult.timedOut &&
-            !statusOwner.timedOut &&
+            !stepTimedOut &&
             !pausedStep;
         const completionGuardPreviousActivityState = statusPayload.steps[flatIndex].activityState;
         if (completionGuardActive) {
@@ -844,7 +858,7 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.lastUpdate = stepEndTime;
         statusOwner.writeStatusPayload();
         appendJsonl(eventsPath, JSON.stringify({
-            type: statusOwner.timedOut
+            type: stepTimedOut
                 ? "subagent.step.failed"
                 : childInterrupted
                     ? "subagent.step.paused"
@@ -855,7 +869,7 @@ async function runSubagentWithInput(config, plan) {
             runId: id,
             stepIndex: flatIndex,
             agent: seqStep.agent,
-            exitCode: statusOwner.timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+            exitCode: stepTimedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
             durationMs: stepEndTime - stepStartTime,
             tokens: stepTokens,
         }));
@@ -926,7 +940,7 @@ async function runSubagentWithInput(config, plan) {
                     agent: task.agent,
                 }));
                 controlOwner.flushPendingStepSteers(fi);
-                const singleResult = await runSingleStep(task, {
+                const rawSingleResult = await runSingleStep(task, {
                     cwd,
                     sessionEnabled,
                     sessionDir: taskSessionDir,
@@ -946,6 +960,7 @@ async function runSubagentWithInput(config, plan) {
                     interruptMessage: "Interrupted. Waiting for explicit next action.",
                     timeoutSignal: timeoutAbortController.signal,
                     timeoutMessage,
+                    onTimeout: (message) => statusOwner.recordStepTimeout(fi, message),
                     timeoutMs: task.timeoutMs,
                     deadlineAt: taskDeadlineAt,
                     startedAt: taskStartTime,
@@ -953,9 +968,15 @@ async function runSubagentWithInput(config, plan) {
                     onChildEvent: (event) => controlOwner.updateStepFromChildEvent(fi, event),
                     onAttemptEnd: () => statusOwner.endStepCompaction(fi),
                     onChildProtocolOutputLimit: statusOwner.onChildProtocolOutputLimit,
-                    skipAcceptance: () => statusOwner.timedOut,
+                    skipAcceptance: () => statusOwner.timedOut || statusPayload.steps[fi]?.timedOut === true,
                     runtimeTracker: activeRuntimeTrackers.get(fi),
                 }, appendDiagnosticJsonl);
+                const singleResult = normalizeTimedOutStepResult(statusPayload.steps[fi], rawSingleResult, timeoutMessage);
+                const stepTimedOut = statusPayload.steps[fi]?.timedOut === true || singleResult.timedOut === true;
+                const timeoutOutput = statusPayload.steps[fi]?.error ??
+                    singleResult.error ??
+                    timeoutMessage ??
+                    "Subagent timed out.";
                 if (task.sessionFile) {
                     statusOwner.latestSessionFile = task.sessionFile;
                 }
@@ -965,12 +986,12 @@ async function runSubagentWithInput(config, plan) {
                 activeRuntimeTrackers.delete(fi);
                 const settledActiveRuntimeMs = Math.max(normalizeActiveRuntimeMs(singleResult.activeRuntimeMs) ?? 0, trackedRuntime ?? 0);
                 singleResult.activeRuntimeMs = settledActiveRuntimeMs;
-                const childInterrupted = singleResult.interrupted === true;
+                const childInterrupted = !stepTimedOut && singleResult.interrupted === true;
                 if (childInterrupted)
                     statusOwner.interrupted = true;
                 const priorStepStatus = statusPayload.steps[fi].status;
-                const pausedStep = childInterrupted || isPausedStepStatus(priorStepStatus);
-                statusPayload.steps[fi].status = statusOwner.timedOut
+                const pausedStep = !stepTimedOut && (childInterrupted || isPausedStepStatus(priorStepStatus));
+                statusPayload.steps[fi].status = stepTimedOut
                     ? "failed"
                     : pausedStep
                         ? "paused"
@@ -982,14 +1003,13 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.steps[fi].activeRuntimeMs = normalizeActiveRuntimeMs(singleResult.activeRuntimeMs);
                 statusPayload.steps[fi].activeRuntimeCheckpointAt = taskEndTime;
                 singleResult.activeRuntimeCheckpointAt = taskEndTime;
-                statusPayload.steps[fi].exitCode = statusOwner.timedOut
+                statusPayload.steps[fi].exitCode = stepTimedOut
                     ? 1
                     : childInterrupted
                         ? 0
                         : singleResult.exitCode;
                 statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
-                statusPayload.steps[fi].timedOut =
-                    statusOwner.timedOut || singleResult.timedOut ? true : undefined;
+                statusPayload.steps[fi].timedOut = stepTimedOut ? true : undefined;
                 statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
                 statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
                 statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;
@@ -1012,8 +1032,8 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
                 statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
                 statusPayload.steps[fi].totalCost = singleResult.totalCost;
-                statusPayload.steps[fi].error = statusOwner.timedOut
-                    ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+                statusPayload.steps[fi].error = stepTimedOut
+                    ? boundChildError(timeoutOutput)
                     : singleResult.error;
                 statusPayload.steps[fi].stderr = singleResult.stderr
                     ? boundChildStderrError(singleResult.stderr, singleResult.stderrTruncated === true, MAX_CHILD_ERROR_BYTES)
@@ -1032,7 +1052,7 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.lastUpdate = taskEndTime;
                 statusOwner.writeStatusPayload();
                 appendJsonl(eventsPath, JSON.stringify({
-                    type: statusOwner.timedOut
+                    type: stepTimedOut
                         ? "subagent.step.failed"
                         : childInterrupted
                             ? "subagent.step.paused"
@@ -1043,13 +1063,13 @@ async function runSubagentWithInput(config, plan) {
                     runId: id,
                     stepIndex: fi,
                     agent: task.agent,
-                    exitCode: statusOwner.timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+                    exitCode: stepTimedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
                     durationMs: taskDuration,
                 }));
                 const completionGuardActive = singleResult.completionGuardTriggered === true &&
                     !singleResult.interrupted &&
                     !singleResult.timedOut &&
-                    !statusOwner.timedOut &&
+                    !stepTimedOut &&
                     !pausedStep;
                 const completionGuardPreviousActivityState = statusPayload.steps[fi].activityState;
                 if (completionGuardActive) {
@@ -1070,14 +1090,15 @@ async function runSubagentWithInput(config, plan) {
                     controlOwner.appendControlEvent(event);
                 }
                 statusOwner.writeStatusPayload();
-                return statusOwner.timedOut
+                return stepTimedOut
                     ? {
                         ...singleResult,
-                        output: timeoutMessage ?? "Subagent timed out.",
-                        error: timeoutMessage ?? "Subagent timed out.",
+                        output: timeoutOutput,
+                        error: timeoutOutput,
                         exitCode: 1,
                         interrupted: false,
                         timedOut: true,
+                        terminationReason: "timed_out",
                         skipped: false,
                     }
                     : { ...singleResult, skipped: false };
@@ -1141,6 +1162,7 @@ async function runSubagentWithInput(config, plan) {
                 interruptMessage: "Interrupted. Waiting for explicit next action.",
                 timeoutSignal: timeoutAbortController.signal,
                 timeoutMessage,
+                onTimeout: (message) => statusOwner.recordStepTimeout(flatIndex, message),
                 timeoutMs: seqStep.timeoutMs,
                 deadlineAt: stepDeadlineAt,
                 startedAt: stepStartTime,
@@ -1148,7 +1170,7 @@ async function runSubagentWithInput(config, plan) {
                 onChildEvent: (event) => controlOwner.updateStepFromChildEvent(flatIndex, event),
                 onAttemptEnd: () => statusOwner.endStepCompaction(flatIndex),
                 onChildProtocolOutputLimit: statusOwner.onChildProtocolOutputLimit,
-                skipAcceptance: () => statusOwner.timedOut,
+                skipAcceptance: () => statusOwner.timedOut || statusPayload.steps[flatIndex]?.timedOut === true,
                 runtimeTracker: activeRuntimeTrackers.get(flatIndex),
             }, appendDiagnosticJsonl);
             settleSingleStep(seqStep, stepStartTime, singleResult);
@@ -1242,27 +1264,8 @@ async function runSubagentWithInput(config, plan) {
                     const transition = transitionLifecycleStatus({
                         asyncDir,
                         expectedGeneration: lifecycleGeneration(statusPayload),
-                        mutate: (status) => ({
-                            ...status,
-                            state: "paused",
-                            pid: undefined,
-                            pause: {
-                                ...statusOwner.supervisorPauseRequest.pause,
-                                pausedAt: runEndedAt,
-                                ownerPid: undefined,
-                            },
-                            activityState: undefined,
-                            currentTool: undefined,
-                            currentToolStartedAt: undefined,
-                            currentPath: undefined,
-                            endedAt: runEndedAt,
-                            lastUpdate: runEndedAt,
-                            sessionFile: pausedSessionFile ?? status.sessionFile,
-                            totalCost: finalTotalCost,
-                            shareUrl,
-                            gistUrl,
-                            shareError,
-                            steps: status.steps?.map((step, index) => step.status === "pausing" || step.status === "paused"
+                        mutate: (status) => {
+                            const pausedSteps = status.steps?.map((step, index) => step.status === "pausing" || step.status === "paused"
                                 ? {
                                     ...step,
                                     ...(statusOwner.refreshTrackedSessionFile(index)
@@ -1281,8 +1284,44 @@ async function runSubagentWithInput(config, plan) {
                                     acceptance: step.acceptance ??
                                         statusOwner.pausedAcceptanceLedger(flatStepAcceptances[index]),
                                 }
-                                : step),
-                        }),
+                                : step) ?? statusPayload.steps;
+                            const pausedStatus = {
+                                ...status,
+                                state: "paused",
+                                pid: undefined,
+                                pause: {
+                                    ...statusOwner.supervisorPauseRequest.pause,
+                                    pausedAt: runEndedAt,
+                                    ownerPid: undefined,
+                                },
+                                activityState: undefined,
+                                currentTool: undefined,
+                                currentToolStartedAt: undefined,
+                                currentPath: undefined,
+                                endedAt: runEndedAt,
+                                lastUpdate: runEndedAt,
+                                sessionFile: pausedSessionFile ?? status.sessionFile,
+                                totalCost: finalTotalCost,
+                                shareUrl,
+                                gistUrl,
+                                shareError,
+                                steps: pausedSteps,
+                            };
+                            const pausedTelemetry = buildPausedRunnerTelemetry({
+                                config,
+                                plan,
+                                results,
+                                controlConfig,
+                                overallStartTime,
+                                endedAt: runEndedAt,
+                                activeRuntimeMs: pausedStatus.activeRuntimeMs,
+                                statusSteps: pausedSteps,
+                            });
+                            return {
+                                ...pausedStatus,
+                                ...(pausedTelemetry ? { telemetry: pausedTelemetry } : { telemetry: undefined }),
+                            };
+                        },
                     });
                     Object.assign(statusPayload, transition.status);
                 }

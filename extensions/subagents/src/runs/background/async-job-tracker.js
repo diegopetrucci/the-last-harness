@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderWidget, widgetRenderKey } from "../../tui/render.js";
+import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/render.js";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
 import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
@@ -228,6 +228,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 }
             }
             state.asyncJobs.delete(asyncId);
+            lastPhraseSlotKeys.delete(asyncId);
             if (state.lastUiContext) {
                 rerenderWidget(state.lastUiContext);
             }
@@ -372,6 +373,19 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             fs.closeSync(fd);
         }
     };
+    const lastPhraseSlotKeys = new Map();
+    const nowMs = () => options.now?.() ?? Date.now();
+    const updatePhraseSlot = (asyncId, job, now) => {
+        const before = lastPhraseSlotKeys.get(asyncId);
+        const after = widgetPhraseSlotKey(job, now);
+        lastPhraseSlotKeys.set(asyncId, after);
+        return before !== after;
+    };
+    const renderOrPhraseChanged = (renderKeyBefore, asyncId, job, now) => {
+        const renderChanged = widgetRenderKey(job) !== renderKeyBefore;
+        const phraseChanged = updatePhraseSlot(asyncId, job, now);
+        return renderChanged || phraseChanged;
+    };
     const ensurePoller = () => {
         if (state.poller)
             return;
@@ -386,6 +400,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 return;
             }
             let widgetChanged = false;
+            const phraseSlotNow = nowMs();
             for (const job of state.asyncJobs.values()) {
                 const widgetStateBefore = widgetRenderKey(job);
                 let nestedRefreshFailed = false;
@@ -512,7 +527,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
                             scheduleCleanup(job.asyncId);
                         }
-                        if (widgetRenderKey(job) !== widgetStateBefore)
+                        if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
                             widgetChanged = true;
                         continue;
                     }
@@ -547,7 +562,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         scheduleCleanup(job.asyncId);
                     }
                 }
-                if (widgetRenderKey(job) !== widgetStateBefore)
+                if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
                     widgetChanged = true;
             }
             if (widgetChanged && state.lastUiContext?.hasUI)
@@ -567,7 +582,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
         const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
         const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
-        state.asyncJobs.set(info.id, {
+        const newJob = {
             asyncId: info.id,
             asyncDir,
             status: "queued",
@@ -585,7 +600,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             controlEventCursor: 0,
             tkTicket: normalizedTkTicket,
             projectAgents: info.projectAgents,
-        });
+        };
+        state.asyncJobs.set(info.id, newJob);
+        lastPhraseSlotKeys.set(info.id, widgetPhraseSlotKey(newJob, nowMs()));
         ensurePoller();
         if (state.lastUiContext) {
             rerenderWidget(state.lastUiContext);
@@ -657,6 +674,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             }
         }
         state.asyncJobs.clear();
+        lastPhraseSlotKeys.clear();
         state.foregroundControls?.clear();
         state.lastForegroundControlId = null;
         state.resultFileCoalescer.clear();

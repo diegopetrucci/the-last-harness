@@ -265,6 +265,7 @@ function compactProgressActivityLines(
   width: number,
   firstPrefix: string,
   continuationPrefix: string,
+  now?: number,
 ): string[] {
   const snapshotNow = snapshotNowForProgress(progress);
   const toolLines = formatCurrentToolLines(
@@ -283,7 +284,22 @@ function compactProgressActivityLines(
       width - visibleWidth(continuationPrefix),
     );
   }
-  const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
+  const elapsedMs =
+    now !== undefined &&
+    Number.isFinite(now) &&
+    progress.startedAt !== undefined &&
+    Number.isFinite(progress.startedAt)
+      ? now - progress.startedAt
+      : progress.durationMs !== undefined && Number.isFinite(progress.durationMs)
+        ? progress.durationMs
+        : undefined;
+  const phrase = compactThinkingPhrase(
+    progress.activityState,
+    progress.turnCount,
+    snapshotNow,
+    undefined,
+    elapsedMs,
+  );
   return [phrase, liveStatus].filter((line): line is string => Boolean(line));
 }
 type RenderResult = Details["results"][number];
@@ -410,6 +426,7 @@ function renderSingleCompact(
   r: Details["results"][number],
   theme: Theme,
   frame?: number,
+  now?: number,
 ): Component {
   const rawOutput = r.truncation?.text || getSingleResultOutput(r);
   const output = safeTerminalText(rawOutput);
@@ -431,6 +448,7 @@ function renderSingleCompact(
       width,
       FOREGROUND_ACTIVITY_PREFIX,
       FOREGROUND_ACTIVITY_CONTINUATION_PREFIX,
+      now,
     ).entries()) {
       const prefix =
         activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
@@ -455,6 +473,7 @@ function renderMultiCompact(
   entries: IndexedResultEntry[],
   theme: Theme,
   frame?: number,
+  now?: number,
 ): Component {
   const hasRunning =
     d.progress?.some((p) => p.status === "running") ||
@@ -542,6 +561,7 @@ function renderMultiCompact(
         width,
         WIDGET_ACTIVITY_PREFIX,
         WIDGET_ACTIVITY_CONTINUATION_PREFIX,
+        now,
       ).entries()) {
         const prefix =
           activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
@@ -1054,6 +1074,7 @@ export function renderSubagentResult(
   options: { expanded: boolean },
   theme: Theme,
   frame?: number,
+  now?: number,
 ): Component {
   const d = result.details;
   const entries = indexedRenderableResults(d?.results);
@@ -1068,10 +1089,10 @@ export function renderSubagentResult(
 
   if (d.mode === "single" && entries.length === 1) {
     const r = entries[0]!.result;
-    if (!expanded) return renderSingleCompact(d, r, theme, frame);
+    if (!expanded) return renderSingleCompact(d, r, theme, frame, now);
     return renderExpandedSingleResult(d, r, theme, mdTheme, frame);
   }
 
-  if (!expanded) return renderMultiCompact(d, entries, theme, frame);
+  if (!expanded) return renderMultiCompact(d, entries, theme, frame, now);
   return renderExpandedMultiResult(d, entries, theme, frame);
 }

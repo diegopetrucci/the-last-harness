@@ -29,6 +29,7 @@ import {
   requestAsyncInterrupt,
   waitForAsyncResultFile,
   waitForAsyncState,
+  waitForAsyncStatusPredicate,
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
@@ -386,12 +387,31 @@ describe("async execution utilities", () => {
         },
         shareEnabled: false,
         maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
       });
 
       const payload = await readAsyncPayload(id);
       const status = JSON.parse(
         fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
+      assert.equal(payload.timedOut, true);
+      assert.equal(status.timedOut, true);
+      assert.equal(payload.telemetry?.outcome?.state, "failed");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(status.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(payload.telemetry?.steps[0]?.outcome?.terminationReason, "timed_out");
       assert.equal(payload.results[0]?.timedOut, true);
       assert.equal(payload.results[0]?.error, "Subagent timed out after 100ms.");
       assert.equal(payload.results[1]?.timedOut, undefined);
@@ -417,6 +437,288 @@ describe("async execution utilities", () => {
         assert.equal(metadata.timeoutMs, status.steps?.[index]?.timeoutMs);
         assert.equal(metadata.deadlineAt, status.steps?.[index]?.deadlineAt);
       }
+    },
+  );
+
+  it(
+    "allows a later parallel interrupt after a step-owned timeout",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and interrupt delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const shortTimeoutMs = scaleTestTimeout(1_000);
+      const shortTimeoutHold = path.join(tempDir, "short-timeout-hold");
+      const interruptSiblingHold = path.join(tempDir, "interrupt-sibling-hold");
+      mockPi.onCall({
+        matchArgIncludes: "Short timeout sibling",
+        waitForMarker: shortTimeoutHold,
+        ignoreSigterm: true,
+      });
+      mockPi.onCall({
+        matchArgIncludes: "Long interrupt sibling",
+        waitForMarker: interruptSiblingHold,
+      });
+      const id = `async-step-timeout-then-interrupt-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "short", task: "Short timeout sibling" },
+          { agent: "long", task: "Long interrupt sibling" },
+        ],
+        concurrency: 2,
+        agents: [
+          makeAgent("short", { maxExecutionTimeMs: shortTimeoutMs }),
+          makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
+        ],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      await waitForMockPiCall(mockPi, 1);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      const timedOutStatus = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.state === "running" && status.steps?.[0]?.timedOut === true,
+        "step-owned timeout before sibling interrupt",
+      );
+      assert.equal(timedOutStatus.timedOut, undefined);
+      assert.ok(timedOutStatus.pid);
+      deliverInterruptRequest({ asyncDir, pid: timedOutStatus.pid, source: "test" });
+
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "paused");
+      assert.equal(payload.timedOut, undefined);
+      assert.equal(status.timedOut, undefined);
+      assert.equal(payload.telemetry?.outcome?.state, "paused");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "interrupted");
+      assert.equal(payload.telemetry?.steps[0]?.outcome?.terminationReason, "timed_out");
+      assert.deepEqual(
+        payload.results.map((result) => result.timedOut),
+        [true, undefined],
+      );
+      assert.deepEqual(
+        payload.results.map((result) => result.terminationReason),
+        ["timed_out", "paused"],
+      );
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.deepEqual(
+        status.steps?.map((step) => step.status),
+        ["failed", "paused"],
+      );
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.match(eventLog, /"type":"subagent.run.paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.timed_out"/);
+    },
+  );
+
+  it(
+    "pauses a surviving parallel sibling after another step times out",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and supervisor pause delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const shortTimeoutMs = scaleTestTimeout(750);
+      const timeoutSiblingHold = path.join(tempDir, "timeout-sibling-hold");
+      const supervisorPauseGate = path.join(tempDir, "supervisor-pause-after-timeout");
+      mockPi.onCall({
+        matchArgIncludes: "Timeout before supervisor pause",
+        waitForMarker: timeoutSiblingHold,
+        ignoreSigterm: true,
+      });
+      mockPi.onCall({
+        matchArgIncludes: "Supervisor pause after sibling timeout",
+        waitForMarker: supervisorPauseGate,
+        jsonl: [
+          events.toolStart("contact_supervisor", {
+            reason: "need_decision",
+            message: "Need a decision after a sibling timeout",
+          }),
+        ],
+        keepAliveAfterFinalMessageMs: scaleTestTimeout(10_000),
+      });
+      const id = `async-step-timeout-then-supervisor-pause-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "short", task: "Timeout before supervisor pause" },
+          { agent: "long", task: "Supervisor pause after sibling timeout" },
+        ],
+        concurrency: 2,
+        agents: [
+          makeAgent("short", { maxExecutionTimeMs: shortTimeoutMs }),
+          makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
+        ],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      await waitForMockPiCall(mockPi, 1);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.steps?.[0]?.timedOut === true,
+        "step-owned timeout before supervisor pause",
+      );
+      fs.writeFileSync(supervisorPauseGate, "", "utf-8");
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "paused");
+      assert.equal(payload.timedOut, undefined);
+      assert.equal(status.state, "paused");
+      assert.equal(status.timedOut, undefined);
+      assert.deepEqual(
+        payload.results.map((result) => result.timedOut),
+        [true, undefined],
+      );
+      assert.deepEqual(
+        payload.results.map((result) => result.terminationReason),
+        ["timed_out", "paused"],
+      );
+      assert.equal(payload.results[0]?.success, false);
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.equal(payload.results[1]?.pause?.kind, "awaiting_supervisor");
+      assert.deepEqual(
+        status.steps?.map((step) => step.status),
+        ["failed", "paused"],
+      );
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.equal(status.steps?.[1]?.pause?.kind, "awaiting_supervisor");
+      assert.equal(status.pause?.kind, "awaiting_supervisor");
+      assert.equal(status.pause?.request?.tool, "contact_supervisor");
+      assert.match(eventLog, /"type":"subagent.run.pausing"/);
+      assert.match(eventLog, /"type":"subagent.run.completed".*"status":"paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.timed_out"/);
+    },
+  );
+
+  it(
+    "keeps a single timed-out step terminal when interrupted during drain",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and interrupt delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const timeoutMs = scaleTestTimeout(1_000);
+      const singleTimeoutHold = path.join(tempDir, "single-timeout-hold");
+      mockPi.onCall({
+        matchArgIncludes: "Single timeout then interrupt",
+        waitForMarker: singleTimeoutHold,
+        ignoreSigterm: true,
+      });
+      const id = `async-single-timeout-then-interrupt-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [{ agent: "worker", task: "Single timeout then interrupt" }],
+        concurrency: 1,
+        agents: [makeAgent("worker", { maxExecutionTimeMs: timeoutMs })],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      const timedOutStatus = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.state === "running" && status.steps?.[0]?.timedOut === true,
+        "single-step timeout before interrupt",
+      );
+      assert.equal(timedOutStatus.timedOut, undefined);
+      assert.ok(timedOutStatus.pid);
+      deliverInterruptRequest({ asyncDir, pid: timedOutStatus.pid, source: "test" });
+
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.timedOut, true);
+      assert.equal(payload.telemetry?.outcome?.state, "failed");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(payload.results[0]?.timedOut, true);
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.equal(status.state, "failed");
+      assert.equal(status.timedOut, true);
+      assert.equal(status.steps?.[0]?.status, "failed");
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.pausing"/);
     },
   );
 

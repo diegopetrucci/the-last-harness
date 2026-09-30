@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { testConcurrencyArgs } from "./test-concurrency.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const repoRoot = resolve(dirname(scriptPath), "..");
@@ -96,6 +97,30 @@ function isSharded(options) {
   return options.some((option) => option === "--test-shard" || option.startsWith("--test-shard="));
 }
 
+/**
+ * Build the Node test-runner command arguments for an imported subagent suite.
+ *
+ * @param {{
+ *   loader: string;
+ *   options?: string[];
+ *   files: string[];
+ *   env?: Record<string, string | undefined>;
+ * }} input
+ * @returns {string[]}
+ */
+export function buildTestCommandArgs({ loader, options = [], files, env = process.env }) {
+  return [
+    "--experimental-strip-types",
+    "--import",
+    loader,
+    "--test",
+    "--test-reporter=tap",
+    ...testConcurrencyArgs({ env }),
+    ...options,
+    ...files,
+  ];
+}
+
 function relayFailureOutput(result) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -149,23 +174,20 @@ export function runSuite(suite, options = []) {
     return 2;
   }
 
+  const loader = pathToFileURL(
+    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
+  ).href;
+  let args;
+  try {
+    args = buildTestCommandArgs({ loader, options, files, env: process.env });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
   const root = mkdtempSync(join(tmpdir(), "tlh-subagents-tests-"));
   const agentDir = join(root, "agent");
   mkdirSync(agentDir, { recursive: true });
   const env = buildChildEnv(process.env, agentDir);
-
-  const loader = pathToFileURL(
-    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
-  ).href;
-  const args = [
-    "--experimental-strip-types",
-    "--import",
-    loader,
-    "--test",
-    "--test-reporter=tap",
-    ...options,
-    ...files,
-  ];
   let result;
   try {
     result = spawnSync(process.execPath, args, {

@@ -1056,11 +1056,13 @@ describe(
           );
         writeStatus(2000);
 
+        const fixedNow = Date.now();
         const state = createState();
         const ui = createUiContext();
         const recorder = createEventRecorder();
         const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           pollIntervalMs: 10,
+          now: () => fixedNow,
         });
         tracker.resetJobs(ui.ctx as never);
         tracker.handleStarted({ id: "run-unchanged", asyncDir: runDir, agent: "worker" });

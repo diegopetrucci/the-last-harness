@@ -489,6 +489,31 @@ describe(
           usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
         },
       };
+      const supervisorRequestGate = path.join(tempDir, "supervisor-request-gate");
+      type ParallelProgressUpdate = {
+        details?: {
+          results?: Array<{
+            progress?: { index?: number };
+            contextPressure?: { severity?: string };
+            contextPressureCrossedThresholds?: string[];
+          }>;
+        };
+      };
+      let resolvePressureUpdate!: () => void;
+      const pressureUpdate = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for parent-observed context pressure update")),
+          scaleTestTimeout(10_000),
+        );
+        timeout.unref?.();
+        resolvePressureUpdate = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+      });
+      // Keep an early test failure from leaving the deferred timeout rejection
+      // unhandled; the awaited promise below still propagates the timeout.
+      void pressureUpdate.catch(() => {});
       mockPi.onCall({
         matchArgIncludes: "finish",
         jsonl: [events.assistantMessage("completed sibling")],
@@ -497,7 +522,7 @@ describe(
         matchArgIncludes: "ask supervisor",
         steps: [
           {
-            delay: 200,
+            waitForMarker: supervisorRequestGate,
             jsonl: [
               events.toolStart("contact_supervisor", {
                 reason: "need_decision",
@@ -513,12 +538,12 @@ describe(
       });
       mockPi.onCall({
         matchArgIncludes: "keep working",
-        steps: [{ delay: 50, jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
+        steps: [{ jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
       });
       mockPi.onCall({
         matchArgIncludes: "start late work",
         steps: [
-          { delay: 50, jsonl: [events.assistantMessage("late-start sibling partial output")] },
+          { jsonl: [events.assistantMessage("late-start sibling partial output")] },
           { delay: 10_000 },
         ],
       });
@@ -542,7 +567,7 @@ describe(
         makeModel("claude-sonnet-4", { provider: "anthropic", contextWindow: 1000 }),
         makeModel("gpt-5-mini", { provider: "openai", contextWindow: 1000 }),
       ];
-      const original = await first.executor.execute(
+      const originalPromise = first.executor.execute(
         "foreground-parallel-pause-original",
         {
           tasks: [
@@ -554,14 +579,28 @@ describe(
           ],
         },
         new AbortController().signal,
-        undefined,
+        (update: unknown) => {
+          const details = (update as ParallelProgressUpdate).details;
+          const activeSibling = details?.results?.find((result) => result.progress?.index === 2);
+          if (
+            activeSibling?.contextPressure?.severity === "warning" &&
+            activeSibling.contextPressureCrossedThresholds?.includes("warning")
+          ) {
+            resolvePressureUpdate();
+          }
+        },
         cohortContext,
       );
-      const runId = original.details?.runId;
-      assert.ok(runId, "expected foreground run id");
       await waitForMockPiCall(3);
       assert.equal(mockPi.callCount(), 4);
       const spawnedPids = startedMockPiPids();
+      // Spawn records prove the cohort was dispatched; release the requester only
+      // after the parent has observed the active sibling's pressure snapshot.
+      await pressureUpdate;
+      fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+      const original = await originalPromise;
+      const runId = original.details?.runId;
+      assert.ok(runId, "expected foreground run id");
       assert.equal(spawnedPids.length, 4);
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
       await waitForAsyncState(runId, "paused");

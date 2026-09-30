@@ -170,14 +170,22 @@ function resultGlyph(result, output, theme, running = result.progress?.status ==
 }
 const FOREGROUND_ACTIVITY_PREFIX = "     ";
 const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = "     ";
-function compactProgressActivityLines(progress, width, firstPrefix, continuationPrefix) {
+function compactProgressActivityLines(progress, width, firstPrefix, continuationPrefix, now) {
     const snapshotNow = snapshotNowForProgress(progress);
     const toolLines = formatCurrentToolLines(progress, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix), false, snapshotNow);
     const liveStatus = buildLiveStatusLine(progress, snapshotNow);
     if (toolLines) {
         return fitCompactToolStatus(toolLines, liveStatus, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix));
     }
-    const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
+    const elapsedMs = now !== undefined &&
+        Number.isFinite(now) &&
+        progress.startedAt !== undefined &&
+        Number.isFinite(progress.startedAt)
+        ? now - progress.startedAt
+        : progress.durationMs !== undefined && Number.isFinite(progress.durationMs)
+            ? progress.durationMs
+            : undefined;
+    const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount, snapshotNow, undefined, elapsedMs);
     return [phrase, liveStatus].filter((line) => Boolean(line));
 }
 function isRenderableResult(value) {
@@ -269,7 +277,7 @@ function foregroundTkTicketLine(result, theme, active, indent = "  ") {
     const ticket = foregroundTkTicketText(result);
     return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
-function renderSingleCompact(d, r, theme, frame) {
+function renderSingleCompact(d, r, theme, frame, now) {
     const rawOutput = r.truncation?.text || getSingleResultOutput(r);
     const output = safeTerminalText(rawOutput);
     const isRunning = r.progress?.status === "running";
@@ -284,7 +292,7 @@ function renderSingleCompact(d, r, theme, frame) {
     if (childLocLine)
         lines.push(childLocLine);
     if (isRunning && r.progress) {
-        for (const [activityIndex, activity] of compactProgressActivityLines(r.progress, width, FOREGROUND_ACTIVITY_PREFIX, FOREGROUND_ACTIVITY_CONTINUATION_PREFIX).entries()) {
+        for (const [activityIndex, activity] of compactProgressActivityLines(r.progress, width, FOREGROUND_ACTIVITY_PREFIX, FOREGROUND_ACTIVITY_CONTINUATION_PREFIX, now).entries()) {
             const prefix = activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
             lines.push(theme.fg("dim", `${prefix}${activity}`));
         }
@@ -300,7 +308,7 @@ function renderSingleCompact(d, r, theme, frame) {
         lines.push(theme.fg("dim", `  session: ${safeTerminalText(shortenPath(r.sessionFile))}`));
     return collapsedForegroundComponent(lines, theme);
 }
-function renderMultiCompact(d, entries, theme, frame) {
+function renderMultiCompact(d, entries, theme, frame, now) {
     const hasRunning = d.progress?.some((p) => p.status === "running") ||
         entries.some(({ result }) => result.progress?.status === "running");
     const failed = d.progress?.some((p) => p.status === "failed") ||
@@ -370,7 +378,7 @@ function renderMultiCompact(d, entries, theme, frame) {
             lines.push(childLocLineMulti);
         if (rRunning && liveProgress) {
             hasRunningResult = true;
-            for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_CONTINUATION_PREFIX).entries()) {
+            for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_CONTINUATION_PREFIX, now).entries()) {
                 const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
                 lines.push(theme.fg("dim", `${prefix}${activity}`));
             }
@@ -652,7 +660,7 @@ function renderExpandedMultiResult(d, entries, theme, frame) {
     }
     return c;
 }
-export function renderSubagentResult(result, options, theme, frame) {
+export function renderSubagentResult(result, options, theme, frame, now) {
     const d = result.details;
     const entries = indexedRenderableResults(d?.results);
     const hideAsyncPlaceholderBody = Boolean(d?.asyncId && entries.length === 0 && d.mode !== "management" && !result.isError);
@@ -665,10 +673,10 @@ export function renderSubagentResult(result, options, theme, frame) {
     if (d.mode === "single" && entries.length === 1) {
         const r = entries[0].result;
         if (!expanded)
-            return renderSingleCompact(d, r, theme, frame);
+            return renderSingleCompact(d, r, theme, frame, now);
         return renderExpandedSingleResult(d, r, theme, mdTheme, frame);
     }
     if (!expanded)
-        return renderMultiCompact(d, entries, theme, frame);
+        return renderMultiCompact(d, entries, theme, frame, now);
     return renderExpandedMultiResult(d, entries, theme, frame);
 }

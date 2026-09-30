@@ -468,6 +468,9 @@ export const WHIMSICAL_THINKING_PHRASES = [
   "Cherry-picking the commits...",
 ] as const;
 
+/** Milliseconds a phrase slot is held before advancing to the next one. */
+export const PHRASE_HOLD_MS = 8000;
+
 const WHIMSICAL_SHUFFLE_SEED = 0x544c4801;
 
 function deterministicPhrasePermutation(length: number): number[] {
@@ -484,11 +487,40 @@ function deterministicPhrasePermutation(length: number): number[] {
 const WHIMSICAL_THINKING_ORDER = deterministicPhrasePermutation(WHIMSICAL_THINKING_PHRASES.length);
 
 /**
- * Return the phrase assigned to a reasoning turn. The turn number is the
- * deterministic cursor through a stable shuffled permutation of the complete
- * pool, with no repeat until the next cycle begins.
+ * Return the phrase for the current thinking state.
+ *
+ * Phrase selection is time-based when elapsed time is known:
+ * - When `elapsedMs` is a finite number, slot = floor(max(0, elapsedMs) / PHRASE_HOLD_MS).
+ * - When both `snapshotNow` and `startedAt` are finite numbers,
+ *   slot = floor(max(0, snapshotNow - startedAt) / PHRASE_HOLD_MS).
+ * This keeps the phrase stable within each 8-second window and advances at the
+ * next boundary regardless of how many turns have elapsed.
+ *
+ * When no timing input is available, the function falls back to the legacy
+ * turn-count cursor through the same deterministic shuffled order.
  */
-export function whimsicalThinkingPhrase(turnCount?: number): string {
+export function whimsicalThinkingPhrase(
+  turnCount?: number,
+  snapshotNow?: number,
+  startedAt?: number,
+  elapsedMs?: number,
+): string {
+  if (elapsedMs !== undefined && Number.isFinite(elapsedMs)) {
+    const slot = Math.floor(Math.max(0, elapsedMs) / PHRASE_HOLD_MS);
+    const phraseIndex = WHIMSICAL_THINKING_ORDER[slot % WHIMSICAL_THINKING_ORDER.length]!;
+    return WHIMSICAL_THINKING_PHRASES[phraseIndex]!;
+  }
+  if (
+    snapshotNow !== undefined &&
+    startedAt !== undefined &&
+    Number.isFinite(snapshotNow) &&
+    Number.isFinite(startedAt)
+  ) {
+    const slot = Math.floor(Math.max(0, snapshotNow - startedAt) / PHRASE_HOLD_MS);
+    const phraseIndex = WHIMSICAL_THINKING_ORDER[slot % WHIMSICAL_THINKING_ORDER.length]!;
+    return WHIMSICAL_THINKING_PHRASES[phraseIndex]!;
+  }
+  // Fallback: use turnCount as the cursor through the shuffled order.
   const turn =
     turnCount !== undefined && Number.isFinite(turnCount) ? Math.max(0, Math.trunc(turnCount)) : 0;
   const phraseIndex = WHIMSICAL_THINKING_ORDER[turn % WHIMSICAL_THINKING_ORDER.length]!;

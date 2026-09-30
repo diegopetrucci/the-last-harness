@@ -550,6 +550,7 @@ async function runSingleAttempt(
     tokens: 0,
     durationMs: 0,
     lastActivityAt: startTime,
+    startedAt: startTime,
   };
   applyHealthProgressProjection(progress, shared.healthState.value);
   const applyHealthTransition = (action: HealthTransitionAction): HealthTransitionResult =>
@@ -570,7 +571,27 @@ async function runSingleAttempt(
       tokens: progress.tokens,
       durationMs: progress.durationMs,
     };
-    return result;
+    // Argument preparation may have created a temporary prompt directory before
+    // the deadline elapsed. Finalize the attempt here instead of returning
+    // early so that cleanup and the terminal progress update share one path.
+    cleanupTempDir(tempDir);
+    return finalizeSingleAttempt({
+      result,
+      progress,
+      startTime,
+      agent,
+      task,
+      options,
+      sessionEnabled: shared.sessionEnabled,
+      originalTask: shared.originalTask,
+      outputSnapshot: shared.outputSnapshot,
+      supervisorPauseRequested: false,
+      interruptedByControl: false,
+      observedMutationAttempt: false,
+      allControlEvents,
+      emitControlEvent,
+      healthState: shared.healthState,
+    });
   }
   const spawnEnv = buildSubagentSpawnEnv(
     process.env,

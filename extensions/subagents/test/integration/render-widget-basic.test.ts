@@ -121,14 +121,13 @@ describe("subagent async widget rendering", () => {
 
     assert.match(text, /first/);
     assert.match(text, /second/);
-    assert.match(
-      text,
-      new RegExp(`^│ {8}${escapeRegExp(whimsicalThinkingPhrase(5))}$\\n^│ {8}active now$`, "m"),
-    );
-    assert.match(
-      text,
-      new RegExp(`^ {9}${escapeRegExp(whimsicalThinkingPhrase(6))}$\\n^ {9}active 2s ago$`, "m"),
-    );
+    // Both jobs have elapsed < 8 s
+    //
+    // Time-based slot = floor(elapsedMs / PHRASE_HOLD_MS): both land on slot 0,
+    // which is the same phrase index as turnCount 0.
+    const slot0Phrase = whimsicalThinkingPhrase(0);
+    assert.match(text, new RegExp(`^│ {8}${escapeRegExp(slot0Phrase)}$\\n^│ {8}active now$`, "m"));
+    assert.match(text, new RegExp(`^ {9}${escapeRegExp(slot0Phrase)}$\\n^ {9}active 2s ago$`, "m"));
     assert.doesNotMatch(
       text,
       /5 turns|6 turns|1 tool use|2 tool uses|12k token|3\.0s|\bsteps?\b|\bchain\b/i,
@@ -500,8 +499,10 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /gpt-5\.5:high/);
   });
 
-  it("cycles compact async thinking phrases per turn while expanded rows retain telemetry", () => {
+  it("cycles compact async thinking phrases on a time cadence while expanded rows retain telemetry", () => {
     const now = Date.now();
+    // Single-mode jobs with steps render phrase via widgetStepActivityLines using
+    // step.startedAt as the time anchor.  Set it so that the time-based slot applies.
     const job: AsyncJobState = {
       asyncId: "run-thinking",
       asyncDir: "/tmp/thinking",
@@ -521,24 +522,35 @@ describe("subagent async widget rendering", () => {
           toolCount: 18,
           tokens: { input: 30_000, output: 10_000, total: 44_000 },
           durationMs: 7_000,
+          startedAt: now - 7_000,
         },
       ],
     };
 
+    // Elapsed 7 000 ms → time-based slot 0; same lookup index as turnCount-fallback at 0.
+    const slot0Phrase = whimsicalThinkingPhrase(0);
     const collapsed = buildWidgetLines([job], theme, 180).join("\n");
     assert.match(
       collapsed,
-      new RegExp(`^ {7}${escapeRegExp(whimsicalThinkingPhrase(5))}$\\n^ {7}active now$`, "m"),
+      new RegExp(`^ {7}${escapeRegExp(slot0Phrase)}$\\n^ {7}active now$`, "m"),
     );
     assert.doesNotMatch(collapsed, /5 turns|18 tool uses|44k token|7\.0s/);
 
-    const next = buildWidgetLines(
+    // Stability: changing turnCount alone must not change the phrase within the 8 s window.
+    const sameWindow = buildWidgetLines(
       [{ ...job, steps: [{ ...job.steps![0]!, turnCount: 6 }] }],
       theme,
       180,
     ).join("\n");
-    assert.match(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(6))));
-    assert.doesNotMatch(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(5))));
+    assert.match(sameWindow, new RegExp(escapeRegExp(slot0Phrase)));
+
+    // Advance: crossing the 8 s boundary must move to slot 1.
+    // updatedAt advances to now + 2 000 ms; step.startedAt stays at now − 7 000,
+    // so elapsed becomes 9 000 ms → slot 1.
+    const slot1Phrase = whimsicalThinkingPhrase(1);
+    const advanced = buildWidgetLines([{ ...job, updatedAt: now + 2_000 }], theme, 180).join("\n");
+    assert.match(advanced, new RegExp(escapeRegExp(slot1Phrase)));
+    assert.doesNotMatch(advanced, new RegExp(escapeRegExp(slot0Phrase)));
 
     const expanded = buildWidgetLines([job], theme, 180, true).join("\n");
     assert.match(expanded, /5 turns · 18 tool uses · 44k token · 7\.0s/);
@@ -555,7 +567,78 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
     assert.match(activeTool, /read \| 2\.0s/);
-    assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(whimsicalThinkingPhrase(5))));
+    assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(slot0Phrase)));
+  });
+
+  it("job-row phrase stays stable when running step changes in a chain/parallel job", () => {
+    // Regression for the pre-fix behaviour where job-level rows anchored the
+    // phrase on runningStep?.startedAt (or activityStep?.startedAt), causing a
+    // reset when the chain advanced or a parallel slot changed.
+    //
+    // After the fix, job-level rows anchor on job.startedAt first; the step
+    // startedAt is only a fallback when job.startedAt is undefined.
+    const now = Date.now();
+    // job.startedAt is 4 000 ms ago → slot 0 within the 8 s window.
+    const jobStartedAt = now - 4_000;
+    const slot0Phrase = whimsicalThinkingPhrase(0);
+    const slot1Phrase = whimsicalThinkingPhrase(1);
+    assert.notEqual(slot0Phrase, slot1Phrase, "sanity: slot 0 and slot 1 must differ");
+
+    // Single-mode job: step 0 (the only step) currently running.
+    // step.startedAt = now − 9 000 ms → would be slot 1 if used as the phrase
+    // anchor; job.startedAt = now − 4 000 ms → slot 0 (correct after fix).
+    // mode: "single" means widgetParallelAgentDetails returns [] so no per-step
+    // phrase rows appear in the multi-job widget — this lets the test assert the
+    // exact job-row phrase without interference from step-level anchoring (which
+    // is intentionally allowed to use step.startedAt).
+    // No currentTool on the step, so widgetActivityLines reaches the phrase path.
+    const singleJob: AsyncJobState = {
+      asyncId: "single-step-anchor",
+      asyncDir: "/tmp/single-step-anchor",
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+      stepsTotal: 1,
+      startedAt: jobStartedAt,
+      updatedAt: now,
+      lastActivityAt: now,
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          status: "running",
+          startedAt: now - 9_000, // slot 1 if used as anchor — must NOT be used
+          lastActivityAt: now,
+          turnCount: 3,
+        },
+      ],
+    };
+
+    const fillerJob: AsyncJobState = {
+      asyncId: "filler-queued",
+      asyncDir: "/tmp/filler",
+      status: "queued",
+      agents: ["scout"],
+      startedAt: now,
+      updatedAt: now,
+    };
+
+    // Two-job widget so the multi-job rendering path is exercised (each running
+    // job goes through widgetActivityDetailLines → widgetActivityLines).
+    // For mode: "single", widgetParallelAgentDetails returns [] so only the
+    // job-level phrase row appears — no step-level phrase to interfere.
+    const text = buildWidgetLines([singleJob, fillerJob], theme, 180).join("\n");
+    assert.match(
+      text,
+      new RegExp(escapeRegExp(slot0Phrase)),
+      "phrase must anchor on job.startedAt (slot 0), not step startedAt (slot 1)",
+    );
+    // single mode with no per-step phrase rows → slot1 must not appear anywhere.
+    assert.doesNotMatch(
+      text,
+      new RegExp(escapeRegExp(slot1Phrase)),
+      "slot 1 phrase must not appear when job.startedAt gives slot 0",
+    );
   });
 
   it("keeps async row status visible before long model badges on narrow widgets", () => {
