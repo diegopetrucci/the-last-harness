@@ -377,6 +377,8 @@ export interface AgentProgress {
   turnCount?: number;
   tokens: number;
   durationMs: number;
+  /** Wall-clock ms when this execution started; used for live-clock phrase selection. */
+  startedAt?: number;
   error?: string;
   failedTool?: string;
 }

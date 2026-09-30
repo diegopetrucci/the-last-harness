@@ -9,6 +9,7 @@ import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.js";
 import { safeTerminalText } from "../shared/display-text.js";
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, isHealthActivityState, fitInlineActivity, fitInlineThinkingActivity, fitCompactToolStatus, formatCurrentToolLines, formatTokenStat, formatToolUseStat, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, runningGlyph, runningSeed, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
+import { PHRASE_HOLD_MS } from "./whimsical-phrases.js";
 const WIDGET_ACTIVITY_PREFIX = "       ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function widgetRenderKey(job) {
@@ -100,7 +101,49 @@ function widgetHasPausingStep(job) {
     return (job.status === "running" &&
         (job.steps?.some((step) => step.interruptRequestedAt !== undefined) ?? false));
 }
-function widgetInlineThinkingActivity(job) {
+function phraseSlot(startedAt, now) {
+    if (startedAt === undefined || !Number.isFinite(startedAt))
+        return undefined;
+    return Math.floor(Math.max(0, now - startedAt) / PHRASE_HOLD_MS);
+}
+function collectNestedPhraseSlots(nodes, now, slots) {
+    for (const node of nodes ?? []) {
+        if (node.state === "running") {
+            const slot = phraseSlot(node.startedAt, now);
+            if (slot !== undefined)
+                slots.push(slot);
+        }
+        for (const step of node.steps ?? []) {
+            if (step.status === "running") {
+                const slot = phraseSlot(step.startedAt, now);
+                if (slot !== undefined)
+                    slots.push(slot);
+            }
+            collectNestedPhraseSlots(step.children, now, slots);
+        }
+        collectNestedPhraseSlots(node.children, now, slots);
+    }
+}
+export function widgetPhraseSlotKey(job, now) {
+    const slots = [];
+    if (job.status === "running") {
+        const jobStartedAt = job.startedAt ?? widgetRunningStep(job)?.startedAt;
+        const slot = phraseSlot(jobStartedAt, now);
+        if (slot !== undefined)
+            slots.push(slot);
+    }
+    for (const step of job.steps ?? []) {
+        if (step.status !== "running")
+            continue;
+        const slot = phraseSlot(step.startedAt, now);
+        if (slot !== undefined)
+            slots.push(slot);
+        collectNestedPhraseSlots(step.children, now, slots);
+    }
+    collectNestedPhraseSlots(job.nestedChildren, now, slots);
+    return slots.join(",");
+}
+function widgetInlineThinkingActivity(job, phraseNow) {
     if (job.status !== "running" ||
         job.interruptRequestedAt !== undefined ||
         job.currentTool ||
@@ -118,11 +161,11 @@ function widgetInlineThinkingActivity(job) {
     if (!freshness)
         return undefined;
     return {
-        phrase: compactThinkingPhrase(activityState, job.turnCount ?? runningStep?.turnCount),
+        phrase: compactThinkingPhrase(activityState, job.turnCount ?? runningStep?.turnCount, phraseNow ?? job.updatedAt, job.startedAt ?? runningStep?.startedAt),
         freshness,
     };
 }
-function widgetActivityLines(job, expanded = false) {
+function widgetActivityLines(job, expanded = false, phraseNow) {
     if (job.status === "continued")
         return ["continued"];
     const privacySafe = isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt);
@@ -147,6 +190,7 @@ function widgetActivityLines(job, expanded = false) {
     const lastActivityAt = job.lastActivityAt ?? activityStep?.lastActivityAt;
     const activityState = widgetActivityState(job, runningStep);
     const turnCount = job.turnCount ?? activityStep?.turnCount;
+    const startedAt = job.startedAt ?? activityStep?.startedAt;
     const facts = [];
     if (currentTool && currentToolStartedAt !== undefined && job.updatedAt !== undefined)
         facts.push(`${currentTool} ${formatDuration(Math.max(0, job.updatedAt - currentToolStartedAt))}`);
@@ -164,7 +208,11 @@ function widgetActivityLines(job, expanded = false) {
     }
     const activity = buildLiveStatusLine({ activityState, lastActivityAt }, job.updatedAt);
     if (!currentTool && !expanded && job.status === "running") {
-        return [compactThinkingPhrase(activityState, turnCount), activity, ...facts].filter((line) => Boolean(line));
+        return [
+            compactThinkingPhrase(activityState, turnCount, phraseNow ?? job.updatedAt, startedAt),
+            activity,
+            ...facts,
+        ].filter((line) => Boolean(line));
     }
     if (activity && facts.length)
         return [`${activity} · ${facts.join(" · ")}`];
@@ -174,7 +222,10 @@ function widgetActivityLines(job, expanded = false) {
         return [facts.join(" · ")];
     if (job.status === "running")
         return [
-            expanded ? "thinking…" : (compactThinkingPhrase(activityState, turnCount) ?? "thinking…"),
+            expanded
+                ? "thinking…"
+                : (compactThinkingPhrase(activityState, turnCount, phraseNow ?? job.updatedAt, startedAt) ??
+                    "thinking…"),
         ];
     if (job.status === "queued")
         return ["queued…"];
@@ -184,11 +235,11 @@ function widgetActivityLines(job, expanded = false) {
         return ["Failed"];
     return ["Done"];
 }
-function widgetActivity(job, expanded = false) {
-    return widgetActivityLines(job, expanded).join(" · ");
+function widgetActivity(job, expanded = false, phraseNow) {
+    return widgetActivityLines(job, expanded, phraseNow).join(" · ");
 }
-function widgetActivityDetailLines(job, theme, expanded = false) {
-    return widgetActivityLines(job, expanded).map((activity) => `  ${theme.fg("dim", `   ${activity}`)}`);
+function widgetActivityDetailLines(job, theme, expanded = false, phraseNow) {
+    return widgetActivityLines(job, expanded, phraseNow).map((activity) => `  ${theme.fg("dim", `   ${activity}`)}`);
 }
 function widgetStepRunningSeed(step, fallbackIndex) {
     return runningSeed(fallbackIndex, step.index, step.toolCount, step.turnCount, step.tokens?.total, step.lastActivityAt, step.currentToolStartedAt, step.durationMs);
@@ -260,7 +311,7 @@ function widgetTkTicketLines(job, theme, indent = "  ") {
     const line = widgetTkTicketLine(job, theme, indent);
     return line ? [line] : [];
 }
-function widgetStepActivity(step, snapshotNow, expanded = false) {
+function widgetStepActivity(step, snapshotNow, expanded = false, phraseNow) {
     if (step.status === "continued")
         return "";
     const privacySafe = isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt);
@@ -286,7 +337,11 @@ function widgetStepActivity(step, snapshotNow, expanded = false) {
     }
     const activity = buildLiveStatusLine(step, snapshotNow);
     if (!step.currentTool && !expanded && step.status === "running") {
-        return [compactThinkingPhrase(step.activityState, step.turnCount), activity, ...facts]
+        return [
+            compactThinkingPhrase(step.activityState, step.turnCount, phraseNow ?? snapshotNow, step.startedAt),
+            activity,
+            ...facts,
+        ]
             .filter(Boolean)
             .join(" · ");
     }
@@ -299,10 +354,10 @@ function widgetStepActivity(step, snapshotNow, expanded = false) {
     return step.status === "running"
         ? expanded
             ? "thinking…"
-            : (compactThinkingPhrase(step.activityState, step.turnCount) ?? "thinking…")
+            : (compactThinkingPhrase(step.activityState, step.turnCount, phraseNow ?? snapshotNow, step.startedAt) ?? "thinking…")
         : "";
 }
-function widgetParallelAgentDetails(job, theme, expanded = false, width = getTermWidth()) {
+function widgetParallelAgentDetails(job, theme, expanded = false, width = getTermWidth(), phraseNow) {
     if (!job.steps?.length)
         return [];
     if (job.mode !== "parallel")
@@ -312,7 +367,7 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
     for (const [index, step] of job.steps.entries()) {
         const displayStep = projectContinuedWidgetStep(job, step);
         const marker = index === job.steps.length - 1 ? "└" : "├";
-        const activity = widgetStepActivity(displayStep, job.updatedAt, expanded);
+        const activity = widgetStepActivity(displayStep, job.updatedAt, expanded, phraseNow);
         const itemTitle = "Agent";
         const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
         const healthWarning = displayStep.interruptRequestedAt === undefined &&
@@ -334,7 +389,7 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
             lines.push(...fitInlineActivity(prefix, healthWarning, theme, Math.max(1, width - 6)));
         }
         else if (freshness) {
-            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(displayStep.activityState, displayStep.turnCount), freshness, theme, Math.max(1, width - 6)));
+            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(displayStep.activityState, displayStep.turnCount, phraseNow ?? job.updatedAt, displayStep.startedAt), freshness, theme, Math.max(1, width - 6)));
         }
         else {
             lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
@@ -342,7 +397,7 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
         const parallelChildLocLine = childLocationLine(step.childLocation, theme, "    ");
         if (parallelChildLocLine)
             lines.push(parallelChildLocLine);
-        for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
+        for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow))
             lines.push(`    ${nestedLine}`);
     }
     return lines;
@@ -396,7 +451,7 @@ function widgetStepStats(theme, step, durationFallbackMs, expanded = false) {
         durationMs !== undefined ? formatDuration(durationMs) : "",
     ]);
 }
-function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, snapshotNow, fitTrailingStatus = false) {
+function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, snapshotNow, fitTrailingStatus = false, phraseNow) {
     if (step.status === "continued")
         return [];
     if (step.interruptRequestedAt !== undefined)
@@ -410,7 +465,7 @@ function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, 
     }
     if (!expanded && step.status === "running")
         return [
-            compactThinkingPhrase(step.activityState, step.turnCount),
+            compactThinkingPhrase(step.activityState, step.turnCount, phraseNow ?? snapshotNow, step.startedAt),
             ...(activity ? [activity] : []),
         ].filter((line) => Boolean(line));
     if (activity)
@@ -460,7 +515,7 @@ function nestedStatusGlyph(state, theme, seed) {
 function nestedRunSeed(run) {
     return runningSeed(run.lastUpdate, run.lastActivityAt, run.currentStep, run.toolCount, run.turnCount, run.totalTokens?.total, run.currentToolStartedAt);
 }
-function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded = false) {
+function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded = false, phraseNow) {
     const facts = [];
     const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
     if (currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined)
@@ -479,7 +534,11 @@ function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded
     }
     const activity = buildLiveStatusLine(input, snapshotNow);
     if (!input.currentTool && !expanded && state === "running") {
-        return [compactThinkingPhrase(input.activityState, input.turnCount), activity, ...facts]
+        return [
+            compactThinkingPhrase(input.activityState, input.turnCount, phraseNow ?? snapshotNow, input.startedAt),
+            activity,
+            ...facts,
+        ]
             .filter(Boolean)
             .join(" · ");
     }
@@ -492,7 +551,7 @@ function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded
     if (state === "running")
         return expanded
             ? "thinking…"
-            : (compactThinkingPhrase(input.activityState, input.turnCount) ?? "thinking…");
+            : (compactThinkingPhrase(input.activityState, input.turnCount, phraseNow ?? snapshotNow, input.startedAt) ?? "thinking…");
     if (state === "queued" || state === "pending")
         return "queued…";
     if (state === "paused")
@@ -501,7 +560,7 @@ function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded
         return "Failed";
     return "Done";
 }
-function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, lineBudget = expanded ? 12 : 1, privacySafe = false) {
+function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, lineBudget = expanded ? 12 : 1, privacySafe = false, phraseNow) {
     if (!children?.length || lineBudget <= 0)
         return [];
     if (!expanded) {
@@ -527,7 +586,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
                     lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
                 return;
             }
-            const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate, privacySafe, expanded);
+            const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate, privacySafe, expanded, phraseNow);
             const error = child.error
                 ? ` · ${privacySafe ? "lifecycle status requires attention" : safeTerminalText(child.error)}`
                 : "";
@@ -547,7 +606,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
                     return;
                 const status = step.status === "running" ? "" : ` · ${safeTerminalText(step.status)}`;
                 const stepAgent = safeTerminalText(step.agent);
-                lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${stepAgent}${status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded)}`));
+                lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${stepAgent}${status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded, phraseNow)}`));
                 append(step.children, depth + 1, `${prefix}    `);
             }
             append(child.children, depth + 1, `${prefix}  `);
@@ -564,7 +623,7 @@ function singleWidgetStepDisplayStatus(job, step) {
         return job.status;
     return projectedStep.status;
 }
-function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus) {
+function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus, phraseNow) {
     const displayStep = projectContinuedWidgetStep(job, step);
     const resolvedDisplayStatus = displayStatus ?? displayStep.status;
     const status = widgetStepStatus(resolvedDisplayStatus, theme, resolvedDisplayStatus === "running" ? displayStep.interruptRequestedAt : undefined);
@@ -583,7 +642,7 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
         `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, safeTerminalText(displayStep.agent))}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
     const activityLines = resolvedDisplayStatus === displayStep.status
-        ? widgetStepActivityLines(displayStep, width - visibleWidth(WIDGET_ACTIVITY_PREFIX), width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt)
+        ? widgetStepActivityLines(displayStep, width - visibleWidth(WIDGET_ACTIVITY_PREFIX), width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt, false, phraseNow)
         : [];
     const childLocLine = childLocationLine(step.childLocation, theme, "    ");
     if (childLocLine)
@@ -592,7 +651,7 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
         const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
         lines.push(theme.fg("dim", `${prefix}${activity}`));
     }
-    for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt))) {
+    for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow)) {
         lines.push(`    ${nestedLine}`);
     }
     if (resolvedDisplayStatus === "running") {
@@ -614,35 +673,35 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     }
     return lines;
 }
-function foregroundStyleWidgetDetails(job, theme, expanded, width) {
+function foregroundStyleWidgetDetails(job, theme, expanded, width, phraseNow) {
     if (!job.steps?.length)
         return [
             ...widgetTkTicketLines(job, theme),
-            ...widgetActivityDetailLines(job, theme, expanded),
-            ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt)).map((line) => `  ${line}`),
+            ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
+            ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow).map((line) => `  ${line}`),
         ];
     const total = job.stepsTotal ?? job.steps.length;
     const itemTitle = job.mode === "parallel" ? "Agent" : "Step";
     const lines = [...widgetTkTicketLines(job, theme)];
     for (const [index, step] of job.steps.entries()) {
-        lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width));
+        lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, undefined, phraseNow));
     }
     const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
     const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-    for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt))) {
+    for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow)) {
         lines.push(`  ${nestedLine}`);
     }
     return lines;
 }
-function singleWidgetAgentDetails(job, theme, expanded, width) {
+function singleWidgetAgentDetails(job, theme, expanded, width, phraseNow) {
     const step = job.steps?.[0];
     if (step) {
-        const stepLines = foregroundStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step));
+        const stepLines = foregroundStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step), phraseNow);
         const ticketLines = widgetTkTicketLines(job, theme, "    ");
         const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
         const attached = new Set(step.children?.map((child) => child.id) ?? []);
         const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-        for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt))) {
+        for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow)) {
             lines.push(`  ${nestedLine}`);
         }
         return lines;
@@ -654,8 +713,8 @@ function singleWidgetAgentDetails(job, theme, expanded, width) {
     return [
         `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)}${statusSuffix}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
         ...widgetTkTicketLines(job, theme),
-        ...widgetActivityDetailLines(job, theme, expanded),
-        ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt)).map((line) => `  ${line}`),
+        ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
+        ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow).map((line) => `  ${line}`),
     ];
 }
 function parallelWidgetAggregateStats(job, theme, expanded = false) {
@@ -721,9 +780,9 @@ function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
     }
     return [`    ${theme.fg("dim", `   ${warning}`)}`];
 }
-function buildSingleWidgetLines(job, theme, contentWidth, expanded) {
+function buildSingleWidgetLines(job, theme, contentWidth, expanded, phraseNow) {
     if (job.mode === "single") {
-        const details = singleWidgetAgentDetails(job, theme, expanded, contentWidth);
+        const details = singleWidgetAgentDetails(job, theme, expanded, contentWidth, phraseNow);
         const healthLines = singleModeHealthWarningLines(job, theme, contentWidth, expanded);
         return wrapDisplayLines([
             ...singleWidgetHeaderLines(job, theme, expanded),
@@ -732,16 +791,16 @@ function buildSingleWidgetLines(job, theme, contentWidth, expanded) {
             ...details.slice(1),
         ], contentWidth);
     }
-    const details = foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
+    const details = foregroundStyleWidgetDetails(job, theme, expanded, contentWidth, phraseNow);
     return wrapDisplayLines([
         ...singleWidgetHeaderLines(job, theme, expanded),
         ...jobHealthWarningLines(job, theme),
         ...details,
     ], contentWidth);
 }
-function compactSingleWidgetLines(job, theme, width) {
+function compactSingleWidgetLines(job, theme, width, phraseNow) {
     const contentWidth = Math.max(1, width - 2);
-    const fullLines = buildSingleWidgetLines(job, theme, contentWidth, false);
+    const fullLines = buildSingleWidgetLines(job, theme, contentWidth, false, phraseNow);
     if (fullLines.length <= 10 || !job.steps?.length || job.mode !== "parallel") {
         return fullLines;
     }
@@ -768,7 +827,7 @@ function compactSingleWidgetLines(job, theme, width) {
         const inlineCommand = Boolean(displayStep.currentTool) && inlineFirstWidth >= minimumCommandWidth;
         const activityLines = widgetStepActivityLines(displayStep, inlineCommand ? inlineFirstWidth : contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX), inlineCommand
             ? contentWidth - visibleWidth(activityContinuationPrefix)
-            : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), false, job.updatedAt, true);
+            : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), false, job.updatedAt, true, phraseNow);
         const activity = activityLines.join(" · ");
         const activitySuffix = activity ? `${activitySeparator}${theme.fg("dim", activity)}` : "";
         const healthWarning = displayStep.status === "running" &&
@@ -806,7 +865,7 @@ function compactSingleWidgetLines(job, theme, width) {
         const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
         if (compactChildLocLine)
             lines.push(compactChildLocLine);
-        for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
+        for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow))
             lines.push(`    ${nestedLine}`);
     }
     if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
@@ -989,10 +1048,10 @@ function progressiveHeaderLine(jobs, theme, width) {
         ], contentWidth),
     ];
 }
-function progressiveJobLine(job, theme, width) {
+function progressiveJobLine(job, theme, width, phraseNow) {
     const contentWidth = Math.max(1, width - 2);
     const stats = widgetSummaryStats(job, theme);
-    const activity = widgetActivity(job);
+    const activity = widgetActivity(job, false, phraseNow);
     const status = job.status === "running" ? "" : job.status === "complete" ? "done" : job.status;
     const ticket = widgetTkTicketText(job);
     const prefixParts = [
@@ -1002,7 +1061,7 @@ function progressiveJobLine(job, theme, width) {
         ticket ? theme.fg("dim", ticket) : "",
     ].filter(Boolean);
     const prefix = `  ${widgetStatusGlyph(job, theme)} ${prefixParts.join(` ${theme.fg("dim", "·")} `)}`;
-    const thinkingActivity = widgetInlineThinkingActivity(job);
+    const thinkingActivity = widgetInlineThinkingActivity(job, phraseNow);
     if (thinkingActivity)
         return fitInlineThinkingActivity(prefix, thinkingActivity.phrase, thinkingActivity.freshness, theme, contentWidth);
     const runningStep = widgetRunningStep(job);
@@ -1037,7 +1096,7 @@ function progressiveHiddenLine(hiddenJobs, theme, width) {
     const fallback = theme.fg("dim", "+");
     return [chooseWidgetSummaryVariant([full, countSummary, countOnly, fallback], contentWidth)];
 }
-function buildProgressiveWidgetLines(jobs, theme, width, lockedRows, previousKeys) {
+function buildProgressiveWidgetLines(jobs, theme, width, lockedRows, previousKeys, phraseNow) {
     const rowCount = Math.max(1, lockedRows);
     if (rowCount === 1)
         return { lines: buildSingleLineWidgetLines(jobs, theme, width), visibleJobKeys: [] };
@@ -1050,7 +1109,7 @@ function buildProgressiveWidgetLines(jobs, theme, width, lockedRows, previousKey
         const job = jobsByKey.get(key);
         if (!job)
             continue;
-        const jobLines = progressiveJobLine(job, theme, width);
+        const jobLines = progressiveJobLine(job, theme, width, phraseNow);
         const prospectiveKeys = [...visibleJobKeys, key];
         const prospectiveHiddenJobs = jobs.filter((candidate) => !prospectiveKeys.includes(progressiveJobKey(candidate)));
         const prospectiveHiddenLines = prospectiveHiddenJobs.length > 0
@@ -1095,7 +1154,7 @@ function fitWidgetLineBudget(lines, theme, width, expanded) {
         visibleCount = nextVisibleCount;
     }
 }
-function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
+function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow) {
     if (expanded) {
         resetWidgetLayoutSession();
         return fitWidgetLineBudget(lines, theme, width, true);
@@ -1112,7 +1171,7 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
         hasMatchingSession &&
         widgetLayoutSession?.tier === "progressive" &&
         widgetLayoutSession.lockedRows !== undefined) {
-        const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys);
+        const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys, phraseNow);
         widgetLayoutSession.visibleJobKeys = rendered.visibleJobKeys;
         return rendered.lines;
     }
@@ -1129,7 +1188,7 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
         return fitWidgetLineBudget(lines, theme, width, false);
     }
     const lockedRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));
-    const rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, []);
+    const rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, [], phraseNow);
     widgetLayoutSession = {
         expanded,
         rows,
@@ -1143,27 +1202,28 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
 function liveDetailExpanded(controller) {
     return controller?.isExpanded() ?? false;
 }
-export function buildWidgetComponent(jobs, controller) {
+export function buildWidgetComponent(jobs, controller, now) {
     return (_tui, theme) => {
+        const phraseNow = now ?? Date.now();
         const width = getTermWidth();
         const expanded = liveDetailExpanded(controller);
         const lines = expanded
-            ? buildWidgetLines(jobs, theme, width, true)
+            ? buildWidgetLines(jobs, theme, width, true, phraseNow)
             : jobs.length === 1
-                ? compactSingleWidgetLines(jobs[0], theme, width)
-                : buildWidgetLines(jobs, theme, width, false);
+                ? compactSingleWidgetLines(jobs[0], theme, width, phraseNow)
+                : buildWidgetLines(jobs, theme, width, false, phraseNow);
         const container = new Container();
-        for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded))
+        for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow))
             container.addChild(new Text(line, 1, 0));
         return container;
     };
 }
-export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded = false) {
+export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded = false, phraseNow) {
     if (jobs.length === 0)
         return [];
     const contentWidth = Math.max(1, width - 2);
     if (jobs.length === 1)
-        return buildSingleWidgetLines(jobs[0], theme, contentWidth, expanded);
+        return buildSingleWidgetLines(jobs[0], theme, contentWidth, expanded, phraseNow);
     const running = jobs.filter((job) => job.status === "running");
     const queued = jobs.filter((job) => job.status === "queued");
     const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -1187,8 +1247,8 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
             `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
             ...widgetTkTicketLines(job, theme),
             ...(jobLocLine ? [jobLocLine] : []),
-            ...widgetActivityDetailLines(job, theme, expanded),
-            ...widgetParallelAgentDetails(job, theme, expanded, width),
+            ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
+            ...widgetParallelAgentDetails(job, theme, expanded, width, phraseNow),
         ]);
         slots--;
     }
@@ -1208,8 +1268,8 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
             `${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
             ...widgetTkTicketLines(job, theme),
             ...(jobLocLine ? [jobLocLine] : []),
-            ...widgetActivityDetailLines(job, theme, expanded),
-            ...widgetParallelAgentDetails(job, theme, expanded, width),
+            ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
+            ...widgetParallelAgentDetails(job, theme, expanded, width, phraseNow),
         ]);
         slots--;
     }
@@ -1237,7 +1297,7 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
     }
     return lines;
 }
-export function renderWidget(ctx, jobs, controller) {
+export function renderWidget(ctx, jobs, controller, now) {
     if (jobs.length === 0) {
         resetWidgetLayoutSession();
         if (ctx.hasUI)
@@ -1246,5 +1306,5 @@ export function renderWidget(ctx, jobs, controller) {
     }
     if (!ctx.hasUI)
         return;
-    ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, controller));
+    ctx.ui.setWidget(WIDGET_KEY, buildWidgetComponent(jobs, controller, now));
 }
