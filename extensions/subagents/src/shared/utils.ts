@@ -104,6 +104,14 @@ function isKnownUnsafeOpenError(error: unknown): boolean {
   return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
 }
 
+function isNonRegularStatusPath(statusPath: string): boolean {
+  try {
+    return !fs.lstatSync(statusPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 class StatusFileTooLargeError extends Error {}
 
 /**
@@ -193,7 +201,7 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
     fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
   } catch (error) {
     if (isNotFoundError(error)) return null;
-    if (isKnownUnsafeOpenError(error)) {
+    if (isKnownUnsafeOpenError(error) || isNonRegularStatusPath(statusPath)) {
       throw unsafeStatusError(
         asyncDir,
         statusPath,

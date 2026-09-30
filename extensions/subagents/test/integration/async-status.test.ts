@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createServer } from "node:net";
 import fsDefault from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as fs from "node:fs";
@@ -651,6 +652,59 @@ describe("async status helpers", () => {
       assert.equal(after.ino, before.ino);
       assert.equal(fs.existsSync(unsafeDir), true);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips a Unix socket status artifact without touching it or aborting siblings", async () => {
+    if (process.platform === "win32") return;
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-socket-restore-"));
+    const socketDir = path.join(root, "run-socket");
+    const socketPath = path.join(socketDir, "status.json");
+    const server = createServer();
+    let listening = false;
+    try {
+      createAsyncDir(root, "run-healthy", {
+        runId: "run-healthy",
+        mode: "single",
+        state: "running",
+        sessionId: "session-owner",
+        startedAt: 100,
+        steps: [{ agent: "worker", status: "running" }],
+      });
+      fs.mkdirSync(socketDir, { recursive: true });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, () => {
+          listening = true;
+          resolve();
+        });
+      });
+      const before = fs.lstatSync(socketPath);
+
+      const result = scanAsyncRunsForRestore(root, {
+        states: ["queued", "running"],
+        sessionId: "session-owner",
+      });
+
+      assert.deepEqual(
+        result.runs.map((run) => run.id),
+        ["run-healthy"],
+      );
+      assert.deepEqual(result.issues, []);
+      assert.deepEqual(result.unsafeIssues, [{ entry: "run-socket", reason: "non_regular" }]);
+      assert.equal(server.listening, true);
+      const after = fs.lstatSync(socketPath);
+      assert.equal(after.isSocket(), true);
+      assert.equal(after.mode, before.mode);
+      assert.equal(after.ino, before.ino);
+    } finally {
+      if (listening) {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

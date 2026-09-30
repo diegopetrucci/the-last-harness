@@ -45,6 +45,14 @@ function isKnownUnsafeOpenError(error) {
     const code = error.code;
     return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
 }
+function isNonRegularStatusPath(statusPath) {
+    try {
+        return !fs.lstatSync(statusPath).isFile();
+    }
+    catch {
+        return false;
+    }
+}
 class StatusFileTooLargeError extends Error {
 }
 export function normalizeComparableCwd(cwd) {
@@ -110,7 +118,7 @@ export function readStatus(asyncDir) {
     catch (error) {
         if (isNotFoundError(error))
             return null;
-        if (isKnownUnsafeOpenError(error)) {
+        if (isKnownUnsafeOpenError(error) || isNonRegularStatusPath(statusPath)) {
             throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file", error);
         }
         throw statusReadError(statusPath, error);
