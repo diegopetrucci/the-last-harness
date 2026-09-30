@@ -4,6 +4,23 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-type` is recorded in [Unsafe dictionary investigation (2026-08-18)](no-unsafe-dictionary-investigation-2026-08-18.md). It is evidence for a future decision only; do not enable the rule or apply cosmetic remediations from that note without a separately approved implementation slice.
 
+## TelemetryDeck MCP (contributors only)
+
+The project-local [`.mcp.json`](../.mcp.json) provides a lazy, OAuth-backed `telemetrydeck` MCP server for approved contributor investigations. It is not part of TLH runtime telemetry behavior. Authenticate only when needed with:
+
+```text
+/mcp-auth telemetrydeck
+```
+
+Treat TelemetryDeck data as sensitive and follow these mandatory constraints:
+
+- Queries must be aggregate-only and must enforce at least 10 distinct `clientUser` values before a result is inspected or reported (for example, `COUNT(DISTINCT clientUser) >= 10`).
+- Never call `Tlh.User.mark`.
+- Never query, display, or retain individual identifiers, including individual `clientUser` values.
+- Never perform cross-system linking: do not link TelemetryDeck data with another system, dataset, repository, session, or identifier.
+
+Do not export or copy raw event data into issues, commits, tests, logs, or other project artifacts. Keep any approved findings at the aggregate level and use the MCP only for contributor work.
+
 ## Direct dependency pin decisions
 
 Direct dependency, devDependency, and peerDependency specs remain exact. This Pi refresh updates the direct Pi pin to `0.87.1`; the existing exact pins for Oxlint `1.82.0`, `@oxlint/plugins` `1.82.0`, Oxfmt `0.67.0`, and `@types/node` `26.5.0` remain unchanged. The other existing exact pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) also remain unchanged; this Pi review does not broaden dependency updates. Pi `0.87.1` retains the runtime dependency layout introduced in 0.85.1, including the ordinary `pi-ai`, `pi-tui`, and `pi-agent-core` dependencies and `@earendil-works/chord`; `pi-client`, `pi-protocol`, and `pi-server` remain absent from the installed dependency tree, while `pi-telemetry` appears transitively.

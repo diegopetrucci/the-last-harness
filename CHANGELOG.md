@@ -6,11 +6,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
 - Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
 
 ### Changed
 
+- Updated the bundled OpenAI Codex defaults: Architect, Product, and Bug Hunter now use GPT-5.6 Sol at medium effort; Rush now uses GPT-5.6 Sol at low effort; and Contrarian now uses GPT-6 Astra at medium effort. Oracle remains on GPT-6 Astra at medium effort, while all other packaged OpenAI Codex, Anthropic, xAI, and OpenRouter defaults remain unchanged.
 - Bumped the bundled `mcporter` extension (`@diegopetrucci/pi-mcp-adapter`) from `2.11.0` to `2.36.0`. It adds MCP Tasks with progress and cancellation, enabling and disabling servers from the `/mcp` panel, more reliable OAuth and bearer-token reconnection with secure credential storage, and a faster, ~150MB smaller default-extension install because it no longer bundles its own copies of Pi's libraries.
 - Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
 - Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.
