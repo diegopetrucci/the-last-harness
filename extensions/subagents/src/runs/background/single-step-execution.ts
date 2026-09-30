@@ -132,6 +132,7 @@ interface SingleStepContext {
   interruptMessage?: string;
   timeoutSignal?: AbortSignal;
   timeoutMessage?: string;
+  onTimeout?: (message?: string) => void;
   timeoutMs?: number;
   deadlineAt?: number;
   startedAt?: number;
@@ -281,9 +282,24 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
     (step.timeoutOwner !== "run" &&
       stepDeadlineAt !== undefined &&
       (ctx.deadlineAt === undefined || stepDeadlineAt <= ctx.deadlineAt));
+  const stepTimeoutMessage = stepOwnsDeadline
+    ? `Subagent timed out after ${step.timeoutMs}ms.`
+    : ctx.timeoutMessage;
   const stepTimeoutTimer =
     childDeadlineAt !== undefined
       ? scheduleDeadline(childDeadlineAt, () => {
+          // Record the timeout before signaling or reaping the child so later
+          // terminal signals cannot replace its canonical classification. Status
+          // persistence is best effort: a synchronous write failure must not
+          // prevent the deadline abort or child cleanup below.
+          try {
+            ctx.onTimeout?.(stepTimeoutMessage);
+          } catch (error) {
+            console.error(
+              `Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`,
+              error,
+            );
+          }
           // A step-owned deadline ends the active segment before signaling or
           // reaping the child. This prevents the timeout/cleanup grace window
           // from being carried into a later continuation budget. The parent
@@ -297,9 +313,7 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   const stepContext: SingleStepContext = {
     ...ctx,
     timeoutSignal: stepTimeoutController.signal,
-    timeoutMessage: stepOwnsDeadline
-      ? `Subagent timed out after ${step.timeoutMs}ms.`
-      : ctx.timeoutMessage,
+    timeoutMessage: stepTimeoutMessage,
     registerTimeout: (interrupt) => {
       activeTimeoutInterrupt = interrupt;
       parentRegisterTimeout?.(interrupt);

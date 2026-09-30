@@ -31,7 +31,7 @@ import {
   SUBAGENT_ASYNC_STARTED_EVENT,
   getAsyncConfigPath,
 } from "../../src/shared/types.ts";
-import type { AsyncStatus } from "../../src/shared/types.ts";
+import type { AsyncStatus, Details, SubagentToolResult } from "../../src/shared/types.ts";
 import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
@@ -1403,6 +1403,45 @@ describe(
       // proving the abort signal terminated the process early.
       assert.ok(elapsed < 5000, `should abort early, took ${elapsed}ms`);
       // Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
+    });
+
+    it("finalizes a pre-spawn timeout once and removes prepared prompt files", async () => {
+      const isolatedTmpDir = path.join(tempDir, "pre-spawn-timeout-tmp");
+      fs.mkdirSync(isolatedTmpDir);
+      const previousTmpDir = process.env.TMPDIR;
+      process.env.TMPDIR = isolatedTmpDir;
+      const updates: SubagentToolResult<Details>[] = [];
+
+      try {
+        const result = await runSync(
+          tempDir,
+          [makeAgent("echo", { systemPrompt: "temporary system prompt" })],
+          "echo",
+          "Task",
+          {
+            runId: "timeout-before-spawn",
+            timeoutMs: 0,
+            onUpdate: (update: SubagentToolResult<Details>) => updates.push(update),
+          },
+        );
+
+        assert.equal(result.timedOut, true);
+        assert.equal(result.error, "Subagent timed out after 0ms.");
+        assert.equal(result.progress.status, "failed");
+        assert.equal(mockPi.callCount(), 0, "an expired deadline must not spawn a child");
+        assert.equal(updates.length, 1, "the terminal timeout update should be emitted once");
+        assert.equal(updates[0]?.details?.results?.[0]?.timedOut, true);
+        assert.equal(updates[0]?.details?.progress?.[0]?.status, "failed");
+        const updateText = updates[0]?.content[0];
+        assert.match(
+          updateText?.type === "text" ? updateText.text : "",
+          /Subagent timed out after 0ms\./,
+        );
+        assert.deepEqual(fs.readdirSync(isolatedTmpDir), []);
+      } finally {
+        if (previousTmpDir === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = previousTmpDir;
+      }
     });
 
     it("marks foreground runs that exceed timeoutMs as timed out", async () => {

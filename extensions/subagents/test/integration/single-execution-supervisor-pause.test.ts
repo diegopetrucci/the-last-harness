@@ -556,9 +556,12 @@ describe(
         );
         assert.match(signalLog, /SIGINT/);
         assert.match(signalLog, /SIGTERM/);
-        const descendants = JSON.parse(
-          fs.readFileSync(path.join(mockPi.dir, `descendants-${parentPid}.json`), "utf-8"),
-        ) as { childPid: number; grandchildPid: number };
+        const descendantsPath = path.join(mockPi.dir, `descendants-${parentPid}.json`);
+        await waitForMarker(descendantsPath);
+        const descendants = JSON.parse(fs.readFileSync(descendantsPath, "utf-8")) as {
+          childPid: number;
+          grandchildPid: number;
+        };
         for (const pid of [parentPid, descendants.childPid, descendants.grandchildPid]) {
           assert.throws(() => process.kill(pid, 0), /ESRCH/);
         }
