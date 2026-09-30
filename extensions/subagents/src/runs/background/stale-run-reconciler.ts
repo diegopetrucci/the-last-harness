@@ -18,7 +18,6 @@ import {
   type SubagentTerminationReason,
   normalizeSubagentRunMode,
 } from "../../shared/types.ts";
-import { createAsyncStatusJsonParseError } from "./async-status-corruption.ts";
 import {
   nestedSummaryFromAsyncStatus,
   projectNestedEvents,
@@ -30,7 +29,6 @@ import {
   checkPidLiveness,
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
-  normalizeAsyncLifecycleStatus,
   recoverStoppedLifecycleOwnership,
 } from "../shared/lifecycle-state.ts";
 import {
@@ -54,6 +52,7 @@ import {
   type SubagentRunTelemetry,
   type SubagentTelemetryOutcome,
 } from "../../shared/telemetry.ts";
+import { readStatus } from "../../shared/utils.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
@@ -143,26 +142,7 @@ function appendJsonlBestEffort(filePath: string, payload: StaleRunRepairEvent): 
 }
 
 function readStatusFile(asyncDir: string): AsyncStatus | null {
-  const statusPath = path.join(asyncDir, "status.json");
-  let content: string;
-  try {
-    content = fs.readFileSync(statusPath, "utf-8");
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-      cause: error,
-    });
-  }
-  try {
-    return normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
-  } catch (error) {
-    throw createAsyncStatusJsonParseError({
-      asyncDir,
-      statusPath,
-      content,
-      cause: error,
-    });
-  }
+  return readStatus(asyncDir);
 }
 
 interface ResultChildOutcome {

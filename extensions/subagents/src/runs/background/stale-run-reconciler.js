@@ -2,9 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
-import { createAsyncStatusJsonParseError } from "./async-status-corruption.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
-import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
+import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
@@ -12,6 +11,7 @@ import { parseThinkingLevel } from "../../shared/model-info.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
+import { readStatus } from "../../shared/utils.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -58,29 +58,7 @@ function appendJsonlBestEffort(filePath, payload) {
     }
 }
 function readStatusFile(asyncDir) {
-    const statusPath = path.join(asyncDir, "status.json");
-    let content;
-    try {
-        content = fs.readFileSync(statusPath, "utf-8");
-    }
-    catch (error) {
-        if (isNotFoundError(error))
-            return null;
-        throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
-    }
-    try {
-        return normalizeAsyncLifecycleStatus(JSON.parse(content));
-    }
-    catch (error) {
-        throw createAsyncStatusJsonParseError({
-            asyncDir,
-            statusPath,
-            content,
-            cause: error,
-        });
-    }
+    return readStatus(asyncDir);
 }
 const DURABLE_ATTENTION_REASONS = new Set([
     "context_pressure",

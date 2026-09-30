@@ -9,7 +9,7 @@ import { readStatus } from "../../shared/utils.js";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
-import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
+import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, isAsyncStatusUnsafeError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
@@ -409,11 +409,16 @@ export function scanAsyncRunsForRestore(asyncDirRoot, options = {}) {
     const entries = listAsyncRunEntries(asyncDirRoot);
     const collector = buildRunCollector(asyncDirRoot, options, "restore_scan");
     const issues = [];
+    const unsafeIssues = [];
     for (const entry of entries) {
         try {
             collector.collectEntry(entry);
         }
         catch (error) {
+            if (isAsyncStatusUnsafeError(error)) {
+                unsafeIssues.push(Object.freeze({ entry, reason: error.reason }));
+                continue;
+            }
             if (!isAsyncStatusCorruptionError(error))
                 throw error;
             issues.push(Object.freeze({
@@ -426,7 +431,11 @@ export function scanAsyncRunsForRestore(asyncDirRoot, options = {}) {
             }));
         }
     }
-    return { runs: finalizeRunList(collector.runs, options.limit), issues };
+    return {
+        runs: finalizeRunList(collector.runs, options.limit),
+        issues,
+        unsafeIssues,
+    };
 }
 function formatActivityFacts(input) {
     if (input.interruptRequestedAt !== undefined)

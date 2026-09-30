@@ -24,7 +24,10 @@ import type {
   ToolCallSummary,
   Usage,
 } from "./types.ts";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.ts";
+import {
+  createAsyncStatusJsonParseError,
+  createAsyncStatusUnsafeError,
+} from "../runs/background/async-status-corruption.ts";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.ts";
 
 // ============================================================================
@@ -79,6 +82,30 @@ function statusReadError(statusPath: string, error: unknown): Error {
   });
 }
 
+function unsafeStatusError(
+  asyncDir: string,
+  statusPath: string,
+  reason: "non_regular" | "oversized",
+  detail: string,
+  cause?: unknown,
+): Error {
+  return createAsyncStatusUnsafeError({
+    asyncDir,
+    statusPath,
+    reason,
+    message: `Failed to read async status file '${statusPath}': ${detail}`,
+    ...(cause !== undefined ? { cause } : {}),
+  });
+}
+
+function isKnownUnsafeOpenError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
+}
+
+class StatusFileTooLargeError extends Error {}
+
 /**
  * Normalize a cwd for stable comparison across call sites.
  * On Windows paths are lowercased so drive-letter case differences are ignored.
@@ -122,7 +149,7 @@ function readBoundedStatusContent(fd: number): string {
   }
 
   if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
-    throw new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+    throw new StatusFileTooLargeError(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
   }
   return Buffer.concat(chunks, bytesRead).toString("utf-8");
 }
@@ -152,7 +179,12 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
       );
     }
     if (!pathStat.isFile()) {
-      throw statusReadError(statusPath, new Error("status path is not a regular file"));
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+      );
     }
   }
 
@@ -161,6 +193,15 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
     fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
   } catch (error) {
     if (isNotFoundError(error)) return null;
+    if (isKnownUnsafeOpenError(error)) {
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+        error,
+      );
+    }
     throw statusReadError(statusPath, error);
   }
 
@@ -172,12 +213,19 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
       throw statusReadError(statusPath, error);
     }
     if (!stat.isFile()) {
-      throw statusReadError(statusPath, new Error("status path is not a regular file"));
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+      );
     }
     if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
-      throw statusReadError(
+      throw unsafeStatusError(
+        asyncDir,
         statusPath,
-        new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`),
+        "oversized",
+        `status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`,
       );
     }
 
@@ -197,6 +245,9 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
       content = readBoundedStatusContent(fd);
     } catch (error) {
       if (isNotFoundError(error)) return null;
+      if (error instanceof StatusFileTooLargeError) {
+        throw unsafeStatusError(asyncDir, statusPath, "oversized", error.message, error);
+      }
       throw statusReadError(statusPath, error);
     }
 

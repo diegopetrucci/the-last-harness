@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { formatToolCall } from "./formatters.js";
 import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, } from "./config-dir.js";
 import { getPiAgentDir } from "./profile.js";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
+import { createAsyncStatusJsonParseError, createAsyncStatusUnsafeError, } from "../runs/background/async-status-corruption.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
 export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, };
 export function getAgentDir() {
@@ -29,6 +29,23 @@ function statusReadError(statusPath, error) {
     return new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
         cause: error,
     });
+}
+function unsafeStatusError(asyncDir, statusPath, reason, detail, cause) {
+    return createAsyncStatusUnsafeError({
+        asyncDir,
+        statusPath,
+        reason,
+        message: `Failed to read async status file '${statusPath}': ${detail}`,
+        ...(cause !== undefined ? { cause } : {}),
+    });
+}
+function isKnownUnsafeOpenError(error) {
+    if (typeof error !== "object" || error === null || !("code" in error))
+        return false;
+    const code = error.code;
+    return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
+}
+class StatusFileTooLargeError extends Error {
 }
 export function normalizeComparableCwd(cwd) {
     const resolved = path.resolve(cwd);
@@ -64,7 +81,7 @@ function readBoundedStatusContent(fd) {
         bytesRead += chunkSize;
     }
     if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
-        throw new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+        throw new StatusFileTooLargeError(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
     }
     return Buffer.concat(chunks, bytesRead).toString("utf-8");
 }
@@ -83,7 +100,7 @@ export function readStatus(asyncDir) {
             });
         }
         if (!pathStat.isFile()) {
-            throw statusReadError(statusPath, new Error("status path is not a regular file"));
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file");
         }
     }
     let fd;
@@ -93,6 +110,9 @@ export function readStatus(asyncDir) {
     catch (error) {
         if (isNotFoundError(error))
             return null;
+        if (isKnownUnsafeOpenError(error)) {
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file", error);
+        }
         throw statusReadError(statusPath, error);
     }
     try {
@@ -104,10 +124,10 @@ export function readStatus(asyncDir) {
             throw statusReadError(statusPath, error);
         }
         if (!stat.isFile()) {
-            throw statusReadError(statusPath, new Error("status path is not a regular file"));
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file");
         }
         if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
-            throw statusReadError(statusPath, new Error(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`));
+            throw unsafeStatusError(asyncDir, statusPath, "oversized", `status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
         }
         const cached = statusCache.get(statusPath);
         if (cached &&
@@ -124,6 +144,9 @@ export function readStatus(asyncDir) {
         catch (error) {
             if (isNotFoundError(error))
                 return null;
+            if (error instanceof StatusFileTooLargeError) {
+                throw unsafeStatusError(asyncDir, statusPath, "oversized", error.message, error);
+            }
             throw statusReadError(statusPath, error);
         }
         let status;
