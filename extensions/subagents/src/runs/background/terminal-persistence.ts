@@ -274,11 +274,16 @@ function applyTerminalStatus(input: TerminalPersistenceInput): SubagentRunTeleme
   statusPayload.gistUrl = input.gistUrl;
   statusPayload.shareError = input.shareError;
   if (statusPayload.state === "failed" && !statusPayload.error) {
-    const failedStep = statusPayload.steps.find((step) => step.status === "failed");
+    const failedStep = timedOut
+      ? statusPayload.steps.find((step) => step.status === "failed" && step.timedOut === true)
+      : statusPayload.steps.find((step) => step.status === "failed");
     if (failedStep?.agent)
-      statusPayload.error = failedStep.error ?? `Step failed: ${failedStep.agent}`;
-    else if (timeoutWonRun(input))
-      statusPayload.error = input.timeoutMessage ?? "Subagent timed out.";
+      statusPayload.error =
+        failedStep.error ??
+        (timedOut
+          ? (input.timeoutMessage ?? "Subagent timed out.")
+          : `Step failed: ${failedStep.agent}`);
+    else if (timedOut) statusPayload.error = input.timeoutMessage ?? "Subagent timed out.";
   }
   const telemetry = buildRunnerTelemetry(
     input,

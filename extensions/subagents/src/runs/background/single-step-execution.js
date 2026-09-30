@@ -77,7 +77,12 @@ function prepareSingleStepSetup(step, ctx) {
         : ctx.timeoutMessage;
     const stepTimeoutTimer = childDeadlineAt !== undefined
         ? scheduleDeadline(childDeadlineAt, () => {
-            ctx.onTimeout?.(stepTimeoutMessage);
+            try {
+                ctx.onTimeout?.(stepTimeoutMessage);
+            }
+            catch (error) {
+                console.error(`Failed to record timeout status for run '${ctx.id}' step ${ctx.flatIndex}; continuing timeout cleanup:`, error);
+            }
             runtimeTracker.freeze(Date.now());
             stepTimeoutController.abort();
             activeTimeoutInterrupt?.();

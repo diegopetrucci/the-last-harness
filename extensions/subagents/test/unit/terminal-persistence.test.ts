@@ -375,6 +375,155 @@ describe("terminal persistence", () => {
     assert.deepEqual(artifact.telemetry, canonicalTelemetry);
   });
 
+  it("prefers a later timed-out step over an earlier failed sibling", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-terminal-persistence-timeout-"));
+    tempDirs.push(root);
+    const id = "parallel-timeout-error";
+    const asyncDir = path.join(root, "async");
+    const resultPath = path.join(root, "result.json");
+    const ordinaryError = "ordinary sibling failed";
+    const timeoutError = "Subagent timed out after 50ms.";
+    const plan = {
+      kind: "parallel" as const,
+      tasks: [
+        {
+          agent: "failed-first",
+          task: "fail",
+          inheritProjectContext: false,
+          inheritSkills: false,
+        },
+        {
+          agent: "timed-out-later",
+          task: "time out",
+          inheritProjectContext: false,
+          inheritSkills: false,
+        },
+      ],
+    };
+    const launchTelemetry = buildSubagentRunTelemetry({
+      runId: id,
+      execution: "async",
+      mode: "parallel",
+      provenance,
+      controls,
+      startedAt: 100,
+      outcome: { state: "running" },
+      steps: [
+        { index: 0, agent: "failed-first", outcome: { state: "running" } },
+        { index: 1, agent: "timed-out-later", outcome: { state: "running" } },
+      ],
+    });
+    const owner = createBackgroundRunStatusOwner({
+      id,
+      asyncDir,
+      cwd: root,
+      plan,
+      overallStartTime: 100,
+      shareEnabled: false,
+      artifactConfig: terminalArtifactConfig,
+      telemetry: launchTelemetry,
+      timeoutMessage: timeoutError,
+      appendEvent: () => undefined,
+    });
+    owner.statusPayload.steps[0] = {
+      ...owner.statusPayload.steps[0]!,
+      status: "failed",
+      error: ordinaryError,
+      exitCode: 1,
+    };
+    owner.statusPayload.steps[1] = {
+      ...owner.statusPayload.steps[1]!,
+      status: "failed",
+      error: timeoutError,
+      exitCode: 1,
+      timedOut: true,
+      terminationReason: "timed_out",
+    };
+    const results: RunnerStepResult[] = [
+      {
+        agent: "failed-first",
+        output: "",
+        error: ordinaryError,
+        success: false,
+        exitCode: 1,
+      },
+      {
+        agent: "timed-out-later",
+        output: "",
+        error: timeoutError,
+        success: false,
+        exitCode: 1,
+        timedOut: true,
+        terminationReason: "timed_out",
+      },
+    ];
+
+    persistRunnerTerminalRun({
+      config: {
+        id,
+        telemetry: launchTelemetry,
+        plan,
+        resultPath,
+        cwd: root,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan,
+      statusOwner: owner,
+      statusPayload: owner.statusPayload,
+      results,
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 150,
+      summary: "ordinary sibling summary",
+      truncated: false,
+      agentName: "parallel",
+      timeoutMessage: timeoutError,
+      resultPath,
+      cwd: root,
+      asyncDir,
+      skipFinalStatusWrite: false,
+      pausedOutputForIndex: () => "paused source output",
+      appendEvent: () => undefined,
+      writeRunLog: () => undefined,
+    });
+
+    const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as {
+      state: string;
+      error?: string;
+      timedOut?: boolean;
+      steps: Array<{ error?: string }>;
+    };
+    assert.equal(status.state, "failed");
+    assert.equal(status.timedOut, true);
+    assert.equal(status.error, timeoutError);
+    assert.deepEqual(
+      status.steps.map((step) => step.error),
+      [ordinaryError, timeoutError],
+    );
+
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
+      state: string;
+      summary: string;
+      error?: string;
+      timedOut?: boolean;
+      telemetry?: { outcome?: { state?: string; terminationReason?: string } };
+      results: Array<{ error?: string }>;
+    };
+    assert.equal(artifact.state, "failed");
+    assert.equal(artifact.timedOut, true);
+    assert.equal(artifact.summary, timeoutError);
+    assert.equal(artifact.error, timeoutError);
+    assert.deepEqual(
+      artifact.results.map((result) => result.error),
+      [ordinaryError, timeoutError],
+    );
+    assert.deepEqual(artifact.telemetry?.outcome, {
+      state: "failed",
+      terminationReason: "timed_out",
+    });
+  });
+
   it("emits one paused nested completion and keeps the parent projection stable on repeats", () => {
     const fixture = createNestedTerminalFixture();
     const pause = markNestedTerminalFixturePaused(fixture);
