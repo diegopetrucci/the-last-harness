@@ -659,7 +659,7 @@ describe("async status helpers", () => {
   it("skips a Unix socket status artifact without touching it or aborting siblings", async () => {
     if (process.platform === "win32") return;
 
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-socket-restore-"));
+    const root = fs.mkdtempSync(path.join("/tmp", "pi-async-socket-restore-"));
     const socketDir = path.join(root, "run-socket");
     const socketPath = path.join(socketDir, "status.json");
     const server = createServer();
