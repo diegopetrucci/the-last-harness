@@ -599,13 +599,19 @@ function validateInstalledDependencies(args, packageJson, packageLock, problems)
 }
 
 function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
-  const directSpec = packageJson.dependencies?.typebox;
-  const directLabel = `${args.packagePath}#dependencies.typebox`;
+  const depsSpec = packageJson.dependencies?.typebox;
+  if (depsSpec !== undefined) {
+    problems.push(
+      `${args.packagePath}#dependencies.typebox must not exist — typebox is host-provided by Pi; declare it as a devDependency (exact pin) and peerDependency ('*') instead`,
+    );
+  }
+  const devSpec = packageJson.devDependencies?.typebox;
+  const devLabel = `${args.packagePath}#devDependencies.typebox`;
   const piSpec = packageLock.packages?.[PI_CODING_AGENT_LOCK_PATH]?.dependencies?.typebox;
   const piLabel = `${args.lockfilePath}#packages[${JSON.stringify(PI_CODING_AGENT_LOCK_PATH)}].dependencies.typebox`;
 
-  if (typeof directSpec !== "string" || directSpec.trim().length === 0) {
-    problems.push(`Missing string dependency spec at ${directLabel}`);
+  if (typeof devSpec !== "string" || devSpec.trim().length === 0) {
+    problems.push(`Missing string dependency spec at ${devLabel}`);
   }
   if (typeof piSpec !== "string" || piSpec.trim().length === 0) {
     problems.push(`Missing pinned Pi typebox dependency spec at ${piLabel}`);
@@ -616,12 +622,22 @@ function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
     return;
   }
   if (
-    typeof directSpec === "string" &&
-    isPinnedExactVersion(directSpec) &&
-    directSpec.trim() !== piSpec.trim()
+    typeof devSpec === "string" &&
+    isPinnedExactVersion(devSpec) &&
+    devSpec.trim() !== piSpec.trim()
   ) {
     problems.push(
-      `TLH's direct typebox dependency must match Pi's pinned typebox version:\n  - ${directLabel}: ${JSON.stringify(directSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`,
+      `TLH's devDependencies typebox pin must match Pi's pinned typebox version:\n  - ${devLabel}: ${JSON.stringify(devSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`,
+    );
+  }
+
+  const peerSpec = packageJson.peerDependencies?.typebox;
+  const peerLabel = `${args.packagePath}#peerDependencies.typebox`;
+  if (peerSpec !== "*") {
+    problems.push(
+      `${peerLabel} must be '*' (host-provided by Pi) — found ${
+        peerSpec === undefined ? "missing" : JSON.stringify(peerSpec)
+      }`,
     );
   }
 }

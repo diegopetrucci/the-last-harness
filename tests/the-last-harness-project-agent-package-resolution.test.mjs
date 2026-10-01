@@ -51,9 +51,14 @@ test("staged package resolves trusted project agents without peer/dev node_modul
   const packageRoot = realpathSync(join(extractDir, "package"));
   const stagedPackage = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   const declaredRuntimeDependencies = Object.keys(stagedPackage.dependencies ?? {});
-  assert.ok(
+  assert.equal(
     declaredRuntimeDependencies.includes("typebox"),
-    "runtime dependencies must remain staged",
+    false,
+    "typebox must not be a staged runtime dependency (host-provided by Pi as a peer)",
+  );
+  assert.ok(
+    Object.keys(stagedPackage.peerDependencies ?? {}).includes("typebox"),
+    "typebox must be declared as a peer dependency",
   );
   for (const dependencyName of declaredRuntimeDependencies) {
     const dependencySource = join(repoRoot, "node_modules", ...dependencyName.split("/"));

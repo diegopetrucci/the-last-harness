@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.87.1 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.99.2 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -92,7 +92,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.87.1 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.99.2 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -144,9 +144,27 @@ To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
 
+## Default theme
+
+TLH ships `theme: "system"` as a packaged default. The `system` theme is Pi's built-in terminal-adaptive palette: Pi queries the terminal's foreground, background, and ANSI colors at launch and builds a matching color scheme, so TLH matches your terminal rather than bringing its own fixed palette. When the terminal switches between light and dark, Pi rebuilds the theme automatically.
+
+The installer fills a missing `theme` key with `"system"` using the same append-if-missing merge used for all packaged defaults. An **existing explicit value is never replaced** by a normal install or `tlh update`—this applies equally to `"the-last-harness"` (the previous default) and any other custom theme you have set. Retaining your existing choice means you see no change unless you deliberately update it.
+
+To switch to the `system` theme yourself, open `/settings`, select **Theme**, and choose **system**. Or edit `~/.the-last-harness/agent/settings.json` directly:
+
+```json
+{
+  "theme": "system"
+}
+```
+
+To revert to the TLH-bundled custom palette instead, set `theme` to `"the-last-harness"` (the theme JSON ships with the package and remains selectable).
+
+Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys. Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
+
 ## Pi-native prompt-cache warming
 
-The pinned Pi `0.87.1` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
+The pinned Pi `0.99.2` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
 
 TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply this value using the same append-if-missing merge used for all packaged settings defaults: when `cacheWarming` is absent from the isolated `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active), set `cacheWarming` to `streaming` in `/settings` or in `~/.the-last-harness/agent/settings.json`. To disable warming entirely, set it to `off`.
 
