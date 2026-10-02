@@ -168,7 +168,7 @@ function readBoundedStatusContent(fd: number): string {
  * path replacement cannot redirect the content read to another artifact.
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
-  const statusPath = path.join(asyncDir, "status.json");
+  const statusPath = path.resolve(asyncDir, "status.json");
 
   // On platforms without one of these flags, lstat avoids opening an already
   // known non-regular path. POSIX platforms use both flags below, so the open

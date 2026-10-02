@@ -5,10 +5,12 @@ import { syncBuiltinESMExports } from "node:module";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
 import { MAX_ASYNC_STATUS_BYTES, readStatus } from "../../src/shared/utils.ts";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 
-function status(runId: string): Record<string, unknown> {
+function status(runId: string): AsyncStatus {
   return {
     runId,
     mode: "single",
@@ -43,6 +45,32 @@ describe("readStatus", () => {
       fs.writeFileSync(statusPath, "{not-json", "utf-8");
       assert.throws(() => readStatus(asyncDir), /Failed to parse async status file/);
     } finally {
+      removeTempDir(root);
+    }
+  });
+
+  it("invalidates cached status after a relative-directory lifecycle write", () => {
+    const root = createTempDir("tlh-read-status-relative-");
+    const asyncDir = path.join(root, "run");
+    const relativeAsyncDir = path.relative(process.cwd(), asyncDir);
+    const originalFstatSync = fsDefault.fstatSync;
+    let cachedStat: fs.Stats | undefined;
+    fs.mkdirSync(asyncDir);
+    try {
+      writeNormalizedLifecycleStatus(relativeAsyncDir, status("initial"));
+      fsDefault.fstatSync = ((fd: number) => {
+        const stat = cachedStat ?? originalFstatSync(fd);
+        cachedStat = stat;
+        return stat;
+      }) as typeof fsDefault.fstatSync;
+      syncBuiltinESMExports();
+
+      assert.equal(readStatus(relativeAsyncDir)?.runId, "initial");
+      writeNormalizedLifecycleStatus(relativeAsyncDir, status("fresh"));
+      assert.equal(readStatus(relativeAsyncDir)?.runId, "fresh");
+    } finally {
+      fsDefault.fstatSync = originalFstatSync;
+      syncBuiltinESMExports();
       removeTempDir(root);
     }
   });

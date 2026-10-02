@@ -94,7 +94,7 @@ function readBoundedStatusContent(fd) {
     return Buffer.concat(chunks, bytesRead).toString("utf-8");
 }
 export function readStatus(asyncDir) {
-    const statusPath = path.join(asyncDir, "status.json");
+    const statusPath = path.resolve(asyncDir, "status.json");
     if (STATUS_NONBLOCK_FLAG === 0 || STATUS_NOFOLLOW_FLAG === 0) {
         let pathStat;
         try {
