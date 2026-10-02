@@ -1061,7 +1061,7 @@ function createOwnedRuntimeCompileCacheFixture(t) {
     join(runtimeDir, "bin"),
     [
       `printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "\${NODE_COMPILE_CACHE:-}" "$*" >>"${piLog}"`,
-      'if [[ "${1:-}" == "--version" ]]; then printf \'0.99.2\\n\'; exit 0; fi',
+      'if [[ "${1:-}" == "--version" ]]; then printf \'1.0.0\\n\'; exit 0; fi',
       "exit 0",
     ].join("\n"),
   );
@@ -1132,7 +1132,7 @@ test("runtime compile cache pre-warm failure prevents a successful installer res
     join(fixture.runtimeDir, "bin"),
     [
       `if [[ -n "\${NODE_COMPILE_CACHE:-}" ]]; then exit 97; fi`,
-      'if [[ "${1:-}" == "--version" ]]; then printf \'0.99.2\\n\'; exit 0; fi',
+      'if [[ "${1:-}" == "--version" ]]; then printf \'1.0.0\\n\'; exit 0; fi',
       "exit 0",
     ].join("\n"),
   );

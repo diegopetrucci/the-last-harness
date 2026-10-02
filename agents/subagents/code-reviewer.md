@@ -4,7 +4,7 @@ description: Reviews diffs against assigned tasks for correctness, security, and
 tools: read, grep, find, ls, bash, contact_supervisor
 tlhModelDefaults:
   - provider: openai-codex
-    models: [gpt-5.6-sol]
+    models: [gpt-6.1-sol]
     effort: medium
   - provider: anthropic
     models: [claude-opus-5-5]

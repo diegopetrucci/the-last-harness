@@ -17,11 +17,28 @@ Explicitly excluded here:
 ## Review cadence
 
 - **Pi-sensitive items**: re-review on every `@earendil-works/pi-coding-agent` version bump.
-- **`annotate-git-diff`**: re-review at least quarterly and on upstream package/repo releases affecting the review UI/flow. It is not a Pi-cadence row and is intentionally not restamped by the Pi 0.99.2 review below.
+- **`annotate-git-diff`**: re-review at least quarterly and on upstream package/repo releases affecting the review UI/flow. It is not a Pi-cadence row and is intentionally not restamped by the Pi 1.0.0 review below.
 
-## Pi 0.99.2 review evidence
+## Pi 1.0.0 review evidence
 
-This active review compares `@earendil-works/pi-coding-agent` `0.87.1` (package commit `f07218c4d4bbc12bef056a7058c3dd49dfe41abe`) with the pinned `0.99.2`. The distributed source maps for coding-agent, agent-core, pi-ai, and pi-tui were inspected at both snapshots, and the published CHANGELOG for 0.87.1 through 0.99.2 (covering 0.87.x, 0.99.0, 0.99.1, 0.99.2) was reviewed. The rows below record exact old/new source findings; a changed file is not by itself evidence that a TLH seam changed. The 0.87.1 table is preserved below as historical evidence.
+This active review compares `@earendil-works/pi-coding-agent` `0.99.2` with the pinned `1.0.0`. The Pi 1.0.0 CHANGELOG (`node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`), installed settings docs (`node_modules/@earendil-works/pi-coding-agent/docs/settings.md`), CLI docs (`node_modules/@earendil-works/pi-coding-agent/docs/cli.md`), and `dist/core/resource-loader.js` were inspected.
+
+### Changes reviewed in Pi 1.0.0
+
+| Area | Upstream path | Finding | TLH impact |
+| --- | --- | --- | --- |
+| Fullscreen TUI default | `docs/settings.md:94` (`tuiMode` default `"fullscreen"`); `docs/cli.md:221-222` (`--tui-mode`); CHANGELOG 1.0.0 Changed | `tuiMode` now defaults to `"fullscreen"` (was `"regular"`). Pi CHANGELOG: "Changed the default TUI mode to fullscreen. Set `tuiMode` to `\"regular\"` or pass `--tui-mode regular` to keep the terminal's normal scrollback." `config/settings.defaults.json` does not include a `tuiMode` key, so Pi's `"fullscreen"` default applies to TLH sessions. | TLH follows Pi's upstream default: TLH sessions now start in fullscreen mode. Users who want terminal scrollback should set `tuiMode: "regular"` in `/settings` or in `~/.the-last-harness/agent/settings.json`, or pass `--tui-mode regular` at launch; see `docs/install.md`. |
+| `quietStartup: "header"` new variant | `docs/settings.md:93` (`quietStartup` type `boolean | "header"`); CHANGELOG 1.0.0 Added | `quietStartup` now accepts a third value `"header"`: it keeps the startup header with version and key hints while hiding the model scope line and loaded-resource listing. The existing `true`/`false` values are unchanged. | TLH ships `quietStartup: true` in `config/settings.defaults.json`, hiding the full header. The new `"header"` variant is a Pi-native option users can set independently; TLH does not override it beyond appending the `true` default when the key is missing. No TLH code change required. |
+| System-theme chroma fix | CHANGELOG 1.0.0 Fixed (#10255, #10293) | "Fixed the system theme making pastel palettes such as Catppuccin Frappe much more vivid; palette colors now keep their chroma." | TLH ships `theme: "system"` as a packaged default (`config/settings.defaults.json:5`). Users on pastel terminal themes benefit from this fix automatically. No TLH change required. |
+| `--provider` without `--model` now errors | `docs/cli.md:63-64` ("`--provider <name>` — Restricts `--model` lookup to one provider. It requires `--model`."); CHANGELOG 1.0.0 Fixed (#10236) | `--provider` without `--model` was silently ignored; it now fails with an error. Verified TLH never passes `--provider` alone: `rg '\-\-provider' agents/ extensions/ scripts/ install.sh config/` returns no output. | No TLH impact. TLH does not pass `--provider` without `--model` anywhere in its wrapper, installer, or extension code. |
+| MCP OAuth per-server credential storage | CHANGELOG 1.0.0 Changed (#10252); `docs/mcp.md` | MCP OAuth credentials are now stored per server name and URL; credentials stored by URL alone migrate to the first server that uses them. | Built-in MCP only; the TLH mcporter adapter (`config/default-extensions.json`) replaces the built-in. Relevant to issue #705. The migration is transparent to existing mcporter users but matters if a user switches from the built-in. |
+| Deferred MCP tool resume fix | CHANGELOG 1.0.0 Fixed | "Fixed deferred MCP tools that `tool_search` loaded being dropped on resume and `/reload` even when their server reconnected before the next prompt." | Built-in MCP only; mcporter adapter replaces it. Relevant to #705. No TLH code change required. |
+| Adapter replacement warning text | `dist/core/resource-loader.js:94` | Warning text in `omitReplacedExtensions`: "Extension ${replacement.extension.path} registers ${kind} `${registeredName}`, so built-in extension `${builtinName}` was not loaded. To use `${builtinName}`, run `pi config` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time." Verified unchanged from 0.99.2 in the installed 1.0.0 `dist/core/resource-loader.js`. | No TLH change required; warning text contract is unchanged. |
+| Codemode / image generation / Radius / Anthropic copy-code login | CHANGELOG 1.0.0 New Features | Pi 1.0.0 adds image generation in codemode (`models.generateImages()`), Radius in `/login`, Anthropic copy-code login, and leaner codemode prompt tokens. | No TLH impact. TLH does not override codemode, `/login`, or Radius flows. |
+
+## Historical Pi 0.99.2 review evidence
+
+This is historical evidence for the 0.87.1 → 0.99.2 upgrade review. The distributed source maps for coding-agent, agent-core, pi-ai, and pi-tui were inspected at both snapshots, and the published CHANGELOG for 0.87.1 through 0.99.2 (covering 0.87.x, 0.99.0, 0.99.1, 0.99.2) was reviewed.
 
 ### New seams introduced in 0.99.0–0.99.2
 

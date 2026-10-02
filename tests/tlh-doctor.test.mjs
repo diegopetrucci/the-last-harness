@@ -81,7 +81,7 @@ function configureHealthyFixture(t) {
 
   const runtimeBin = join(fixture.runtimeDir, "bin");
   mkdirSync(runtimeBin, { recursive: true });
-  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.99.2'\n");
+  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 1.0.0'\n");
   writeFileSync(
     join(fixture.runtimeDir, ".tlh-runtime-owned"),
     JSON.stringify(
