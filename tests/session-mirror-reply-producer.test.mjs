@@ -25,6 +25,7 @@ function entry(id, parentId, text) {
 
 function createHarness({ text = "reply text", now = () => 0, publishedBranchId = ROOT_ID } = {}) {
   let entries = [entry(ROOT_ID, null, "existing"), entry(LEAF_ID, ROOT_ID, "existing leaf")];
+  let currentLeafId = LEAF_ID;
   const observer = {
     enabled: true,
     attestation: "attested",
@@ -48,7 +49,7 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
   let idle = true;
   let snapshots = 0;
   const manager = {
-    getLeafId: () => LEAF_ID,
+    getLeafId: () => currentLeafId,
     getEntries: () => entries,
   };
   const producer = createSessionMirrorReplyProducer({
@@ -83,14 +84,18 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     notify: (outcome) => outcomes.push(outcome),
   });
   producer.sessionStart();
-  producer.publicationReady({
-    sessionId: SESSION_ID,
-    sourceInstanceId: SOURCE_INSTANCE_ID,
-    sourceEpoch: 1,
-    branchId: publishedBranchId,
-    leafId: LEAF_ID,
-    sourceRevision: 7,
-  });
+  const publish = (overrides = {}) => {
+    producer.publicationReady({
+      sessionId: SESSION_ID,
+      sourceInstanceId: SOURCE_INSTANCE_ID,
+      sourceEpoch: 1,
+      branchId: publishedBranchId,
+      leafId: currentLeafId,
+      sourceRevision: observer.revision,
+      ...overrides,
+    });
+  };
+  publish({ sourceRevision: 7 });
   assert.equal(channels.length, 1);
 
   return {
@@ -103,6 +108,7 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     outcomes,
     channels,
     producer,
+    publish,
     snapshots: () => snapshots,
     setSendHook(hook) {
       sendHook = hook;
@@ -110,11 +116,14 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     setIdle(value) {
       idle = value;
     },
+    setLeafId(value) {
+      currentLeafId = value;
+    },
     replaceEntries(value) {
       entries = value;
     },
     appendReply() {
-      entries = [...entries, entry(REPLY_ID, LEAF_ID, text)];
+      entries = [...entries, entry(REPLY_ID, currentLeafId, text)];
     },
     request(overrides = {}) {
       return channels[0].onRequest({
@@ -122,14 +131,106 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
         requestId: "request-1",
         generation: 1,
         branchId: publishedBranchId,
-        leafId: LEAF_ID,
-        sourceRevision: 7,
+        leafId: currentLeafId,
+        sourceRevision: observer.revision,
         ttlSeconds: 30,
         text,
         ...overrides,
       });
     },
   };
+}
+
+function createLifecycleHarness() {
+  const observer = {
+    enabled: true,
+    attestation: "attested",
+    status: "idle",
+    settled: true,
+    dirty: false,
+    snapshotRequired: false,
+    publicationPending: false,
+    sinkInFlight: false,
+    successfulPublications: 1,
+    generation: 1,
+    revision: 7,
+  };
+  const entries = [entry(ROOT_ID, null, "existing"), entry(LEAF_ID, ROOT_ID, "existing leaf")];
+  const channels = [];
+  const manager = {
+    getLeafId: () => LEAF_ID,
+    getEntries: () => entries,
+  };
+  const producer = createSessionMirrorReplyProducer({
+    enabled: true,
+    getSessionManager: () => manager,
+    getObserverState: () => observer,
+    sendUserMessage: () => {},
+    isIdle: () => true,
+    requestSnapshot: () => {},
+    createChannel: (options) => {
+      let resolveOpen;
+      const openPromise = new Promise((resolve) => {
+        resolveOpen = resolve;
+      });
+      const record = {
+        options,
+        state: "connecting",
+        closeCalls: 0,
+        closeReasons: [],
+        resolveOpen,
+      };
+      channels.push(record);
+      return {
+        open: () => openPromise,
+        close: (reason) => {
+          record.closeCalls += 1;
+          record.closeReasons.push(reason);
+          record.state = "closed";
+        },
+        getState: () => record.state,
+      };
+    },
+  });
+  producer.sessionStart();
+
+  return {
+    observer,
+    channels,
+    producer,
+    publish({
+      sessionId = SESSION_ID,
+      sourceInstanceId = SOURCE_INSTANCE_ID,
+      sourceEpoch = 1,
+      branchId = ROOT_ID,
+      leafId = LEAF_ID,
+      sourceRevision = observer.revision,
+    } = {}) {
+      producer.publicationReady({
+        sessionId,
+        sourceInstanceId,
+        sourceEpoch,
+        branchId,
+        leafId,
+        sourceRevision,
+      });
+    },
+    resolveOpen(index, opened = true) {
+      const channel = channels[index];
+      channel.state = opened ? "open" : "closed";
+      channel.resolveOpen(opened);
+    },
+    close(index) {
+      const channel = channels[index];
+      channel.state = "closed";
+      channel.options.onClosed?.();
+    },
+  };
+}
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 test("producer accepts only after persisted user-message observation and requests a snapshot", async () => {
@@ -178,15 +279,162 @@ test("producer confirms persistence on the next macrotask before fast-settle pub
   assert.equal(harness.snapshots(), 1);
 
   harness.observer.revision = 8;
-  harness.producer.publicationReady({
-    sessionId: SESSION_ID,
-    sourceInstanceId: SOURCE_INSTANCE_ID,
-    sourceEpoch: 1,
+  harness.publish({ sourceRevision: 8 });
+  assert.equal(harness.channels.length, 1);
+
+  assert.equal(
+    await harness.channels[0].onRequest({
+      kind: "reply",
+      requestId: "old-revision",
+      generation: 1,
+      branchId: ROOT_ID,
+      leafId: LEAF_ID,
+      sourceRevision: 7,
+      ttlSeconds: 30,
+      text: "reply text",
+    }),
+    "stale",
+  );
+  const latest = harness.channels[0].onRequest({
+    kind: "reply",
+    requestId: "latest-revision",
+    generation: 1,
     branchId: ROOT_ID,
     leafId: LEAF_ID,
     sourceRevision: 8,
+    ttlSeconds: 30,
+    text: "reply text",
   });
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await latest, "accepted");
+});
+
+test("producer retains a connecting channel while publication target advances", async () => {
+  const harness = createLifecycleHarness();
+  harness.publish({ sourceRevision: 7 });
+  assert.equal(harness.channels.length, 1);
+  harness.publish({ branchId: "branch-2", leafId: "leaf-2", sourceRevision: 8 });
+  assert.equal(harness.channels.length, 1);
+  assert.equal(harness.channels[0].closeCalls, 0);
+
+  harness.resolveOpen(0);
+  await flushMicrotasks();
+  assert.equal(harness.producer.getState().channel, "open");
+});
+
+test("producer rotates on owner changes and reopens after closure or failure", async () => {
+  const harness = createLifecycleHarness();
+  harness.publish({ sourceRevision: 7 });
+  harness.resolveOpen(0);
+  await flushMicrotasks();
+
+  harness.publish({ sourceEpoch: 2, sourceRevision: 8 });
   assert.equal(harness.channels.length, 2);
+  assert.equal(harness.channels[0].closeCalls, 1);
+  assert.equal(harness.channels[1].options.sourceEpoch, 2);
+  harness.resolveOpen(1);
+  await flushMicrotasks();
+
+  harness.close(1);
+  assert.equal(harness.producer.getState().channel, "none");
+  harness.publish({ sourceEpoch: 2, sourceRevision: 8 });
+  assert.equal(harness.channels.length, 3);
+  harness.resolveOpen(2);
+  await flushMicrotasks();
+
+  harness.publish({ sourceEpoch: 3, sourceRevision: 9 });
+  assert.equal(harness.channels.length, 4);
+  harness.resolveOpen(3, false);
+  await flushMicrotasks();
+  assert.equal(harness.producer.getState().channel, "none");
+  harness.publish({ sourceEpoch: 3, sourceRevision: 9 });
+  assert.equal(harness.channels.length, 5);
+});
+
+test("producer ignores delayed callbacks from a replaced channel", async () => {
+  const harness = createLifecycleHarness();
+  harness.publish({ sourceRevision: 7 });
+  const old = harness.channels[0];
+
+  harness.publish({ sourceEpoch: 2, sourceRevision: 8 });
+  assert.equal(harness.channels.length, 2);
+  harness.resolveOpen(1);
+  await flushMicrotasks();
+
+  old.resolveOpen(false);
+  await flushMicrotasks();
+  old.options.onClosed?.();
+  harness.publish({ sourceEpoch: 2, sourceRevision: 8 });
+  assert.equal(harness.channels.length, 2);
+  assert.equal(harness.producer.getState().channel, "open");
+  assert.equal(harness.channels[1].closeCalls, 0);
+});
+
+test("producer refreshes branch and leaf authorization without rotating the channel", async () => {
+  const harness = createHarness();
+  const nextBranchId = "next-branch";
+  const nextLeafId = "next-leaf";
+  harness.setLeafId(nextLeafId);
+  harness.replaceEntries([
+    entry(ROOT_ID, null, "existing"),
+    entry(nextBranchId, ROOT_ID, "next branch"),
+    entry(nextLeafId, nextBranchId, "next leaf"),
+  ]);
+  harness.observer.revision = 8;
+  harness.publish({ branchId: nextBranchId, leafId: nextLeafId, sourceRevision: 8 });
+  assert.equal(harness.channels.length, 1);
+
+  assert.equal(
+    await harness.channels[0].onRequest({
+      kind: "reply",
+      requestId: "old-branch-leaf",
+      generation: 1,
+      branchId: ROOT_ID,
+      leafId: LEAF_ID,
+      sourceRevision: 8,
+      ttlSeconds: 30,
+      text: "reply text",
+    }),
+    "stale",
+  );
+  const latest = harness.channels[0].onRequest({
+    kind: "reply",
+    requestId: "latest-branch-leaf",
+    generation: 1,
+    branchId: nextBranchId,
+    leafId: nextLeafId,
+    sourceRevision: 8,
+    ttlSeconds: 30,
+    text: "reply text",
+  });
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await latest, "accepted");
+});
+
+test("current channel closure clears its latest publication target", async () => {
+  const harness = createHarness();
+  harness.observer.revision = 8;
+  harness.publish({ sourceRevision: 8 });
+  harness.channels[0].onClosed?.();
+
+  assert.equal(harness.producer.getState().channel, "none");
+  assert.equal(
+    await harness.channels[0].onRequest({
+      kind: "reply",
+      requestId: "closed-channel",
+      generation: 1,
+      branchId: ROOT_ID,
+      leafId: LEAF_ID,
+      sourceRevision: 8,
+      ttlSeconds: 30,
+      text: "reply text",
+    }),
+    "stale",
+  );
 });
 
 test("matching non-extension input invalidates a pending reply and latches busy", async () => {

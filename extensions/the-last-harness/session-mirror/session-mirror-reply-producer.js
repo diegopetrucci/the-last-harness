@@ -233,6 +233,7 @@ export function createSessionMirrorReplyProducer(options) {
     let busyLatch = false;
     let compactionLatched = false;
     let channel;
+    let channelGeneration;
     let channelSerial = 0;
     let publishedSnapshot;
     let pending;
@@ -508,19 +509,21 @@ export function createSessionMirrorReplyProducer(options) {
             return;
         const previous = channel;
         const previousTarget = publishedSnapshot;
-        const sameTarget = previousTarget !== undefined &&
+        const sameOwner = previous !== undefined &&
+            previousTarget !== undefined &&
+            channelGeneration === generation &&
             previousTarget.sessionId === target.sessionId &&
             previousTarget.sourceInstanceId === target.sourceInstanceId &&
-            previousTarget.sourceEpoch === target.sourceEpoch &&
-            previousTarget.branchId === target.branchId &&
-            previousTarget.leafId === target.leafId &&
-            previousTarget.sourceRevision === target.sourceRevision;
-        if (sameTarget && previous !== undefined && channelState(previous) !== "none")
+            previousTarget.sourceEpoch === target.sourceEpoch;
+        if (sameOwner && channelState(previous) !== "none") {
+            publishedSnapshot = target;
             return;
+        }
         if (previous !== undefined) {
             invalidatePending("disconnected");
-            bestEffortClose(previous, "owner-replaced");
             channel = undefined;
+            channelGeneration = undefined;
+            bestEffortClose(previous, "owner-replaced");
         }
         publishedSnapshot = target;
         const serial = nextCounter(channelSerial);
@@ -538,8 +541,8 @@ export function createSessionMirrorReplyProducer(options) {
                     if (channel !== next)
                         return;
                     channel = undefined;
-                    if (publishedSnapshot === target)
-                        publishedSnapshot = undefined;
+                    channelGeneration = undefined;
+                    publishedSnapshot = undefined;
                     invalidatePending("disconnected");
                 },
             });
@@ -548,6 +551,7 @@ export function createSessionMirrorReplyProducer(options) {
             return;
         }
         channel = next;
+        channelGeneration = generation;
         let opening;
         try {
             opening = next.open();
@@ -555,8 +559,8 @@ export function createSessionMirrorReplyProducer(options) {
         catch {
             if (channel === next) {
                 channel = undefined;
-                if (publishedSnapshot === target)
-                    publishedSnapshot = undefined;
+                channelGeneration = undefined;
+                publishedSnapshot = undefined;
             }
             bestEffortClose(next, "owner-replaced");
             return;
@@ -565,16 +569,16 @@ export function createSessionMirrorReplyProducer(options) {
             if (channel !== next || serial !== channelSerial || opened !== true) {
                 if (channel === next) {
                     channel = undefined;
-                    if (publishedSnapshot === target)
-                        publishedSnapshot = undefined;
+                    channelGeneration = undefined;
+                    publishedSnapshot = undefined;
                 }
                 bestEffortClose(next, "owner-replaced");
             }
         }, () => {
             if (channel === next) {
                 channel = undefined;
-                if (publishedSnapshot === target)
-                    publishedSnapshot = undefined;
+                channelGeneration = undefined;
+                publishedSnapshot = undefined;
             }
             bestEffortClose(next, "owner-replaced");
         });
@@ -589,6 +593,7 @@ export function createSessionMirrorReplyProducer(options) {
         publishedSnapshot = undefined;
         const previous = channel;
         channel = undefined;
+        channelGeneration = undefined;
         if (previous !== undefined)
             bestEffortClose(previous, "owner-replaced");
     };
@@ -602,6 +607,7 @@ export function createSessionMirrorReplyProducer(options) {
         publishedSnapshot = undefined;
         const previous = channel;
         channel = undefined;
+        channelGeneration = undefined;
         if (previous !== undefined)
             bestEffortClose(previous, "producer-disconnect");
     };

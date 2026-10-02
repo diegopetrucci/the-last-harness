@@ -68,6 +68,12 @@ const FAILURE = "local bridge reply channel failed";
 const FAILURE_EVENTS = ["error", "end", "close"] as const;
 const DEFAULT_CLOSE_REASON: LocalBridgeReplyCloseReason = "producer-disconnect";
 const MAX_REPLY_GENERATION = 2_000_000_000;
+const FRAME_HEADER_BYTES = 4;
+const MAX_RETAINED_RECEIVE_BYTES = (MAX_CONTROL_BYTES + FRAME_HEADER_BYTES) * 2;
+
+type ReceiveState = {
+  buffer: Buffer;
+};
 
 function controls(value: unknown): object {
   const result = option(value, "controls");
@@ -186,10 +192,42 @@ function writeFrame(socket: BridgeSocket, bytes: Uint8Array, register: Cancel): 
   });
 }
 
-function readFrame(socket: BridgeSocket, maximum: number, register: Cancel): Promise<Uint8Array> {
+function clearReceiveState(receive: ReceiveState): void {
+  receive.buffer = Buffer.alloc(0);
+}
+
+function appendReceiveBytes(receive: ReceiveState, chunk: unknown): boolean {
+  if (!(chunk instanceof Uint8Array)) return false;
+  const current = receive.buffer.byteLength;
+  if (current > MAX_RETAINED_RECEIVE_BYTES) return false;
+  if (chunk.byteLength > MAX_RETAINED_RECEIVE_BYTES - current) return false;
+  if (chunk.byteLength === 0) return true;
+  const incoming = Buffer.from(chunk);
+  receive.buffer =
+    current === 0
+      ? incoming
+      : Buffer.concat([receive.buffer, incoming], current + incoming.byteLength);
+  return true;
+}
+
+function takeReceiveFrame(receive: ReceiveState, maximum: number): Uint8Array | null | undefined {
+  if (receive.buffer.byteLength < FRAME_HEADER_BYTES) return undefined;
+  const expected = receive.buffer.readUInt32BE(0);
+  if (expected > maximum) return null;
+  const total = expected + FRAME_HEADER_BYTES;
+  if (receive.buffer.byteLength < total) return undefined;
+  const body = receive.buffer.subarray(FRAME_HEADER_BYTES, total);
+  receive.buffer = receive.buffer.subarray(total);
+  return body;
+}
+
+function readFrame(
+  socket: BridgeSocket,
+  maximum: number,
+  receive: ReceiveState,
+  register: Cancel,
+): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    let bytes = Buffer.alloc(0);
-    let expected = -1;
     let done = false;
     const failed = () => finish();
     const finish = (value?: Uint8Array) => {
@@ -198,28 +236,32 @@ function readFrame(socket: BridgeSocket, maximum: number, register: Cancel): Pro
       bestEffort(() => socket.pause());
       remove(socket, "data", received);
       for (const event of FAILURE_EVENTS) remove(socket, event, failed);
-      if (value === undefined) reject(new Error(FAILURE));
-      else resolve(value);
+      if (value === undefined) {
+        clearReceiveState(receive);
+        reject(new Error(FAILURE));
+      } else resolve(value);
     };
     const received = (chunk: unknown) => {
       try {
-        if (!(chunk instanceof Uint8Array) || chunk.byteLength > maximum + 4) return finish();
-        if (bytes.length + chunk.byteLength > maximum + 4) return finish();
-        bytes = Buffer.concat([bytes, Buffer.from(chunk)]);
-        if (expected < 0 && bytes.length >= 4) {
-          expected = bytes[0] * 0x1000000 + bytes[1] * 0x10000 + bytes[2] * 0x100 + bytes[3];
-          if (expected > maximum) return finish();
-        }
-        if (expected >= 0 && bytes.length >= expected + 4) {
-          if (bytes.length !== expected + 4) return finish();
-          finish(bytes.subarray(4));
-        }
+        if (!appendReceiveBytes(receive, chunk)) return finish();
+        const frame = takeReceiveFrame(receive, maximum);
+        if (frame === null) return finish();
+        if (frame !== undefined) finish(frame);
       } catch {
         finish();
       }
     };
     register(() => finish());
     try {
+      const frame = takeReceiveFrame(receive, maximum);
+      if (frame === null) {
+        finish();
+        return;
+      }
+      if (frame !== undefined) {
+        finish(frame);
+        return;
+      }
       for (const event of FAILURE_EVENTS) if (!done) socket.once(event, failed);
       if (!done) socket.on("data", received);
       if (!done) socket.resume();
@@ -299,6 +341,7 @@ export function createSessionMirrorReplyChannel(
   let handshakeComplete = false;
   let closeRequested = false;
   let closeNotified = false;
+  let receiveState: ReceiveState | undefined;
   let cancelPending: (() => void) | undefined;
   let openPromise: Promise<boolean> | undefined;
 
@@ -309,6 +352,10 @@ export function createSessionMirrorReplyChannel(
   };
 
   const destroy = (): void => {
+    if (receiveState !== undefined) {
+      clearReceiveState(receiveState);
+      receiveState = undefined;
+    }
     const current = socket;
     if (current === undefined) return;
     bestEffort(() => current.destroy());
@@ -437,6 +484,8 @@ export function createSessionMirrorReplyChannel(
             finish(false);
             return;
           }
+          const receive = { buffer: Buffer.alloc(0) } satisfies ReceiveState;
+          receiveState = receive;
           attach(candidate);
           if (closeRequested) {
             finish(false);
@@ -452,7 +501,9 @@ export function createSessionMirrorReplyChannel(
             finish(false);
             return;
           }
-          const ready = parseReadyResult(await readFrame(candidate, MAX_CONTROL_BYTES, register));
+          const ready = parseReadyResult(
+            await readFrame(candidate, MAX_CONTROL_BYTES, receive, register),
+          );
           if (closeRequested || ready === undefined || ready.sourceEpoch !== info.sourceEpoch) {
             finish(false);
             return;
@@ -463,7 +514,7 @@ export function createSessionMirrorReplyChannel(
           while (!closeRequested && state === "open") {
             let body: Uint8Array;
             try {
-              body = await readFrame(candidate, MAX_CONTROL_BYTES, (cancel) => {
+              body = await readFrame(candidate, MAX_CONTROL_BYTES, receive, (cancel) => {
                 cancelPending = cancel;
               });
             } catch {
@@ -524,6 +575,7 @@ export function createSessionMirrorReplyChannel(
     state = "closed";
     bestEffort(() => cancelPending?.());
     cancelPending = undefined;
+    if (receiveState !== undefined) clearReceiveState(receiveState);
     const current = socket;
     const closeFrame = handshakeComplete ? replyCloseFrame(reason) : undefined;
     if (current !== undefined && closeFrame !== undefined) {
