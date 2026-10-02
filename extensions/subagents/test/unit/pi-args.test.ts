@@ -874,6 +874,25 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
+    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+  });
+
+  it("keeps the generic MCP gateway for MCP-only declarations while direct tools stay filtered", () => {
+    const { args, env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      supervisorBridge: false,
+      tools: ["mcp", "mcp:server/lookup"],
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
     assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
   });
 
