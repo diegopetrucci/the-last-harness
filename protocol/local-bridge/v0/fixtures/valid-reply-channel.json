@@ -1,0 +1,64 @@
+{
+  "scenario": "reply-channel",
+  "minorZeroReadOnly": {
+    "kind": "hello",
+    "protocol": { "family": "local-bridge", "major": 0, "minor": 0 },
+    "installationId": "fixture-installation",
+    "sessionId": "fixture-session-read-only",
+    "sourceInstanceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "launchToken": "0123456789abcdef0123456789abcdef",
+    "capabilities": ["snapshot-replace", "cursor-recovery"]
+  },
+  "dataHello": {
+    "kind": "hello",
+    "protocol": { "family": "local-bridge", "major": 0, "minor": 0 },
+    "installationId": "fixture-installation",
+    "sessionId": "fixture-session-reply",
+    "sourceInstanceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "launchToken": "0123456789abcdef0123456789abcdef",
+    "capabilities": ["snapshot-replace", "cursor-recovery"]
+  },
+  "replyHandshake": {
+    "kind": "reply-hello",
+    "protocol": { "family": "local-bridge", "major": 0, "minor": 1 },
+    "installationId": "fixture-installation",
+    "sessionId": "fixture-session-reply",
+    "sourceInstanceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceEpoch": 1,
+    "generation": 3,
+    "launchToken": "0123456789abcdef0123456789abcdef",
+    "capabilities": ["reply-text"]
+  },
+  "reply": {
+    "kind": "reply",
+    "requestId": "fixture-request-1",
+    "generation": 3,
+    "branchId": "fixture-branch-1",
+    "leafId": "fixture-leaf-1",
+    "sourceRevision": 7,
+    "ttlSeconds": 30,
+    "text": "A bounded plain-text reply."
+  },
+  "replyB": {
+    "kind": "reply",
+    "requestId": "fixture-request-2",
+    "generation": 3,
+    "branchId": "fixture-branch-1",
+    "leafId": "fixture-leaf-1",
+    "sourceRevision": 7,
+    "ttlSeconds": 30,
+    "text": "A second bounded plain-text reply."
+  },
+  "multilineReply": {
+    "kind": "reply",
+    "requestId": "fixture-multiline-request",
+    "generation": 3,
+    "branchId": "fixture-branch-1",
+    "leafId": "fixture-leaf-1",
+    "sourceRevision": 7,
+    "ttlSeconds": 30,
+    "text": "line one\n\tline two"
+  },
+  "receipt": { "kind": "receipt", "code": "accepted" },
+  "close": { "kind": "reply-close", "reason": "producer-disconnect" }
+}

@@ -1,0 +1,13 @@
+{
+  "scenario": "unsafe-rendezvous",
+  "companionDirectory": "/Users/fixture/.the-last-harness/companion",
+  "rendezvousSocketName": "mirror-0123456789abcdef01234567.sock",
+  "expectedCode": "unsafe-rendezvous",
+  "invalidPaths": [
+    "/tmp/mirror-0123456789abcdef01234567.sock",
+    "/Users/fixture/.the-last-harness/companion-evil/mirror-0123456789abcdef01234567.sock",
+    "/Users/fixture/.the-last-harness/companion/not-random.sock",
+    "/Users/fixture/.the-last-harness/companion/mirror-0123456789abcdef01234567.sock/child"
+  ],
+  "overlongCompanionDirectory": "/Users/fixture/.the-last-harness/companion-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}

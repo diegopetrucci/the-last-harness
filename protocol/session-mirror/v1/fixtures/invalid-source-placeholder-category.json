@@ -1,0 +1,46 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-invalid-placeholder-category",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-invalid-placeholder-category",
+    "revision": 0,
+    "cursor": "opaque-cursor-invalid-placeholder-category",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-invalid-placeholder-category",
+      "status": "idle",
+      "tree": {
+        "rootIds": ["unsafe-placeholder-category"],
+        "activeLeafId": "unsafe-placeholder-category",
+        "entries": [
+          {
+            "id": "unsafe-placeholder-category",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "private-data"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

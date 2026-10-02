@@ -1,0 +1,9 @@
+{
+  "scenario": "concurrent-owner",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-busy",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "currentSourceInstanceId": "dddddddddddddddddddddddddddddddd",
+  "competingSourceInstanceId": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "expectedCode": "busy"
+}

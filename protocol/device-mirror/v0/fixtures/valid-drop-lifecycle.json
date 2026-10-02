@@ -1,0 +1,14 @@
+{
+  "handle": "launch-handle-a",
+  "reasons": [
+    "producer-disconnect",
+    "takeover",
+    "accepted-event",
+    "eviction",
+    "listener-stop",
+    "device-disconnect",
+    "backgrounding"
+  ],
+  "dropIsImmediate": true,
+  "dropIsIdempotent": true
+}

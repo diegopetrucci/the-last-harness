@@ -1,0 +1,28 @@
+{
+  "scenario": "idle-eviction",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-idle",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "initialSourceInstanceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "replacementSourceInstanceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "activeSlotSessions": [
+    "slot-1",
+    "slot-2",
+    "slot-3",
+    "slot-4",
+    "slot-5",
+    "slot-6",
+    "slot-7",
+    "slot-8"
+  ],
+  "takeoverSourceHex": "e",
+  "takeoverCountBeforeHistoryFull": 63,
+  "knownRecordCountBeforeBusy": 64,
+  "knownRecordOverflowSession": "conversation-known-overflow",
+  "idleMinutes": 60,
+  "expectedEvictionCode": "evicted",
+  "expectedReconnectCode": "ready",
+  "expectedStaleCode": "stale-source",
+  "expectedHistoryFullCode": "source-history-full",
+  "expectedKnownHistoryCode": "busy"
+}
