@@ -842,8 +842,9 @@ export function createAsyncJobTracker(
 
     let runs: AsyncRunSummary[];
     let issues: ReturnType<typeof scanAsyncRunsForRestore>["issues"];
+    let unsafeIssues: ReturnType<typeof scanAsyncRunsForRestore>["unsafeIssues"];
     try {
-      ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
+      ({ runs, issues, unsafeIssues } = scanAsyncRunsForRestore(asyncDirRoot, {
         states: ["queued", "running"],
         sessionId,
         resultsDir,
@@ -862,6 +863,13 @@ export function createAsyncJobTracker(
       const quarantined = { jsonParse: 0, persistedValidation: 0 };
       const deferred = { jsonParse: 0, persistedValidation: 0 };
       const failed = { jsonParse: 0, persistedValidation: 0 };
+      const skippedUnsafe = new Set<string>();
+      for (const issue of unsafeIssues) {
+        const dedupeKey = `unsafe-status\u0000${issue.entry}\u0000${issue.reason}`;
+        if (restoreWarningDedupe.has(dedupeKey)) continue;
+        restoreWarningDedupe.add(dedupeKey);
+        skippedUnsafe.add(dedupeKey);
+      }
       for (const issue of issues) {
         const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
         if (result.outcome === "quarantined") {
@@ -880,6 +888,10 @@ export function createAsyncJobTracker(
         }
       }
       const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
+      if (skippedUnsafe.size > 0)
+        warnings.push(
+          `skipped ${skippedUnsafe.size} unsafe status artifact${skippedUnsafe.size === 1 ? "" : "s"}`,
+        );
       const quarantinedSummary = formatRestoreIssueCounts(quarantined);
       if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
       const deferredSummary = formatRestoreIssueCounts(deferred);
@@ -887,7 +899,7 @@ export function createAsyncJobTracker(
       const failedSummary = formatRestoreIssueCounts(failed);
       if (failedSummary) warnings.push(`left ${failedSummary} in place`);
       if (warnings.length > 1)
-        warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
+        warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);
       for (const run of runs) {
         state.asyncJobs.set(run.id, summaryToJob(run));
       }

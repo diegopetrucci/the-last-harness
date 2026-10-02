@@ -36,6 +36,31 @@ export function fingerprintAsyncStatusFile(asyncDir, statusPath = path.join(asyn
 export function isAsyncStatusCorruptionError(error) {
     return error instanceof AsyncStatusCorruptionError;
 }
+export class AsyncStatusUnsafeError extends Error {
+    name = "AsyncStatusUnsafeError";
+    reason;
+    asyncDir;
+    statusPath;
+    constructor(input) {
+        super(input.message, input.cause ? { cause: input.cause } : undefined);
+        this.reason = input.reason;
+        this.asyncDir = input.asyncDir;
+        this.statusPath = input.statusPath ?? path.join(input.asyncDir, "status.json");
+    }
+}
+export function isAsyncStatusUnsafeError(error) {
+    return error instanceof AsyncStatusUnsafeError;
+}
+export function createAsyncStatusUnsafeError(input) {
+    const cause = input.cause instanceof Error ? input.cause : undefined;
+    return new AsyncStatusUnsafeError({
+        message: input.message,
+        reason: input.reason,
+        asyncDir: input.asyncDir,
+        statusPath: input.statusPath,
+        ...(cause ? { cause } : {}),
+    });
+}
 export function createAsyncStatusJsonParseError(input) {
     const cause = input.cause instanceof Error ? input.cause : new Error(String(input.cause));
     const statusPath = input.statusPath ?? path.join(input.asyncDir, "status.json");

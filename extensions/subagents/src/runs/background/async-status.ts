@@ -44,8 +44,10 @@ import {
   createAsyncStatusValidationError,
   fingerprintAsyncStatusFile,
   isAsyncStatusCorruptionError,
+  isAsyncStatusUnsafeError,
   type AsyncStatusCorruptionFingerprint,
   type AsyncStatusCorruptionKind,
+  type AsyncStatusUnsafeReason,
 } from "./async-status-corruption.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
@@ -166,9 +168,15 @@ export interface AsyncRunCorruptEntryIssue {
   fingerprint?: AsyncStatusCorruptionFingerprint;
 }
 
+export interface AsyncRunUnsafeEntryIssue {
+  entry: string;
+  reason: AsyncStatusUnsafeReason;
+}
+
 interface AsyncRunRestoreScanResult {
   runs: AsyncRunSummary[];
   issues: AsyncRunCorruptEntryIssue[];
+  unsafeIssues: AsyncRunUnsafeEntryIssue[];
 }
 
 interface AsyncRunListOptions {
@@ -631,10 +639,15 @@ export function scanAsyncRunsForRestore(
   const entries = listAsyncRunEntries(asyncDirRoot);
   const collector = buildRunCollector(asyncDirRoot, options, "restore_scan");
   const issues: AsyncRunCorruptEntryIssue[] = [];
+  const unsafeIssues: AsyncRunUnsafeEntryIssue[] = [];
   for (const entry of entries) {
     try {
       collector.collectEntry(entry);
     } catch (error) {
+      if (isAsyncStatusUnsafeError(error)) {
+        unsafeIssues.push(Object.freeze({ entry, reason: error.reason }));
+        continue;
+      }
       if (!isAsyncStatusCorruptionError(error)) throw error;
       issues.push(
         Object.freeze({
@@ -648,7 +661,11 @@ export function scanAsyncRunsForRestore(
       );
     }
   }
-  return { runs: finalizeRunList(collector.runs, options.limit), issues };
+  return {
+    runs: finalizeRunList(collector.runs, options.limit),
+    issues,
+    unsafeIssues,
+  };
 }
 
 function formatActivityFacts(input: {
