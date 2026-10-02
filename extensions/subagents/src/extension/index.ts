@@ -120,9 +120,11 @@ export { loadConfig } from "./config.ts";
 type PiToolWithInternalFailure = "subagent";
 
 /**
- * Pi 0.83 represents tool failure separately from AgentToolResult. Keep the
- * extension's rich internal result until execute() returns, then strip the
- * private flag and restore it through the supported tool_result patch hook.
+ * Legacy bridge: through Pi 0.87.1, AgentToolResult had no `isError` field;
+ * TLH stripped the internal flag and restored it via the tool_result patch hook.
+ * Pi 0.99.x adds an optional `isError` consumed natively by agent-core.
+ * The bridge is retained for minimal-change compatibility; no behaviour change
+ * is needed because a required boolean is assignable to an optional one.
  */
 export function createSubagentToolResultBridge() {
   const failedResults = new Map<

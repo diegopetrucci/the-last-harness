@@ -144,15 +144,20 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following Pi 0.87.1 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following Pi 1.0.0 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
+- **MCP adapter warning:** at startup verify that Pi's resource-loader warning about the built-in `mcp` extension not being loaded appears (mentioning `/mcp` and `pi config`) and that `/mcp` is functional via the TLH adapter.
+- **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
+- **Interactive fullscreen TUI:** verify that TLH sessions start in Pi's fullscreen mode by default (Pi 1.0.0+); confirm the transcript scrolls within the window, the editor stays fixed, and subagent tool-call and status widgets render correctly; then set `tuiMode: "regular"` and verify the session falls back to normal terminal scrollback.
+- **Adapter MCP connectivity:** with at least one configured MCP server, verify the adapter connects, the footer shows the server count, and the proxy `mcp` tool is accessible.
+- **Session persistence after first user message:** send a first user message and interrupt before the assistant replies; verify the session file exists and resume works correctly.
 - **Model and thinking:** with a real provider, verify model-selection persistence and provider-backed thinking levels, including the supported maximum-thinking badge.
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `0.87.1`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises Pi `1.0.0`, verify update convergence from that published ref.
 
-The live-provider checks passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. The published-ref update convergence check also passed after publication: a ticket-owned isolated `v0.42.1` latest-release install updated to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`, then was cleaned up. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
+The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. The 1.0.0 live checks are pending the next release candidate. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 
 ## Final validation guidance
 

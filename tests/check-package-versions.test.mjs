@@ -43,6 +43,7 @@ function tempFixture({
   peerDependencies = {
     "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
     "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+    typebox: "*",
   },
   overrides = {},
   defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
@@ -76,7 +77,6 @@ function tempFixture({
     name: "fixture",
     version: packageVersion,
     dependencies: {
-      typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
       ...dependencies,
     },
     devDependencies: {
@@ -84,6 +84,7 @@ function tempFixture({
       "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
       "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
       "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
       ...devDependencies,
     },
     peerDependencies: {
@@ -254,6 +255,7 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
     peerDependencies: {
       "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
       "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      typebox: "*",
     },
     overrides: {
       dompurify: "3.4.11",
@@ -308,6 +310,7 @@ test("check-package-versions rejects loose dependencies, devDependencies, and ov
       typescript: "latest",
     },
     peerDependencies: {
+      typebox: "*",
       allowed: "^1.0.0",
     },
     overrides: {
@@ -600,10 +603,27 @@ test("check-package-versions manages direct Pi type dependencies with the shared
   assert.match(result.stderr, /package\.json#devDependencies\.@earendil-works\/pi-ai: "9\.8\.7"/);
 });
 
-test("check-package-versions ties direct typebox to Pi's pinned typebox version", () => {
+test("check-package-versions rejects typebox in dependencies (host-provided by Pi)", () => {
   const fixture = tempFixture({
     packageVersion: "1.2.3",
-    dependencies: { typebox: FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION },
+    dependencies: { typebox: FIXTURE_MANAGED_TYPEBOX_VERSION },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json#dependencies\.typebox must not exist/);
+  assert.match(result.stderr, /host-provided by Pi/);
+});
+
+test("check-package-versions ties devDependencies typebox to Pi's pinned typebox version", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    devDependencies: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      typebox: FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION,
+    },
   });
 
   const result = runCheckPackageVersions(fixture);
@@ -611,13 +631,47 @@ test("check-package-versions ties direct typebox to Pi's pinned typebox version"
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    /TLH's direct typebox dependency must match Pi's pinned typebox version:/,
+    /TLH's devDependencies typebox pin must match Pi's pinned typebox version:/,
   );
-  assert.match(result.stderr, /package\.json#dependencies\.typebox: "1\.3\.6"/);
+  assert.match(result.stderr, /package\.json#devDependencies\.typebox: "1\.3\.6"/);
   assert.match(
     result.stderr,
     /package-lock\.json#packages\["node_modules\/@earendil-works\/pi-coding-agent"\]\.dependencies\.typebox: "1\.3\.7"/,
   );
+});
+
+test("check-package-versions rejects missing peerDependencies typebox", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    peerDependencies: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      // typebox intentionally omitted
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json#peerDependencies\.typebox must be '\*'/);
+  assert.match(result.stderr, /found missing/);
+});
+
+test("check-package-versions rejects wrong-range peerDependencies typebox", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    peerDependencies: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json#peerDependencies\.typebox must be '\*'/);
+  assert.match(result.stderr, /found "1\.3\.7"/);
 });
 
 test("check-package-versions rejects non-exact managed Pi package pins", () => {

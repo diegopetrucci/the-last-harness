@@ -16,6 +16,7 @@ import {
   type NormalizedBuildSystemPromptOptions,
   type Skill,
   type ToolDefinition,
+  type ToolExposure,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { writeChildMessageRequestToDir } from "../../src/runs/background/control-channel.ts";
@@ -73,11 +74,13 @@ function recordEvents(handlers: Map<TestEventName, TestEventHandler>): TestEvent
 }
 
 function makeToolInfo(name: string): ToolInfo {
+  const exposure: ToolExposure = "direct";
   return {
     name,
     description: "test tool",
     parameters: Type.Object({}),
     sourceInfo: { path: "", source: "test", scope: "temporary", origin: "top-level" },
+    exposure,
   };
 }
 
