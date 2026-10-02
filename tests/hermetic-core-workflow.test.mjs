@@ -275,7 +275,7 @@ function writeFakeTk(path) {
 function registerScriptedProviders(modelRegistry, scriptState) {
   const models = {
     anthropic: ["claude-opus-5-5", "claude-sonnet-4-6"],
-    "openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
+    "openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-6.1-sol"],
   };
   for (const [provider, ids] of Object.entries(models)) {
     modelRegistry.registerProvider(provider, {
@@ -310,7 +310,7 @@ function scriptedRoleForModel(model) {
   if (model.provider === "openai-codex" && model.id === "gpt-5.4") {
     return "developer";
   }
-  if (model.provider === "openai-codex" && (model.id === "gpt-5.5" || model.id === "gpt-5.6-sol")) {
+  if (model.provider === "openai-codex" && (model.id === "gpt-5.5" || model.id === "gpt-6.1-sol")) {
     return "code-reviewer";
   }
   return currentRole();
@@ -641,7 +641,7 @@ test(
             ? params.model.split("/")
             : role === "developer"
               ? ["openai-codex", "gpt-5.4"]
-              : ["openai-codex", "gpt-5.6-sol"];
+              : ["openai-codex", "gpt-6.1-sol"];
           // Strip thinking suffix (e.g. ':max') appended by TLH before registry lookup
           const registryId = modelKey[1]?.includes(":") ? modelKey[1].split(":")[0] : modelKey[1];
           const model = modelRegistry.find(modelKey[0], registryId);
@@ -812,7 +812,7 @@ test(
       );
       assert.equal(
         scriptState.providerCalls.some(
-          (entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-5.6-sol",
+          (entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-6.1-sol",
         ),
         true,
         diagnostics,
