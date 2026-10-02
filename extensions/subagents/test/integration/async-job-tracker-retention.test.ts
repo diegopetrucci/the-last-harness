@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -497,6 +498,65 @@ describe(
           tracker?.resetJobs();
           removeTempDir(asyncRoot);
         }
+      }
+    });
+
+    it("restores healthy jobs while warning once for unsafe status artifacts", () => {
+      if (process.platform === "win32") return;
+
+      const asyncRoot = createTempDir("pi-async-job-restore-unsafe-status-");
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      console.warn = (message?: unknown) => warnings.push(String(message ?? ""));
+      try {
+        const healthyDir = path.join(asyncRoot, "run-healthy");
+        const unsafeDir = path.join(asyncRoot, "run-unsafe");
+        fs.mkdirSync(healthyDir, { recursive: true });
+        fs.mkdirSync(unsafeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(healthyDir, "status.json"),
+          JSON.stringify({
+            runId: "run-healthy",
+            mode: "single",
+            state: "running",
+            sessionId: "session-owner",
+            startedAt: 1000,
+            steps: [{ agent: "worker", status: "running" }],
+          }),
+          "utf-8",
+        );
+        const unsafeStatusPath = path.join(unsafeDir, "status.json");
+        execFileSync("mkfifo", [unsafeStatusPath]);
+        const before = fs.lstatSync(unsafeStatusPath);
+
+        const state = createState();
+        state.currentSessionId = "session-owner";
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 1000 },
+        );
+        tracker.restoreActiveJobs();
+
+        assert.deepEqual([...state.asyncJobs.keys()], ["run-healthy"]);
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0] ?? "", /skipped 1 unsafe status artifact/);
+        assert.doesNotMatch(warnings[0] ?? "", /status\.json|run-unsafe|session-owner|\//);
+        const after = fs.lstatSync(unsafeStatusPath);
+        assert.equal(after.isFIFO(), true);
+        assert.equal(after.mode, before.mode);
+        assert.equal(after.ino, before.ino);
+
+        tracker.resetJobs();
+        tracker.restoreActiveJobs();
+        assert.equal(warnings.length, 1, "unchanged unsafe artifacts should warn once");
+        assert.deepEqual([...state.asyncJobs.keys()], ["run-healthy"]);
+      } finally {
+        console.warn = originalWarn;
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
       }
     });
 
