@@ -280,11 +280,13 @@ function prepareDefaults(
   // Strip the builtin:mcp exclusion from the defaults clone when mcporter is
   // disabled, so the merge engine does not add it when the adapter is not
   // active. Removing it from the persisted settings is handled separately by
-  // applyBuiltinMcpExclusionSync.
+  // applyBuiltinMcpExclusionSync. A missing manifest entry also means there is
+  // no adapter to coordinate with, so do not introduce the exclusion.
   const mcporterEntry = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
   if (
+    !mcporterEntry ||
     disabledIds.has(MCPORTER_EXTENSION_ID) ||
-    (mcporterEntry && defaultExtensionPackageFilterDisables(existingSettings, mcporterEntry))
+    defaultExtensionPackageFilterDisables(existingSettings, mcporterEntry)
   ) {
     if (Array.isArray(next.extensions)) {
       const filtered = (next.extensions as unknown[]).filter(
@@ -924,22 +926,68 @@ function syncDefaultExtensionProvenance(
   }
 }
 
-function isMcporterEffectivelyDisabled(
+function hasBuiltinMcpExclusion(settings: unknown): boolean {
+  return (
+    isPlainObject(settings) &&
+    Array.isArray(settings.extensions) &&
+    settings.extensions.includes(BUILTIN_MCP_EXCLUSION)
+  );
+}
+
+function isBuiltinMcpExclusionManaged(settings: unknown): boolean {
+  return (
+    isPlainObject(settings) &&
+    isPlainObject(settings.tlh) &&
+    settings.tlh.builtinMcpExclusionManaged === true
+  );
+}
+
+function markBuiltinMcpExclusionManaged(settings: JsonObject): boolean {
+  const tlh = settings.tlh;
+  if (tlh === undefined) {
+    settings.tlh = { builtinMcpExclusionManaged: true };
+    return true;
+  }
+  if (!isPlainObject(tlh)) return false;
+  if (tlh.builtinMcpExclusionManaged === true) return false;
+  tlh.builtinMcpExclusionManaged = true;
+  return true;
+}
+
+function clearBuiltinMcpExclusionManaged(settings: JsonObject): boolean {
+  if (!isPlainObject(settings.tlh)) return false;
+  if (!Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged")) return false;
+  delete settings.tlh.builtinMcpExclusionManaged;
+  return true;
+}
+
+function removeBuiltinMcpExclusion(settings: JsonObject): boolean {
+  if (!Array.isArray(settings.extensions)) return false;
+  const before = settings.extensions;
+  const filtered = before.filter((entry: unknown) => entry !== BUILTIN_MCP_EXCLUSION);
+  if (filtered.length === before.length) return false;
+  if (filtered.length === 0) {
+    delete settings.extensions;
+  } else {
+    settings.extensions = filtered;
+  }
+  return true;
+}
+
+function isMcporterEffectivelyEnabled(
   disabledIds: ReadonlySet<string>,
   existingSettings: unknown,
   defaultExtensions: readonly DefaultExtensionEntry[],
 ): boolean {
-  if (disabledIds.has(MCPORTER_EXTENSION_ID)) return true;
   const mcporter = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
-  if (!mcporter) return false;
-  return defaultExtensionPackageFilterDisables(existingSettings, mcporter);
+  if (!mcporter || disabledIds.has(MCPORTER_EXTENSION_ID)) return false;
+  return !defaultExtensionPackageFilterDisables(existingSettings, mcporter);
 }
 
 /**
- * Remove the -builtin:mcp exclusion from the merged settings when mcporter is
- * disabled. The normal mergeArray will not add it (because prepareDefaults
- * strips it from the defaults clone), but a persisted entry from a previous
- * enabled state still needs to be removed.
+ * Coordinate the persisted builtin:mcp exclusion with the bundled mcporter
+ * adapter. The ownership marker is only written when this merge inserts the
+ * exclusion; an unmarked entry is user-owned and is never removed here.
  */
 function applyBuiltinMcpExclusionSync(
   settings: JsonObject,
@@ -948,17 +996,28 @@ function applyBuiltinMcpExclusionSync(
   defaultExtensions: readonly DefaultExtensionEntry[],
   changes: string[],
 ): void {
-  if (!isMcporterEffectivelyDisabled(disabledIds, existingSettings, defaultExtensions)) return;
-  if (!Array.isArray(settings.extensions)) return;
-  const before = settings.extensions as unknown[];
-  const filtered = before.filter((e: unknown) => e !== BUILTIN_MCP_EXCLUSION);
-  if (filtered.length === before.length) return;
-  if (filtered.length === 0) {
-    delete settings.extensions;
-  } else {
-    settings.extensions = filtered;
+  const mcporterEnabled = isMcporterEffectivelyEnabled(
+    disabledIds,
+    existingSettings,
+    defaultExtensions,
+  );
+  const exclusionWasPresent = hasBuiltinMcpExclusion(existingSettings);
+  const exclusionIsPresent = hasBuiltinMcpExclusion(settings);
+
+  if (mcporterEnabled) {
+    if (!exclusionWasPresent && exclusionIsPresent && markBuiltinMcpExclusionManaged(settings)) {
+      changes.push("mark builtin:mcp exclusion as TLH-managed");
+    }
+    return;
   }
-  changes.push("remove builtin:mcp exclusion (mcporter disabled)");
+
+  if (!isBuiltinMcpExclusionManaged(settings)) return;
+  if (removeBuiltinMcpExclusion(settings)) {
+    changes.push("remove TLH-managed builtin:mcp exclusion (mcporter disabled)");
+  }
+  if (clearBuiltinMcpExclusionManaged(settings)) {
+    changes.push("clear builtin:mcp exclusion ownership");
+  }
 }
 
 function mergeSettings(

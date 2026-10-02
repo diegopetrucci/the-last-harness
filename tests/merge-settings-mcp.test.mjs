@@ -83,20 +83,22 @@ test("packaged settings defaults disable builtin:mcp", () => {
   );
 });
 
-test("fresh merge appends the builtin:mcp exclusion", () => {
-  const fixture = tempFixture({
+test("fresh merge appends the builtin:mcp exclusion and records ownership", () => {
+  const fixture = tempFixtureWithBundledExtensions({
     packages: [harnessPackage],
     lastChangelogVersion: changelogSentinel,
   });
 
   runMerge(fixture);
 
-  assert.deepEqual(readJson(fixture.settings).extensions, [builtinMcpExclusion]);
+  const after = readJson(fixture.settings);
+  assert.deepEqual(after.extensions, [builtinMcpExclusion]);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, true);
 });
 
-test("update preserves unrelated extension entries and does not duplicate the exclusion", () => {
+test("update preserves unrelated extension entries and does not claim a preexisting exclusion", () => {
   const extensions = ["./user-extension.js", builtinMcpExclusion, "./another-extension.js"];
-  const fixture = tempFixture({
+  const fixture = tempFixtureWithBundledExtensions({
     packages: [harnessPackage],
     extensions,
     lastChangelogVersion: changelogSentinel,
@@ -110,6 +112,7 @@ test("update preserves unrelated extension entries and does not duplicate the ex
     afterFirstMerge.extensions.filter((entry) => entry === builtinMcpExclusion).length,
     1,
   );
+  assert.equal(afterFirstMerge.tlh?.builtinMcpExclusionManaged, undefined);
 
   const secondOutput = runMerge(fixture, { quiet: false });
   assert.match(secondOutput, /No settings changes needed\./);
@@ -117,7 +120,7 @@ test("update preserves unrelated extension entries and does not duplicate the ex
 });
 
 test("opted-out merge (disabledDefaultExtensions) does not add the builtin:mcp exclusion", () => {
-  const fixture = tempFixture({
+  const fixture = tempFixtureWithBundledExtensions({
     packages: [harnessPackage],
     tlh: { disabledDefaultExtensions: ["mcporter"] },
     lastChangelogVersion: changelogSentinel,
@@ -132,8 +135,8 @@ test("opted-out merge (disabledDefaultExtensions) does not add the builtin:mcp e
   );
 });
 
-test("opted-out merge (disabledDefaultExtensions) removes a persisted builtin:mcp exclusion", () => {
-  const fixture = tempFixture({
+test("opted-out merge preserves an unmarked user exclusion", () => {
+  const fixture = tempFixtureWithBundledExtensions({
     packages: [harnessPackage],
     extensions: [builtinMcpExclusion],
     tlh: { disabledDefaultExtensions: ["mcporter"] },
@@ -143,14 +146,48 @@ test("opted-out merge (disabledDefaultExtensions) removes a persisted builtin:mc
   runMerge(fixture);
 
   const after = readJson(fixture.settings);
-  assert.ok(
-    !Array.isArray(after.extensions) || !after.extensions.includes(builtinMcpExclusion),
-    "merge must remove the persisted builtin:mcp exclusion when mcporter is disabled",
-  );
+  assert.deepEqual(after.extensions, [builtinMcpExclusion]);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
 });
 
-test("opted-out merge (disabledDefaultExtensions) preserves unrelated extension entries", () => {
-  const fixture = tempFixture({
+test("opted-out merge removes a TLH-owned exclusion and clears ownership", () => {
+  const fixture = tempFixtureWithBundledExtensions({
+    packages: [harnessPackage],
+    extensions: [builtinMcpExclusion],
+    tlh: {
+      disabledDefaultExtensions: ["mcporter"],
+      builtinMcpExclusionManaged: true,
+    },
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.equal(after.extensions, undefined);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("false exclusion ownership does not authorize removal", () => {
+  const fixture = tempFixtureWithBundledExtensions({
+    packages: [harnessPackage],
+    extensions: [builtinMcpExclusion],
+    tlh: {
+      disabledDefaultExtensions: ["mcporter"],
+      builtinMcpExclusionManaged: false,
+    },
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.deepEqual(after.extensions, [builtinMcpExclusion]);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, false);
+});
+
+test("opted-out merge preserves unrelated extension entries and unmarked exclusions", () => {
+  const fixture = tempFixtureWithBundledExtensions({
     packages: [harnessPackage],
     extensions: ["./user-ext.js", builtinMcpExclusion, "./other-ext.js"],
     tlh: { disabledDefaultExtensions: ["mcporter"] },
@@ -160,13 +197,7 @@ test("opted-out merge (disabledDefaultExtensions) preserves unrelated extension 
   runMerge(fixture);
 
   const after = readJson(fixture.settings);
-  assert.ok(Array.isArray(after.extensions), "extensions array must be preserved");
-  assert.ok(after.extensions.includes("./user-ext.js"), "unrelated entries must be preserved");
-  assert.ok(after.extensions.includes("./other-ext.js"), "unrelated entries must be preserved");
-  assert.ok(
-    !after.extensions.includes(builtinMcpExclusion),
-    "builtin:mcp exclusion must be removed when mcporter is disabled",
-  );
+  assert.deepEqual(after.extensions, ["./user-ext.js", builtinMcpExclusion, "./other-ext.js"]);
 });
 
 test("package-filter opt-out does not add the builtin:mcp exclusion", () => {
@@ -187,4 +218,103 @@ test("package-filter opt-out does not add the builtin:mcp exclusion", () => {
     !Array.isArray(after.extensions) || !after.extensions.includes(builtinMcpExclusion),
     "merge must not add the builtin:mcp exclusion when mcporter is disabled via package filter",
   );
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("package-filter opt-out removes a TLH-owned exclusion and clears ownership", () => {
+  const mcporterSource = readJson(bundledExtensionsPath).find((e) => e.id === "mcporter")?.source;
+  assert.ok(mcporterSource, "mcporter must have a bundled source");
+
+  const fixture = tempFixtureWithBundledExtensions({
+    packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
+    extensions: [builtinMcpExclusion],
+    tlh: { builtinMcpExclusionManaged: true },
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.equal(after.extensions, undefined);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("package-filter opt-out preserves an unmarked user exclusion", () => {
+  const mcporterSource = readJson(bundledExtensionsPath).find((e) => e.id === "mcporter")?.source;
+  assert.ok(mcporterSource, "mcporter must have a bundled source");
+
+  const fixture = tempFixtureWithBundledExtensions({
+    packages: [harnessPackage, { source: mcporterSource, extensions: [] }],
+    extensions: [builtinMcpExclusion],
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.deepEqual(after.extensions, [builtinMcpExclusion]);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("fresh merge with an empty default-extension manifest does not add the exclusion", () => {
+  const fixture = tempFixture({
+    packages: [harnessPackage],
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.equal(after.extensions, undefined);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("missing default-extension manifest removes only a TLH-owned exclusion", () => {
+  const fixture = tempFixture({
+    packages: [harnessPackage],
+    extensions: [builtinMcpExclusion],
+    tlh: { builtinMcpExclusionManaged: true },
+    lastChangelogVersion: changelogSentinel,
+  });
+  rmSync(fixture.extensions);
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.equal(after.extensions, undefined);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("missing default-extension manifest preserves an unmarked user exclusion", () => {
+  const fixture = tempFixture({
+    packages: [harnessPackage],
+    extensions: [builtinMcpExclusion],
+    lastChangelogVersion: changelogSentinel,
+  });
+  rmSync(fixture.extensions);
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.deepEqual(after.extensions, [builtinMcpExclusion]);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("enabled merge adds exactly one exclusion while preserving an existing extensions array", () => {
+  const fixture = tempFixtureWithBundledExtensions({
+    packages: [harnessPackage],
+    extensions: ["./user-ext.js"],
+    lastChangelogVersion: changelogSentinel,
+  });
+
+  runMerge(fixture);
+
+  const after = readJson(fixture.settings);
+  assert.deepEqual(after.extensions, ["./user-ext.js", builtinMcpExclusion]);
+  assert.equal(after.extensions.filter((entry) => entry === builtinMcpExclusion).length, 1);
+  assert.equal(after.tlh?.builtinMcpExclusionManaged, true);
+
+  const secondOutput = runMerge(fixture, { quiet: false });
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.deepEqual(readJson(fixture.settings).extensions, after.extensions);
 });
