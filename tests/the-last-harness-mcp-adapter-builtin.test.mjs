@@ -1,13 +1,10 @@
 /**
- * Pi 0.99.2 regression: built-in MCP adapter replacement.
+ * Built-in MCP adapter coexistence.
  *
- * Pi 0.99.0 introduced built-in codemode, tool-search, and mcp extensions. The built-in mcp
- * extension is marked `replaceable: true`, which means it is silently omitted when another
- * extension registers the same `/mcp` command.
- *
- * TLH ships `mcporter` (npm:@diegopetrucci/pi-mcp-adapter) as a default extension. When
- * mcporter is loaded it registers `/mcp`, causing Pi to omit the built-in and emit a warning.
- * When mcporter is disabled the built-in MCP loads normally.
+ * Pi 1.0.0 includes a replaceable built-in `mcp` extension. Without an exclusion, another
+ * extension that registers `/mcp` makes Pi omit the built-in and emit a replacement warning.
+ * TLH persists `-builtin:mcp` while its bundled `mcporter` adapter owns `/mcp`, so the product
+ * path must remain warning-free while the underlying replacement behavior stays covered.
  *
  * Tests drive Pi's real DefaultResourceLoader (exported from @earendil-works/pi-coding-agent)
  * with stub extension factories and isolated temp agentDir/cwd so they are fully offline,
@@ -15,9 +12,9 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 const { DefaultResourceLoader, SettingsManager } = await import("@earendil-works/pi-coding-agent");
@@ -58,10 +55,10 @@ function stubAdapterMcpFactory(pi) {
 }
 
 // ---------------------------------------------------------------------------
-// Case (a): adapter present — built-in mcp is NOT loaded; warning is reported
+// Case (a): adapter present without the exclusion — built-in mcp is NOT loaded; warning is reported
 // ---------------------------------------------------------------------------
 
-test("adapter present: builtin mcp is omitted and a warning is reported", async () => {
+test("adapter present without exclusion: builtin mcp is omitted and a warning is reported", async () => {
   const { agentDir, cwd } = makeTempDirs();
   try {
     // Use an in-memory SettingsManager to avoid all file I/O for settings.
@@ -112,7 +109,56 @@ test("adapter present: builtin mcp is omitted and a warning is reported", async 
 });
 
 // ---------------------------------------------------------------------------
-// Case (b): adapter absent — builtin mcp IS loaded normally
+// Case (b): TLH's persisted exclusion — adapter loads without a replacement warning
+// ---------------------------------------------------------------------------
+
+test("adapter present: packaged builtin:mcp exclusion avoids replacement warning", async () => {
+  const { agentDir, cwd } = makeTempDirs();
+  try {
+    const settingsDefaults = JSON.parse(
+      readFileSync(resolve(import.meta.dirname, "..", "config", "settings.defaults.json"), "utf8"),
+    );
+    assert.ok(
+      settingsDefaults.extensions?.includes("-builtin:mcp"),
+      "the packaged settings default must disable builtin:mcp",
+    );
+    const settingsManager = SettingsManager.inMemory({
+      extensions: settingsDefaults.extensions,
+    });
+
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      extensionFactories: [
+        { name: "mcp", factory: stubBuiltinMcpFactory, replaceable: true, builtin: true },
+        { name: "adapter-stub", factory: stubAdapterMcpFactory },
+      ],
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+
+    await loader.reload();
+    const result = loader.getExtensions();
+    const loadedPaths = result.extensions.map((e) => e.path);
+    assert.ok(!loadedPaths.includes("builtin:mcp"));
+    assert.ok(loadedPaths.includes("<inline:adapter-stub>"));
+    assert.equal(
+      (result.warnings ?? []).filter(
+        (warning) => warning.warning.includes("mcp") && warning.warning.includes("/mcp"),
+      ).length,
+      0,
+      "persisted builtin:mcp exclusion must suppress the replacement warning",
+    );
+  } finally {
+    cleanupTempDirs();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Case (c): adapter absent — builtin mcp IS loaded normally
 // ---------------------------------------------------------------------------
 
 test("adapter absent: builtin mcp loads normally with no replacement warning", async () => {

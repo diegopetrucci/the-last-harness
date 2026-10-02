@@ -6,6 +6,8 @@ import process from "node:process";
 import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const RETIRED_DEFAULT_PACKAGE_IDENTITIES = new Set(RETIRED_TLH_DEFAULT_PACKAGE_SOURCES.map(packageIdentity).filter((value) => Boolean(value)));
@@ -329,6 +331,58 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
         }
     }
 }
+function isBuiltinMcpExclusionManaged(settings) {
+    return settings.tlh?.builtinMcpExclusionManaged === true;
+}
+function markBuiltinMcpExclusionManaged(settings) {
+    settings.tlh ??= {};
+    settings.tlh.builtinMcpExclusionManaged = true;
+}
+function clearBuiltinMcpExclusionManaged(settings) {
+    if (!settings.tlh || !Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged")) {
+        return false;
+    }
+    delete settings.tlh.builtinMcpExclusionManaged;
+    return true;
+}
+/**
+ * Remove only TLH-owned -builtin:mcp entries when mcporter is disabled so
+ * Pi's native builtin:mcp can own /mcp without a warning. Unmarked entries
+ * are user-owned and must remain untouched.
+ */
+function applyBuiltinMcpExclusionOnDisable(settings) {
+    if (!isBuiltinMcpExclusionManaged(settings))
+        return;
+    if (Array.isArray(settings.extensions)) {
+        const filtered = settings.extensions.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+        if (filtered.length !== settings.extensions.length) {
+            if (filtered.length === 0) {
+                delete settings.extensions;
+            }
+            else {
+                settings.extensions = filtered;
+            }
+        }
+    }
+    clearBuiltinMcpExclusionManaged(settings);
+}
+/**
+ * Restore -builtin:mcp to settings.extensions when mcporter is re-enabled so
+ * the adapter remains the sole /mcp owner without a replacement warning. A
+ * pre-existing unmarked entry is user-owned and is not claimed.
+ */
+function applyBuiltinMcpExclusionOnEnable(settings) {
+    if (Array.isArray(settings.extensions)) {
+        if (settings.extensions.includes(BUILTIN_MCP_EXCLUSION))
+            return;
+        settings.extensions = [BUILTIN_MCP_EXCLUSION, ...settings.extensions];
+        markBuiltinMcpExclusionManaged(settings);
+    }
+    else if (settings.extensions === undefined) {
+        settings.extensions = [BUILTIN_MCP_EXCLUSION];
+        markBuiltinMcpExclusionManaged(settings);
+    }
+}
 function applyAnthropicWarningOnDisable(settings) {
     const warnings = settings.warnings;
     if (!isPlainObject(warnings))
@@ -361,6 +415,9 @@ function commandDisable(settings, defaultExtensions, id) {
     disabledIds.add(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
     disablePackage(settings, extension);
+    if (extension.id === MCPORTER_EXTENSION_ID) {
+        applyBuiltinMcpExclusionOnDisable(settings);
+    }
     if (extension.id === "anthropic-auth") {
         return applyAnthropicWarningOnDisable(settings);
     }
@@ -373,6 +430,9 @@ function commandEnable(settings, defaultExtensions, id) {
     setDisabledIds(settings, disabledIds, defaultExtensions);
     enablePackage(settings, extension);
     repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+    if (extension.id === MCPORTER_EXTENSION_ID) {
+        applyBuiltinMcpExclusionOnEnable(settings);
+    }
     if (extension.id === "anthropic-auth") {
         return applyAnthropicWarningOnEnable(settings);
     }

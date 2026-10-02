@@ -146,7 +146,7 @@ If the checker fails, investigate before release instead of treating it like a n
 
 The following Pi 1.0.0 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
-- **MCP adapter warning:** at startup verify that Pi's resource-loader warning about the built-in `mcp` extension not being loaded appears (mentioning `/mcp` and `pi config`) and that `/mcp` is functional via the TLH adapter.
+- **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
 - **Interactive fullscreen TUI:** verify that TLH sessions start in Pi's fullscreen mode by default (Pi 1.0.0+); confirm the transcript scrolls within the window, the editor stays fixed, and subagent tool-call and status widgets render correctly; then set `tuiMode: "regular"` and verify the session falls back to normal terminal scrollback.
 - **Adapter MCP connectivity:** with at least one configured MCP server, verify the adapter connects, the footer shows the server count, and the proxy `mcp` tool is accessible.

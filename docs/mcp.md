@@ -60,17 +60,15 @@ For OAuth-backed servers, configure an HTTP `url` for the server and then run `/
 
 `directTools` is opt-in. It exposes individual MCP tools directly instead of going through the proxy `mcp` tool, but it is more token-expensive and may need cache warm-up or a manual `/mcp reconnect <server>` before the direct tool list is ready.
 
-## Startup warning
+## Built-in MCP compatibility
 
-Pi 0.99.0 introduced a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. When TLH's `mcporter` adapter loads and registers `/mcp`, Pi detects the conflict, leaves the built-in MCP out, and emits a resource-loader warning that looks like:
+Pi 1.0.0 includes a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
 
-```
-Extension <mcporter-install-path> registers command `/mcp`, so built-in extension `mcp` was not loaded. To use `mcp`, run `pi config` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.
-```
+This is temporary compatibility behavior while `mcporter` owns `/mcp`. Install/update adds the exclusion only when `mcporter` is present and enabled in the bundled default-extension manifest. When TLH inserts it, the isolated settings record `tlh.builtinMcpExclusionManaged: true` as ownership evidence. A pre-existing exclusion without that marker is user-owned: TLH preserves it during opt-out and does not claim it when the adapter is enabled. Disabling `mcporter`, opting it out by package filter, or removing it from the manifest removes only a TLH-managed exclusion and clears the marker; unrelated extension settings remain unchanged.
 
-The `pi config` advice is Pi's generic text for any built-in replacement. In TLH, **keep the adapter enabled** — it is the intended MCP integration. The adapter replaces the built-in intentionally. To switch to native MCP instead, run `tlh defaults disable mcporter` and reload; the built-in will then load without a warning. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705), but that native migration is a non-goal of the per-agent gateway contract.
+Keep the adapter enabled — it is the intended TLH MCP integration. To switch to native MCP, run `tlh defaults disable mcporter`; Pi's built-in `builtin:mcp` will load on next session start without a warning only if no `-builtin:mcp` exclusion remains in the isolated settings. TLH removes only a TLH-managed exclusion; a preserved user-owned exclusion continues to prevent native MCP from loading. If TLH migrates away from `mcporter`, that migration must explicitly remove any TLH-managed `-builtin:mcp` entry and its ownership marker while preserving unmarked user exclusions. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705), but that native migration is a non-goal of the per-agent gateway contract.
 
-If `mcporter` is disabled, Pi's native `builtin:mcp` loads instead. This provides core MCP connectivity without TLH's adapter-specific features (status-bar footer, proxy `mcp` tool). In particular, the packaged agents' generic proxy-gateway contract is lost while the adapter is disabled; enabling the native extension does not recreate that contract. Direct `mcp:*` child tools remain filtered out.
+If `mcporter` is disabled and native `builtin:mcp` loads, this provides core MCP connectivity without TLH's adapter-specific features (status-bar footer, proxy `mcp` tool). In particular, the packaged agents' generic proxy-gateway contract is lost while the adapter is disabled; enabling the native extension does not recreate that contract. Direct `mcp:*` child tools remain filtered out.
 
 ## Rollback and re-enable
 
