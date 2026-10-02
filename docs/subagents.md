@@ -14,6 +14,16 @@ TLH copies its nine canonical minor-agent definitions to `<agent-dir>/tlh/agents
 
 The canonical packaged TLH roles are thirteen roles: the four primaries `architect`, `rush`, `product`, and `bug-hunter`, plus nine bundled minors — `developer` for implementation, `test-runner` for exact final-validation shell/MCP steps, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright. Stable, always-available project custom `embedded.<slug>` agents are a separate exact-root contract available to the architect or disabled primary mode; see [custom-subagents.md](custom-subagents.md).
 
+### MCP gateway contracts
+
+All thirteen packaged roles declare the generic `mcp` gateway alongside their existing tools. The declaration provides the same proxy capability without enabling direct `mcp:*` child tools:
+
+- Primary agents and `developer` may use the gateway within their authorized task or ticket scope and existing role boundaries.
+- Read-only minors are instructed to use it only for read-only work, avoid mutations, and escalate uncertain side effects. Those restrictions are prompt guidance, not gateway enforcement; a gateway call is not a security boundary.
+- `test-runner` is the intentional unrestricted exception. It may invoke assigned generic MCP validation steps that change external server state, but only in the exact order and shape supplied by its final-validation ticket.
+
+The proxy gateway comes from the bundled `mcporter` adapter. Disabling `mcporter` removes the adapter-provided proxy `mcp` contract for packaged agents; native `builtin:mcp` does not recreate that proxy surface. Native MCP migration tracked in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705) is a separate non-goal. To roll back an opt-out and restore the gateway, run `tlh defaults enable mcporter` and reload or restart TLH. See [mcp.md](mcp.md) for adapter configuration and the warning/rollback details.
+
 ### Malformed custom-agent handling
 
 A malformed custom markdown definition is isolated during discovery instead of aborting the whole agent set. Definitions that fail validation (for example, missing required frontmatter or invalid package, acceptance-role, execution-limit, or tool-budget values) are skipped while valid peers remain executable. `subagent({ action: "list" })` reports an **Agent load warnings** section with the source path and validation error; requesting a skipped definition reports the same diagnostic when it can identify the file.
@@ -94,7 +104,7 @@ The optional `tools` declaration has three distinct states, and the child CLI is
 
 An agent may declare `supervisorBridge: false` to opt out of generic native-supervisor prompt guidance and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
 
-A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
+A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). The generic `mcp` entry is retained in an explicit child `--tools` allowlist, while `mcp:*` entries are filtered and never registered as direct child tools; `MCP_DIRECT_TOOLS=__none__` keeps direct MCP bootstrap disabled.
 
 **Pi 0.99.2 note — `--no-extensions` and built-in providers:** When a custom agent declares an explicit `extensions` list, TLH emits `--no-extensions` for the child process. In Pi 0.99.2, `--no-extensions` disables **all** built-in extensions: `builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and `builtin:llama.cpp` (the llama.cpp provider). The `DefaultResourceLoader` achieves this by limiting the resolved extension paths to only CLI-passed sources when `noExtensions` is set, which excludes the settings-enabled built-in paths (`resource-loader.js` ~403). If a custom agent with an explicit extension list needs one of these built-ins, add `builtin:<name>` (for example `"builtin:mcp"`) as an entry in the agent definition's `extensions` field. TLH passes it through as `--extension builtin:<name>`, which causes the package manager's `resolveExtensionSources` to include it in the CLI-enabled paths and restore that specific built-in even after `--no-extensions` (`resource-loader.js` ~750).
 
