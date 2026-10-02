@@ -54,17 +54,13 @@ For OAuth-backed servers, configure an HTTP `url` for the server and then run `/
 
 `directTools` is opt-in. It exposes individual MCP tools directly instead of going through the proxy `mcp` tool, but it is more token-expensive and may need cache warm-up or a manual `/mcp reconnect <server>` before the direct tool list is ready.
 
-## Startup warning
+## Built-in MCP compatibility
 
-Pi 0.99.0 introduced a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. When TLH's `mcporter` adapter loads and registers `/mcp`, Pi detects the conflict, leaves the built-in MCP out, and emits a resource-loader warning that looks like:
+Pi 1.0.0 includes a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
 
-```
-Extension <mcporter-install-path> registers command `/mcp`, so built-in extension `mcp` was not loaded. To use `mcp`, run `pi config` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.
-```
+This is temporary compatibility behavior while `mcporter` owns `/mcp`. Keep the adapter enabled — it is the intended TLH MCP integration. Install/update persists the exclusion; `tlh defaults disable mcporter` removes it so Pi's built-in MCP can load, and `tlh defaults enable mcporter` restores it. If TLH migrates away from `mcporter`, that migration must explicitly remove the persisted `-builtin:mcp` entry before relying on Pi's built-in MCP. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705).
 
-The `pi config` advice is Pi's generic text for any built-in replacement. In TLH, **keep the adapter enabled** — it is the intended MCP integration. The adapter replaces the built-in intentionally. To switch to native MCP instead, run `tlh defaults disable mcporter` and reload; the built-in will then load without a warning. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705).
-
-If `mcporter` is disabled, Pi's native `builtin:mcp` loads instead. This provides core MCP connectivity without TLH's adapter-specific features (status-bar footer, proxy `mcp` tool).
+To switch to native MCP, run `tlh defaults disable mcporter`; Pi's built-in `builtin:mcp` will load on next session start without a warning.
 
 ## Opt out
 

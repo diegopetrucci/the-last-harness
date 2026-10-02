@@ -13,6 +13,8 @@ const __dirname = dirname(__filename);
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 function usage() {
     return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
 
@@ -158,6 +160,23 @@ function hasCanonicalEntryWithReplacementObject(settings, extension) {
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
     const next = clone(defaults);
     next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
+    // Strip the builtin:mcp exclusion from the defaults clone when mcporter is
+    // disabled, so the merge engine does not add it when the adapter is not
+    // active. Removing it from the persisted settings is handled separately by
+    // applyBuiltinMcpExclusionSync.
+    const mcporterEntry = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (disabledIds.has(MCPORTER_EXTENSION_ID) ||
+        (mcporterEntry && defaultExtensionPackageFilterDisables(existingSettings, mcporterEntry))) {
+        if (Array.isArray(next.extensions)) {
+            const filtered = next.extensions.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+            if (filtered.length === 0) {
+                delete next.extensions;
+            }
+            else {
+                next.extensions = filtered;
+            }
+        }
+    }
     // Strip the anthropic-auth warning suppression from the defaults clone when
     // that extension is disabled, so the merge engine cannot re-introduce
     // warnings.anthropicExtraUsage into an opted-out user's settings on update.
@@ -654,6 +673,37 @@ function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds
         changes.push("update TLH default extension provenance metadata");
     }
 }
+function isMcporterEffectivelyDisabled(disabledIds, existingSettings, defaultExtensions) {
+    if (disabledIds.has(MCPORTER_EXTENSION_ID))
+        return true;
+    const mcporter = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (!mcporter)
+        return false;
+    return defaultExtensionPackageFilterDisables(existingSettings, mcporter);
+}
+/**
+ * Remove the -builtin:mcp exclusion from the merged settings when mcporter is
+ * disabled. The normal mergeArray will not add it (because prepareDefaults
+ * strips it from the defaults clone), but a persisted entry from a previous
+ * enabled state still needs to be removed.
+ */
+function applyBuiltinMcpExclusionSync(settings, disabledIds, existingSettings, defaultExtensions, changes) {
+    if (!isMcporterEffectivelyDisabled(disabledIds, existingSettings, defaultExtensions))
+        return;
+    if (!Array.isArray(settings.extensions))
+        return;
+    const before = settings.extensions;
+    const filtered = before.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+    if (filtered.length === before.length)
+        return;
+    if (filtered.length === 0) {
+        delete settings.extensions;
+    }
+    else {
+        settings.extensions = filtered;
+    }
+    changes.push("remove builtin:mcp exclusion (mcporter disabled)");
+}
 function mergeSettings(existing, defaults, { force }) {
     if (!isPlainObject(existing)) {
         throw new Error("Existing settings must be a JSON object");
@@ -841,6 +891,7 @@ function main() {
     pruneQuietToolsDisabledDefaultExtension(next, changes);
     pruneFffDisabledDefaultExtension(next, changes);
     pruneSubagentsDisabledDefaultExtension(next, changes);
+    applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {
