@@ -1162,3 +1162,264 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
   );
   assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
+
+// ---------------------------------------------------------------------------
+// tlh defaults disable/enable mcporter <-> -builtin:mcp exclusion coordination
+// ---------------------------------------------------------------------------
+
+test("tlh-defaults disable mcporter removes -builtin:mcp from settings.extensions", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [mcporterSrc],
+        extensions: ["-builtin:mcp"],
+        tlh: { builtinMcpExclusionManaged: true },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.ok(
+    !Array.isArray(settings.extensions) || !settings.extensions.includes("-builtin:mcp"),
+    "disabling mcporter must remove -builtin:mcp from extensions",
+  );
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("tlh-defaults disable mcporter preserves an unmarked user exclusion", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [mcporterSrc],
+        extensions: ["-builtin:mcp"],
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("tlh-defaults disable mcporter preserves unrelated extension entries", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [mcporterSrc],
+        extensions: ["./user-ext.js", "-builtin:mcp", "./other-ext.js"],
+        tlh: { builtinMcpExclusionManaged: true },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.ok(Array.isArray(settings.extensions), "extensions array must be preserved");
+  assert.ok(settings.extensions.includes("./user-ext.js"), "unrelated entries must be preserved");
+  assert.ok(settings.extensions.includes("./other-ext.js"), "unrelated entries must be preserved");
+  assert.ok(
+    !settings.extensions.includes("-builtin:mcp"),
+    "-builtin:mcp must be removed when mcporter is disabled",
+  );
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("tlh-defaults enable mcporter restores -builtin:mcp without claiming a preexisting exclusion", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        extensions: ["./user-ext.js", "-builtin:mcp"],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.extensions, ["./user-ext.js", "-builtin:mcp"]);
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, undefined);
+});
+
+test("tlh-defaults enable mcporter restores -builtin:mcp to settings.extensions", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        extensions: ["./user-ext.js"],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.ok(Array.isArray(settings.extensions), "extensions array must exist after enable");
+  assert.ok(
+    settings.extensions.includes("-builtin:mcp"),
+    "enable mcporter must restore -builtin:mcp to extensions",
+  );
+  assert.ok(
+    settings.extensions.includes("./user-ext.js"),
+    "unrelated extension entries must be preserved",
+  );
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+});
+
+test("tlh-defaults enable mcporter adds -builtin:mcp when no extensions array exists", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.ok(
+    Array.isArray(settings.extensions) && settings.extensions.includes("-builtin:mcp"),
+    "enable mcporter must add -builtin:mcp even when no extensions array was present",
+  );
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+});
+
+test("tlh-defaults mcporter enable/disable cycles keep ownership idempotent", () => {
+  const fixture = tempFixture();
+  const mcporterSrc = bundledSource("mcporter");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([{ id: "mcporter", source: mcporterSrc, aliases: [], replaces: [] }], null, 2),
+  );
+  writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
+
+  const runDefaults = (command) =>
+    runNode(defaultsScript, [
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      command,
+      "mcporter",
+    ]);
+
+  runDefaults("enable");
+  let settings = readJson(fixture.settings);
+  assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+
+  runDefaults("disable");
+  settings = readJson(fixture.settings);
+  assert.equal(settings.extensions, undefined);
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, undefined);
+
+  runDefaults("enable");
+  settings = readJson(fixture.settings);
+  assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
+  assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+});
