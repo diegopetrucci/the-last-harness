@@ -13,6 +13,8 @@ const __dirname = dirname(__filename);
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 function usage() {
     return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
 
@@ -158,6 +160,25 @@ function hasCanonicalEntryWithReplacementObject(settings, extension) {
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
     const next = clone(defaults);
     next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
+    // Strip the builtin:mcp exclusion from the defaults clone when mcporter is
+    // disabled, so the merge engine does not add it when the adapter is not
+    // active. Removing it from the persisted settings is handled separately by
+    // applyBuiltinMcpExclusionSync. A missing manifest entry also means there is
+    // no adapter to coordinate with, so do not introduce the exclusion.
+    const mcporterEntry = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (!mcporterEntry ||
+        disabledIds.has(MCPORTER_EXTENSION_ID) ||
+        defaultExtensionPackageFilterDisables(existingSettings, mcporterEntry)) {
+        if (Array.isArray(next.extensions)) {
+            const filtered = next.extensions.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+            if (filtered.length === 0) {
+                delete next.extensions;
+            }
+            else {
+                next.extensions = filtered;
+            }
+        }
+    }
     // Strip the anthropic-auth warning suppression from the defaults clone when
     // that extension is disabled, so the merge engine cannot re-introduce
     // warnings.anthropicExtraUsage into an opted-out user's settings on update.
@@ -654,6 +675,82 @@ function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds
         changes.push("update TLH default extension provenance metadata");
     }
 }
+function hasBuiltinMcpExclusion(settings) {
+    return (isPlainObject(settings) &&
+        Array.isArray(settings.extensions) &&
+        settings.extensions.includes(BUILTIN_MCP_EXCLUSION));
+}
+function isBuiltinMcpExclusionManaged(settings) {
+    return (isPlainObject(settings) &&
+        isPlainObject(settings.tlh) &&
+        settings.tlh.builtinMcpExclusionManaged === true);
+}
+function markBuiltinMcpExclusionManaged(settings) {
+    const tlh = settings.tlh;
+    if (tlh === undefined) {
+        settings.tlh = { builtinMcpExclusionManaged: true };
+        return true;
+    }
+    if (!isPlainObject(tlh))
+        return false;
+    if (tlh.builtinMcpExclusionManaged === true)
+        return false;
+    tlh.builtinMcpExclusionManaged = true;
+    return true;
+}
+function clearBuiltinMcpExclusionManaged(settings) {
+    if (!isPlainObject(settings.tlh))
+        return false;
+    if (!Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged"))
+        return false;
+    delete settings.tlh.builtinMcpExclusionManaged;
+    return true;
+}
+function removeBuiltinMcpExclusion(settings) {
+    if (!Array.isArray(settings.extensions))
+        return false;
+    const before = settings.extensions;
+    const filtered = before.filter((entry) => entry !== BUILTIN_MCP_EXCLUSION);
+    if (filtered.length === before.length)
+        return false;
+    if (filtered.length === 0) {
+        delete settings.extensions;
+    }
+    else {
+        settings.extensions = filtered;
+    }
+    return true;
+}
+function isMcporterEffectivelyEnabled(disabledIds, existingSettings, defaultExtensions) {
+    const mcporter = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (!mcporter || disabledIds.has(MCPORTER_EXTENSION_ID))
+        return false;
+    return !defaultExtensionPackageFilterDisables(existingSettings, mcporter);
+}
+/**
+ * Coordinate the persisted builtin:mcp exclusion with the bundled mcporter
+ * adapter. The ownership marker is only written when this merge inserts the
+ * exclusion; an unmarked entry is user-owned and is never removed here.
+ */
+function applyBuiltinMcpExclusionSync(settings, disabledIds, existingSettings, defaultExtensions, changes) {
+    const mcporterEnabled = isMcporterEffectivelyEnabled(disabledIds, existingSettings, defaultExtensions);
+    const exclusionWasPresent = hasBuiltinMcpExclusion(existingSettings);
+    const exclusionIsPresent = hasBuiltinMcpExclusion(settings);
+    if (mcporterEnabled) {
+        if (!exclusionWasPresent && exclusionIsPresent && markBuiltinMcpExclusionManaged(settings)) {
+            changes.push("mark builtin:mcp exclusion as TLH-managed");
+        }
+        return;
+    }
+    if (!isBuiltinMcpExclusionManaged(settings))
+        return;
+    if (removeBuiltinMcpExclusion(settings)) {
+        changes.push("remove TLH-managed builtin:mcp exclusion (mcporter disabled)");
+    }
+    if (clearBuiltinMcpExclusionManaged(settings)) {
+        changes.push("clear builtin:mcp exclusion ownership");
+    }
+}
 function mergeSettings(existing, defaults, { force }) {
     if (!isPlainObject(existing)) {
         throw new Error("Existing settings must be a JSON object");
@@ -841,6 +938,7 @@ function main() {
     pruneQuietToolsDisabledDefaultExtension(next, changes);
     pruneFffDisabledDefaultExtension(next, changes);
     pruneSubagentsDisabledDefaultExtension(next, changes);
+    applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

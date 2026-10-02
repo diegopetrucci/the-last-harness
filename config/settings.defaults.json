@@ -2,6 +2,9 @@
   "packages": [
     "git:github.com/diegopetrucci/the-last-harness"
   ],
+  "extensions": [
+    "-builtin:mcp"
+  ],
   "theme": "system",
   "editorPaddingX": 1,
   "quietStartup": true,

@@ -40,9 +40,13 @@ type JsonObject = Record<string, unknown>;
 
 type Settings = JsonObject & {
   packages?: unknown[];
+  extensions?: unknown[];
   tlh?: JsonObject;
   warnings?: unknown;
 };
+
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -463,6 +467,59 @@ function commandSources(
   }
 }
 
+function isBuiltinMcpExclusionManaged(settings: Settings): boolean {
+  return settings.tlh?.builtinMcpExclusionManaged === true;
+}
+
+function markBuiltinMcpExclusionManaged(settings: Settings): void {
+  settings.tlh ??= {};
+  settings.tlh.builtinMcpExclusionManaged = true;
+}
+
+function clearBuiltinMcpExclusionManaged(settings: Settings): boolean {
+  if (!settings.tlh || !Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged")) {
+    return false;
+  }
+  delete settings.tlh.builtinMcpExclusionManaged;
+  return true;
+}
+
+/**
+ * Remove only TLH-owned -builtin:mcp entries when mcporter is disabled so
+ * Pi's native builtin:mcp can own /mcp without a warning. Unmarked entries
+ * are user-owned and must remain untouched.
+ */
+function applyBuiltinMcpExclusionOnDisable(settings: Settings): void {
+  if (!isBuiltinMcpExclusionManaged(settings)) return;
+  if (Array.isArray(settings.extensions)) {
+    const filtered = settings.extensions.filter((e: unknown) => e !== BUILTIN_MCP_EXCLUSION);
+    if (filtered.length !== settings.extensions.length) {
+      if (filtered.length === 0) {
+        delete settings.extensions;
+      } else {
+        settings.extensions = filtered;
+      }
+    }
+  }
+  clearBuiltinMcpExclusionManaged(settings);
+}
+
+/**
+ * Restore -builtin:mcp to settings.extensions when mcporter is re-enabled so
+ * the adapter remains the sole /mcp owner without a replacement warning. A
+ * pre-existing unmarked entry is user-owned and is not claimed.
+ */
+function applyBuiltinMcpExclusionOnEnable(settings: Settings): void {
+  if (Array.isArray(settings.extensions)) {
+    if (settings.extensions.includes(BUILTIN_MCP_EXCLUSION)) return;
+    settings.extensions = [BUILTIN_MCP_EXCLUSION, ...settings.extensions];
+    markBuiltinMcpExclusionManaged(settings);
+  } else if (settings.extensions === undefined) {
+    settings.extensions = [BUILTIN_MCP_EXCLUSION];
+    markBuiltinMcpExclusionManaged(settings);
+  }
+}
+
 function applyAnthropicWarningOnDisable(settings: Settings): boolean {
   const warnings = settings.warnings;
   if (!isPlainObject(warnings)) return false;
@@ -497,6 +554,9 @@ function commandDisable(
   disabledIds.add(extension.id);
   setDisabledIds(settings, disabledIds, defaultExtensions);
   disablePackage(settings, extension);
+  if (extension.id === MCPORTER_EXTENSION_ID) {
+    applyBuiltinMcpExclusionOnDisable(settings);
+  }
   if (extension.id === "anthropic-auth") {
     return applyAnthropicWarningOnDisable(settings);
   }
@@ -514,6 +574,9 @@ function commandEnable(
   setDisabledIds(settings, disabledIds, defaultExtensions);
   enablePackage(settings, extension);
   repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+  if (extension.id === MCPORTER_EXTENSION_ID) {
+    applyBuiltinMcpExclusionOnEnable(settings);
+  }
   if (extension.id === "anthropic-auth") {
     return applyAnthropicWarningOnEnable(settings);
   }
