@@ -1,0 +1,85 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-b0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-b4",
+    "revision": 4,
+    "cursor": "opaque-cursor-b4",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-b4",
+      "status": "idle",
+      "tree": {
+        "activeLeafId": "entry-b1",
+        "entries": [
+          {
+            "id": "entry-b1",
+            "parentId": null,
+            "kind": "user-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic user turn branch root"
+              }
+            }
+          },
+          {
+            "id": "entry-b2",
+            "parentId": "entry-b1",
+            "kind": "assistant-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic assistant turn branch first"
+              }
+            }
+          },
+          {
+            "id": "entry-b3",
+            "parentId": "entry-b1",
+            "kind": "user-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic user turn branch alternate"
+              }
+            }
+          },
+          {
+            "id": "entry-b4",
+            "parentId": "entry-b3",
+            "kind": "assistant-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic assistant turn branch alternate"
+              }
+            }
+          }
+        ],
+        "rootIds": ["entry-b1"]
+      }
+    }
+  }
+}

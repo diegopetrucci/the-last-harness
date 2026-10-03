@@ -97,6 +97,16 @@ extensions/the-last-harness/primary-agent-runtime-boundaries.js linguist-generat
 extensions/the-last-harness/primary-agent-runtime-delegation.js linguist-generated=true
 extensions/the-last-harness/primary-agent-runtime-settings.js linguist-generated=true
 extensions/the-last-harness/profile-state.js linguist-generated=true
+extensions/the-last-harness/session-mirror-observer-facade.js linguist-generated=true
+extensions/the-last-harness/session-mirror-observer-probe.js linguist-generated=true
+extensions/the-last-harness/session-mirror/json-boundary.js linguist-generated=true
+extensions/the-last-harness/session-mirror/local-bridge-boundary.js linguist-generated=true
+extensions/the-last-harness/session-mirror/local-bridge-reply-channel.js linguist-generated=true
+extensions/the-last-harness/session-mirror/local-bridge-sink.js linguist-generated=true
+extensions/the-last-harness/session-mirror/profile-attestation.js linguist-generated=true
+extensions/the-last-harness/session-mirror/session-adapter.js linguist-generated=true
+extensions/the-last-harness/session-mirror/observer.js linguist-generated=true
+extensions/the-last-harness/session-mirror/session-mirror-reply-producer.js linguist-generated=true
 extensions/the-last-harness/prompts.js linguist-generated=true
 extensions/the-last-harness/provider-auth-health.js linguist-generated=true
 extensions/the-last-harness/reconcile-command.js linguist-generated=true
