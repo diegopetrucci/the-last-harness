@@ -17,11 +17,43 @@ Explicitly excluded here:
 ## Review cadence
 
 - **Pi-sensitive items**: re-review on every `@earendil-works/pi-coding-agent` version bump.
-- **`annotate-git-diff`**: re-review at least quarterly and on upstream package/repo releases affecting the review UI/flow. It is not a Pi-cadence row and is intentionally not restamped by the Pi 1.0.0 review below.
+- **`annotate-git-diff`**: re-review at least quarterly and on upstream package/repo releases affecting the review UI/flow. It is not a Pi-cadence row and is intentionally not restamped by the Pi 1.0.1 review below.
 
-## Pi 1.0.0 review evidence
+## Pi 1.0.3 review evidence
 
-This active review compares `@earendil-works/pi-coding-agent` `0.99.2` with the pinned `1.0.0`. The Pi 1.0.0 CHANGELOG (`node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`), installed settings docs (`node_modules/@earendil-works/pi-coding-agent/docs/settings.md`), CLI docs (`node_modules/@earendil-works/pi-coding-agent/docs/cli.md`), and `dist/core/resource-loader.js` were inspected.
+Reviewed 2026-10-05 by diffing the 1.0.1 and 1.0.3 tarballs of `pi-coding-agent`, `pi-ai`, `pi-tui`, and `pi-agent-core`. Pi 1.0.2 was reviewed via its changelog (a single `models.json` addition) and is covered by the 1.0.1 → 1.0.3 tarball diff below; TLH skipped the 1.0.2 pin.
+
+### Changes reviewed in Pi 1.0.2–1.0.3
+
+| Area | Upstream path | Finding | TLH impact |
+| --- | --- | --- | --- |
+| `samplingParamsByThinkingLevel` in models.json | `pi-coding-agent` → `models.json` (1.0.2) | Pi 1.0.2 adds per-thinking-level sampling parameter overrides to `models.json`. | TLH does not write or ship `models.json`. No TLH impact. |
+| Azure provider rename | `pi-ai` → `providers/azure-openai-responses.*` renamed to `providers/azure.*` (1.0.3) | The provider key `azure-openai-responses` is renamed to `azure` in all Pi provider references. Users who have hardcoded `azure-openai-responses` in `auth.json`, `models.json`, or `settings.json` must rename the key to `azure`; the old key is no longer recognized. | TLH writes no Azure configuration. The launch-telemetry provider-name allowlist was updated to recognize both `azure` and `azure-openai-responses` (ticket tlha-3bir). No other TLH production code change required. |
+| Home/End keybinding change | `pi-tui` → keybindings (1.0.3) | `tui.altScreen.top`/`tui.altScreen.bottom` (fullscreen transcript scroll to top/bottom) now default to Ctrl+Home/Ctrl+End (was Home/End). Correspondingly, Home/End in the editor now always move the cursor to line start/end; the prior Ctrl+Home/Ctrl+End editor bindings for those actions are dropped. | TLH defines no overrides for `tui.altScreen.top`, `tui.altScreen.bottom`, or editor line-start/end keybindings. No TLH change required. |
+| `detectInstallChange` restart hint | `pi-coding-agent` → `dist/config.js`, `src/modes/interactive/interactive-mode.ts` (`maybeShowInstallChangeWarning`) (1.0.3) | Pi 1.0.3 adds `detectInstallChange`, which records the package.json path read at startup. After an error during a session, interactive mode calls `maybeShowInstallChangeWarning`, which re-reads that file and shows a one-time restart hint if the on-disk version differs from the running version (`'updated'`) or the file is gone (`'removed'`). | Benefits TLH's runtime-swap flow: when `tlh update` replaces the private runtime in place during a running session, the next in-session error surfaces a restart hint instead of opaque missing-module errors. No TLH code change required. |
+| OAuth refresh refactor (`refreshStoredOAuthCredential`) | `pi-ai` → `dist/auth/resolve.js` (1.0.3) | Pi 1.0.3 extracts the OAuth token-refresh path into `refreshStoredOAuthCredential`, ensuring a rotated refresh token is persisted before the result is returned; a cancellation or error after token rotation no longer discards the new refresh token. | Affects Claude Pro/Max subscription OAuth refresh. **Live Claude Pro/Max OAuth validation remains a pending release gate** — this check was not completed as of this review and must be confirmed before a public release targeting Claude Pro/Max users (same gate as the Pi 1.0.1 inline-tools review). No TLH production code change required. |
+| Codemode `image()` output files and Pi output file permissions | `pi-coding-agent` → codemode extension (1.0.3) | The codemode `image()` API now also writes each generated image to a temp output file and includes the file path in the result. Separately, all Pi output files — full text of truncated tool output, binary MCP resources, and codemode images — are now created readable only by the owner. | TLH does not override codemode. No TLH impact. |
+| Byte-identical TLH seams (`pi-ai` / `anthropic-messages`) | `pi-ai` → `dist/api/anthropic-messages.js` | `anthropic-messages.js` is byte-identical between Pi 1.0.1 and 1.0.3, including `INLINE_TOOLS_BETA = "inline-tools-2026-09-15"`. | No TLH changes required. The Pi 1.0.1 inline-tools assessment remains current. |
+| Packaging | `package.json`, sibling packages | No shrinkwrap in any `@earendil-works` package. `pi-coding-agent` 1.0.3 dependencies and engines are unchanged from 1.0.1 except that all `@earendil-works/*` siblings carry caret ranges pinned to 1.0.3. | TLH's `npm ci` lockfile approach and `overrides` block continue to hold the full dependency graph at the managed pin. No production code change beyond the pin bump. |
+
+## Historical Pi 1.0.1 review evidence
+
+Reviewed 2026-10-03 by diffing the 1.0.0 and 1.0.1 tarballs of `pi-coding-agent`, `pi-ai`, `pi-tui`, and `pi-agent-core`.
+
+### Changes reviewed in Pi 1.0.1
+
+| Area | Upstream path | Finding | TLH impact |
+| --- | --- | --- | --- |
+| Shrinkwrap removal | `package.json` (no `npm-shrinkwrap.json` in 1.0.1) | Pi 1.0.1 no longer ships a shrinkwrap; the private runtime dependency graph is no longer pinned by upstream. Pi also releases all first-party sibling packages (`pi-ai`, `pi-tui`, `pi-agent-core`, etc.) in lockstep; Pi 1.0.2 was published during the 1.0.1 review window and was silently picked up by caret ranges before the overrides were in place. | TLH responds by installing the private runtime via `npm ci` from its own lockfile at `config/pi-runtime/`. All `@earendil-works/*` siblings are additionally held at the managed pin via `overrides` in both `package.json` (hand-maintained) and `config/pi-runtime/package.json` (the runtime-lock generator writes this manifest, including its overrides, from the pin), preventing any newer sibling from entering silently through caret ranges. No production code change beyond what was already shipped for the lockfile feature. |
+| Byte-identical TLH seams | `cache-stats`, `settings-manager`, `project-trust`, `resource-loader`, `system-prompt`, `json-event`, `model-runtime`, `model-registry`, `cache-warmer`, `extensions/index` | All listed upstream source files are byte-identical between 1.0.0 and 1.0.1. | No TLH changes required. Existing seam contracts and compatibility assessments from the Pi 1.0.0 review remain current. |
+| `interactive-mode` diff | `src/modes/interactive/interactive-mode.ts` | The 1.0.0 → 1.0.1 diff does not touch `showNewVersionNotification`, `showPackageUpdateNotification`, the model/effort selector hook sites, or any other method patched by TLH prototype overrides. | No TLH changes required. |
+| Inline-tools beta header (`pi-ai`) | `pi-ai` → `anthropic-messages.ts` | `pi-ai` now sends the `inline-tools-2026-09-15` beta header and uses a `tool_addition` content block for mid-conversation tool changes, exercised via `setActiveTools` and the native supervisor `registerTool` path. | The inline-tools path is provider-transport-level and is not intercepted by TLH. **Live Claude Pro/Max OAuth validation of this path is a pending release gate** — that check was not completed as of this review and must be confirmed before a public release targeting Claude Pro/Max users. |
+| `registerToolRenderer` API | `src/core/extensions/types.ts` (`ExtensionAPI`) | 1.0.1 adds `registerToolRenderer` to `ExtensionAPI`, allowing extensions to supply custom rendering for named tools. | TLH does not call `registerToolRenderer`. The API is intentionally unused; no production code change required. A no-op mock stub is present in the test environment as a shim for tests that construct a full `ExtensionAPI` surface. |
+| pi-tui path resolution (test-only) | `pi-tui` test support | 1.0.1 hoists sibling packages under the npm layout, changing the path that `createRequire` anchored at `pi-coding-agent` resolves to for pi-tui test utilities. | Test-only adjustment: TLH test helpers that import pi-tui internals now anchor `createRequire` at `pi-coding-agent` to match the 1.0.1 hoisted layout. No production code change. |
+
+## Historical Pi 1.0.0 review evidence
+
+This is historical evidence for the 0.99.2 → 1.0.0 upgrade review. The Pi 1.0.0 CHANGELOG (`node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md`), installed settings docs (`node_modules/@earendil-works/pi-coding-agent/docs/settings.md`), CLI docs (`node_modules/@earendil-works/pi-coding-agent/docs/cli.md`), and `dist/core/resource-loader.js` were inspected.
 
 ### Changes reviewed in Pi 1.0.0
 
@@ -125,3 +157,11 @@ This is retained historical evidence, not the current pin. The inventory was re-
 4. Preserve TLH-only safety behavior unless the ticket explicitly says to change it.
 5. Run the narrowest targeted tests listed above plus a `git diff --check` pass.
 6. If provenance is incomplete, say so explicitly in the PR or ticket notes rather than implying stronger attestation.
+
+**When bumping the Pi version pin**, apply the following steps in addition to the review steps above. Upstream releases all `@earendil-works/*` siblings in lockstep with caret ranges, so a newer sibling can enter silently if the overrides are not updated together with the pin.
+
+7. Update the managed pin everywhere it appears: `install.sh`, `scripts/tlh-install.mts` (then rebuild with `npm run build`), `extensions/the-last-harness/model-selection-scope.ts`, and the `devDependencies`/`peerDependencies` entries in `package.json`.
+8. Update every `@earendil-works/*` entry in the `overrides` block of root `package.json` by hand. `config/pi-runtime/package.json` (including its overrides) is regenerated by the runtime-lock generator in the next step — do not hand-edit it.
+9. Delete `config/pi-runtime/package-lock.json` and run `npm run generate:pi-runtime-lock` to regenerate it.
+10. Run `npm install` in the repository root to refresh the root lockfile.
+11. Run `npm run check:package-versions` to confirm no sibling or override has drifted from the pin; the check fails on any mismatch.

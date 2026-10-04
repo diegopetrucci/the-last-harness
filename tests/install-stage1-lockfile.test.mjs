@@ -14,6 +14,7 @@ import test from "node:test";
 import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 import {
   TLH_PINNED_PI_VERSION,
+  escapeRegExp,
   runInstaller,
   safeInstallerPath,
   scrubInstallerEnv,
@@ -135,7 +136,11 @@ test("lockfile install: same version + differing lock triggers reinstall", (t) =
     "npm ci must be called for lock mismatch",
   );
   // The lock mismatch message is in verbose output; verify the install succeeded.
-  assert.match(output, /Pinning local Pi runtime to 1\.0\.0/, "output must mention pinning");
+  assert.match(
+    output,
+    new RegExp(`Pinning local Pi runtime to ${escapeRegExp(TLH_PINNED_PI_VERSION)}`),
+    "output must mention pinning",
+  );
 });
 
 test("lockfile install: global-layout runtime without lib/package-lock.json triggers reinstall", (t) => {
@@ -281,7 +286,7 @@ test("lockfile install: failed npm ci leaves previous runtime intact and no stag
     }),
     "utf8",
   );
-  const existingPiBinContent = "#!/bin/sh\nprintf '1.0.0\\n'\n";
+  const existingPiBinContent = `#!/bin/sh\nprintf '${TLH_PINNED_PI_VERSION}\\n'\n`;
   // Overwrite pi with simple script to check it remains after failure.
   writeFileSync(join(runtimeDir, "bin", "pi"), existingPiBinContent, "utf8");
 

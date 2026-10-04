@@ -27,6 +27,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+const PI_SIBLING_PACKAGES = Object.freeze([
+  "@earendil-works/chord",
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-codemode",
+  "@earendil-works/pi-mcp",
+  "@earendil-works/pi-telemetry",
+  "@earendil-works/pi-tui",
+]);
 const RUNTIME_MANIFEST_DIR = join(repoRoot, "config", "pi-runtime");
 const RUNTIME_PACKAGE_JSON = join(RUNTIME_MANIFEST_DIR, "package.json");
 const RUNTIME_PACKAGE_LOCK = join(RUNTIME_MANIFEST_DIR, "package-lock.json");
@@ -49,7 +58,10 @@ function main(): void {
   const pinnedPiVersion = readDeclaredStringConstant(TLH_INSTALL_MTS, "PINNED_PI_VERSION");
   process.stdout.write(`generate-pi-runtime-lock: pinned Pi version is ${pinnedPiVersion}\n`);
 
-  // Write (or overwrite) the minimal manifest
+  // Write (or overwrite) the minimal manifest with overrides to constrain
+  // all @earendil-works/* siblings to the same pinned version so they cannot
+  // drift to a newer patch release while pi-coding-agent stays at the pin.
+  const overrides = Object.fromEntries(PI_SIBLING_PACKAGES.map((pkg) => [pkg, pinnedPiVersion]));
   const manifest = {
     name: "tlh-pi-runtime",
     version: pinnedPiVersion,
@@ -57,6 +69,7 @@ function main(): void {
     dependencies: {
       [PI_PACKAGE_NAME]: pinnedPiVersion,
     },
+    overrides,
   };
   writeFileSync(RUNTIME_PACKAGE_JSON, JSON.stringify(manifest, null, 2) + "\n", "utf8");
   process.stdout.write(`generate-pi-runtime-lock: wrote ${RUNTIME_PACKAGE_JSON}\n`);

@@ -162,6 +162,7 @@ const defaultExtensionAPI = {
   },
   registerVirtualModel(_model: unknown): void {},
   unregisterVirtualModel(_provider: string, _id: string): void {},
+  registerToolRenderer(_resolver: unknown): void {},
 } satisfies Omit<ExtensionAPI, "on" | "events">;
 
 // AgentConfig is imported from production so test fixtures stay in sync with the
