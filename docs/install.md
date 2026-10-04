@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.0.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.0.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 

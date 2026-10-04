@@ -597,3 +597,115 @@ test("lockfile install: lib/ has no bin/ subdirectory after fresh install (Fix #
     "lib/bin must not exist after staged swap (staged bin dir must be removed before swap)",
   );
 });
+
+// ---------------------------------------------------------------------------
+// Exact rendered text for pinnedPiInstallGuidance error messages — tlha-h20u
+// ---------------------------------------------------------------------------
+
+test("version error: required-version message has no leading capital in guidance fragment", (t) => {
+  // When the staged pi reports a wrong version, the error must read:
+  //   "Pi X.Y.Z is required (found A.B.C). Re-run the TLH installer … ."
+  // where the guidance is capitalised as a standalone sentence (capital R, single period).
+  // Specifically it must NOT contain ', or Re-run' (capital R) — that would indicate the
+  // guidance was incorrectly embedded mid-sentence with its old capitalisation.
+  const root = makeTempDir("tlh-install-lockfile-version-msg-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  const npmLog = join(root, "npm.log");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  // Template pi reports wrong version so staged validation fails.
+  writeFakePi(
+    templateDir,
+    'if [[ "${1:-}" == "--version" ]]; then printf \'0.80.7\\n\'; exit 0; fi\nexit 0',
+  );
+  writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath: join(templateDir, "pi") });
+  writeFakeCommand(fakebin, "git", "exit 0");
+  writeFakeTk(fakebin);
+
+  const env = scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: safeInstallerPath(fakebin),
+    TLH_PACKAGE_SOURCE: packageDir,
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+  });
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env,
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.notEqual(result.status, 0, `expected failure on wrong version:\n${output}`);
+  // Exact required-version fragment (version numbers are deterministic).
+  assert.ok(
+    output.includes(
+      `Pi ${TLH_PINNED_PI_VERSION} is required (found 0.80.7). Re-run the TLH installer (\`tlh update\` or the install.sh script) to provision the private runtime.`,
+    ),
+    `output must contain exact required-version message:\n${output}`,
+  );
+  // Must not contain the old mid-sentence capital in the guidance fragment.
+  assert.ok(!output.includes(", or Re-run"), `must not contain ', or Re-run':\n${output}`);
+});
+
+test("version error: unparseable-version message has lowercase guidance fragment", (t) => {
+  // When the staged pi prints non-semver output the error must read:
+  //   "unable to parse Pi version from …: not-a-semver. … or re-run the TLH installer …."
+  // The guidance must be lowercase (fragment embedded mid-sentence) ending with one period.
+  const root = makeTempDir("tlh-install-lockfile-unparseable-msg-");
+  const homeDir = join(root, "home");
+  const agentDir = join(root, "agent");
+  const binDir = join(root, "bin");
+  const fakebin = join(root, "fakebin");
+  const packageDir = join(root, "package-source");
+  const templateDir = join(root, "pi-template");
+  const npmLog = join(root, "npm.log");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  mkdirSync(homeDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  // Template pi prints non-semver output so the parse step fails.
+  writeFakePi(
+    templateDir,
+    'if [[ "${1:-}" == "--version" ]]; then printf \'not-a-semver\\n\'; exit 0; fi\nexit 0',
+  );
+  writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath: join(templateDir, "pi") });
+  writeFakeCommand(fakebin, "git", "exit 0");
+  writeFakeTk(fakebin);
+
+  const env = scrubInstallerEnv({
+    HOME: homeDir,
+    PATH: safeInstallerPath(fakebin),
+    TLH_PACKAGE_SOURCE: packageDir,
+    TLH_SKIP_GNOSIS_INSTALL: "1",
+  });
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"],
+    env,
+  );
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.notEqual(result.status, 0, `expected failure on unparseable version:\n${output}`);
+  // Must contain the unparseable-version prefix and the lowercase guidance fragment.
+  assert.ok(
+    output.includes("unable to parse Pi version from"),
+    `output must mention 'unable to parse Pi version from':\n${output}`,
+  );
+  assert.ok(
+    output.includes("not-a-semver"),
+    `output must include the unparseable output:\n${output}`,
+  );
+  assert.ok(
+    output.includes(
+      `or re-run the TLH installer (\`tlh update\` or the install.sh script) to provision the private runtime.`,
+    ),
+    `output must contain lowercase guidance fragment ending with single period:\n${output}`,
+  );
+  // Must not contain the old capitalised guidance fragment in mid-sentence position.
+  assert.ok(!output.includes(", or Re-run"), `must not contain ', or Re-run':\n${output}`);
+});

@@ -670,6 +670,12 @@ PI_UNINSTALL_DISPLAY=""
 # Source of truth: TLH_RUNTIME_MANIFEST_NAME in scripts/lib/tlh-install-runtime.mts.
 _RUNTIME_PKG_JSON_REMOVE=false
 _RUNTIME_LOCK_JSON_REMOVE=false
+# Set to true when .tlh-runtime-install.lock exists as a non-symlink dir (migrated removal).
+# Source of truth: RUNTIME_INSTALL_LOCK_NAME in scripts/lib/tlh-install-runtime.mts.
+_RUNTIME_INSTALL_LOCK_REMOVE=false
+# Set to true when .tlh-runtime-install.lock.reclaim exists as a non-symlink dir (migrated removal).
+# Source of truth: RUNTIME_INSTALL_LOCK_RECLAIM_NAME in scripts/lib/tlh-install-runtime.mts.
+_RUNTIME_INSTALL_LOCK_RECLAIM_REMOVE=false
 
 if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
   # ── ownership gate ──────────────────────────────────────────────────────────
@@ -724,6 +730,12 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
     # Ownership gate failed — SKIP with conditional manual-removal hint.
     REMOVE_PI=false
     PI_SKIP_REASON="${_runtime_gate_skip_reason}. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
+  elif [[ -L "${RUNTIME_DIR}/lib" || -L "${RUNTIME_DIR}/bin" ]]; then
+    # Symlinked runtime child — mirrors the installer's refusal to operate through symlinks.
+    # Check before layout/migrated/created branches so neither npm uninstall, manifest
+    # removal, lock removal, nor rm -rf runs against a potentially shared tree.
+    REMOVE_PI=false
+    PI_SKIP_REASON="TLH will not remove through a symlinked runtime child (${RUNTIME_DIR}/lib or ${RUNTIME_DIR}/bin is a symlink); not removing to protect co-located files. If this is TLH's private runtime and you no longer need its contents, run: ${_runtime_rm_hint}; otherwise leave it"
   elif [[ ! -f "${RUNTIME_BIN}" || ! -d "${RUNTIME_DIR}/lib/node_modules/${PI_PACKAGE_NAME}" ]]; then
     # Marker valid but positive pi layout absent.
     REMOVE_PI=false
@@ -756,6 +768,16 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
         _RUNTIME_LOCK_JSON_REMOVE=true
       fi
     fi
+    # Remove the per-runtime install lock dir when it is a non-symlink directory.
+    _install_lock_dir="${RUNTIME_DIR}/.tlh-runtime-install.lock"
+    if [[ -d "${_install_lock_dir}" && ! -L "${_install_lock_dir}" ]]; then
+      _RUNTIME_INSTALL_LOCK_REMOVE=true
+    fi
+    # Remove the reclaim mutex dir when it is a non-symlink directory.
+    _install_lock_reclaim_dir="${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim"
+    if [[ -d "${_install_lock_reclaim_dir}" && ! -L "${_install_lock_reclaim_dir}" ]]; then
+      _RUNTIME_INSTALL_LOCK_RECLAIM_REMOVE=true
+    fi
   else
     # origin=created: exclusivity check remains an advisory tripwire before rm -rf.
     # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
@@ -771,6 +793,9 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
         # Transient crash-recovery dirs produced by the staged npm-ci installer;
         # source of truth: RUNTIME_*_DIR_PREFIX in scripts/lib/tlh-install-runtime.mts.
         .tlh-runtime-staging-*|.tlh-runtime-previous-*|.tlh-runtime-failed-*) ;;
+        # Per-runtime install lock dir (RUNTIME_INSTALL_LOCK_NAME) and its reclaim mutex
+        # (RUNTIME_INSTALL_LOCK_RECLAIM_NAME); both are transient crash-recovery entries.
+        .tlh-runtime-install.lock|.tlh-runtime-install.lock.reclaim) ;;
         *)
           _runtime_exclusive=false
           _runtime_unexpected_entry="${_runtime_entry}"
@@ -873,6 +898,12 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
         if [[ "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
           say "             and rm -f ${RUNTIME_DIR}/lib/package-lock.json (TLH runtime lock)"
         fi
+        if [[ "${_RUNTIME_INSTALL_LOCK_REMOVE}" == "true" ]]; then
+          say "             and rm -rf ${RUNTIME_DIR}/.tlh-runtime-install.lock (TLH install lock)"
+        fi
+        if [[ "${_RUNTIME_INSTALL_LOCK_RECLAIM_REMOVE}" == "true" ]]; then
+          say "             and rm -rf ${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim (TLH reclaim mutex)"
+        fi
       else
         say "  ${STEP}. would remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
       fi
@@ -881,6 +912,12 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
         say "  ${STEP}. Remove migrated TLH pi from shared runtime (npm): ${PI_UNINSTALL_DISPLAY}"
         if [[ "${_RUNTIME_PKG_JSON_REMOVE}" == "true" || "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
           say "             and TLH runtime manifest files from ${RUNTIME_DIR}/lib/"
+        fi
+        if [[ "${_RUNTIME_INSTALL_LOCK_REMOVE}" == "true" ]]; then
+          say "             and ${RUNTIME_DIR}/.tlh-runtime-install.lock"
+        fi
+        if [[ "${_RUNTIME_INSTALL_LOCK_RECLAIM_REMOVE}" == "true" ]]; then
+          say "             and ${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim"
         fi
       else
         say "  ${STEP}. Remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
@@ -951,6 +988,14 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
       if [[ "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
         log "Clearing TLH runtime lock: ${RUNTIME_DIR}/lib/package-lock.json"
         removal_run rm -f "${RUNTIME_DIR}/lib/package-lock.json"
+      fi
+      if [[ "${_RUNTIME_INSTALL_LOCK_REMOVE}" == "true" ]]; then
+        log "Clearing TLH install lock: ${RUNTIME_DIR}/.tlh-runtime-install.lock"
+        removal_run rm -rf "${RUNTIME_DIR}/.tlh-runtime-install.lock"
+      fi
+      if [[ "${_RUNTIME_INSTALL_LOCK_RECLAIM_REMOVE}" == "true" ]]; then
+        log "Clearing TLH reclaim mutex: ${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim"
+        removal_run rm -rf "${RUNTIME_DIR}/.tlh-runtime-install.lock.reclaim"
       fi
     fi
   elif [[ "${PI_REMOVE_MODE}" == "legacy" ]]; then

@@ -814,7 +814,7 @@ function gitCheckoutIo(config: InstallConfig) {
 }
 
 function pinnedPiInstallGuidance(_config: InstallConfig): string {
-  return `Re-run the TLH installer (\`tlh update\` or the install.sh script) to provision the private runtime.`;
+  return `re-run the TLH installer (\`tlh update\` or the install.sh script) to provision the private runtime`;
 }
 
 function readPiInstalledByTlhPreference(config: InstallConfig): boolean | undefined {
@@ -946,7 +946,7 @@ function assertSupportedPiVersion(
   const currentVersion = match[0];
   if (currentVersion !== PINNED_PI_VERSION) {
     throw new Error(
-      `${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance}`,
+      `${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance[0].toUpperCase()}${installGuidance.slice(1)}.`,
     );
   }
   verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);

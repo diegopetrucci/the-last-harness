@@ -1496,3 +1496,201 @@ run_uninstall_special_char_paths_smoke() {
   assert_present "${sibling_subdir}/content.txt"
   assert_present "${real_profile}"
 }
+
+run_uninstall_install_lock_smoke() {
+  log "Running uninstall.sh install-lock smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-install-lock"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── Case 1: origin=created with leftover .tlh-runtime-install.lock ────────
+  # The tripwire must tolerate the lock dir and still plan rm -rf (not skip).
+  local created_dir="${case_dir}/created"
+  local created_agent="${created_dir}/agent"
+  local created_runtime="${created_dir}/runtime"
+  mkdir -p "${created_agent}/tlh"
+  write_tlh_pi_runtime "${created_runtime}"
+  write_tlh_runtime_marker "${created_runtime}" created
+  # Seed a leftover install lock dir.
+  mkdir -p "${created_runtime}/.tlh-runtime-install.lock"
+  printf '{"pid":99999,"hostname":"test-host","startedAt":"2020-01-01T00:00:00.000Z"}' \
+    >"${created_runtime}/.tlh-runtime-install.lock/owner.json"
+  cat >"${created_agent}/tlh/install-state.json" <<'EOF_STATE'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE
+
+  bash uninstall.sh --dry-run --agent-dir "${created_agent}" --bin-dir "${case_dir}/bin-created" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  # Must still plan removal, not skip (lock is tolerated by tripwire).
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${created_runtime}"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+
+  # Real run: runtime (including lock) must be removed entirely.
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --agent-dir "${created_agent}" --bin-dir "${case_dir}/bin-created" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  assert_absent "${created_runtime}"
+
+  # ── Case 2: origin=migrated with leftover .tlh-runtime-install.lock ───────
+  # The lock must be removed surgically alongside TLH manifest files.
+  local migrated_dir="${case_dir}/migrated"
+  local migrated_agent="${migrated_dir}/agent"
+  local migrated_runtime="${migrated_dir}/runtime"
+  mkdir -p "${migrated_agent}/tlh"
+  write_tlh_pi_runtime "${migrated_runtime}"
+  write_tlh_runtime_marker "${migrated_runtime}" migrated
+  mkdir -p "${migrated_runtime}/.tlh-runtime-install.lock"
+  printf '{"pid":99999,"hostname":"test-host","startedAt":"2020-01-01T00:00:00.000Z"}' \
+    >"${migrated_runtime}/.tlh-runtime-install.lock/owner.json"
+  cat >"${migrated_agent}/tlh/install-state.json" <<'EOF_STATE'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${migrated_agent}" --bin-dir "${case_dir}/bin-migrated" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  # Must plan surgical removal and mention the lock.
+  assert_contains "${combined_file}" "would remove migrated TLH pi from shared runtime"
+  assert_contains "${combined_file}" ".tlh-runtime-install.lock"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${migrated_runtime}"
+}
+
+run_uninstall_install_lock_reclaim_smoke() {
+  log "Running uninstall.sh install-lock reclaim-dir smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-install-lock-reclaim"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── Case 1: origin=created with leftover reclaim mutex dir ────────────────
+  # The tripwire must tolerate the reclaim dir and still plan rm -rf (not skip).
+  local created_dir="${case_dir}/created"
+  local created_agent="${created_dir}/agent"
+  local created_runtime="${created_dir}/runtime"
+  mkdir -p "${created_agent}/tlh"
+  write_tlh_pi_runtime "${created_runtime}"
+  write_tlh_runtime_marker "${created_runtime}" created
+  # Seed a leftover install lock dir AND its reclaim mutex.
+  mkdir -p "${created_runtime}/.tlh-runtime-install.lock"
+  printf '{"pid":99999,"hostname":"test-host","startedAt":"2020-01-01T00:00:00.000Z","token":"t1"}' \
+    >"${created_runtime}/.tlh-runtime-install.lock/owner.json"
+  mkdir -p "${created_runtime}/.tlh-runtime-install.lock.reclaim"
+  cat >"${created_agent}/tlh/install-state.json" <<'EOF_STATE'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE
+
+  bash uninstall.sh --dry-run --agent-dir "${created_agent}" --bin-dir "${case_dir}/bin-created" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  # Must still plan removal (lock and reclaim dir are tolerated by tripwire).
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${created_runtime}"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+
+  # Real run: runtime (including lock and reclaim dir) must be removed entirely.
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --agent-dir "${created_agent}" --bin-dir "${case_dir}/bin-created" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  assert_absent "${created_runtime}"
+
+  # ── Case 2: origin=migrated with leftover reclaim mutex dir ───────────────
+  # The reclaim dir must be removed surgically alongside the lock and manifest files.
+  local migrated_dir="${case_dir}/migrated"
+  local migrated_agent="${migrated_dir}/agent"
+  local migrated_runtime="${migrated_dir}/runtime"
+  mkdir -p "${migrated_agent}/tlh"
+  write_tlh_pi_runtime "${migrated_runtime}"
+  write_tlh_runtime_marker "${migrated_runtime}" migrated
+  mkdir -p "${migrated_runtime}/.tlh-runtime-install.lock"
+  printf '{"pid":99999,"hostname":"test-host","startedAt":"2020-01-01T00:00:00.000Z","token":"t1"}' \
+    >"${migrated_runtime}/.tlh-runtime-install.lock/owner.json"
+  mkdir -p "${migrated_runtime}/.tlh-runtime-install.lock.reclaim"
+  cat >"${migrated_agent}/tlh/install-state.json" <<'EOF_STATE'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${migrated_agent}" --bin-dir "${case_dir}/bin-migrated" \
+    >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  # Must plan surgical removal and mention both lock and reclaim dir.
+  assert_contains "${combined_file}" "would remove migrated TLH pi from shared runtime"
+  assert_contains "${combined_file}" ".tlh-runtime-install.lock"
+  assert_contains "${combined_file}" ".tlh-runtime-install.lock.reclaim"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${migrated_runtime}"
+}
+
+run_uninstall_symlinked_runtime_child_smoke() {
+  log "Running uninstall.sh symlinked-runtime-child smoke check..."
+  local case_dir="${TMP_ROOT}/uninstall-symlinked-runtime-child"
+  local stdout_file="${case_dir}/stdout.log"
+  local stderr_file="${case_dir}/stderr.log"
+  local combined_file="${case_dir}/combined.log"
+  mkdir -p "${case_dir}"
+
+  # ── Case 1: migrated layout — lib is a symlink to a real directory ─────────
+  # The marker is valid but ${RUNTIME_DIR}/lib is a symlink.  TLH must refuse
+  # removal and leave the symlink target's files untouched.
+  local migrated_agent="${case_dir}/migrated/agent"
+  local migrated_runtime="${case_dir}/migrated/runtime"
+  local migrated_lib_target="${case_dir}/migrated/real-lib"
+  mkdir -p "${migrated_agent}/tlh"
+  # Create the real lib directory outside the runtime prefix.
+  mkdir -p "${migrated_lib_target}/node_modules/@earendil-works/pi-coding-agent"
+  printf 'sentinel-file\n' >"${migrated_lib_target}/sentinel.txt"
+  # Build a runtime prefix where lib → migrated_lib_target (symlink).
+  mkdir -p "${migrated_runtime}/bin"
+  printf '#!/bin/sh\n' >"${migrated_runtime}/bin/pi"
+  chmod +x "${migrated_runtime}/bin/pi"
+  ln -s "${migrated_lib_target}" "${migrated_runtime}/lib"
+  write_tlh_runtime_marker "${migrated_runtime}" migrated
+  cat >"${migrated_agent}/tlh/install-state.json" <<'EOF_STATE_MIGRATED'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE_MIGRATED
+
+  bash uninstall.sh --dry-run --agent-dir "${migrated_agent}" \
+    --bin-dir "${case_dir}/bin-migrated" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "symlinked runtime child"
+  assert_not_contains "${combined_file}" "would remove migrated TLH pi"
+  assert_not_contains "${combined_file}" "would remove private runtime"
+  # Symlink target contents must be untouched.
+  assert_present "${migrated_lib_target}/sentinel.txt"
+
+  # ── Case 2: created layout — lib is a symlink (dangling) ──────────────────
+  # The marker is valid with origin=created, but ${RUNTIME_DIR}/lib is a
+  # dangling symlink.  TLH must refuse rm -rf and leave the target path alone.
+  local created_agent="${case_dir}/created/agent"
+  local created_runtime="${case_dir}/created/runtime"
+  local created_lib_target="${case_dir}/created/vanished-lib"
+  mkdir -p "${created_agent}/tlh"
+  mkdir -p "${created_runtime}/bin"
+  printf '#!/bin/sh\n' >"${created_runtime}/bin/pi"
+  chmod +x "${created_runtime}/bin/pi"
+  # Create lib as a symlink to a path that does not exist (dangling).
+  ln -s "${created_lib_target}" "${created_runtime}/lib"
+  write_tlh_runtime_marker "${created_runtime}" created
+  cat >"${created_agent}/tlh/install-state.json" <<'EOF_STATE_CREATED'
+{"schemaVersion":1,"repo":"diegopetrucci/the-last-harness","piInstalledByTlh":true}
+EOF_STATE_CREATED
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${created_agent}" \
+    --bin-dir "${case_dir}/bin-created" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would skip pi/runtime removal"
+  assert_contains "${combined_file}" "symlinked runtime child"
+  assert_not_contains "${combined_file}" "would remove private runtime: rm -rf ${created_runtime}"
+  # The dangling symlink target path must still not exist.
+  assert_absent "${created_lib_target}"
+}
