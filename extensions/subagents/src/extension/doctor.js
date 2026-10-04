@@ -51,16 +51,9 @@ function formatSkillSourceCounts(skills) {
     const parts = SKILL_SOURCE_ORDER.map((source) => `${source} ${counts.get(source) ?? 0}`).filter((part) => !part.endsWith(" 0"));
     return parts.length > 0 ? parts.join(", ") : "none";
 }
-function formatConfiguredSessionDir(input) {
-    if (input.requestedSessionDir) {
-        return path.resolve(input.expandTilde?.(input.requestedSessionDir) ?? input.requestedSessionDir);
-    }
-    return "not configured";
-}
 function formatSessionLines(input) {
     const sessionFile = input.currentSessionFile ?? null;
     const lines = [
-        lineFromCheck("configured session dir", () => `- configured session dir: ${formatConfiguredSessionDir(input)}`),
         `- current session file: ${sessionFile ?? "not available"}`,
         `- current session dir: ${sessionFile ? path.dirname(sessionFile) : "not available"}`,
         `- current session id: ${input.currentSessionId ?? input.state.currentSessionId ?? "not available"}`,

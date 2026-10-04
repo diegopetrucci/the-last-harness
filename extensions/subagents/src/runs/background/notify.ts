@@ -81,8 +81,6 @@ export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch" as con
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
-const MAX_NESTED_ENTRIES = 8;
-const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
@@ -90,13 +88,6 @@ const MAX_SESSION_PATH_CHARS = 4_096;
 // UUIDs provide cross-process uniqueness; the monotonic suffix also keeps IDs
 // distinct if a test or host replaces crypto.randomUUID with a deterministic stub.
 let completionBatchIdentitySequence = 0;
-
-interface NestedNotifyChild {
-  id?: string;
-  agent?: string;
-  state?: string;
-  children?: NestedNotifyChild[];
-}
 
 interface SubagentChildResult {
   agent: string;
@@ -107,7 +98,6 @@ interface SubagentChildResult {
   artifactPath?: string;
   sessionPath?: string;
   index?: number;
-  children?: NestedNotifyChild[];
   acceptance?: AcceptanceLedger;
 }
 
@@ -348,7 +338,7 @@ function boundedSummaryOrSuppress(value: string, maxChars: number): string {
  * Per-child summary budget for the grouped shape.
  *
  * Reserves all non-summary scaffolding — per-child labels, both reference lines from
- * formatChildReferences, blank separators, nested-child lines, and outer preview content
+ * formatChildReferences, blank separators, and outer preview content
  * such as the failure summary and counts header — before dividing the remaining ceiling
  * among displayed children. This is the species fix: a budget divided up to a limit
  * without first reserving the fixed recovery scaffolding that must travel with the
@@ -596,49 +586,6 @@ function countChildStatuses(children: SubagentChildResult[]): string | undefined
   return parts.length ? parts.join(", ") : undefined;
 }
 
-interface NestedFormatBudget {
-  remaining: number;
-  omissionMarkers: Set<string>;
-}
-
-function formatNestedChildren(
-  children: NestedNotifyChild[] | undefined,
-  indent = "   ",
-  budget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() },
-): string[] {
-  if (!children?.length) return [];
-  const entries: string[] = [];
-  const markOmitted = (currentIndent: string, marker: string) => {
-    if (budget.omissionMarkers.has(marker)) return;
-    budget.omissionMarkers.add(marker);
-    entries.push(`${currentIndent}${marker}`);
-  };
-  const append = (runs: NestedNotifyChild[] | undefined, currentIndent: string, depth: number) => {
-    if (!runs?.length) return;
-    if (depth >= MAX_NESTED_DEPTH) {
-      markOmitted(currentIndent, "… [nested depth limit reached]");
-      return;
-    }
-    for (const child of runs) {
-      if (budget.remaining <= 0) {
-        markOmitted(currentIndent, "… [additional nested entries omitted]");
-        return;
-      }
-      budget.remaining--;
-      const label = boundedLabel(child.agent ?? child.id ?? "nested");
-      const state = child.state ? boundedLabel(child.state) : undefined;
-      entries.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
-      append(child.children, `${currentIndent}  `, depth + 1);
-    }
-  };
-  append(children, indent, 0);
-  // Emit the heading only when there is content beneath it. When the shared budget is
-  // exhausted and the omission marker was already recorded by an earlier sibling, this
-  // child has no entries to show; emitting the heading alone would produce a bare
-  // 'Nested subagents:' with nothing beneath it.
-  return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
-}
-
 function formatChildReferences(child: SubagentChildResult, privacySafe = false): string[] {
   if (privacySafe) return [];
   const acceptanceLine = (() => {
@@ -676,16 +623,9 @@ function formatProtectedLifecyclePreview(
         .filter((entry) => entry.status === status),
     )
     .slice(0, MAX_DISPLAYED_CHILDREN);
-  // Compute per-child scaffold costs using a separate budget so the shared budget
-  // used during rendering is not consumed during cost estimation.
-  const nestedBudgetForCost: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const childCosts = displayedChildren.map(({ child, index, status }) => {
     const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
-    const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
-    return joinedLineCost([labelLine, ...nested, ""]);
+    return joinedLineCost([labelLine, ""]);
   });
   // Reduce displayed children when their scaffold alone would exceed the ceiling,
   // incrementing the omission counter rather than silently tail-cutting a displayed child.
@@ -713,18 +653,11 @@ function formatProtectedLifecyclePreview(
     effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
   const showCountsLine = !!counts && optionalLinesAffordable;
   const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
-  // Shared nested budget across all displayed children; each call to formatNestedChildren
-  // drains from the same pool, matching the pattern at the other multi-child call sites.
-  const nestedBudget: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const lines: string[] = [];
   if (showCountsLine) lines.push(`Children: ${counts}`, "");
   if (showOmissionLine) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
   for (const { child, index, status } of effectiveDisplayedChildren) {
     lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-    lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
     lines.push("");
   }
   return lines.join("\n").trimEnd();
@@ -760,10 +693,6 @@ function formatResultPreview(
   });
   if (privacySafe) return formatProtectedLifecyclePreview(result, ceilingForPreview);
   const children = Array.isArray(result.results) ? result.results : [];
-  const nestedBudget: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   // The budget here is caller-derived, so it can fall below the truncation-marker width.
   // Suppress rather than emit a sliced marker: an empty preview at a 5-char ceiling is
   // correct, a string that looks like a corrupted truncation notice is not.
@@ -779,19 +708,15 @@ function formatResultPreview(
     !children.some((child) => resolveChildStatus(child) === "failed");
   if (children.length === 1) {
     const child = children[0]!;
-    // Compute refs and nested upfront so their cost can bound the outer-summary budget.
-    // Nested is computed here (consuming nestedBudget once) and reused in rendering.
+    // Compute references upfront so their cost can bound the outer-summary budget.
     const singleChildRefs = formatChildReferences(child, privacySafe);
-    const singleChildNested = formatNestedChildren(child.children, "   ", nestedBudget);
     const refsCost = joinedLineCost(singleChildRefs);
-    const nestedCost = joinedLineCost(singleChildNested);
-    // Drop refs and nested entirely when they alone exceed the ceiling. At those ceilings
+    // Drop references entirely when they alone exceed the ceiling. At that ceiling
     // the recovery pointers cannot be preserved; the summary gets the full budget instead.
-    const scaffoldFits = refsCost + nestedCost <= ceilingForPreview;
+    const scaffoldFits = refsCost <= ceilingForPreview;
     const effectiveRefs = scaffoldFits ? singleChildRefs : [];
-    const effectiveNested = scaffoldFits ? singleChildNested : [];
-    const effectiveScaffoldCost = scaffoldFits ? refsCost + nestedCost : 0;
-    // Bound the outer failure summary to leave room for refs/nested + separator so
+    const effectiveScaffoldCost = scaffoldFits ? refsCost : 0;
+    // Bound the outer failure summary to leave room for references + separator so
     // the fixed scaffold lines are never crowded out by a long outer summary.
     const outerSummaryBudget = isUnrepresentedOuterFailure
       ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - 2))
@@ -825,7 +750,6 @@ function formatResultPreview(
     if (outerFailureSummary) lines.push(outerFailureSummary, "");
     if (showSummaryLine) lines.push(childDisplayText);
     lines.push(...effectiveRefs);
-    lines.push(...effectiveNested);
     return lines.join("\n").trim();
   }
   // Multi-child path.
@@ -838,19 +762,12 @@ function formatResultPreview(
         .filter((entry) => entry.status === status),
     )
     .slice(0, MAX_DISPLAYED_CHILDREN);
-  // Compute per-child scaffold costs upfront using a separate NestedFormatBudget so the
-  // shared nestedBudget is not consumed by the cost-estimation pass.
-  const nestedBudgetForCost: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const childCosts = displayedChildren.map(({ child, index, status }) => {
     const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
     const refs = formatChildReferences(child, privacySafe);
-    const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
     // Include an empty placeholder for the summary's position so joinedLineCost accounts
     // for the separator between the label and the first ref line.
-    return joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+    return joinedLineCost([labelLine, "", ...refs, ""]);
   });
   // Dynamic reduction: drop trailing displayed children when their scaffolding alone would
   // exceed the ceiling, incrementing the omission counter instead. This implements the
@@ -935,7 +852,6 @@ function formatResultPreview(
     }
     // else: suppress (budget too tight for a well-formed truncation marker)
     lines.push(...formatChildReferences(child, privacySafe));
-    lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
     lines.push("");
   }
   return lines.join("\n").trimEnd();
@@ -1064,8 +980,8 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
   for (const entry of entries) {
     blocks.push(...entry.headLines);
     // When _reformatPreview is available, re-format the preview for this entry's
-    // previewCeiling. This reserves nested child reference lines (recovery pointers
-    // inside multi-child resultPreviews) before dividing the per-child summary budget,
+    // previewCeiling. This reserves child reference lines (recovery pointers) before
+    // dividing the per-child summary budget,
     // fixing the species: batched entries previously treated the entire resultPreview
     // as truncatable prose, causing fitPreviewWithinCeiling to cut inner child
     // artifact/session lines from the tail.

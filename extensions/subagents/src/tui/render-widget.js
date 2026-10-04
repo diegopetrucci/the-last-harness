@@ -4,7 +4,6 @@ import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
 import {} from "../shared/subagent-shortcuts.js";
 import { MAX_WIDGET_JOBS, WIDGET_KEY, } from "../shared/types.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
-import { countNestedRuns } from "../runs/shared/nested-render.js";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.js";
 import { safeTerminalText } from "../shared/display-text.js";
@@ -27,7 +26,6 @@ export function widgetRenderKey(job) {
         agents: job.agents,
         currentStep: job.currentStep,
         steps: job.steps,
-        nestedChildren: job.nestedChildren,
         stepsTotal: job.stepsTotal,
         runningSteps: job.runningSteps,
         completedSteps: job.completedSteps,
@@ -106,24 +104,6 @@ function phraseSlot(startedAt, now) {
         return undefined;
     return Math.floor(Math.max(0, now - startedAt) / PHRASE_HOLD_MS);
 }
-function collectNestedPhraseSlots(nodes, now, slots) {
-    for (const node of nodes ?? []) {
-        if (node.state === "running") {
-            const slot = phraseSlot(node.startedAt, now);
-            if (slot !== undefined)
-                slots.push(slot);
-        }
-        for (const step of node.steps ?? []) {
-            if (step.status === "running") {
-                const slot = phraseSlot(step.startedAt, now);
-                if (slot !== undefined)
-                    slots.push(slot);
-            }
-            collectNestedPhraseSlots(step.children, now, slots);
-        }
-        collectNestedPhraseSlots(node.children, now, slots);
-    }
-}
 export function widgetPhraseSlotKey(job, now) {
     const slots = [];
     if (job.status === "running") {
@@ -138,9 +118,7 @@ export function widgetPhraseSlotKey(job, now) {
         const slot = phraseSlot(step.startedAt, now);
         if (slot !== undefined)
             slots.push(slot);
-        collectNestedPhraseSlots(step.children, now, slots);
     }
-    collectNestedPhraseSlots(job.nestedChildren, now, slots);
     return slots.join(",");
 }
 function widgetInlineThinkingActivity(job, phraseNow) {
@@ -397,8 +375,6 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
         const parallelChildLocLine = childLocationLine(step.childLocation, theme, "    ");
         if (parallelChildLocLine)
             lines.push(parallelChildLocLine);
-        for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow))
-            lines.push(`    ${nestedLine}`);
     }
     return lines;
 }
@@ -479,142 +455,6 @@ function widgetOutputPath(job, step) {
         return undefined;
     return path.join(job.asyncDir, `output-${step.index}.log`);
 }
-function nestedRunName(run) {
-    if (run.agent)
-        return safeTerminalText(run.agent);
-    if (run.agents?.length)
-        return formatWidgetAgents(run.agents);
-    return safeTerminalText(run.id);
-}
-function formatNestedWidgetAggregate(children, theme) {
-    const counts = countNestedRuns(children);
-    if (counts.total === 0)
-        return undefined;
-    const liveGlyph = counts.running > 0
-        ? `${nestedStatusGlyph("running", theme, runningSeed(counts.running, counts.total))} `
-        : "";
-    const parts = [
-        counts.paused > 0 ? `${counts.paused} paused` : "",
-        counts.failed > 0 ? `${counts.failed} failed` : "",
-        counts.complete > 0 ? `${counts.complete} complete` : "",
-        counts.queued > 0 ? `${counts.queued} queued` : "",
-    ].filter(Boolean);
-    return `${liveGlyph}+${counts.total} nested run${counts.total === 1 ? "" : "s"}${parts.length ? ` (${parts.join(", ")})` : ""}`;
-}
-function nestedStatusGlyph(state, theme, seed) {
-    if (state === "running")
-        return theme.fg("accent", runningGlyph(seed));
-    if (state === "complete" || state === "completed")
-        return theme.fg("success", "✓");
-    if (state === "failed")
-        return theme.fg("error", "✗");
-    if (state === "paused")
-        return theme.fg("warning", "■");
-    return theme.fg("muted", "◦");
-}
-function nestedRunSeed(run) {
-    return runningSeed(run.lastUpdate, run.lastActivityAt, run.currentStep, run.toolCount, run.turnCount, run.totalTokens?.total, run.currentToolStartedAt);
-}
-function nestedActivity(input, state, snapshotNow, privacySafe = false, expanded = false, phraseNow) {
-    const facts = [];
-    const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
-    if (currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined)
-        facts.push(`${currentTool} ${formatDuration(Math.max(0, snapshotNow - input.currentToolStartedAt))}`);
-    else if (currentTool)
-        facts.push(currentTool);
-    if (!privacySafe && input.currentPath)
-        facts.push(safeTerminalText(shortenPath(input.currentPath)));
-    if (expanded) {
-        if (input.turnCount !== undefined)
-            facts.push(`${input.turnCount} turns`);
-        if (input.toolCount !== undefined)
-            facts.push(`${input.toolCount} tools`);
-        if (input.totalTokens?.total)
-            facts.push(formatTokenStat(input.totalTokens.total));
-    }
-    const activity = buildLiveStatusLine(input, snapshotNow);
-    if (!input.currentTool && !expanded && state === "running") {
-        return [
-            compactThinkingPhrase(input.activityState, input.turnCount, phraseNow ?? snapshotNow, input.startedAt),
-            activity,
-            ...facts,
-        ]
-            .filter(Boolean)
-            .join(" · ");
-    }
-    if (activity && facts.length)
-        return `${activity} · ${facts.join(" · ")}`;
-    if (activity)
-        return activity;
-    if (facts.length)
-        return facts.join(" · ");
-    if (state === "running")
-        return expanded
-            ? "thinking…"
-            : (compactThinkingPhrase(input.activityState, input.turnCount, phraseNow ?? snapshotNow, input.startedAt) ?? "thinking…");
-    if (state === "queued" || state === "pending")
-        return "queued…";
-    if (state === "paused")
-        return "Paused";
-    if (state === "failed")
-        return "Failed";
-    return "Done";
-}
-function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, lineBudget = expanded ? 12 : 1, privacySafe = false, phraseNow) {
-    if (!children?.length || lineBudget <= 0)
-        return [];
-    if (!expanded) {
-        const aggregate = formatNestedWidgetAggregate(children, theme);
-        return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
-    }
-    const lines = [];
-    const maxDepth = 2;
-    const append = (items, depth, prefix) => {
-        if (!items?.length || lines.length >= lineBudget)
-            return;
-        if (depth > maxDepth) {
-            const aggregate = formatNestedWidgetAggregate(items, theme);
-            if (aggregate && lines.length < lineBudget)
-                lines.push(theme.fg("dim", `${prefix}↳ ${aggregate}`));
-            return;
-        }
-        for (let index = 0; index < items.length; index++) {
-            const child = items[index];
-            if (lines.length >= lineBudget) {
-                const aggregate = formatNestedWidgetAggregate(items.slice(index), theme);
-                if (aggregate)
-                    lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
-                return;
-            }
-            const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate, privacySafe, expanded, phraseNow);
-            const error = child.error
-                ? ` · ${privacySafe ? "lifecycle status requires attention" : safeTerminalText(child.error)}`
-                : "";
-            const status = child.state === "running" ? "" : ` · ${safeTerminalText(child.state)}`;
-            lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)}${status} · ${activity}${error}`));
-            if (depth === maxDepth) {
-                const aggregate = formatNestedWidgetAggregate([
-                    ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
-                    ...(child.children ?? []),
-                ], theme);
-                if (aggregate && lines.length < lineBudget)
-                    lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
-                continue;
-            }
-            for (const step of child.steps ?? []) {
-                if (lines.length >= lineBudget)
-                    return;
-                const status = step.status === "running" ? "" : ` · ${safeTerminalText(step.status)}`;
-                const stepAgent = safeTerminalText(step.agent);
-                lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${stepAgent}${status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded, phraseNow)}`));
-                append(step.children, depth + 1, `${prefix}    `);
-            }
-            append(child.children, depth + 1, `${prefix}  `);
-        }
-    };
-    append(children, 0, "");
-    return wrapDisplayLines(lines, width);
-}
 function singleWidgetStepDisplayStatus(job, step) {
     const projectedStep = projectContinuedWidgetStep(job, step);
     if (projectedStep.status !== "running")
@@ -651,9 +491,6 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
         const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
         lines.push(theme.fg("dim", `${prefix}${activity}`));
     }
-    for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow)) {
-        lines.push(`    ${nestedLine}`);
-    }
     if (resolvedDisplayStatus === "running") {
         if (!expanded)
             lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
@@ -678,18 +515,12 @@ function foregroundStyleWidgetDetails(job, theme, expanded, width, phraseNow) {
         return [
             ...widgetTkTicketLines(job, theme),
             ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
-            ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow).map((line) => `  ${line}`),
         ];
     const total = job.stepsTotal ?? job.steps.length;
     const itemTitle = job.mode === "parallel" ? "Agent" : "Step";
     const lines = [...widgetTkTicketLines(job, theme)];
     for (const [index, step] of job.steps.entries()) {
         lines.push(...foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index + 1, total, expanded, width, undefined, phraseNow));
-    }
-    const attached = new Set(job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
-    const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-    for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow)) {
-        lines.push(`  ${nestedLine}`);
     }
     return lines;
 }
@@ -699,11 +530,6 @@ function singleWidgetAgentDetails(job, theme, expanded, width, phraseNow) {
         const stepLines = foregroundStyleWidgetStepLines(job, theme, step, undefined, 1, 1, expanded, width, singleWidgetStepDisplayStatus(job, step), phraseNow);
         const ticketLines = widgetTkTicketLines(job, theme, "    ");
         const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
-        const attached = new Set(step.children?.map((child) => child.id) ?? []);
-        const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-        for (const nestedLine of formatNestedWidgetLines(unattached, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow)) {
-            lines.push(`  ${nestedLine}`);
-        }
         return lines;
     }
     const agent = job.agents?.[0] ? safeTerminalText(job.agents[0]) : widgetJobName(job);
@@ -714,7 +540,6 @@ function singleWidgetAgentDetails(job, theme, expanded, width, phraseNow) {
         `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)}${statusSuffix}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
         ...widgetTkTicketLines(job, theme),
         ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
-        ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt), phraseNow).map((line) => `  ${line}`),
     ];
 }
 function parallelWidgetAggregateStats(job, theme, expanded = false) {
@@ -865,8 +690,6 @@ function compactSingleWidgetLines(job, theme, width, phraseNow) {
         const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
         if (compactChildLocLine)
             lines.push(compactChildLocLine);
-        for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt), phraseNow))
-            lines.push(`    ${nestedLine}`);
     }
     if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
         lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));

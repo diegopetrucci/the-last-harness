@@ -19,7 +19,6 @@ import type {
   Details,
   DisplayItem,
   ErrorInfo,
-  NestedRunSummary,
   SingleResult,
   ToolCallSummary,
   Usage,
@@ -494,22 +493,6 @@ export function sumResultsUsage(results: SingleResult[]): Usage {
   return usage;
 }
 
-function addNestedCost(
-  total: NonNullable<Details["totalCost"]>,
-  children: NestedRunSummary[] | undefined,
-): void {
-  for (const child of children ?? []) {
-    if (child.totalCost) {
-      total.inputTokens += child.totalCost.inputTokens;
-      total.outputTokens += child.totalCost.outputTokens;
-      total.costUsd += child.totalCost.costUsd;
-      continue;
-    }
-    addNestedCost(total, child.children);
-    for (const step of child.steps ?? []) addNestedCost(total, step.children);
-  }
-}
-
 /** Sum input tokens, output tokens, and cost across a set of SingleResults. */
 export function sumResultsCost(results: SingleResult[]): NonNullable<Details["totalCost"]> {
   const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
@@ -517,7 +500,6 @@ export function sumResultsCost(results: SingleResult[]): NonNullable<Details["to
     total.inputTokens += result.usage.input;
     total.outputTokens += result.usage.output;
     total.costUsd += result.usage.cost;
-    addNestedCost(total, result.children);
   }
   return total;
 }

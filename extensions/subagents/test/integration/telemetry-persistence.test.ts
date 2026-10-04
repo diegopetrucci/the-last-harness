@@ -81,7 +81,6 @@ describe("subagent telemetry persistence", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
       controlConfig: controls,
       telemetryProvenance: provenance,

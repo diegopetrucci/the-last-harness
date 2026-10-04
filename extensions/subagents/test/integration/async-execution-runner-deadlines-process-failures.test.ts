@@ -90,7 +90,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -126,7 +125,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       timeoutMs: 500,
@@ -180,7 +178,6 @@ describe("async execution runner deadlines and process failures", () => {
       agents: [makeAgent("worker")],
       ctx,
       artifactConfig,
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       timeoutMs: maxSafeDuration,
@@ -196,7 +193,6 @@ describe("async execution runner deadlines and process failures", () => {
       agentConfig: makeAgent("worker"),
       ctx,
       artifactConfig,
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       timeoutMs: maxSafeDuration,
@@ -212,7 +208,6 @@ describe("async execution runner deadlines and process failures", () => {
       agentConfig: makeAgent("worker", { maxExecutionTimeMs: maxSafeDuration }),
       ctx,
       artifactConfig,
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -500,7 +495,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       activeRuntimeMs: 1.5,
@@ -712,7 +706,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -758,7 +751,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -801,7 +793,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
       timeoutMs,
     });
@@ -848,7 +839,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -876,7 +866,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -899,7 +888,6 @@ describe("async execution runner deadlines and process failures", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -930,7 +918,6 @@ describe("async execution runner deadlines and process failures", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });

@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import type { MockPi } from "../support/helpers.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createMockPi,
   createTempDir,
@@ -21,6 +22,34 @@ import {
 } from "../support/native-result-lifecycle-fixtures.ts";
 
 const nativeResultGroupingAvailable = available;
+
+const boundedNativeRunSync: typeof runSync = async (
+  runtimeCwd,
+  agents,
+  agentName,
+  task,
+  options,
+) => {
+  assert.equal(options.maxOutput, undefined);
+  return runSync(runtimeCwd, agents, agentName, task, {
+    ...options,
+    maxOutput: { lines: 1, bytes: 100 },
+  });
+};
+
+const boundedNativeFileOnlyRunSync: typeof runSync = async (
+  runtimeCwd,
+  agents,
+  agentName,
+  task,
+  options,
+) => {
+  assert.equal(options.maxOutput, undefined);
+  return runSync(runtimeCwd, agents, agentName, task, {
+    ...options,
+    maxOutput: { lines: 1, bytes: 10 },
+  });
+};
 
 describe(
   "native result grouping",
@@ -171,11 +200,11 @@ describe(
     it("native foreground summaries honor maxOutput truncation without discarding full structured output", async () => {
       const fullOutput = `first visible line\n${"second hidden line".repeat(700)}\nthird hidden line`;
       mockPi.onCall({ output: fullOutput });
-      const { executor } = makeExecutor();
+      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
 
       const result = await executor.execute(
         "single-truncated",
-        { agent: "worker", task: "Summarize lines", maxOutput: { lines: 1, bytes: 100 } },
+        { agent: "worker", task: "Summarize lines" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
@@ -187,12 +216,16 @@ describe(
       assert.doesNotMatch(text, /second hidden line/);
       assert.equal(result.details?.results?.[0]?.finalOutput, fullOutput);
       assert.equal(result.details?.results?.[0]?.truncation?.truncated, true);
+      assert.doesNotMatch(
+        result.details?.results?.[0]?.truncation?.text ?? "",
+        /second hidden line/,
+      );
       assert.ok(text.length <= 8_000);
     });
 
     it("native foreground summaries preserve file-only references even when maxOutput is smaller", async () => {
       mockPi.onCall({ output: "full saved native output\nwith hidden details" });
-      const { executor } = makeExecutor();
+      const { executor } = makeExecutor({ runSync: boundedNativeFileOnlyRunSync });
 
       const result = await executor.execute(
         "single-file-only",
@@ -201,7 +234,6 @@ describe(
           task: "Write report",
           output: "native-file-only.md",
           outputMode: "file-only",
-          maxOutput: { lines: 1, bytes: 10 },
         },
         new AbortController().signal,
         undefined,
@@ -223,7 +255,7 @@ describe(
         stderr: "single terminal failure",
         exitCode: 1,
       });
-      const { executor } = makeExecutor();
+      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
 
       const result = await executor.execute(
         "single-failed",
@@ -232,7 +264,6 @@ describe(
           task: "Summarize failure",
           output: "failed-file-only.md",
           outputMode: "file-only",
-          maxOutput: { lines: 1, bytes: 100 },
         },
         new AbortController().signal,
         undefined,
@@ -262,7 +293,7 @@ describe(
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
       mockPi.onCall({ output: "save visible line\nsave hidden line\nsave final hidden" });
-      const { executor } = makeExecutor();
+      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
 
       const result = await executor.execute(
         "single-file-save-failed",
@@ -271,7 +302,6 @@ describe(
           task: "Write report",
           output: requestedOutput,
           outputMode: "file-only",
-          maxOutput: { lines: 1, bytes: 100 },
         },
         new AbortController().signal,
         undefined,
@@ -305,7 +335,7 @@ describe(
       mockPi.onCall({
         output: "parallel visible line\nparallel hidden line\nparallel final hidden",
       });
-      const { executor } = makeExecutor();
+      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
 
       const result = await executor.execute(
         "parallel-file-save-failed",
@@ -318,7 +348,6 @@ describe(
               outputMode: "file-only",
             },
           ],
-          maxOutput: { lines: 1, bytes: 100 },
         },
         new AbortController().signal,
         undefined,
@@ -359,7 +388,6 @@ describe(
             outputMode: "file-only",
           },
         ],
-        maxOutput: { lines: 1, bytes: 100 },
       });
       assert.equal(fs.existsSync(requestedOutput), false);
     });
@@ -384,7 +412,6 @@ describe(
           },
           { agent: "worker", task: "finish chain" },
         ],
-        maxOutput: { lines: 1, bytes: 100 },
       });
       assert.equal(fs.existsSync(requestedOutput), false);
     });

@@ -212,7 +212,7 @@ describe("async interrupt action", () => {
     }
   });
 
-  it("queues steering for a running async child by directory", async () => {
+  it("rejects steering selected by the retired public directory", async () => {
     const state = createState();
     const runId = `steer-dir-${Date.now().toString(36)}`;
     const asyncDir = createRunningAsync(state, runId, { track: false });
@@ -225,12 +225,12 @@ describe("async interrupt action", () => {
         ctx(),
       );
 
-      assert.equal(result.isError, undefined);
-      assert.match(text(result), new RegExp(`Steering queued for async run ${runId}`));
-      const requests = consumeChildMessageRequests(asyncDir);
-      assert.equal(requests.length, 1);
-      assert.equal(requests[0]?.type, "steer");
-      assert.equal(requests[0]?.message, "Focus on validation.");
+      assert.equal(result.isError, true);
+      assert.equal(
+        text(result),
+        "dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.",
+      );
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), []);
     } finally {
       cleanup(runId, asyncDir);
     }

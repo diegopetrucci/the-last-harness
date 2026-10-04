@@ -28,11 +28,9 @@ interface DoctorReportInput {
   cwd: string;
   config: ExtensionConfig;
   state: SubagentState;
-  requestedSessionDir?: string;
   currentSessionFile?: string | null;
   currentSessionId?: string | null;
   sessionError?: string;
-  expandTilde?: (value: string) => string;
   paths?: DoctorPaths;
   deps?: Partial<DoctorDeps>;
 }
@@ -99,22 +97,9 @@ function formatSkillSourceCounts(skills: Array<{ source: SkillSource }>): string
   return parts.length > 0 ? parts.join(", ") : "none";
 }
 
-function formatConfiguredSessionDir(input: DoctorReportInput): string {
-  if (input.requestedSessionDir) {
-    return path.resolve(
-      input.expandTilde?.(input.requestedSessionDir) ?? input.requestedSessionDir,
-    );
-  }
-  return "not configured";
-}
-
 function formatSessionLines(input: DoctorReportInput): string[] {
   const sessionFile = input.currentSessionFile ?? null;
   const lines = [
-    lineFromCheck(
-      "configured session dir",
-      () => `- configured session dir: ${formatConfiguredSessionDir(input)}`,
-    ),
     `- current session file: ${sessionFile ?? "not available"}`,
     `- current session dir: ${sessionFile ? path.dirname(sessionFile) : "not available"}`,
     `- current session id: ${input.currentSessionId ?? input.state.currentSessionId ?? "not available"}`,

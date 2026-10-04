@@ -97,7 +97,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
 
@@ -188,7 +187,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           sessionRoot,
         });
@@ -293,7 +291,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           sessionRoot,
         });
@@ -385,7 +382,6 @@ describe("async execution utilities", () => {
           includeMetadata: true,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         controlConfig: {
           enabled: true,
@@ -481,7 +477,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         controlConfig: {
           enabled: true,
@@ -591,7 +586,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
 
@@ -671,7 +665,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         controlConfig: {
           enabled: true,
@@ -764,7 +757,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -817,7 +809,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       await waitForMockPiCall(mockPi, 0);
@@ -868,7 +859,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         // This is the internal run-deadline seam; public callers configure it
         // through execution.maxRunTimeMs at the executor boundary.
@@ -959,7 +949,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           ...options,
         });
@@ -1055,7 +1044,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
       timeoutMs,
       acceptance: {
@@ -1125,7 +1113,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         acceptance: {
           level: "verified",
@@ -1199,7 +1186,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -1253,7 +1239,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1311,7 +1296,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1357,7 +1341,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });

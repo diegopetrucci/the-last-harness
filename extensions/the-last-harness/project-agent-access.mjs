@@ -156,6 +156,7 @@ function resolveMarkerLocation(input) {
   };
 }
 
+/** Retired nested metadata remains a deny-only marker, never an execution/status/display route. */
 function hasPersistedProjectAgentMarker(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   if (Object.hasOwn(value, "projectAgent") || Object.hasOwn(value, "projectAgents")) return true;

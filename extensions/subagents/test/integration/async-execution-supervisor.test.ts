@@ -134,7 +134,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -221,7 +220,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -373,7 +371,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -477,7 +474,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -579,7 +575,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -660,7 +655,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -734,7 +728,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -822,7 +815,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -893,7 +885,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1002,7 +993,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1080,7 +1070,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1152,7 +1141,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1242,7 +1230,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1291,7 +1278,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1353,7 +1339,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1387,7 +1372,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1462,7 +1446,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });

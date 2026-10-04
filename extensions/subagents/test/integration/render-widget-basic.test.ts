@@ -851,18 +851,6 @@ describe("subagent async widget rendering", () => {
           currentToolStartedAt: now - 2000,
           recentTools: [{ tool: "grep", args: "stale detail", endMs: now - 1000 }],
           recentOutput: ["stale live output"],
-          children: [
-            {
-              id: "retained-child",
-              parentRunId: "single-terminal-before-step-refresh",
-              parentStepIndex: 0,
-              depth: 1,
-              path: [{ runId: "single-terminal-before-step-refresh", stepIndex: 0 }],
-              state: "complete",
-              agent: "retained-child",
-              lastUpdate: now,
-            },
-          ],
         },
       ],
     };
@@ -885,7 +873,6 @@ describe("subagent async widget rendering", () => {
 
       const expandedText = buildWidgetLines([{ ...job, status }], theme, 180, true).join("\n");
       assert.match(expandedText, /2 turns · 3 tool uses · 12k token/);
-      assert.match(expandedText, /retained-child · complete/);
       assert.doesNotMatch(expandedText, /output-0\.log|stale detail|stale live output/);
       assert.doesNotMatch(expandedText, /^ {7}read\b/m);
     }

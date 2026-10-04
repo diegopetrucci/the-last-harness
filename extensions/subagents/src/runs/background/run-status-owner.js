@@ -3,7 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getArtifactPaths } from "../../shared/artifacts.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
-import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.js";
 import { boundChildError, claimChildTerminalReason, formatProtocolOutputLimit, } from "../shared/child-protocol.js";
 import { buildSkippedAcceptanceLedger } from "../shared/acceptance.js";
 import { ACTIVE_RUNTIME_CHECKPOINT_INTERVAL_MS, TERMINAL_RUN_STATES, applyActiveRuntimeCheckpoint, boundedActiveRuntimeMs, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, transitionLifecycleStatus, writeNormalizedLifecycleStatus, isLifecycleTransitionContentionError, } from "../shared/lifecycle-state.js";
@@ -74,7 +73,7 @@ function resolveAsyncStepTranscriptPath(input) {
     return getArtifactPaths(input.artifactsDir, input.runId, input.agent, input.flatStepCount > 1 ? input.flatIndex : undefined).transcriptPath;
 }
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, telemetry, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, toolBudget, tkTicket, projectAgents, telemetry, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
     for (const step of flatSteps) {
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
@@ -127,7 +126,7 @@ export function createBackgroundRunStatusOwner(input) {
             recentOutput: [],
         };
     });
-    const sessionEnabled = Boolean(sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
+    const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
     const initialActiveRuntimeValues = initialStatusSteps
         .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
         .filter((value) => value !== undefined);
@@ -174,8 +173,6 @@ export function createBackgroundRunStatusOwner(input) {
     const terminalReason = {};
     const controlHooks = {
         clearActivityState: () => undefined,
-        interruptNestedDescendants: () => undefined,
-        timeoutNestedDescendants: () => undefined,
         interruptActiveChildren: () => undefined,
         timeoutActiveChildren: () => undefined,
         abortInterrupt: () => undefined,
@@ -196,7 +193,6 @@ export function createBackgroundRunStatusOwner(input) {
     let pausedCheckpointCommitted = false;
     let interrupted = false;
     let timedOut = false;
-    let lastEmittedNestedTerminalState;
     let runtimeCheckpointTimer;
     function listTrackedSessionFiles(dir) {
         if (!dir)
@@ -209,39 +205,6 @@ export function createBackgroundRunStatusOwner(input) {
         }
         catch {
             return [];
-        }
-    }
-    function emitNestedSelfEvent(type) {
-        if (!nestedRoute || !nestedSelf)
-            return;
-        try {
-            const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-                id,
-                parentRunId: nestedSelf.parentRunId,
-                parentStepIndex: nestedSelf.parentStepIndex,
-                depth: nestedSelf.depth,
-                path: nestedSelf.path,
-                mode: statusPayload.mode,
-                ts: Date.now(),
-            });
-            const terminalState = type === "subagent.nested.completed" &&
-                (child.state === "complete" || child.state === "failed" || child.state === "paused")
-                ? child.state
-                : undefined;
-            if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState)
-                return;
-            writeNestedEvent(nestedRoute, {
-                type,
-                ts: Date.now(),
-                parentRunId: nestedSelf.parentRunId,
-                parentStepIndex: nestedSelf.parentStepIndex,
-                child,
-            });
-            if (terminalState !== undefined)
-                lastEmittedNestedTerminalState = terminalState;
-        }
-        catch (error) {
-            console.error("Failed to emit nested async status event:", error);
         }
     }
     function beginTrackedSessionStep(flatIndex, stepSessionDir, sessionFile) {
@@ -325,13 +288,6 @@ export function createBackgroundRunStatusOwner(input) {
         else {
             writeNormalizedLifecycleStatus(asyncDir, statusPayload);
         }
-        if (options.projectNested !== false) {
-            emitNestedSelfEvent(statusPayload.state === "running" ||
-                statusPayload.state === "queued" ||
-                statusPayload.state === "pausing"
-                ? "subagent.nested.updated"
-                : "subagent.nested.completed");
-        }
     }
     function checkpointActiveRuntime(now = Date.now(), freeze = false) {
         const candidates = [...activeRuntimeTrackers].flatMap(([index, tracker]) => {
@@ -359,7 +315,7 @@ export function createBackgroundRunStatusOwner(input) {
                 statusPayload.activeRuntimeMs = Math.max(previousAggregateRuntime ?? 0, aggregateRuntime);
                 statusPayload.activeRuntimeCheckpointAt = Math.max(normalizeActiveRuntimeCheckpointAt(statusPayload.activeRuntimeCheckpointAt) ?? 0, normalizeActiveRuntimeCheckpointAt(now) ?? 0);
                 statusPayload.lastUpdate = now;
-                writeStatusPayload({ projectNested: false, lifecycleLocked: true });
+                writeStatusPayload({ lifecycleLocked: true });
             },
         });
     }
@@ -534,7 +490,6 @@ export function createBackgroundRunStatusOwner(input) {
         if (persisted.state === "paused")
             pausedCheckpointCommitted = true;
         concurrentTerminalStatusAdopted = true;
-        controlHooks.interruptNestedDescendants();
         controlHooks.interruptActiveChildren();
         return persisted;
     }
@@ -698,7 +653,6 @@ export function createBackgroundRunStatusOwner(input) {
                 request: supervisorPauseRequest.pause.request,
             },
         }));
-        controlHooks.interruptNestedDescendants();
         controlHooks.abortInterrupt();
         controlHooks.interruptActiveChildren();
     }
@@ -736,7 +690,6 @@ export function createBackgroundRunStatusOwner(input) {
         writeStatusPayload();
         pausedCheckpointCommitted = true;
         appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
-        controlHooks.interruptNestedDescendants();
         controlHooks.abortInterrupt();
         controlHooks.interruptActiveChildren();
     }
@@ -785,7 +738,6 @@ export function createBackgroundRunStatusOwner(input) {
             message,
         }));
         controlHooks.abortTimeout();
-        controlHooks.timeoutNestedDescendants();
         controlHooks.timeoutActiveChildren();
     }
     function pausedStepResult(task) {
@@ -953,7 +905,6 @@ export function createBackgroundRunStatusOwner(input) {
         applyPausedStepMetadata,
         startRuntimeCheckpointTimer,
         disposeRuntimeCheckpointTimer,
-        emitNestedSelfEvent,
     };
     return owner;
 }

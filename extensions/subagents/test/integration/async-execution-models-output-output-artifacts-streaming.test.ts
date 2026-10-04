@@ -152,7 +152,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -215,7 +214,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -257,7 +255,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
       outputMode: "file-only",
@@ -307,7 +304,6 @@ describe("async execution output and event streaming", () => {
         agentConfig: makeAgent("worker", { completionGuard: false }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig,
-        shareEnabled: false,
         maxOutput,
         maxSubagentDepth: 2,
       });
@@ -347,7 +343,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxOutput: { lines: 2, bytes: 1024 },
       maxSubagentDepth: 2,
     });
@@ -393,7 +388,6 @@ describe("async execution output and event streaming", () => {
         includeChildEventProjections: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     const bytePayload = readJsonRecord(await waitForAsyncResultFile(parallelId));
@@ -439,7 +433,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "context.md",
       outputBaseDir,
@@ -482,7 +475,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
       maxSubagentDepth: 2,
@@ -525,7 +517,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "false",
       maxSubagentDepth: 2,
@@ -567,7 +558,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -606,7 +596,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -659,7 +648,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -705,7 +693,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -747,7 +734,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -783,7 +769,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -839,7 +824,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -883,7 +867,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -919,7 +902,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     };
     try {
@@ -1085,7 +1067,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1122,7 +1103,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1162,7 +1142,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1200,7 +1179,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       skills: ["pi-subagents"],
       maxSubagentDepth: 2,
@@ -1233,7 +1211,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1298,7 +1275,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1358,7 +1334,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1409,7 +1384,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1483,7 +1457,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1584,7 +1557,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot,
         maxSubagentDepth: 2,
       });
@@ -1642,7 +1614,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -1731,7 +1702,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });

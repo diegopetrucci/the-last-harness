@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   normalizeProjectAgentRunCapture,
@@ -16,7 +15,6 @@ import {
   transitionLifecycleStatus,
   withLifecycleContinuation,
 } from "../shared/lifecycle-state.ts";
-import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -35,7 +33,7 @@ import {
   transitionSubagentRunTelemetryLifecycle,
   type SubagentRunTelemetry,
 } from "../../shared/telemetry.ts";
-import type { ExecutorDeps, SubagentParamsLike } from "./subagent-executor.ts";
+import type { SubagentParamsLike } from "./subagent-executor.ts";
 import {
   isClaimedPausedLifecycle,
   pausedForegroundStatusPath,
@@ -46,7 +44,6 @@ import {
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
-import { updateForegroundNestedProjection } from "../shared/nested-events.ts";
 import { projectRunAuthorizationError } from "./project-agent-control.ts";
 import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
@@ -90,22 +87,9 @@ function formatForegroundActivity(
   return [`active ${seconds}s ago`, ...facts].join(" | ");
 }
 
-export function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
-  const roots: string[] = [];
-  const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-  if (parentSessionFile) roots.push(deps.getSubagentSessionRoot(parentSessionFile));
-  return [...new Set(roots)];
-}
-
 export function foregroundStatusResult(
   control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
 ): SubagentToolResult<Details> {
-  let nestedWarning: string | undefined;
-  try {
-    updateForegroundNestedProjection(control);
-  } catch (error) {
-    nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
-  }
   const activity = formatForegroundActivity(control);
   const lines = [
     `Run: ${control.runId}`,
@@ -116,14 +100,6 @@ export function foregroundStatusResult(
       : undefined,
     activity ? `Activity: ${activity}` : undefined,
   ].filter((line): line is string => Boolean(line));
-  lines.push(
-    ...formatNestedRunStatusLines(control.nestedChildren, {
-      indent: "",
-      commandHints: true,
-      maxLines: 20,
-    }),
-  );
-  if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
   return {
     content: [{ type: "text", text: lines.join("\n") }],
     details: { mode: "management", results: [] },

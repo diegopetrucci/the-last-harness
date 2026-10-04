@@ -23,7 +23,6 @@ import { RESULTS_DIR, } from "../../shared/types.js";
 import { remainingExecutionTimeMs, } from "../../agents/execution-ceiling.js";
 import { lookupPrivateProjectActionReference, projectRunAuthorizationError, requirePersistedProjectCaptureForTarget, authorizePersistedProjectAgentRun, rejectMissingPrivateProjectReference, } from "./project-agent-control.js";
 import { resolveForegroundResumeTarget } from "./foreground-run-state.js";
-import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "./foreground-nested-control.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { indexedLifecycleContinuation, isClaimedPausedLifecycle, pausedForegroundHealthFromResult, pausedForegroundStatusPath, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -565,19 +564,7 @@ async function resolveResumeActionTarget(input) {
             if (!isResumeAmbiguity(error) || !message.includes("foreground:") || asyncMatches !== 1)
                 throw error;
         }
-        if (resolved?.kind === "nested") {
-            if (input.privateProjectLookup.status === "found") {
-                throw projectRunAuthorizationError("the retained project-agent run resolved to an unsupported nested control target.");
-            }
-            if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-                return resumeLiveNestedRun(resolved);
-            }
-            const trustedSessionRoots = input.parentSessionFile
-                ? [input.deps.getSubagentSessionRoot(input.parentSessionFile)]
-                : [];
-            target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
-        }
-        else if (resolved?.kind === "async" || input.params.dir) {
+        if (resolved?.kind === "async" || input.params.dir) {
             const preResolutionDir = resolved?.kind === "async"
                 ? resolved.location.asyncDir
                 : input.params.dir
@@ -783,7 +770,7 @@ async function prepareResume(input) {
     }
     const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
     if (blocked) {
-        return managementError(`Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`);
+        return managementError(`Subagent resume blocked at the configured recursion depth (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`);
     }
     const effectiveCwd = persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
     const scope = resolveExecutionAgentScope(input.params.agentScope);
@@ -932,13 +919,10 @@ export async function resumeAsyncRun(input) {
                 modelScope,
             },
             cwd: effectiveCwd,
-            maxOutput: input.params.maxOutput,
             artifactsDir,
             artifactConfig: input.artifactConfig,
-            shareEnabled: input.params.share === true,
             sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
             sessionFile: target.sessionFile,
-            acceptance: input.params.acceptance,
             continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
             activeRuntimeMs,
             ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
@@ -947,7 +931,7 @@ export async function resumeAsyncRun(input) {
             timeoutMs: runTimeoutMs,
             outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
             maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
-            controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+            controlConfig: resolveControlConfig(input.deps.config.control),
             availableModels,
             modelRegistry: modelRegistrySnapshot.evidence,
             providerFallbackModels: providerFallbackModelsForTarget(input.params),

@@ -1,61 +1,11 @@
 import assert from "node:assert/strict";
-import * as os from "node:os";
-import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  attachNestedChildrenToResultChildren,
   formatForegroundNativeSubagentResult,
   resolveSubagentResultStatus,
 } from "../../src/shared/result-formatting.ts";
-import type { SubagentResultChild } from "../../src/shared/types.ts";
-import { makePublicNestedRunSummary } from "../support/helpers.ts";
 
 describe("result formatter", () => {
-  it("attaches compact nested children under their parent result child without route secrets", () => {
-    // Typed as SubagentResultChild[] so T is inferred as the full interface,
-    // making children (which the function attaches) accessible on the return type.
-    const items: SubagentResultChild[] = [
-      { agent: "owner-a", status: "completed", summary: "done", index: 0 },
-      { agent: "owner-b", status: "completed", summary: "done", index: 1 },
-    ];
-    const children = attachNestedChildrenToResultChildren("root-run", items, [
-      {
-        id: "nested-a",
-        parentRunId: "root-run",
-        parentStepIndex: 1,
-        depth: 1,
-        path: [{ runId: "root-run", stepIndex: 1 }],
-        state: "complete",
-        agent: "reviewer",
-        sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
-        controlInbox: "/tmp/should-not-leak",
-        capabilityToken: "secret-token",
-        children: [
-          {
-            id: "nested-grandchild",
-            parentRunId: "nested-a",
-            depth: 2,
-            path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
-            state: "complete",
-            agent: "auditor",
-            controlInbox: "/tmp/grandchild-should-not-leak",
-            capabilityToken: "grandchild-secret",
-          },
-        ],
-      },
-    ]);
-
-    const nested = children[1]?.children?.[0];
-    const grandchild = nested?.children?.[0];
-    assert.equal(children[0]?.children, undefined);
-    assert.equal(nested?.id, "nested-a");
-    assert.equal(Object.hasOwn(nested ?? {}, "controlInbox"), false);
-    assert.equal(Object.hasOwn(nested ?? {}, "capabilityToken"), false);
-    assert.equal(grandchild?.id, "nested-grandchild");
-    assert.equal(Object.hasOwn(grandchild ?? {}, "controlInbox"), false);
-    assert.equal(Object.hasOwn(grandchild ?? {}, "capabilityToken"), false);
-  });
-
   it("formats native foreground results with bounded failed-first previews and explicit omissions", () => {
     const grouped = formatForegroundNativeSubagentResult({
       runId: "run-native",
@@ -105,68 +55,32 @@ describe("result formatter", () => {
     assert.ok(grouped.text.length <= 8_000);
   });
 
-  it("bounds native foreground errors, child summaries, and nested previews", () => {
-    const grouped = formatForegroundNativeSubagentResult({
-      runId: "run-native-error",
+  it("bounds direct error and summary text exactly once within the native ceiling", () => {
+    const errorSummary = `Collected output validation failed: ${"E".repeat(2_000)}`;
+    const { text } = formatForegroundNativeSubagentResult({
+      runId: "run-direct-bounds",
       mode: "parallel",
-      statusOverride: "failed",
-      errorSummary: `Collected output validation failed: ${"E".repeat(2_000)}`,
+      errorSummary,
       children: [
         {
           agent: "reviewer",
           status: "failed",
           summary: "s".repeat(2_000),
           artifactPath: "/tmp/reviewer-output.md",
-          children: Array.from({ length: 9 }, (_, index) => ({
-            id: `nested-${index}`,
-            parentRunId: "run-native-error",
-            parentStepIndex: 0,
-            depth: 1,
-            path: [{ runId: "run-native-error", stepIndex: 0 }],
-            state: "complete",
-            agent: `nested-agent-${index}`,
-            children: [
-              {
-                id: `nested-${index}-child`,
-                parentRunId: `nested-${index}`,
-                depth: 2,
-                path: [{ runId: "run-native-error", stepIndex: 0 }, { runId: `nested-${index}` }],
-                state: "complete",
-                agent: `nested-child-${index}`,
-                children: [
-                  {
-                    id: `nested-${index}-grandchild`,
-                    parentRunId: `nested-${index}-child`,
-                    depth: 3,
-                    path: [
-                      { runId: "run-native-error", stepIndex: 0 },
-                      { runId: `nested-${index}` },
-                      { runId: `nested-${index}-child` },
-                    ],
-                    state: "complete",
-                    agent: `nested-grandchild-${index}`,
-                  },
-                ],
-              },
-            ],
-          })),
+          index: 0,
         },
       ],
     });
 
-    assert.equal(grouped.status, "failed");
-    assert.equal(grouped.summary, "1 failed");
-    assert.match(grouped.text, /Error:\nCollected output validation failed:/);
-    assert.match(grouped.text, /\[error truncated; full text is unavailable\]/);
-    assert.match(
-      grouped.text,
-      /Summary:\ns+[\s\S]*\[summary truncated; see references below for full output\]/,
+    assert.match(text, /Error:\nCollected output validation failed:/);
+    assert.equal((text.match(/Collected output validation failed/g) ?? []).length, 1);
+    assert.equal((text.match(/\[error truncated; full text is unavailable\]/g) ?? []).length, 1);
+    assert.equal(
+      (text.match(/\[summary truncated; see references below for full output\]/g) ?? []).length,
+      1,
     );
-    assert.match(grouped.text, /Nested subagents:/);
-    assert.match(grouped.text, /… \[nested depth limit reached; full tree is unavailable\]/);
-    assert.match(grouped.text, /… \[additional nested entries omitted; full tree is unavailable\]/);
-    assert.equal(grouped.text.match(/Collected output validation failed/g)?.length ?? 0, 1);
-    assert.ok(grouped.text.length <= 8_000);
+    assert.doesNotMatch(text, /Nested subagents:/);
+    assert.ok(text.length <= 8_000);
   });
 
   it("summary truncation is surrogate-safe in formatForegroundNativeSubagentResult", () => {
@@ -219,7 +133,6 @@ describe("result formatter", () => {
 // Five properties are checked per combination:
 //   1. Output never exceeds MAX_NATIVE_FOREGROUND_CHARS (8 000).
 //   2. Every displayed child retains BOTH recovery pointers (artifact + session).
-//   3. A 'Nested subagents:' heading is never emitted without content beneath it.
 //   4. No mangled truncation-marker fragments (e.g. '… [su').
 //   5. Output is always well-formed UTF-16.
 // =========================================================================
@@ -242,97 +155,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       );
     }
   }
-
-  // Structural well-formedness: a 'Nested subagents:' heading must never appear
-  // without content beneath it. A length check alone cannot catch this because an
-  // orphaned heading still fits within the ceiling while producing meaningless output.
-  function assertNoOrphanedNestedHeading(label: string, text: string): void {
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]?.trim() !== "Nested subagents:") continue;
-      let j = i + 1;
-      while (j < lines.length && lines[j]?.trim() === "") j++;
-      const next = lines[j]?.trim() ?? "";
-      // The next non-empty line must be a nested entry (↳) or an omission marker (…).
-      const hasContent = next.startsWith("↳") || next.startsWith("…");
-      assert.ok(
-        hasContent,
-        `[${label}]: orphaned 'Nested subagents:' heading at line ${i} — next non-empty line: ${JSON.stringify(next)}`,
-      );
-    }
-  }
-
-  function makeNestedEntry(id: string) {
-    return makePublicNestedRunSummary(id, { agent: `nested-${id}` });
-  }
-
-  // -------------------------------------------------------------------------
-  // Detection check for the orphaned-heading guard.
-  //
-  // WHAT THIS ESTABLISHES: assertNoOrphanedNestedHeading actually fires when an
-  // orphaned heading is present, and does not fire on real formatter output. A
-  // guard that has never failed is not evidence of anything, so the detection
-  // half is exercised against a hand-built sample.
-  //
-  // WHAT THIS DOES NOT ESTABLISH: this formatter cannot produce an orphaned
-  // heading through its current code paths, so no live formatter run is used
-  // as the triggering input. The sample below is hand-built to exercise the
-  // assertNoOrphanedNestedHeading helper itself.
-  //
-  // The guard is FORWARD-LOOKING: nested lines are computed as a unit, and a
-  // future change that emits the heading and then omits the entries beneath it
-  // without a marker would produce exactly the defect this guard catches.
-  // -------------------------------------------------------------------------
-  it("orphaned-heading guard detects a bare heading and passes on real formatter output", () => {
-    // Construct text where 'Nested subagents:' is followed by a blank line and then
-    // an artifact line — NOT a nested entry (↳) or omission marker (…).
-    const orphanedText = [
-      "subagent results",
-      "",
-      "Run: run-x",
-      "Mode: parallel",
-      "Status: completed",
-      "Children: 1 completed",
-      "",
-      "1/1. worker — completed",
-      "Summary:",
-      "done",
-      "Nested subagents:",
-      // Blank line then non-nested-entry content: the defect.
-      "",
-      "Output artifact: /tmp/a.md",
-    ].join("\n");
-
-    // The guard must detect the defect.
-    assert.throws(
-      () => assertNoOrphanedNestedHeading("hand-built-bare-heading-sample", orphanedText),
-      /orphaned/,
-      "assertNoOrphanedNestedHeading must fire on text with an orphaned 'Nested subagents:' heading",
-    );
-
-    // Real formatter output must pass the same guard.
-    const result = formatForegroundNativeSubagentResult({
-      runId: "run-x",
-      mode: "parallel",
-      children: [
-        {
-          agent: "worker",
-          status: "completed",
-          summary: "done",
-          index: 0,
-          children: [makeNestedEntry("n1")],
-        },
-      ],
-    });
-    // Must not throw.
-    assert.doesNotThrow(
-      () => assertNoOrphanedNestedHeading("real-formatter-output", result.text),
-      "formatter must not produce an orphaned 'Nested subagents:' heading",
-    );
-    // Must also have the nested entry in the output.
-    assert.match(result.text, /Nested subagents:/, "nested section must appear");
-    assert.match(result.text, /↳ nested-n1/, "nested entry must appear beneath the heading");
-  });
 
   // -------------------------------------------------------------------------
   // Pointer survival sweep: 1 through 8 children.
@@ -384,12 +206,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
         `n=${n}: expected ${displayedN} session pointers, got ${sessionCount}`,
       );
 
-      // 3. No orphaned 'Nested subagents:' headings.
-      assert.doesNotThrow(
-        () => assertNoOrphanedNestedHeading(`n=${n}`, text),
-        `n=${n}: orphaned 'Nested subagents:' heading in output`,
-      );
-
       // 4. No mangled truncation markers.
       assert.doesNotThrow(
         () => assertNoMangledMarker(`n=${n}`, text),
@@ -400,37 +216,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       assert.ok(text.isWellFormed(), `n=${n}: output contains ill-formed UTF-16`);
     });
   }
-
-  it("8 children with nested subagents: all displayed children retain pointers and no orphaned headings", () => {
-    const children = Array.from({ length: 8 }, (_, i) => ({
-      agent: `worker-${i}`,
-      status: "completed" as const,
-      summary: "S".repeat(500),
-      artifactPath: ART_PATH,
-      sessionPath: SESS_PATH,
-      index: i,
-      // Every other child has a nested subagent to exercise the heading guard.
-      children: i % 2 === 0 ? [makeNestedEntry(`n${i}`)] : undefined,
-    }));
-
-    const { text } = formatForegroundNativeSubagentResult({
-      runId: "run-nested-sweep",
-      mode: "parallel",
-      children,
-    });
-
-    assert.ok(text.length <= MAX_CHARS, `length ${text.length} exceeds ceiling`);
-    assert.doesNotThrow(() => assertNoOrphanedNestedHeading("8-children-nested", text));
-    assert.doesNotThrow(() => assertNoMangledMarker("8-children-nested", text));
-    assert.ok(text.isWellFormed());
-    // All 8 children must retain both pointers.
-    assert.equal(
-      (text.match(/Output artifact:/g) ?? []).length,
-      8,
-      "all 8 artifact pointers must survive",
-    );
-    assert.equal((text.match(/Session:/g) ?? []).length, 8, "all 8 session pointers must survive");
-  });
 
   it("output stays within ceiling when children have very long reference paths", () => {
     // Max-length paths push the per-child fixed cost near the reference cap (500 chars),
@@ -454,7 +239,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 
     assert.ok(text.length <= MAX_CHARS, `length ${text.length} exceeds ceiling`);
     assert.doesNotThrow(() => assertNoMangledMarker("long-refs", text));
-    assert.doesNotThrow(() => assertNoOrphanedNestedHeading("long-refs", text));
     assert.ok(text.isWellFormed());
   });
 
@@ -582,9 +366,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
       const next = lines[j]?.trim() ?? "";
       // Scaffolding lines that would directly follow an orphaned heading:
       const isScaffolding =
-        next.startsWith("Output artifact:") ||
-        next.startsWith("Session:") ||
-        next.startsWith("Nested subagents:");
+        next.startsWith("Output artifact:") || next.startsWith("Session:") || false;
       const isOmissionMarker = next.startsWith("…");
       const isChildHeader = /^\d+\/\d+\./.test(next); // e.g. '2/8. worker'
       const isEndOfInput = j >= lines.length;
@@ -599,7 +381,6 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 
     // Additional gate checks from the contract sweep.
     assert.doesNotThrow(() => assertNoMangledMarker("finding-a", text));
-    assert.doesNotThrow(() => assertNoOrphanedNestedHeading("finding-a", text));
     assert.ok(text.isWellFormed());
   });
 
