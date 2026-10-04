@@ -51,6 +51,7 @@ Options:
   --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
+  --runtime-manifest-dir <dir> Directory with package.json+package-lock.json for Pi runtime lock validation (default: config/pi-runtime; pass "" to skip)
   -h, --help                   Show this help
 `;
 }
@@ -63,6 +64,7 @@ function parseArgs(argv) {
     installShPath: DEFAULT_INSTALL_SH_PATH,
     modelSelectionScopePath: DEFAULT_MODEL_SELECTION_SCOPE_PATH,
     nodeModulesDir: "",
+    runtimeManifestDir: "config/pi-runtime",
     gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
     piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
     help: false,
@@ -103,6 +105,12 @@ function parseArgs(argv) {
     }
     if (arg === "--node-modules-dir") {
       args.nodeModulesDir = requiredValue(argv, index + 1, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-manifest-dir") {
+      // Empty string is a valid value meaning "skip runtime manifest check"
+      args.runtimeManifestDir = argv[index + 1] ?? "";
       index += 1;
       continue;
     }
@@ -153,6 +161,11 @@ function parseArgs(argv) {
     if (arg.startsWith("--node-modules-dir=")) {
       args.nodeModulesDir = arg.slice("--node-modules-dir=".length);
       if (!args.nodeModulesDir) throw new Error("--node-modules-dir requires a value");
+      continue;
+    }
+    if (arg.startsWith("--runtime-manifest-dir=")) {
+      // Empty string value means "skip runtime manifest check"
+      args.runtimeManifestDir = arg.slice("--runtime-manifest-dir=".length);
       continue;
     }
     if (arg.startsWith("--gnosis-script=")) {
@@ -699,6 +712,118 @@ function validateManagedPiPins(args, packageJson, problems) {
   }
 }
 
+/**
+ * Read the canonical managed Pi version from install.sh (TLH_PINNED_PI_VERSION).
+ * Returns undefined if the version cannot be read or is not pinned.
+ */
+function readManagedPiVersion(args) {
+  try {
+    const version = readShellStringVariable(args.installShPath, "TLH_PINNED_PI_VERSION");
+    return isPinnedExactVersion(version) ? version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_RUNTIME_TOP_LEVEL_KEY = `node_modules/${PI_CODING_AGENT_PACKAGE}`;
+
+/**
+ * Validate config/pi-runtime/{package.json,package-lock.json}:
+ * - manifest dependency matches the managed Pi pin
+ * - lockfileVersion is 3
+ * - exactly one top-level node_modules entry (pi-coding-agent)
+ * - every non-root entry has resolved
+ * - the top-level entry and all packages not covered by a hasShrinkwrap parent have integrity
+ */
+function validateRuntimeManifest(args, managedPiVersion, problems) {
+  if (!args.runtimeManifestDir) return;
+
+  const manifestPath = join(args.runtimeManifestDir, "package.json");
+  const lockPath = join(args.runtimeManifestDir, "package-lock.json");
+
+  let manifest;
+  try {
+    manifest = readJsonFile(manifestPath);
+  } catch (error) {
+    problems.push(error.message);
+    return;
+  }
+
+  const piDep = manifest.dependencies?.[PI_CODING_AGENT_PACKAGE];
+  if (managedPiVersion === undefined) {
+    // If we can't read the managed pin, only check the manifest is structurally valid
+    if (typeof piDep !== "string" || !isPinnedExactVersion(piDep)) {
+      problems.push(
+        `${manifestPath}#dependencies["${PI_CODING_AGENT_PACKAGE}"] must be an exact version pin, found ${JSON.stringify(piDep)}`,
+      );
+    }
+  } else if (piDep !== managedPiVersion) {
+    problems.push(
+      `${manifestPath}#dependencies["${PI_CODING_AGENT_PACKAGE}"] must be ${JSON.stringify(managedPiVersion)} (matching managed Pi pin), found ${JSON.stringify(piDep)}`,
+    );
+  }
+
+  let lock;
+  try {
+    lock = readJsonFile(lockPath);
+  } catch (error) {
+    problems.push(error.message);
+    return;
+  }
+
+  if (lock.lockfileVersion !== 3) {
+    problems.push(
+      `${lockPath}#lockfileVersion must be 3, found ${JSON.stringify(lock.lockfileVersion)}`,
+    );
+  }
+
+  const packages = isPlainObject(lock.packages) ? lock.packages : {};
+  const nonRootKeys = Object.keys(packages).filter((k) => k !== "");
+
+  // Check exactly one top-level package
+  const topLevelKeys = nonRootKeys.filter((k) => {
+    if (!k.startsWith("node_modules/")) return false;
+    const rest = k.slice("node_modules/".length);
+    return !rest.includes("/node_modules/");
+  });
+
+  if (topLevelKeys.length !== 1 || topLevelKeys[0] !== PI_RUNTIME_TOP_LEVEL_KEY) {
+    const found = topLevelKeys.length === 0 ? "none" : topLevelKeys.join(", ");
+    problems.push(
+      `${lockPath} must have exactly one top-level package (${PI_RUNTIME_TOP_LEVEL_KEY}), found: ${found}`,
+    );
+  }
+
+  // Every non-root entry must have resolved
+  const missingResolved = nonRootKeys.filter((k) => !packages[k].resolved);
+  if (missingResolved.length > 0) {
+    const sample = missingResolved.slice(0, 3).join(", ");
+    problems.push(
+      `${lockPath}: ${missingResolved.length} package(s) missing resolved (e.g. ${sample})`,
+    );
+  }
+
+  // Identify packages that have their own shrinkwrap (their nested deps may lack integrity)
+  const shrinkwrapKeys = new Set(nonRootKeys.filter((k) => packages[k].hasShrinkwrap));
+
+  // Every non-root entry must have integrity unless it is nested under a hasShrinkwrap parent
+  const missingIntegrity = nonRootKeys.filter((k) => {
+    if (packages[k].integrity) return false;
+    for (const sw of shrinkwrapKeys) {
+      if (k.startsWith(sw + "/node_modules/")) return false;
+    }
+    return true;
+  });
+
+  if (missingIntegrity.length > 0) {
+    const sample = missingIntegrity.slice(0, 3).join(", ");
+    problems.push(
+      `${lockPath}: ${missingIntegrity.length} package(s) missing integrity (not covered by an inner shrinkwrap; e.g. ${sample})`,
+    );
+  }
+}
+
 function collectProblems(args) {
   const packageJson = readJsonFile(args.packagePath);
   const packageLock = readJsonFile(args.lockfilePath);
@@ -723,6 +848,9 @@ function collectProblems(args) {
     "Managed Gnosis",
     problems,
   );
+
+  const managedPiVersion = readManagedPiVersion(args);
+  validateRuntimeManifest(args, managedPiVersion, problems);
 
   return { version, problems };
 }

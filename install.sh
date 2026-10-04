@@ -575,6 +575,9 @@ required|scripts/lib/tlh-install-subagents.mjs
 required|scripts/lib/tlh-install-npm.mjs
 required|scripts/lib/tlh-install-profile-cleanup.mjs
 required|scripts/lib/tlh-install-support-files.mjs
+required|scripts/lib/tlh-install-runtime.mjs
+required|config/pi-runtime/package.json
+required|config/pi-runtime/package-lock.json
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs

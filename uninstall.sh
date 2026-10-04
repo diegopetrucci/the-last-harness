@@ -665,6 +665,11 @@ fi
 
 PI_REMOVE_MODE="none"   # "runtime" | "runtime-package" | "legacy" | "none"
 PI_UNINSTALL_DISPLAY=""
+# Set to true when lib/package.json / lib/package-lock.json match the TLH runtime
+# manifest structure (line 1 = '{', line 2 = '  "name": "tlh-pi-runtime",').
+# Source of truth: TLH_RUNTIME_MANIFEST_NAME in scripts/lib/tlh-install-runtime.mts.
+_RUNTIME_PKG_JSON_REMOVE=false
+_RUNTIME_LOCK_JSON_REMOVE=false
 
 if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
   # ── ownership gate ──────────────────────────────────────────────────────────
@@ -729,6 +734,28 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
     REMOVE_PI=true
     PI_REMOVE_MODE="runtime-package"
     PI_UNINSTALL_DISPLAY="npm uninstall -g --ignore-scripts --prefix \"${RUNTIME_DIR}\" ${PI_PACKAGE_NAME}"
+    # Check whether TLH-owned runtime manifest files should also be removed.
+    # Each file is checked independently: remove only when it is a regular
+    # non-symlink file whose line 1 is exactly '{' and line 2 is exactly
+    # '  "name": "tlh-pi-runtime",' — as written by the generator
+    # (JSON.stringify with 2-space indent) and npm.  Any other shape keeps
+    # the file (fail-closed; no greedy mid-line name match).
+    _lib_pjson="${RUNTIME_DIR}/lib/package.json"
+    _lib_lock="${RUNTIME_DIR}/lib/package-lock.json"
+    if [[ -f "${_lib_pjson}" && ! -L "${_lib_pjson}" ]]; then
+      _pjson_l1="$(sed -n '1p' "${_lib_pjson}" 2>/dev/null || true)"
+      _pjson_l2="$(sed -n '2p' "${_lib_pjson}" 2>/dev/null || true)"
+      if [[ "${_pjson_l1}" == '{' && "${_pjson_l2}" == '  "name": "tlh-pi-runtime",' ]]; then
+        _RUNTIME_PKG_JSON_REMOVE=true
+      fi
+    fi
+    if [[ -f "${_lib_lock}" && ! -L "${_lib_lock}" ]]; then
+      _lock_l1="$(sed -n '1p' "${_lib_lock}" 2>/dev/null || true)"
+      _lock_l2="$(sed -n '2p' "${_lib_lock}" 2>/dev/null || true)"
+      if [[ "${_lock_l1}" == '{' && "${_lock_l2}" == '  "name": "tlh-pi-runtime",' ]]; then
+        _RUNTIME_LOCK_JSON_REMOVE=true
+      fi
+    fi
   else
     # origin=created: exclusivity check remains an advisory tripwire before rm -rf.
     # unexpected top-level entries can DOWNGRADE to SKIP, never upgrade to delete.
@@ -741,6 +768,9 @@ if [[ -d "${RUNTIME_DIR}" && "${KEEP_PI}" != "true" ]]; then
       _runtime_basename="${_runtime_entry##*/}"
       case "${_runtime_basename}" in
         bin|lib|node-compile-cache|"${RUNTIME_MARKER_FILENAME}") ;;
+        # Transient crash-recovery dirs produced by the staged npm-ci installer;
+        # source of truth: RUNTIME_*_DIR_PREFIX in scripts/lib/tlh-install-runtime.mts.
+        .tlh-runtime-staging-*|.tlh-runtime-previous-*|.tlh-runtime-failed-*) ;;
         *)
           _runtime_exclusive=false
           _runtime_unexpected_entry="${_runtime_entry}"
@@ -837,12 +867,21 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
     if [[ "${DRY_RUN}" == "true" ]]; then
       if [[ "${PI_REMOVE_MODE}" == "runtime-package" ]]; then
         say "  ${STEP}. would remove migrated TLH pi from shared runtime (npm): ${PI_UNINSTALL_DISPLAY}"
+        if [[ "${_RUNTIME_PKG_JSON_REMOVE}" == "true" ]]; then
+          say "             and rm -f ${RUNTIME_DIR}/lib/package.json (TLH runtime manifest)"
+        fi
+        if [[ "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
+          say "             and rm -f ${RUNTIME_DIR}/lib/package-lock.json (TLH runtime lock)"
+        fi
       else
         say "  ${STEP}. would remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
       fi
     else
       if [[ "${PI_REMOVE_MODE}" == "runtime-package" ]]; then
         say "  ${STEP}. Remove migrated TLH pi from shared runtime (npm): ${PI_UNINSTALL_DISPLAY}"
+        if [[ "${_RUNTIME_PKG_JSON_REMOVE}" == "true" || "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
+          say "             and TLH runtime manifest files from ${RUNTIME_DIR}/lib/"
+        fi
       else
         say "  ${STEP}. Remove legacy pi (npm): ${PI_UNINSTALL_DISPLAY}"
       fi
@@ -905,6 +944,14 @@ if [[ "${REMOVE_PI}" == "true" ]]; then
       removal_run npm uninstall -g --ignore-scripts --prefix "${RUNTIME_DIR}" "${PI_PACKAGE_NAME}"
       log "Clearing migrated TLH runtime ownership marker: ${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
       removal_run rm -f "${RUNTIME_DIR}/${RUNTIME_MARKER_FILENAME}"
+      if [[ "${_RUNTIME_PKG_JSON_REMOVE}" == "true" ]]; then
+        log "Clearing TLH runtime manifest: ${RUNTIME_DIR}/lib/package.json"
+        removal_run rm -f "${RUNTIME_DIR}/lib/package.json"
+      fi
+      if [[ "${_RUNTIME_LOCK_JSON_REMOVE}" == "true" ]]; then
+        log "Clearing TLH runtime lock: ${RUNTIME_DIR}/lib/package-lock.json"
+        removal_run rm -f "${RUNTIME_DIR}/lib/package-lock.json"
+      fi
     fi
   elif [[ "${PI_REMOVE_MODE}" == "legacy" ]]; then
     if ! command -v npm >/dev/null 2>&1; then

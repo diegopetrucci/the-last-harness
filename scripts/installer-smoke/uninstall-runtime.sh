@@ -707,9 +707,10 @@ run_uninstall_runtime_ownership_smoke() {
   assert_present "${dotdot_sentinel}"
   assert_present "${dotdot_runtime}"
 
-  # ── Case 5: migrated runtime → surgical uninstall clears marker only ───────
+  # ── Case 5: migrated runtime + TLH manifest files → surgical uninstall removes manifest ─
   # origin=migrated must preserve the shared prefix and foreign packages while
-  # clearing TLH's ownership marker after npm uninstall succeeds.
+  # clearing TLH's ownership marker and TLH-owned manifest files (lib/package.json
+  # and lib/package-lock.json with name=="tlh-pi-runtime") after npm uninstall succeeds.
   local migrated_dir="${case_dir}/migrated"
   local migrated_agent="${migrated_dir}/agent"
   local migrated_runtime="${migrated_dir}/runtime"
@@ -717,9 +718,11 @@ run_uninstall_runtime_ownership_smoke() {
   local migrated_npm_log="${migrated_dir}/npm.log"
   local foreign_package_dir="${migrated_runtime}/lib/node_modules/foreign-package"
   local foreign_package_file="${foreign_package_dir}/package.json"
+  local migrated_lib_pkg_json="${migrated_runtime}/lib/package.json"
+  local migrated_lib_pkg_lock="${migrated_runtime}/lib/package-lock.json"
   assert_safe_uninstall_smoke_paths "${migrated_agent}" "${case_dir}/bin-migrated"
   write_tlh_install_state "${migrated_agent}" true
-  write_tlh_pi_runtime "${migrated_runtime}"
+  write_tlh_pi_runtime "${migrated_runtime}" with-manifest
   write_tlh_runtime_marker "${migrated_runtime}" migrated
   mkdir -p "${migrated_fakebin}" "${foreign_package_dir}"
   printf '{"name":"foreign-package"}\n' >"${foreign_package_file}"
@@ -736,6 +739,15 @@ rm -f "${migrated_runtime}/bin/pi"
 EOF_MIGRATED_NPM
   chmod +x "${migrated_fakebin}/npm"
 
+  # dry-run: plan must show the manifest removal alongside the npm uninstall.
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${migrated_agent}" --bin-dir "${case_dir}/bin-migrated" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove migrated TLH pi from shared runtime (npm): npm uninstall -g --ignore-scripts --prefix \"${migrated_runtime}\" @earendil-works/pi-coding-agent"
+  assert_contains "${combined_file}" "and rm -f ${migrated_runtime}/lib/package.json (TLH runtime manifest)"
+  assert_contains "${combined_file}" "and rm -f ${migrated_runtime}/lib/package-lock.json (TLH runtime lock)"
+
   : >"${stdout_file}"
   : >"${stderr_file}"
   set +e
@@ -751,8 +763,154 @@ EOF_MIGRATED_NPM
   assert_absent "${migrated_runtime}/.tlh-runtime-owned"
   assert_absent "${migrated_runtime}/lib/node_modules/@earendil-works/pi-coding-agent"
   assert_absent "${migrated_runtime}/bin/pi"
+  # TLH-owned manifest files must be removed.
+  assert_absent "${migrated_lib_pkg_json}"
+  assert_absent "${migrated_lib_pkg_lock}"
+  # Foreign package must survive.
   assert_present "${foreign_package_file}"
   assert_present "${migrated_runtime}"
+
+  # ── Case 6: migrated runtime with foreign lib/package.json → manifest NOT removed ─
+  # When lib/package.json has a foreign "name" (not "tlh-pi-runtime"), the
+  # uninstaller must skip manifest removal to protect co-located files.
+  local migrated_foreign_dir="${case_dir}/migrated-foreign"
+  local migrated_foreign_agent="${migrated_foreign_dir}/agent"
+  local migrated_foreign_runtime="${migrated_foreign_dir}/runtime"
+  local migrated_foreign_fakebin="${migrated_foreign_dir}/fakebin"
+  local migrated_foreign_npm_log="${migrated_foreign_dir}/npm.log"
+  local foreign_lib_pkg_json="${migrated_foreign_runtime}/lib/package.json"
+  assert_safe_uninstall_smoke_paths "${migrated_foreign_agent}" "${case_dir}/bin-migrated-foreign"
+  write_tlh_install_state "${migrated_foreign_agent}" true
+  write_tlh_pi_runtime "${migrated_foreign_runtime}"
+  write_tlh_runtime_marker "${migrated_foreign_runtime}" migrated
+  # Foreign lib/package.json with a different name 
+  printf '{"name":"some-other-shared-runtime"}\n' >"${foreign_lib_pkg_json}"
+  mkdir -p "${migrated_foreign_fakebin}"
+  cat >"${migrated_foreign_fakebin}/npm" <<EOF_MIGRATED_FOREIGN_NPM
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >"${migrated_foreign_npm_log}"
+rm -rf "${migrated_foreign_runtime}/lib/node_modules/@earendil-works/pi-coding-agent"
+rm -f "${migrated_foreign_runtime}/bin/pi"
+EOF_MIGRATED_FOREIGN_NPM
+  chmod +x "${migrated_foreign_fakebin}/npm"
+
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  set +e
+  PATH="${migrated_foreign_fakebin}:${PATH}" bash uninstall.sh --agent-dir "${migrated_foreign_agent}" --bin-dir "${case_dir}/bin-migrated-foreign" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "migrated-foreign runtime uninstall smoke exited with non-zero status: ${status}"
+  fi
+  # Foreign lib/package.json must survive.
+  assert_present "${foreign_lib_pkg_json}"
+
+  # ── Case 7: origin=created with staging dir → tripwire allows it, runtime removed ─
+  # A leftover .tlh-runtime-staging-<uuid> dir from a crash must not trigger
+  # the exclusivity tripwire.  The uninstaller must still rm -rf the runtime.
+  local staging_dir="${case_dir}/staging"
+  local staging_agent="${staging_dir}/agent"
+  local staging_runtime="${staging_dir}/runtime"
+  local staging_subdir="${staging_runtime}/.tlh-runtime-staging-test123"
+  assert_safe_uninstall_smoke_paths "${staging_agent}" "${case_dir}/bin-staging"
+  write_tlh_install_state "${staging_agent}" true
+  write_tlh_pi_runtime "${staging_runtime}"
+  write_tlh_runtime_marker "${staging_runtime}" created
+  mkdir -p "${staging_subdir}"
+  printf 'crashed staging remnant\n' >"${staging_subdir}/package.json"
+
+  # dry-run: plan must show removal (not skip).
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --dry-run --agent-dir "${staging_agent}" --bin-dir "${case_dir}/bin-staging" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_contains "${combined_file}" "would remove private runtime: rm -rf ${staging_runtime}"
+  assert_not_contains "${combined_file}" "would skip pi/runtime removal"
+
+  # real run: entire runtime dir including staging subdir must be removed.
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  bash uninstall.sh --agent-dir "${staging_agent}" --bin-dir "${case_dir}/bin-staging" >"${stdout_file}" 2>"${stderr_file}"
+  assert_absent "${staging_runtime}"
+
+  # 	at Case 8: manifest detection 	at independent per-file checks 	at
+  # Each of lib/package.json and lib/package-lock.json is removed only when
+  # line 1 is '{' and line 2 is '  "name": "tlh-pi-runtime",'. Other shapes
+  # keep the file (fail-closed).  RUNTIME_DIR = PROFILE_ROOT/runtime, so each
+  # sub-case gets its own <sub-dir>/{agent,runtime} pair.
+  #
+  # Shared no-op npm stub: exits 0 without modifying fs; sufficient for these
+  # tests since we only need to reach the manifest-removal logic.
+  local mfakebin="${case_dir}/manifest-fakebin"
+  mkdir -p "${mfakebin}"
+  cat >"${mfakebin}/npm" <<'EOF_MFAKE_NPM'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF_MFAKE_NPM
+  chmod +x "${mfakebin}/npm"
+
+  # 	at 8a: nested-name package.json (name not first key) 	at kept
+  # Line 2 is "version" not "name", so the check fails and the file survives.
+  local m_nested="${case_dir}/m-nested"
+  local m_nested_agent="${m_nested}/agent"
+  local m_nested_runtime="${m_nested}/runtime"
+  local m_nested_pjson="${m_nested_runtime}/lib/package.json"
+  local m_nested_lock="${m_nested_runtime}/lib/package-lock.json"
+  write_tlh_install_state "${m_nested_agent}" true
+  write_tlh_pi_runtime "${m_nested_runtime}"
+  write_tlh_runtime_marker "${m_nested_runtime}" migrated
+  # Name is on line 3, not line 2 	at should be kept.
+  printf '{\n  "version": "1.0.0",\n  "name": "tlh-pi-runtime",\n  "private": true\n}\n' >"${m_nested_pjson}"
+  # Lock has TLH format; it will be removed (verifies independence).
+  printf '{\n  "name": "tlh-pi-runtime",\n  "lockfileVersion": 3\n}\n' >"${m_nested_lock}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  PATH="${mfakebin}:${PATH}" bash uninstall.sh --agent-dir "${m_nested_agent}" --bin-dir "${case_dir}/bin-m-nested" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_present "${m_nested_pjson}"
+  assert_absent "${m_nested_lock}"
+
+  # 	at 8b: malformed JSON package.json 	at kept
+  # Second line does not match '  "name": "tlh-pi-runtime",' so file is kept.
+  local m_bad="${case_dir}/m-bad"
+  local m_bad_agent="${m_bad}/agent"
+  local m_bad_runtime="${m_bad}/runtime"
+  local m_bad_pjson="${m_bad_runtime}/lib/package.json"
+  write_tlh_install_state "${m_bad_agent}" true
+  write_tlh_pi_runtime "${m_bad_runtime}"
+  write_tlh_runtime_marker "${m_bad_runtime}" migrated
+  # Line 1 = '{' but line 2 is invalid/unexpected.
+  printf '{\nNOT VALID JSON\n}\n' >"${m_bad_pjson}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  PATH="${mfakebin}:${PATH}" bash uninstall.sh --agent-dir "${m_bad_agent}" --bin-dir "${case_dir}/bin-m-bad" >"${stdout_file}" 2>"${stderr_file}"
+  assert_present "${m_bad_pjson}"
+
+  # 	at 8c: foreign package-lock.json kept while TLH package.json removed 	at
+  # Each file is evaluated independently.
+  local m_split="${case_dir}/m-split"
+  local m_split_agent="${m_split}/agent"
+  local m_split_runtime="${m_split}/runtime"
+  local m_split_pjson="${m_split_runtime}/lib/package.json"
+  local m_split_lock="${m_split_runtime}/lib/package-lock.json"
+  write_tlh_install_state "${m_split_agent}" true
+  write_tlh_pi_runtime "${m_split_runtime}"
+  write_tlh_runtime_marker "${m_split_runtime}" migrated
+  # TLH-owned package.json (correct structure).
+  printf '{\n  "name": "tlh-pi-runtime",\n  "version": "1.0.0"\n}\n' >"${m_split_pjson}"
+  # Foreign package-lock.json (wrong name on line 2).
+  printf '{\n  "name": "some-other-shared-runtime",\n  "lockfileVersion": 3\n}\n' >"${m_split_lock}"
+  : >"${stdout_file}"
+  : >"${stderr_file}"
+  PATH="${mfakebin}:${PATH}" bash uninstall.sh --agent-dir "${m_split_agent}" --bin-dir "${case_dir}/bin-m-split" >"${stdout_file}" 2>"${stderr_file}"
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+  assert_absent "${m_split_pjson}"
+  assert_present "${m_split_lock}"
 }
 
 run_uninstall_sibling_preservation_smoke() {

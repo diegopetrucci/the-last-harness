@@ -196,7 +196,7 @@ function tempFixture({
   };
 }
 
-function runCheckPackageVersions(fixture) {
+function runCheckPackageVersions(fixture, extraArgs = []) {
   return spawnSync(
     process.execPath,
     [
@@ -223,6 +223,10 @@ function runCheckPackageVersions(fixture) {
       fixture.installMjsPath,
       "--node-modules-dir",
       fixture.nodeModulesDir,
+      // Skip runtime manifest check unless the caller provides a fixture dir
+      "--runtime-manifest-dir",
+      "",
+      ...extraArgs,
     ],
     {
       cwd: repoRoot,
@@ -792,4 +796,190 @@ test("check-package-versions keeps managed Pi installed-version freshness checks
   assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
   assert.match(result.stderr, /@earendil-works\/pi-coding-agent/);
   assert.match(result.stderr, /expected "9\.8\.7", got "9\.8\.6"/);
+});
+
+// ---------------------------------------------------------------------------
+// Runtime manifest validation tests
+// ---------------------------------------------------------------------------
+
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_RUNTIME_TOP_LEVEL_KEY = `node_modules/${PI_CODING_AGENT_PACKAGE}`;
+
+function makeRuntimeManifestDir({
+  piVersion = FIXTURE_MANAGED_PI_VERSION,
+  lockfileVersion = 3,
+  extraTopLevel = [],
+  missingResolved = false,
+  missingIntegrity = false,
+  missingIntegrityWithoutShrinkwrap = false,
+} = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "tlh-runtime-manifest-test-"));
+  _tmpDirs.push(dir);
+
+  const packageJson = {
+    name: "tlh-pi-runtime",
+    version: piVersion,
+    private: true,
+    dependencies: { [PI_CODING_AGENT_PACKAGE]: piVersion },
+  };
+  writeFileSync(join(dir, "package.json"), JSON.stringify(packageJson, null, 2), "utf8");
+
+  // Build a minimal but structurally-valid lockfile
+  const topLevelEntry = {
+    version: piVersion,
+    resolved: `https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-${piVersion}.tgz`,
+    integrity:
+      "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+    hasShrinkwrap: true,
+  };
+  const nestedKey = `${PI_RUNTIME_TOP_LEVEL_KEY}/node_modules/some-dep`;
+  const nestedEntry = {
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/some-dep/-/some-dep-1.0.0.tgz",
+    // No integrity — covered by hasShrinkwrap parent
+  };
+
+  const packages = {
+    "": {
+      name: "tlh-pi-runtime",
+      version: piVersion,
+      dependencies: { [PI_CODING_AGENT_PACKAGE]: piVersion },
+    },
+    [PI_RUNTIME_TOP_LEVEL_KEY]: topLevelEntry,
+    [nestedKey]: nestedEntry,
+  };
+
+  for (const extraKey of extraTopLevel) {
+    packages[`node_modules/${extraKey}`] = {
+      version: "1.0.0",
+      resolved: `https://registry.npmjs.org/${extraKey}/-/${extraKey}-1.0.0.tgz`,
+      integrity:
+        "sha512-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ==",
+    };
+  }
+
+  if (missingResolved) {
+    delete packages[PI_RUNTIME_TOP_LEVEL_KEY].resolved;
+  }
+
+  if (missingIntegrity) {
+    delete packages[PI_RUNTIME_TOP_LEVEL_KEY].integrity;
+  }
+
+  if (missingIntegrityWithoutShrinkwrap) {
+    // Add a top-level package with no integrity and no shrinkwrap parent
+    packages["node_modules/orphan-no-integrity"] = {
+      version: "1.0.0",
+      resolved: "https://registry.npmjs.org/orphan-no-integrity/-/orphan-no-integrity-1.0.0.tgz",
+    };
+  }
+
+  const lock = {
+    name: "tlh-pi-runtime",
+    version: piVersion,
+    lockfileVersion,
+    requires: true,
+    packages,
+  };
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify(lock, null, 2), "utf8");
+
+  return dir;
+}
+
+test("check-package-versions passes with a valid runtime manifest", () => {
+  const runtimeDir = makeRuntimeManifestDir();
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+});
+
+test("check-package-versions fails when runtime manifest dep version mismatches managed Pi pin", () => {
+  const runtimeDir = makeRuntimeManifestDir({ piVersion: FIXTURE_MANAGED_PI_DRIFT_VERSION });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /dependencies\["@earendil-works\/pi-coding-agent"\]/);
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_DRIFT_VERSION));
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_VERSION));
+});
+
+test("check-package-versions fails when runtime lockfile has wrong lockfileVersion", () => {
+  const runtimeDir = makeRuntimeManifestDir({ lockfileVersion: 2 });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /lockfileVersion must be 3/);
+  assert.match(result.stderr, /found 2/);
+});
+
+test("check-package-versions fails when runtime lockfile has extra top-level packages", () => {
+  const runtimeDir = makeRuntimeManifestDir({ extraTopLevel: ["unexpected-extra-package"] });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /exactly one top-level package/);
+  assert.match(result.stderr, /unexpected-extra-package/);
+});
+
+test("check-package-versions fails when runtime lockfile entry is missing resolved", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingResolved: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing resolved/);
+});
+
+test("check-package-versions fails when top-level runtime package is missing integrity", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingIntegrity: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing integrity/);
+});
+
+test("check-package-versions fails when a non-shrinkwrap-covered package is missing integrity", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingIntegrityWithoutShrinkwrap: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing integrity/);
+  assert.match(result.stderr, /orphan-no-integrity/);
+});
+
+test("check-package-versions skips runtime manifest check when dir is empty string", () => {
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  // No --runtime-manifest-dir passed = uses the "" override from runCheckPackageVersions
+  const result = runCheckPackageVersions(fixture);
+
+  // Should still pass (fixture has no config/pi-runtime but we skip the check)
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("check-package-versions fails when runtime manifest package.json is missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tlh-runtime-manifest-missing-"));
+  _tmpDirs.push(dir);
+  // Create lock but no package.json
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3 }), "utf8");
+
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", dir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json/);
 });

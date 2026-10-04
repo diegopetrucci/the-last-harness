@@ -17,7 +17,6 @@ import test from "node:test";
 import { makeTempDir, readPiLogRecords } from "./install-stage1-test-helpers.mjs";
 import {
   TLH_NON_PINNED_PI_VERSION,
-  TLH_PI_PACKAGE_SPEC,
   TLH_PINNED_PI_VERSION,
   escapeRegExp,
   readJson,
@@ -26,8 +25,9 @@ import {
   runStage1LocalPackageInstall,
   safeInstallerPath,
   scrubInstallerEnv,
+  seedRuntimeLock,
   writeFakeCommand,
-  writeFakeNpmInstaller,
+  writeFakeNpmCiInstaller,
   writeFakePi,
   writeFakeTk,
   writeLoggingPi,
@@ -63,7 +63,6 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
   const templateDir = join(root, "pi-template");
   const runtimeDir = join(root, "runtime");
   const runtimeBinDir = join(runtimeDir, "bin");
-  const installedPiPath = join(runtimeBinDir, "pi");
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
@@ -98,10 +97,9 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
     ].join("\n"),
   );
   writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath,
   });
 
   const env = scrubInstallerEnv({
@@ -122,10 +120,10 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
     new RegExp(`Pinning local Pi runtime to ${escapeRegExp(TLH_PINNED_PI_VERSION)}`),
   );
   assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
-    `install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
+    `ci --ignore-scripts --no-audit --no-fund`,
   ]);
   // The stale pi was only probed for --version; the repaired pi is first validated
-  // for --version (post-install check), then ran install+update, and finally
+  // for --version (pre-swap check), then again post-swap, then ran install+update, and finally
   // pre-warmed with --version after the successful installer work.
   assert.deepEqual(
     readPiLogRecords(stalePiCallLog).map((record) => record.command),
@@ -133,7 +131,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
   );
   assert.deepEqual(
     readPiLogRecords(repairedPiLog).map((record) => record.command),
-    ["--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
+    ["--version", "--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
   );
   const state = readJson(join(agentDir, "tlh", "install-state.json"));
   assert.equal(state.piInstalledByTlh, true);
@@ -154,7 +152,6 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
   const templateDir = join(root, "pi-template");
   const runtimeDir = join(root, "runtime");
   const runtimeBinDir = join(runtimeDir, "bin");
-  const installedPiPath = join(runtimeBinDir, "pi");
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(agentDir, { recursive: true });
@@ -198,10 +195,9 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
     ].join("\n"),
   );
   writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath,
   });
 
   const env = scrubInstallerEnv({
@@ -222,7 +218,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
     new RegExp(`Pinning local Pi runtime to ${escapeRegExp(TLH_PINNED_PI_VERSION)}`),
   );
   assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
-    `install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
+    `ci --ignore-scripts --no-audit --no-fund`,
   ]);
   // PATH pi must never be invoked — the installer is private-runtime-only.
   assert.equal(existsSync(pathPiLog), false, output);
@@ -231,11 +227,11 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
     readPiLogRecords(stalePiCallLog).map((record) => record.command),
     ["--version"],
   );
-  // Repaired pi is first validated for --version (post-install check), then ran
-  // install+update, and finally pre-warmed with --version.
+  // Repaired pi is first validated for --version (pre-swap), then again post-swap,
+  // then ran install+update, and finally pre-warmed with --version.
   assert.deepEqual(
     readPiLogRecords(repairedPiLog).map((record) => record.command),
-    ["--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
+    ["--version", "--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
   );
   const state = readJson(join(agentDir, "tlh", "install-state.json"));
   assert.equal(state.piInstalledByTlh, true);
@@ -280,6 +276,8 @@ test("stage-1 preserves piInstalledByTlh=true when rerunning with a valid privat
   writeFakeTk(fakebin);
   // Valid private runtime at the pinned version.
   writeLoggingPi(runtimeBinDir, piLog, TLH_PINNED_PI_VERSION);
+  // Seed lib/package-lock.json matching the shipped lock so the reuse check passes.
+  seedRuntimeLock(runtimeDir);
 
   const env = scrubInstallerEnv({
     HOME: homeDir,
@@ -351,8 +349,6 @@ test("stage-1 records piInstalledByTlh=true when installing the private runtime"
     const npmLog = join(root, "npm.log");
     const piLog = join(root, "pi.log");
     const templateDir = join(root, "pi-template");
-    const runtimeDir = join(root, "runtime");
-    const installedPiPath = join(runtimeDir, "bin", "pi");
     t.after(() => rmSync(root, { recursive: true, force: true }));
     mkdirSync(homeDir, { recursive: true });
     mkdirSync(agentDir, { recursive: true });
@@ -366,10 +362,9 @@ test("stage-1 records piInstalledByTlh=true when installing the private runtime"
     writeFakeCommand(fakebin, "git", "exit 0");
     writeFakeTk(fakebin);
     writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
-    writeFakeNpmInstaller(fakebin, {
+    writeFakeNpmCiInstaller(fakebin, {
       npmLog,
       templatePiPath: join(templateDir, "pi"),
-      installedPiPath,
     });
 
     const env = scrubInstallerEnv({
@@ -395,14 +390,14 @@ test("stage-1 records piInstalledByTlh=true when installing the private runtime"
     assert.equal(result.status, 0, `${scenario.name}\n${output}`);
     assert.deepEqual(
       readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean),
-      [`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`],
+      [`ci --ignore-scripts --no-audit --no-fund`],
       scenario.name,
     );
     const state = readJson(join(agentDir, "tlh", "install-state.json"));
     assert.equal(state.piInstalledByTlh, true, scenario.name);
     assert.deepEqual(
       readPiLogRecords(piLog).map((record) => record.command),
-      ["--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
+      ["--version", "--version", `install ${packageDir}`, `update ${packageDir}`, "--version"],
       scenario.name,
     );
   }
@@ -419,8 +414,6 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
   const packageDir = join(root, "package-source");
   const npmLog = join(root, "npm.log");
   const templateDir = join(root, "pi-template");
-  const runtimeDir = join(root, "runtime");
-  const installedPiPath = join(runtimeDir, "bin", "pi");
   const legacyBin = join(homeDir, ".local", "bin");
   const legacyPiPath = join(legacyBin, "pi");
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -454,17 +447,16 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
     `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`,
   );
 
-  // Template pi with a clearly wrong non-pinned version (0.80.7) — simulates a broken npm install.
+  // Template pi with a clearly wrong non-pinned version (0.80.7) — simulates a broken npm ci.
   writeFakePi(
     templateDir,
     'if [[ "${1:-}" == "--version" ]]; then printf \'0.80.7\\n\'; exit 0; fi\nexit 0',
   );
 
-  // Fake npm: always installs the wrong-version template pi.
-  writeFakeNpmInstaller(fakebin, {
+  // Fake npm: handles npm ci (creates staged structure with wrong-version pi).
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath,
   });
   writeFakeCommand(fakebin, "git", "exit 0");
   writeFakeTk(fakebin);
@@ -573,7 +565,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
   // Template pi for npm to install as the new private runtime (correct pinned version).
   writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
 
-  // Fake npm: logs all invocations, handles install only (copies template to runtime path).
+  // Fake npm: logs all invocations, handles npm ci only (staged structure in cwd).
   // Any npm uninstall call would indicate the installer is (incorrectly) trying to remove ~/.local.
   writeFakeCommand(
     fakebin,
@@ -581,10 +573,10 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
     [
       `printf '%s\\n' "$*" >>"${npmLog}"`,
       `case "$1" in`,
-      `  install)`,
-      `    mkdir -p "${join(runtimeDir, "bin")}"`,
-      `    cp "${join(templateDir, "pi")}" "${installedPiPath}"`,
-      `    chmod +x "${installedPiPath}"`,
+      `  ci)`,
+      `    mkdir -p "node_modules/@earendil-works/pi-coding-agent/dist/bundle"`,
+      `    cp "${join(templateDir, "pi")}" "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `    chmod +x "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
       `    ;;`,
       `esac`,
     ].join("\n"),
@@ -943,10 +935,9 @@ test("stage-1 refuses to install into a runtime prefix containing a foreign top-
 
     writeFakeTk(fakebin);
     writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
-    writeFakeNpmInstaller(fakebin, {
+    writeFakeNpmCiInstaller(fakebin, {
       npmLog,
       templatePiPath: join(templateDir, "pi"),
-      installedPiPath: join(runtimeDir, "bin", "pi"),
     });
 
     const env = scrubInstallerEnv({
@@ -1013,10 +1004,9 @@ test("stage-1 installs normally when runtime prefix exists but is empty", (t) =>
 
   writeFakeTk(fakebin);
   writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(runtimeDir, "bin", "pi"),
   });
 
   const env = scrubInstallerEnv({
@@ -1032,8 +1022,13 @@ test("stage-1 installs normally when runtime prefix exists but is empty", (t) =>
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, `install into empty runtime prefix failed:\n${output}`);
-  // npm must have been called to install pi.
+  // npm ci must have been called to install pi.
   assert.equal(existsSync(npmLog), true, "npm was not called for empty runtime prefix");
+  assert.deepEqual(
+    readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean),
+    ["ci --ignore-scripts --no-audit --no-fund"],
+    "npm ci must be used for empty runtime prefix install",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1061,8 @@ function createOwnedRuntimeCompileCacheFixture(t) {
     ].join("\n"),
   );
   writeRuntimeMarker(runtimeDir);
+  // Seed lib/package-lock.json so the reuse check passes without calling npm.
+  seedRuntimeLock(runtimeDir);
   writeFakeCommand(fakebin, "git", "exit 0");
   writeFakeCommand(fakebin, "npm", "exit 97");
   writeFakeTk(fakebin);
@@ -1356,6 +1353,8 @@ test("runtime ownership: existing valid marker (path-matched) is accepted on reu
   // npm must NOT be called (valid pi exists).
   writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
   writeLoggingPi(join(runtimeDir, "bin"), piLog, TLH_PINNED_PI_VERSION);
+  // Seed lib/package-lock.json so the reuse check passes without calling npm.
+  seedRuntimeLock(runtimeDir);
 
   // Write a valid ownership marker into the pre-existing runtime.
   const realRuntimeDir = realpathSync(runtimeDir);
@@ -1422,6 +1421,8 @@ test("runtime ownership: non-empty unmarked prefix with piInstalledByTlh=true is
   // npm must NOT be called (valid pi exists, migration only writes marker).
   writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
   writeLoggingPi(join(runtimeDir, "bin"), piLog, TLH_PINNED_PI_VERSION);
+  // Seed lib/package-lock.json so the reuse check passes without calling npm.
+  seedRuntimeLock(runtimeDir);
 
   // Install-state carries piInstalledByTlh=true (provenance from a prior install).
   writeFileSync(

@@ -239,7 +239,8 @@ TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime
 
 | Condition | Effect |
 |---|---|
-| valid `.tlh-runtime-owned` marker present | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| valid `.tlh-runtime-owned` marker, `origin=created` | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| valid `.tlh-runtime-owned` marker, `origin=migrated` | surgical removal: `npm uninstall -g --prefix …` removes Pi only; `lib/package.json` and `lib/package-lock.json` are also removed when their `name` is exactly `tlh-pi-runtime` (the TLH runtime manifest); foreign files are preserved |
 | marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this |
 | `--force-include-pi` flag | removes private runtime when a valid marker is present; runtime skipped with a hint if unmarked; removes legacy `~/.local/bin/pi` if present and private runtime is absent |
 | `--keep-pi` flag | keeps everything — skips runtime and pi removal |
