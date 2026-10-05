@@ -178,6 +178,12 @@ To switch to the `system` theme yourself, open `/settings`, select **Theme**, an
 
 To revert to the TLH-bundled custom palette instead, set `theme` to `"the-last-harness"` (the theme JSON ships with the package and remains selectable).
 
+If an existing isolated profile still selects `the-last-harness`, an interactive primary TLH launch shows this one-off informational notice:
+
+> TLH can now follow your terminal's theme colors. To switch: /settings → Theme → system.
+
+The notice never changes the selected theme. After the notice is displayed, TLH records `legacyThemeNoticeDisplayed: true` in the profile-scoped `~/.the-last-harness/agent/tlh/startup-state.json` marker file. To show it again, remove only that property from the active profile's `tlh/startup-state.json` (preserving the other startup state) and launch TLH interactively; resetting the marker does not change the theme.
+
 Running `tlh update --force` (or equivalently `bash install.sh --force`) passes `--force` to the settings merger, which overwrites existing scalar values—including `theme`—with the current packaged defaults. `tlh doctor --repair` does not accept a `--force` option and never overwrites an existing theme value; it only fills in missing keys. Use `/settings` or manual edits to re-set your preferred theme after a forced update if needed.
 
 ## Pi-native prompt-cache warming
