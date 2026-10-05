@@ -31,6 +31,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Removed
 
 - Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
+- Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
 
 ## [0.43.0] - 2026-09-25
 

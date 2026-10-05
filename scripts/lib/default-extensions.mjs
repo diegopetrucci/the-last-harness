@@ -92,12 +92,27 @@ export const RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES = Object.freeze([
     "git:github.com/nicobailon/pi-subagents",
     "git:github.com/diegopetrucci/pi-subagents",
 ]);
-export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+// These sources were retired from TLH defaults. Profiles without provenance
+// predate ownership tracking, so their presence is conservatively inferred as
+// TLH-managed; profiles with provenance still require a recorded identity.
+export const LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
     "npm:@plannotator/pi-extension",
     "npm:@diegopetrucci/pi-librarian",
     "npm:@diegopetrucci/pi-triage-comments",
     "npm:@ff-labs/pi-fff",
     ...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
+]);
+// These defaults were retired with provenance tracking in place. Only an
+// explicit recorded identity proves TLH ownership; profiles lacking provenance
+// (or lacking these identities) must preserve the package.
+export const PROVENANCE_GATED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+    "npm:@earendil-works/pi-voice",
+    "git:github.com/earendil-works/pi-transcribe",
+    "npm:@earendil-works/pi-transcribe",
+]);
+export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+    ...LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
+    ...PROVENANCE_GATED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 ]);
 // Sources of retired default extensions that TLH now removes unconditionally
 // from isolated settings because they should no longer stay installed after
@@ -307,7 +322,7 @@ export function setDefaultExtensionProvenance(settings, managedPackageIdentities
     tlh.defaultExtensionProvenance = { managedPackageIdentities: values };
     return true;
 }
-export function withLegacyRetiredDefaultPackageIdentities(settings, managedPackageIdentities = new Set(), retiredPackageSources = RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+export function withLegacyRetiredDefaultPackageIdentities(settings, managedPackageIdentities = new Set(), retiredPackageSources = LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
     const nextManagedPackageIdentities = new Set(managedPackageIdentities);
     const { exists } = rawDefaultExtensionProvenance(settings);
     if (exists || !isPlainObject(settings) || !Array.isArray(settings.packages)) {
