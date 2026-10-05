@@ -2,7 +2,15 @@
 
 TLH ships [`@diegopetrucci/pi-web-access@0.29.2`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. It is an Exa-only selective fork, not a feature-parity release. The `web-scout` subagent uses its three tools for general web research; GitHub-specific research still goes to the TLH `librarian` subagent, which uses `gh` and `git` directly.
 
-During an install or update, TLH migrates recognized upstream, manual, and prior TLH `pi-web-access` sources in the isolated profile to the scoped `0.29.2` package. If you need to keep another provider or one of the removed capabilities, run `tlh defaults disable pi-web-access` before updating; the opt-out preserves that provider instead of replacing it.
+During an install or update, TLH migrates recognized upstream, manual, and prior TLH `pi-web-access` sources in the isolated profile to the scoped `0.29.2` package. If you need to keep another provider or one of the removed capabilities, opt out before updating, then explicitly reinstall the desired provider into the same isolated profile:
+
+```sh
+tlh defaults disable pi-web-access
+tlh update
+tlh install <desired-provider-source>
+```
+
+`tlh defaults disable` removes the managed source and all `settings.packages` entries matching its recognized replacement identities; it does not preserve a provider automatically. While the default remains disabled, each `tlh update` reapplies this cleanup. Recognized identities are the npm packages `@diegopetrucci/pi-web-access` and `pi-web-access` (any version) and the GitHub repositories `nicobailon/pi-web-access` and `diegopetrucci/pi-web-access` (any ref, with equivalent Git/HTTPS/SSH source spellings). Reinstall a provider from any of these identities after every `tlh update`; this cleanup does not remove unrelated provider identities.
 
 ## Current surface
 
