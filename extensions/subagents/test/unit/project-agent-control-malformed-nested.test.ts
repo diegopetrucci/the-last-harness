@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,8 +13,10 @@ import {
   retainProjectAgentRunReference,
   resolveProjectAgentSnapshot,
 } from "../../src/agents/project-agent-snapshot.ts";
-import { ASYNC_DIR, TEMP_ROOT_DIR } from "../../src/shared/types.ts";
-import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import {
+  hasMalformedProjectAgentControlMarker,
+  hasProjectAgentControlMarker,
+} from "../../src/runs/foreground/project-agent-control.ts";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
   cleanupRun,
@@ -35,6 +37,166 @@ const testEnvironment = createProjectAgentControlEnvironment();
 describe("project-agent control malformed and nested rejection", () => {
   beforeEach(testEnvironment.setup);
   afterEach(testEnvironment.teardown);
+
+  it("keeps retired nested markers in deny-only scans, including malformed captures", () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-nested-marker-scan-")),
+    );
+    execFileSync("git", ["init", "--quiet", root]);
+    const generation = createProjectGeneration(root, "session-project", "generation-nested-scan");
+    const validNestedMarkers: unknown[] = [
+      { steps: [{ children: [{ projectAgents: [generation.capture] }] }] },
+      { nestedChildren: [{ results: [{ projectAgents: [generation.capture] }] }] },
+    ];
+    const malformedNestedMarkers: unknown[] = [
+      { steps: [{ children: [{ projectAgents: [{ forged: true }] }] }] },
+      { nestedChildren: [{ results: [{ projectAgents: [{ forged: true }] }] }] },
+    ];
+
+    try {
+      for (const marker of validNestedMarkers) {
+        assert.equal(hasProjectAgentControlMarker(marker), true);
+        assert.equal(hasMalformedProjectAgentControlMarker(marker), false);
+      }
+      for (const marker of malformedNestedMarkers) {
+        assert.equal(hasProjectAgentControlMarker(marker), true);
+        assert.equal(hasMalformedProjectAgentControlMarker(marker), true);
+      }
+      assert.equal(hasProjectAgentControlMarker({ projectAgent: generation.capture }), true);
+      assert.equal(hasProjectAgentControlMarker({}), false);
+    } finally {
+      revokeIfRegistered(generation.capability);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies retired nested markers for steer and interrupt without fallback side effects", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-nested-live-")),
+    );
+    execFileSync("git", ["init", "--quiet", root]);
+    const generation = createProjectGeneration(root, "session-project", "generation-nested-live");
+    const suffix = Date.now().toString(36);
+    const cases = [
+      {
+        label: "steps children valid",
+        runId: `nested-steps-children-${suffix}`,
+        marker: {
+          steps: [
+            {
+              agent: "worker",
+              status: "running" as const,
+              children: [{ projectAgents: [generation.capture] }],
+            },
+          ],
+        },
+      },
+      {
+        label: "nestedChildren results valid",
+        runId: `nested-children-results-${suffix}`,
+        marker: { nestedChildren: [{ results: [{ projectAgents: [generation.capture] }] }] },
+      },
+      {
+        label: "steps children malformed",
+        runId: `nested-steps-children-malformed-${suffix}`,
+        marker: {
+          steps: [
+            {
+              agent: "worker",
+              status: "running" as const,
+              children: [{ projectAgents: [{ forged: true }] }],
+            },
+          ],
+        },
+      },
+      {
+        label: "nestedChildren results malformed",
+        runId: `nested-children-results-malformed-${suffix}`,
+        marker: { nestedChildren: [{ results: [{ projectAgents: [{ forged: true }] }] }] },
+      },
+    ];
+    const asyncDirs = cases.map(({ runId, marker }) => {
+      const asyncDir = runAsyncDir(runId);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      writeJson(path.join(asyncDir, "status.json"), {
+        runId,
+        mode: "single",
+        state: "running",
+        pid: process.pid,
+        sessionId: "session-project",
+        cwd: root,
+        startedAt: 100,
+        lastUpdate: Date.now(),
+        steps: [{ agent: "worker", status: "running" }],
+        ...marker,
+      });
+      return asyncDir;
+    });
+    const state = createState();
+    for (const [index, { runId }] of cases.entries()) {
+      state.asyncJobs.set(runId, {
+        asyncId: runId,
+        asyncDir: asyncDirs[index]!,
+        status: "running",
+        pid: process.pid,
+        updatedAt: Date.now() + index,
+        projectAgents: undefined,
+      });
+    }
+    let signalCalls = 0;
+    const executor = makeExecutor(
+      root,
+      state,
+      { capability: generation.capability },
+      {
+        kill: (_pid, signal) => {
+          if (signal !== 0) signalCalls++;
+          return true;
+        },
+      },
+    );
+
+    try {
+      for (const [index, { label, runId }] of cases.entries()) {
+        const steer = await executor.execute(
+          `nested-marker-steer-${index}`,
+          { action: "steer", id: runId, message: "must not become a fallback message" },
+          new AbortController().signal,
+          undefined,
+          makeContext(root),
+        );
+        assert.equal(steer.isError, true, label);
+        assert.match(text(steer), /private reference|project-agent|fallback/i);
+        assert.doesNotMatch(text(steer), /Steering queued|Interrupt requested/);
+        assert.equal(
+          fs.existsSync(path.join(asyncDirs[index]!, "control", "steer-requests")),
+          false,
+          label,
+        );
+
+        const interrupt = await executor.execute(
+          `nested-marker-interrupt-${index}`,
+          { action: "interrupt", id: runId },
+          new AbortController().signal,
+          undefined,
+          makeContext(root),
+        );
+        assert.equal(interrupt.isError, true, label);
+        assert.match(text(interrupt), /private reference|project-agent|fallback/i);
+        assert.doesNotMatch(text(interrupt), /Interrupt requested/);
+        assert.equal(
+          fs.existsSync(path.join(asyncDirs[index]!, "control", "interrupt.json")),
+          false,
+          label,
+        );
+      }
+      assert.equal(signalCalls, 0);
+    } finally {
+      for (const { runId } of cases) cleanupRun(runId);
+      revokeIfRegistered(generation.capability);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("rejects capture-bearing controls when the private reference is missing", async () => {
     const root = fs.realpathSync(
@@ -470,7 +632,7 @@ describe("project-agent control malformed and nested rejection", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-  it("authorizes the concrete interrupt fallback target before no-id and dir-only signaling", async () => {
+  it("authorizes concrete interrupt fallback targets while rejecting retired public directories", async () => {
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-interrupt-fallback-")),
     );
@@ -527,8 +689,12 @@ describe("project-agent control malformed and nested rejection", () => {
         makeContext(root),
       );
       assert.equal(dirOnly.isError, true);
-      assert.match(text(dirOnly), /private reference|project-agent|fallback/i);
+      assert.equal(
+        text(dirOnly),
+        "dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.",
+      );
       assert.equal(signalCalls, 0);
+      assert.equal(fs.existsSync(path.join(projectAsyncDir, "control", "interrupt.json")), false);
 
       ordinaryRunId = `ordinary-interrupt-fallback-${Date.now().toString(36)}`;
       const ordinaryDir = writeStatus(ordinaryRunId, root, generation.capture, {
@@ -579,7 +745,7 @@ describe("project-agent control malformed and nested rejection", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-  it("keeps no-id and dir-only ordinary paused interrupts on async handling", async () => {
+  it("keeps paused ordinary interrupts safe while rejecting retired public directories", async () => {
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-paused-ordinary-interrupt-")),
     );
@@ -618,23 +784,42 @@ describe("project-agent control malformed and nested rejection", () => {
     });
     const executor = makeExecutor(root, state, { capability: generation.capability });
     try {
-      for (const params of [
-        { action: "interrupt" as const },
-        { action: "interrupt" as const, dir: asyncDir },
-      ]) {
-        const result = await executor.execute(
-          "interrupt-paused-ordinary",
-          params,
-          new AbortController().signal,
-          undefined,
-          makeContext(root),
-        );
-        assert.equal(result.isError, true);
-        assert.match(text(result), /No running async run|interrupt-capable pid/i);
-        const persisted = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
-        assert.equal(persisted.state, "paused");
-        assert.equal(persisted.cancel, undefined);
-      }
+      const noId = await executor.execute(
+        "interrupt-paused-ordinary",
+        { action: "interrupt" },
+        new AbortController().signal,
+        undefined,
+        makeContext(root),
+      );
+      assert.equal(noId.isError, true);
+      assert.match(text(noId), /No running async run|interrupt-capable pid/i);
+      const noIdStatus: unknown = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"),
+      );
+      assert.ok(
+        typeof noIdStatus === "object" && noIdStatus !== null && !Array.isArray(noIdStatus),
+      );
+      assert.equal((noIdStatus as { state?: unknown }).state, "paused");
+      assert.equal((noIdStatus as { cancel?: unknown }).cancel, undefined);
+
+      const dirOnly = await executor.execute(
+        "interrupt-paused-ordinary-dir",
+        { action: "interrupt", dir: asyncDir },
+        new AbortController().signal,
+        undefined,
+        makeContext(root),
+      );
+      assert.equal(dirOnly.isError, true);
+      assert.equal(
+        text(dirOnly),
+        "dir is no longer supported. Run directories are resolved internally; public dir selectors are no longer supported.",
+      );
+      const dirStatus: unknown = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"),
+      );
+      assert.ok(typeof dirStatus === "object" && dirStatus !== null && !Array.isArray(dirStatus));
+      assert.equal((dirStatus as { state?: unknown }).state, "paused");
+      assert.equal((dirStatus as { cancel?: unknown }).cancel, undefined);
     } finally {
       cleanupRun(runId);
       revokeIfRegistered(generation.capability);
@@ -821,359 +1006,6 @@ describe("project-agent control malformed and nested rejection", () => {
       cleanupRun(runId);
       revokeIfRegistered(generation.capability);
       fs.rmSync(asyncDir, { recursive: true, force: true });
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-  it("denies project-marked nested steer without a private reference and preserves marker-free nested steer", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-nested-steer-")),
-    );
-    const generation = createProjectGeneration(root, "session-project", "generation-nested-steer");
-    const rootRunId = `nested-control-root-${Date.now().toString(36)}`;
-    const projectRunId = `nested-project-${Date.now().toString(36)}`;
-    const ordinaryRunId = `nested-ordinary-${Date.now().toString(36)}`;
-    const route = createNestedRoute(rootRunId);
-    const nestedRoot = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId);
-    const projectAsyncDir = path.join(nestedRoot, projectRunId);
-    const ordinaryAsyncDir = path.join(nestedRoot, ordinaryRunId);
-    const writeNestedStatus = (runId: string, asyncDir: string) => {
-      fs.mkdirSync(asyncDir, { recursive: true });
-      writeJson(path.join(asyncDir, "status.json"), {
-        runId,
-        mode: "single",
-        state: "running",
-        sessionId: "session-project",
-        cwd: root,
-        startedAt: Date.now(),
-        lastUpdate: Date.now(),
-        steps: [{ agent: "nested-worker", status: "running" }],
-      });
-    };
-    writeNestedStatus(projectRunId, projectAsyncDir);
-    writeNestedStatus(ordinaryRunId, ordinaryAsyncDir);
-    writeNestedEvent(route, {
-      type: "subagent.nested.started",
-      ts: Date.now(),
-      parentRunId: rootRunId,
-      child: {
-        id: projectRunId,
-        parentRunId: rootRunId,
-        depth: 1,
-        path: [{ runId: rootRunId }],
-        state: "running",
-        agent: generation.capture.provenance.agent,
-        asyncDir: projectAsyncDir,
-        projectAgent: generation.capture,
-      },
-    });
-    writeNestedEvent(route, {
-      type: "subagent.nested.started",
-      ts: Date.now() + 1,
-      parentRunId: rootRunId,
-      child: {
-        id: ordinaryRunId,
-        parentRunId: rootRunId,
-        depth: 1,
-        path: [{ runId: rootRunId }],
-        state: "running",
-        agent: "nested-worker",
-        asyncDir: ordinaryAsyncDir,
-      },
-    });
-    const state = createState();
-    state.currentSessionId = "session-project";
-    state.asyncJobs.set(rootRunId, {
-      asyncId: rootRunId,
-      asyncDir: path.join(ASYNC_DIR, rootRunId),
-      status: "running",
-      nestedRoute: route,
-    } as never);
-    try {
-      for (const architect of [true, false]) {
-        const executor = makeExecutor(root, state, {
-          capability: generation.capability,
-          architect,
-        });
-        const denied = await executor.execute(
-          "steer",
-          { action: "steer", id: projectRunId, message: "Do not bypass nested project control." },
-          new AbortController().signal,
-          undefined,
-          makeContext(root),
-        );
-        assert.equal(denied.isError, true, architect ? "architect" : "non-architect");
-        assert.match(text(denied), /nested|private reference|project-agent|fallback/i);
-        const compatible = await executor.execute(
-          "steer",
-          { action: "steer", id: ordinaryRunId, message: "Steer ordinary nested work." },
-          new AbortController().signal,
-          undefined,
-          makeContext(root),
-        );
-        assert.equal(compatible.isError, undefined);
-        assert.match(text(compatible), /Steering queued for nested async run/);
-      }
-    } finally {
-      revokeIfRegistered(generation.capability);
-      fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
-      fs.rmSync(nestedRoot, { recursive: true, force: true });
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-  it("fails closed for malformed nested project-agent event and status markers", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-nested-malformed-")),
-    );
-    const generation = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-nested-malformed",
-    );
-    const rootRunId = `nested-malformed-root-${Date.now().toString(36)}`;
-    const resumeRunId = `nested-malformed-resume-${Date.now().toString(36)}`;
-    const steerRunId = `nested-malformed-steer-${Date.now().toString(36)}`;
-    const interruptRunId = `nested-malformed-interrupt-${Date.now().toString(36)}`;
-    const foundInterruptRunId = `nested-malformed-found-interrupt-${Date.now().toString(36)}`;
-    const route = createNestedRoute(rootRunId);
-    const nestedRoot = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId);
-    const parentSessionFile = path.join(root, "parent.jsonl");
-    const resumeSessionFile = path.join(root, resumeRunId, "session.jsonl");
-    fs.mkdirSync(path.dirname(resumeSessionFile), { recursive: true });
-    fs.writeFileSync(parentSessionFile, "", "utf8");
-    fs.writeFileSync(resumeSessionFile, "", "utf8");
-
-    const interruptProcess = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
-    const interruptPid = interruptProcess.pid;
-    if (typeof interruptPid !== "number" || interruptPid <= 0) {
-      interruptProcess.kill();
-      throw new Error("Failed to start disposable interrupt fixture process.");
-    }
-
-    const writeNestedStatus = (
-      runId: string,
-      state: "running" | "complete",
-      step: Record<string, unknown>,
-      pid = process.pid,
-    ): string => {
-      const asyncDir = path.join(nestedRoot, runId);
-      fs.mkdirSync(asyncDir, { recursive: true });
-      writeJson(path.join(asyncDir, "status.json"), {
-        runId,
-        mode: "single",
-        state,
-        pid,
-        sessionId: "session-project",
-        cwd: root,
-        startedAt: Date.now(),
-        lastUpdate: Date.now(),
-        steps: [step as never],
-      });
-      return asyncDir;
-    };
-
-    const resumeAsyncDir = writeNestedStatus(resumeRunId, "complete", {
-      agent: "nested-worker",
-      status: "complete",
-      sessionFile: resumeSessionFile,
-      projectAgent: { forged: true },
-    });
-    const steerAsyncDir = writeNestedStatus(steerRunId, "running", {
-      agent: "nested-worker",
-      status: "running",
-      projectAgent: { forged: true },
-    });
-    const interruptAsyncDir = writeNestedStatus(
-      interruptRunId,
-      "running",
-      {
-        agent: "nested-worker",
-        status: "running",
-        projectAgent: { forged: true },
-      },
-      interruptPid,
-    );
-    const foundInterruptAsyncDir = writeNestedStatus(
-      foundInterruptRunId,
-      "running",
-      {
-        agent: "nested-worker",
-        status: "running",
-      },
-      interruptPid,
-    );
-
-    const resumeChild = {
-      id: resumeRunId,
-      parentRunId: rootRunId,
-      depth: 1,
-      path: [{ runId: rootRunId }],
-      state: "complete" as const,
-      agent: "nested-worker",
-      asyncDir: resumeAsyncDir,
-      sessionFile: resumeSessionFile,
-    };
-    writeNestedEvent(route, {
-      type: "subagent.nested.completed",
-      ts: Date.now(),
-      parentRunId: rootRunId,
-      child: resumeChild,
-    });
-
-    const steerChild = {
-      id: steerRunId,
-      parentRunId: rootRunId,
-      depth: 1,
-      path: [{ runId: rootRunId }],
-      state: "running" as const,
-      agent: "nested-worker",
-      asyncDir: steerAsyncDir,
-      steps: [{ agent: "nested-worker", status: "running" as const }],
-    };
-    writeNestedEvent(route, {
-      type: "subagent.nested.updated",
-      ts: Date.now() + 1,
-      parentRunId: rootRunId,
-      child: steerChild,
-    });
-
-    const interruptChild = {
-      id: interruptRunId,
-      parentRunId: rootRunId,
-      depth: 1,
-      path: [{ runId: rootRunId }],
-      state: "running" as const,
-      agent: "nested-worker",
-      asyncDir: interruptAsyncDir,
-    };
-    writeNestedEvent(route, {
-      type: "subagent.nested.updated",
-      ts: Date.now() + 2,
-      parentRunId: rootRunId,
-      child: interruptChild,
-    });
-
-    const malformedInterruptChild = {
-      id: foundInterruptRunId,
-      parentRunId: rootRunId,
-      depth: 1,
-      path: [{ runId: rootRunId }],
-      state: "running" as const,
-      agent: "nested-worker",
-      asyncDir: foundInterruptAsyncDir,
-    };
-    Reflect.set(malformedInterruptChild, "projectAgent", { forged: true });
-    writeNestedEvent(route, {
-      type: "subagent.nested.updated",
-      ts: Date.now() + 3,
-      parentRunId: rootRunId,
-      child: malformedInterruptChild,
-    });
-
-    retainProjectAgentRunReference(generation.capability, interruptRunId, [generation.capture]);
-    retainProjectAgentRunReference(generation.capability, foundInterruptRunId, [
-      generation.capture,
-    ]);
-    const state = createState();
-    state.currentSessionId = "session-project";
-    state.asyncJobs.set(rootRunId, {
-      asyncId: rootRunId,
-      asyncDir: path.join(ASYNC_DIR, rootRunId),
-      status: "running",
-      nestedRoute: route,
-    } as never);
-    const executor = makeExecutor(root, state, { capability: generation.capability });
-    const context = makeContext(root);
-    context.sessionManager.getSessionFile = () => parentSessionFile;
-
-    try {
-      const steerStatusPath = path.join(steerAsyncDir, "status.json");
-      const steerStatus = JSON.parse(fs.readFileSync(steerStatusPath, "utf8"));
-      delete steerStatus.steps[0].projectAgent;
-      writeJson(steerStatusPath, steerStatus);
-      const baselineSteer = await executor.execute(
-        "nested-baseline-steer",
-        { action: "steer", id: steerRunId, message: "Baseline direct steer would write." },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      assert.equal(baselineSteer.isError, undefined, text(baselineSteer));
-      assert.equal(
-        text(baselineSteer),
-        `Steering queued for nested async run ${steerRunId}. Delivery requires a live Pi child session that supports mid-run steering.`,
-      );
-      const steerRequestsPath = path.join(steerAsyncDir, "control", "steer-requests");
-      assert.equal(fs.existsSync(steerRequestsPath), true);
-      fs.rmSync(steerRequestsPath, { recursive: true, force: true });
-      steerStatus.steps[0].projectAgent = { forged: true };
-      writeJson(steerStatusPath, steerStatus);
-
-      const resume = await executor.execute(
-        "nested-malformed-resume",
-        { action: "resume", id: resumeRunId, message: "Do not bypass the malformed marker." },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      assert.equal(resume.isError, true);
-      assert.equal(
-        text(resume),
-        `TLH project-agent control rejected: Nested run '${resumeRunId}' has a malformed project-agent marker in persisted status.`,
-      );
-
-      const steer = await executor.execute(
-        "nested-malformed-steer",
-        { action: "steer", id: steerRunId, message: "Do not bypass the malformed marker." },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      assert.equal(steer.isError, true);
-      assert.equal(
-        text(steer),
-        "TLH project-agent control rejected: the nested target has a malformed project-agent marker; refusing steer fallback.",
-      );
-      assert.equal(fs.existsSync(path.join(steerAsyncDir, "control", "steer-requests")), false);
-
-      const interrupt = await executor.execute(
-        "nested-malformed-interrupt",
-        { action: "interrupt", id: interruptRunId },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      assert.equal(interrupt.isError, true);
-      assert.equal(
-        text(interrupt),
-        "TLH project-agent control rejected: the nested target has a malformed project-agent marker; refusing interrupt fallback.",
-      );
-      assert.equal(fs.existsSync(path.join(interruptAsyncDir, "control", "interrupt.json")), false);
-
-      const foundInterrupt = await executor.execute(
-        "nested-malformed-found-interrupt",
-        { action: "interrupt", id: foundInterruptRunId },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      assert.equal(foundInterrupt.isError, true);
-      assert.equal(
-        text(foundInterrupt),
-        "TLH project-agent control rejected: the nested target carries a malformed or unavailable project-agent marker; refusing nested interrupt fallback.",
-      );
-      assert.equal(
-        fs.existsSync(path.join(foundInterruptAsyncDir, "control", "interrupt.json")),
-        false,
-      );
-    } finally {
-      releaseProjectAgentRunReference(interruptRunId);
-      releaseProjectAgentRunReference(foundInterruptRunId);
-      interruptProcess.kill();
-      revokeIfRegistered(generation.capability);
-      fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
-      fs.rmSync(nestedRoot, { recursive: true, force: true });
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

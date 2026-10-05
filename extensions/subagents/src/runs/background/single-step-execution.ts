@@ -33,7 +33,6 @@ import {
   type ContextUsageDiagnostics,
   type CostSummary,
   type ModelAttempt,
-  type NestedRouteInfo,
   type ResolvedArtifactConfig,
   type SubagentModelIdentity,
   type SubagentModelResolution,
@@ -136,7 +135,6 @@ interface SingleStepContext {
   timeoutMs?: number;
   deadlineAt?: number;
   startedAt?: number;
-  nestedRoute?: NestedRouteInfo;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
   onChildEvent?: (event: ChildEvent) => void;
   /** Called after each child attempt has fully settled, including failures. */

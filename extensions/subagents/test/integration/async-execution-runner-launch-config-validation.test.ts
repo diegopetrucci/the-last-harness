@@ -9,6 +9,7 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createEventBus,
   createMockPi,
@@ -20,7 +21,9 @@ import {
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
+  RETIRED_NESTED_ROUTE_ENV_VARS,
   SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_CHILD_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
@@ -60,6 +63,13 @@ type PersistedEventRunnerConfig = Omit<SubagentRunConfig, "artifactConfig"> & {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizedRunnerEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env[SUBAGENT_CHILD_ENV];
+  for (const name of RETIRED_NESTED_ROUTE_ENV_VARS) delete env[name];
+  return env;
 }
 
 function readEventTypes(asyncDir: string): string[] {
@@ -232,7 +242,6 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     effects.push("return");
@@ -269,7 +278,6 @@ describe("async execution runner launch and configuration validation", () => {
           },
           availableModels: routeModels,
           artifactConfig: makeRouteArtifactConfig(),
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -313,7 +321,6 @@ describe("async execution runner launch and configuration validation", () => {
         },
         availableModels: routeModels,
         artifactConfig: makeRouteArtifactConfig(),
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -356,7 +363,6 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -399,7 +405,6 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -465,7 +470,6 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
@@ -500,7 +504,6 @@ describe("async execution runner launch and configuration validation", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(run.isError, undefined);
@@ -544,7 +547,6 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       };
       const single = executeAsyncSingle(singleId, {
@@ -650,7 +652,6 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(run.isError, undefined);
@@ -705,7 +706,6 @@ describe("async execution runner launch and configuration validation", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(run.isError, undefined);
@@ -740,7 +740,6 @@ describe("async execution runner launch and configuration validation", () => {
     const commonParams = {
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       artifactConfig,
-      shareEnabled: false,
       maxSubagentDepth: 2,
     };
     mockPi.onCall({ output: "single done" });
@@ -975,7 +974,6 @@ describe("async execution runner launch and configuration validation", () => {
       agentConfig: makeAgent("worker", { completionGuard: false }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance" },
       artifactConfig,
-      shareEnabled: false,
       maxSubagentDepth: 2,
       acceptance: { level: "reviewed", criteria: ["Patch bug"], review: false },
     });
@@ -1159,6 +1157,68 @@ describe("async execution runner launch and configuration validation", () => {
     );
   });
 
+  it("rejects legacy nested-self runner envelopes before spawn or artifact mutation", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const cases = [
+      { label: "file", useStdin: false },
+      { label: "stdin", useStdin: true },
+    ] as const;
+
+    for (const testCase of cases) {
+      const id = `async-retired-nested-self-${testCase.label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      const config = {
+        id,
+        plan: {
+          kind: "single",
+          task: { agent: "worker", task: "This child must not launch." },
+        },
+        resultPath,
+        cwd: tempDir,
+        asyncDir,
+        sessionId: `session-${id}`,
+        nestedSelf: { rootRunId: "legacy-root", parentRunId: "legacy-parent" },
+      };
+      const configJson = JSON.stringify(config);
+      if (!testCase.useStdin) fs.writeFileSync(configPath, configJson, "utf-8");
+
+      const runner = spawnSync(
+        process.execPath,
+        testCase.useStdin ? [runnerPath] : [runnerPath, configPath],
+        {
+          cwd: process.cwd(),
+          encoding: "utf-8",
+          input: testCase.useStdin ? configJson : undefined,
+          env: sanitizedRunnerEnv(),
+        },
+      );
+
+      assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
+      assert.match(runner.stderr, /Nested subagent orchestration is retired/);
+      assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
+      assert.equal(
+        fs.existsSync(configPath),
+        !testCase.useStdin,
+        `${testCase.label}: nested envelope must be rejected before file consumption`,
+      );
+      assert.equal(
+        fs.existsSync(asyncDir),
+        false,
+        `${testCase.label}: rejection must not create async artifacts`,
+      );
+      assert.equal(
+        fs.existsSync(resultPath),
+        false,
+        `${testCase.label}: rejection must not create a result artifact`,
+      );
+    }
+  });
+
   it("rejects retired structured-output plans before launching a child", () => {
     const runnerPath = path.resolve(
       process.cwd(),
@@ -1338,6 +1398,192 @@ describe("async execution runner launch and configuration validation", () => {
     assert.match(fs.readFileSync(artifactPaths.outputPath, "utf-8"), /persisted compact result/);
     assert.equal(fs.existsSync(artifactPaths.metadataPath), true);
     assert.equal(payload.results[0]?.transcriptPath, undefined);
+  });
+
+  it("ignores legacy share:true runner configs for file and stdin entries", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const piArgv1 = path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs");
+    const exporterSentinel = path.join(tempDir, "exporter-invoked");
+    const fakePiPackageRoot = path.join(tempDir, "fake-pi-package");
+    const exporterDir = path.join(fakePiPackageRoot, "dist", "core", "export-html");
+    fs.mkdirSync(exporterDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakePiPackageRoot, "package.json"),
+      JSON.stringify({ type: "module", bin: { pi: "dist/cli.mjs" } }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(fakePiPackageRoot, "dist", "cli.mjs"),
+      `import ${JSON.stringify(
+        pathToFileURL(
+          path.resolve(process.cwd(), "extensions/subagents/test/support/mock-pi-script.mjs"),
+        ),
+      )};\n`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(exporterDir, "index.js"),
+      [
+        'import fs from "node:fs";',
+        `const sentinel = ${JSON.stringify(exporterSentinel)};`,
+        "export function exportFromFile(_sessionFile, options = {}) {",
+        '  fs.writeFileSync(sentinel, "exporter invoked", "utf-8");',
+        '  if (options.outputPath) fs.writeFileSync(options.outputPath, "<html>", "utf-8");',
+        "  return options.outputPath;",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const fakeGhDir = path.join(tempDir, "fake-gh-bin");
+    const ghSentinel = path.join(tempDir, "gh-invoked");
+    fs.mkdirSync(fakeGhDir, { recursive: true });
+    const ghPath = path.join(fakeGhDir, "gh");
+    fs.writeFileSync(
+      ghPath,
+      "#!/bin/sh\nprintf 'gh invoked' > \"$TLH_TEST_FAKE_GH_SENTINEL\"\nexit 77\n",
+      "utf-8",
+    );
+    fs.chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
+    const originalGhSentinel = process.env.TLH_TEST_FAKE_GH_SENTINEL;
+    process.env.PATH = `${fakeGhDir}${path.delimiter}${originalPath ?? ""}`;
+    process.env.MOCK_PI_SESSION_DIR_FILE = "1";
+    process.env.TLH_TEST_FAKE_GH_SENTINEL = ghSentinel;
+
+    const htmlFilesUnder = (root: string): string[] => {
+      const files: string[] = [];
+      const visit = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const entryPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) visit(entryPath);
+          else if (entry.name.endsWith(".html")) files.push(entryPath);
+        }
+      };
+      visit(root);
+      return files;
+    };
+
+    const runLegacyConfig = (entry: "file" | "stdin"): void => {
+      const id = `async-legacy-share-${entry}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      const sessionDir = path.join(tempDir, `${id}-session`);
+      const outputFile = path.join(asyncDir, "output-0.log");
+      const sessionFile = path.join(sessionDir, "2026-01-01T00-00-00-000Z_session.jsonl");
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(
+        sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          message: { role: "assistant", usage: { input: 1, output: 1 } },
+        })}\n`,
+        "utf-8",
+      );
+      mockPi.onCall({ output: "legacy share result" });
+
+      const baseConfig = {
+        id,
+        plan: {
+          kind: "single",
+          task: {
+            agent: "worker",
+            task: "Complete the legacy-share compatibility fixture.",
+            inheritProjectContext: false,
+            inheritSkills: false,
+          },
+        },
+        resultPath,
+        cwd: tempDir,
+        sessionDir,
+        asyncDir,
+        artifactConfig: resolveArtifactConfig({ mode: "compact" }),
+        piPackageRoot: fakePiPackageRoot,
+        piArgv1,
+        sessionId: `session-${id}`,
+      } satisfies SubagentRunConfig;
+      // Deliberately preserve the historical runner-only input outside the
+      // production config type; the runner must ignore it without publishing.
+      const legacyConfig: SubagentRunConfig & { share: true } = {
+        ...baseConfig,
+        share: true,
+      };
+
+      const runner =
+        entry === "file"
+          ? (() => {
+              fs.writeFileSync(configPath, JSON.stringify(legacyConfig), "utf-8");
+              return spawnSync(process.execPath, [runnerPath, configPath], {
+                cwd: process.cwd(),
+                encoding: "utf-8",
+                env: { ...process.env },
+              });
+            })()
+          : spawnSync(process.execPath, [runnerPath], {
+              cwd: process.cwd(),
+              encoding: "utf-8",
+              input: JSON.stringify(legacyConfig),
+              env: { ...process.env },
+            });
+
+      assert.equal(runner.status, 0, `${entry}: ${runner.stderr}`);
+      const payload: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+      const status: unknown = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      );
+      assert.ok(isRecord(payload), `${entry}: result payload should be an object`);
+      assert.ok(isRecord(status), `${entry}: status payload should be an object`);
+      assert.equal(
+        payload.success,
+        true,
+        `${entry}: child should succeed: ${JSON.stringify(payload)}`,
+      );
+      assert.equal(status.state, "complete", `${entry}: status should complete`);
+      const payloadSessionFile = payload.sessionFile;
+      const statusSessionFile = status.sessionFile;
+      assert.equal(
+        typeof payloadSessionFile,
+        "string",
+        `${entry}: result session pointer should be a string`,
+      );
+      assert.equal(
+        typeof statusSessionFile,
+        "string",
+        `${entry}: status session pointer should be a string`,
+      );
+      if (typeof payloadSessionFile !== "string" || typeof statusSessionFile !== "string") {
+        throw new Error(`${entry}: session pointer should be a string`);
+      }
+      assert.equal(payloadSessionFile, statusSessionFile, `${entry}: session pointer should agree`);
+      assert.ok(fs.existsSync(statusSessionFile), `${entry}: session file should exist`);
+      assert.equal(status.outputFile, outputFile, `${entry}: output pointer should be canonical`);
+      assert.ok(fs.existsSync(outputFile), `${entry}: output file should exist`);
+      assert.match(fs.readFileSync(outputFile, "utf-8"), /legacy share result/);
+      assert.equal("shareUrl" in payload, false, `${entry}: share URL must not be published`);
+      assert.equal("gistUrl" in payload, false, `${entry}: gist URL must not be published`);
+      assert.equal("shareError" in payload, false, `${entry}: share error must not be published`);
+      assert.equal(fs.existsSync(exporterSentinel), false, `${entry}: exporter must not run`);
+      assert.equal(fs.existsSync(ghSentinel), false, `${entry}: gh must not run`);
+      assert.deepEqual(htmlFilesUnder(tempDir), [], `${entry}: no HTML artifact should be created`);
+    };
+
+    try {
+      runLegacyConfig("file");
+      runLegacyConfig("stdin");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
+      else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
+      if (originalGhSentinel === undefined) delete process.env.TLH_TEST_FAKE_GH_SENTINEL;
+      else process.env.TLH_TEST_FAKE_GH_SENTINEL = originalGhSentinel;
+    }
   });
 
   it("omits compact task metadata but retains debug and mode-less legacy task text", () => {

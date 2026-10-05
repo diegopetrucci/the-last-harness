@@ -14,6 +14,8 @@ import {
   ProjectAgentSnapshotCapabilityError,
   ProjectAgentSnapshotMergeError,
   mergeProjectAgentSnapshot,
+  normalizeProjectAgentRunCapture,
+  projectAgentRunCaptureEquals,
   registerProjectAgentSnapshot,
   resolveProjectAgentRunReference,
   lookupProjectAgentRunReference,
@@ -156,6 +158,35 @@ describe("project agent snapshot provider", () => {
     assert.deepEqual(manifest.entries[0]?.agent.toolBudget?.block, ["bash"]);
     assert.equal(manifest.entries[0]?.digest, "digest-immutable");
     assert.deepEqual(manifest.tombstones, ["removed-profile"]);
+    revokeProjectAgentSnapshot(capability);
+  });
+
+  it("preserves legacy interactive capture fields while validating their boolean shape", () => {
+    const agent = makeAgent("legacy-capture");
+    const capability = register({ entries: [makeEntry(agent, "legacy-capture-digest")] });
+    const manifest = resolveProjectAgentSnapshot(
+      capability,
+      getProjectAgentSnapshotProvenance(capability),
+    );
+    const capture = createProjectAgentRunCapture(manifest, agent);
+    const legacyCapture = {
+      provenance: capture.provenance,
+      config: { ...capture.config, interactive: true },
+    };
+    const normalized = normalizeProjectAgentRunCapture(legacyCapture);
+
+    assert.ok(normalized);
+    assert.deepEqual(normalized?.config, legacyCapture.config);
+    assert.equal(projectAgentRunCaptureEquals(legacyCapture, { ...legacyCapture }), true);
+
+    for (const interactive of ["true", 1, null]) {
+      const malformed = {
+        provenance: capture.provenance,
+        config: { ...capture.config, interactive },
+      };
+      assert.equal(normalizeProjectAgentRunCapture(malformed), undefined);
+      assert.equal(projectAgentRunCaptureEquals(malformed, legacyCapture), false);
+    }
     revokeProjectAgentSnapshot(capability);
   });
 

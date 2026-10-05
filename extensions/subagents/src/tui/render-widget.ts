@@ -10,13 +10,10 @@ import {
   type ActivityState,
   type AsyncJobState,
   type AsyncJobStep,
-  type NestedRunSummary,
-  type NestedStepSummary,
   MAX_WIDGET_JOBS,
   WIDGET_KEY,
 } from "../shared/types.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
-import { countNestedRuns } from "../runs/shared/nested-render.ts";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.ts";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.ts";
 import { safeTerminalText } from "../shared/display-text.ts";
@@ -63,7 +60,6 @@ export function widgetRenderKey(job: AsyncJobState): string {
     agents: job.agents,
     currentStep: job.currentStep,
     steps: job.steps,
-    nestedChildren: job.nestedChildren,
     stepsTotal: job.stepsTotal,
     runningSteps: job.runningSteps,
     completedSteps: job.completedSteps,
@@ -164,44 +160,19 @@ function phraseSlot(startedAt: number | undefined, now: number): number | undefi
   return Math.floor(Math.max(0, now - startedAt) / PHRASE_HOLD_MS);
 }
 
-function collectNestedPhraseSlots(
-  nodes: NestedRunSummary[] | undefined,
-  now: number,
-  slots: number[],
-): void {
-  for (const node of nodes ?? []) {
-    if (node.state === "running") {
-      const slot = phraseSlot(node.startedAt, now);
-      if (slot !== undefined) slots.push(slot);
-    }
-    for (const step of node.steps ?? []) {
-      if (step.status === "running") {
-        const slot = phraseSlot(step.startedAt, now);
-        if (slot !== undefined) slots.push(slot);
-      }
-      collectNestedPhraseSlots(step.children, now, slots);
-    }
-    collectNestedPhraseSlots(node.children, now, slots);
-  }
-}
-
 /**
  * Returns the current 8-second phrase-slot key for all visible running phrase
- * rows in the widget.  The key encodes one slot number per row (job-level,
- * each running step, and each running nested child) joined with commas.
+ * rows in the widget. The key encodes one slot number per row (job-level and
+ * each running step) joined with commas.
  * A change in this key means the visible phrase text will change, so the
  * poller uses it to schedule a rerender at phrase boundaries even when the
  * widgetRenderKey (which tracks status-derived fields) has not changed.
- *
- * Traversal covers job-level, top-level steps, step.children, nestedChildren,
- * nested steps, and child.children recursively.  Running descendants under a
- * non-running parent job are included; only the job-level row itself requires
- * job.status === "running".
+ * Running steps under a non-running parent job are included; only the job-level
+ * row itself requires job.status === "running".
  *
  * Anchoring:
  * - Job-level row: job.startedAt, falling back to the running step's startedAt.
  * - Step/parallel rows: each step's own startedAt.
- * - Nested child rows: each running nested child's startedAt.
  */
 export function widgetPhraseSlotKey(job: AsyncJobState, now: number): string {
   const slots: number[] = [];
@@ -219,11 +190,7 @@ export function widgetPhraseSlotKey(job: AsyncJobState, now: number): string {
     if (step.status !== "running") continue;
     const slot = phraseSlot(step.startedAt, now);
     if (slot !== undefined) slots.push(slot);
-    collectNestedPhraseSlots(step.children, now, slots);
   }
-
-  // Nested children: recursive traversal including nested steps and grandchildren.
-  collectNestedPhraseSlots(job.nestedChildren, now, slots);
 
   return slots.join(",");
 }
@@ -548,17 +515,6 @@ function widgetParallelAgentDetails(
     // survives fitWidgetLineBudget pressure (which drops from the tail).
     const parallelChildLocLine = childLocationLine(step.childLocation, theme, "    ");
     if (parallelChildLocLine) lines.push(parallelChildLocLine);
-    for (const nestedLine of formatNestedWidgetLines(
-      step.children,
-      theme,
-      width,
-      expanded,
-      job.updatedAt,
-      expanded ? 8 : 1,
-      isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt),
-      phraseNow,
-    ))
-      lines.push(`    ${nestedLine}`);
   }
   return lines;
 }
@@ -666,201 +622,6 @@ function widgetOutputPath(
   return path.join(job.asyncDir, `output-${step.index}.log`);
 }
 
-function nestedRunName(run: NestedRunSummary): string {
-  if (run.agent) return safeTerminalText(run.agent);
-  if (run.agents?.length) return formatWidgetAgents(run.agents);
-  return safeTerminalText(run.id);
-}
-
-function formatNestedWidgetAggregate(
-  children: NestedRunSummary[] | undefined,
-  theme: Theme,
-): string | undefined {
-  const counts = countNestedRuns(children);
-  if (counts.total === 0) return undefined;
-  const liveGlyph =
-    counts.running > 0
-      ? `${nestedStatusGlyph("running", theme, runningSeed(counts.running, counts.total))} `
-      : "";
-  const parts = [
-    counts.paused > 0 ? `${counts.paused} paused` : "",
-    counts.failed > 0 ? `${counts.failed} failed` : "",
-    counts.complete > 0 ? `${counts.complete} complete` : "",
-    counts.queued > 0 ? `${counts.queued} queued` : "",
-  ].filter(Boolean);
-  return `${liveGlyph}+${counts.total} nested run${counts.total === 1 ? "" : "s"}${parts.length ? ` (${parts.join(", ")})` : ""}`;
-}
-
-function nestedStatusGlyph(
-  state: NestedRunSummary["state"] | NestedStepSummary["status"],
-  theme: Theme,
-  seed?: number,
-): string {
-  if (state === "running") return theme.fg("accent", runningGlyph(seed));
-  if (state === "complete" || state === "completed") return theme.fg("success", "✓");
-  if (state === "failed") return theme.fg("error", "✗");
-  if (state === "paused") return theme.fg("warning", "■");
-  return theme.fg("muted", "◦");
-}
-
-function nestedRunSeed(run: NestedRunSummary): number | undefined {
-  return runningSeed(
-    run.lastUpdate,
-    run.lastActivityAt,
-    run.currentStep,
-    run.toolCount,
-    run.turnCount,
-    run.totalTokens?.total,
-    run.currentToolStartedAt,
-  );
-}
-
-function nestedActivity(
-  input: Pick<
-    NestedRunSummary | NestedStepSummary,
-    | "activityState"
-    | "lastActivityAt"
-    | "currentTool"
-    | "currentToolStartedAt"
-    | "currentPath"
-    | "turnCount"
-    | "toolCount"
-    | "startedAt"
-  > & { totalTokens?: NestedRunSummary["totalTokens"] },
-  state: NestedRunSummary["state"] | NestedStepSummary["status"],
-  snapshotNow?: number,
-  privacySafe = false,
-  expanded = false,
-  phraseNow?: number,
-): string {
-  const facts: string[] = [];
-  const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
-  if (currentTool && input.currentToolStartedAt !== undefined && snapshotNow !== undefined)
-    facts.push(
-      `${currentTool} ${formatDuration(Math.max(0, snapshotNow - input.currentToolStartedAt))}`,
-    );
-  else if (currentTool) facts.push(currentTool);
-  if (!privacySafe && input.currentPath)
-    facts.push(safeTerminalText(shortenPath(input.currentPath)));
-  if (expanded) {
-    if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
-    if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
-    if (input.totalTokens?.total) facts.push(formatTokenStat(input.totalTokens.total));
-  }
-  const activity = buildLiveStatusLine(input, snapshotNow);
-  if (!input.currentTool && !expanded && state === "running") {
-    return [
-      compactThinkingPhrase(
-        input.activityState,
-        input.turnCount,
-        phraseNow ?? snapshotNow,
-        input.startedAt,
-      ),
-      activity,
-      ...facts,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  }
-  if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
-  if (activity) return activity;
-  if (facts.length) return facts.join(" · ");
-  if (state === "running")
-    return expanded
-      ? "thinking…"
-      : (compactThinkingPhrase(
-          input.activityState,
-          input.turnCount,
-          phraseNow ?? snapshotNow,
-          input.startedAt,
-        ) ?? "thinking…");
-  if (state === "queued" || state === "pending") return "queued…";
-  if (state === "paused") return "Paused";
-  if (state === "failed") return "Failed";
-  return "Done";
-}
-
-function formatNestedWidgetLines(
-  children: NestedRunSummary[] | undefined,
-  theme: Theme,
-  width: number,
-  expanded: boolean,
-  snapshotNow?: number,
-  lineBudget = expanded ? 12 : 1,
-  privacySafe = false,
-  phraseNow?: number,
-): string[] {
-  if (!children?.length || lineBudget <= 0) return [];
-  if (!expanded) {
-    const aggregate = formatNestedWidgetAggregate(children, theme);
-    return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
-  }
-  const lines: string[] = [];
-  const maxDepth = 2;
-  const append = (items: NestedRunSummary[] | undefined, depth: number, prefix: string): void => {
-    if (!items?.length || lines.length >= lineBudget) return;
-    if (depth > maxDepth) {
-      const aggregate = formatNestedWidgetAggregate(items, theme);
-      if (aggregate && lines.length < lineBudget)
-        lines.push(theme.fg("dim", `${prefix}↳ ${aggregate}`));
-      return;
-    }
-    for (let index = 0; index < items.length; index++) {
-      const child = items[index]!;
-      if (lines.length >= lineBudget) {
-        const aggregate = formatNestedWidgetAggregate(items.slice(index), theme);
-        if (aggregate) lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
-        return;
-      }
-      const activity = nestedActivity(
-        child,
-        child.state,
-        snapshotNow ?? child.lastUpdate,
-        privacySafe,
-        expanded,
-        phraseNow,
-      );
-      const error = child.error
-        ? ` · ${privacySafe ? "lifecycle status requires attention" : safeTerminalText(child.error)}`
-        : "";
-      const status = child.state === "running" ? "" : ` · ${safeTerminalText(child.state)}`;
-      lines.push(
-        theme.fg(
-          "dim",
-          `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)}${status} · ${activity}${error}`,
-        ),
-      );
-      if (depth === maxDepth) {
-        const aggregate = formatNestedWidgetAggregate(
-          [
-            ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
-            ...(child.children ?? []),
-          ],
-          theme,
-        );
-        if (aggregate && lines.length < lineBudget)
-          lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
-        continue;
-      }
-      for (const step of child.steps ?? []) {
-        if (lines.length >= lineBudget) return;
-        const status = step.status === "running" ? "" : ` · ${safeTerminalText(step.status)}`;
-        const stepAgent = safeTerminalText(step.agent);
-        lines.push(
-          theme.fg(
-            "dim",
-            `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${stepAgent}${status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded, phraseNow)}`,
-          ),
-        );
-        append(step.children, depth + 1, `${prefix}    `);
-      }
-      append(child.children, depth + 1, `${prefix}  `);
-    }
-  };
-  append(children, 0, "");
-  return wrapDisplayLines(lines, width);
-}
-
 function singleWidgetStepDisplayStatus(
   job: AsyncJobState,
   step: NonNullable<AsyncJobState["steps"]>[number],
@@ -928,18 +689,6 @@ function foregroundStyleWidgetStepLines(
       activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
     lines.push(theme.fg("dim", `${prefix}${activity}`));
   }
-  for (const nestedLine of formatNestedWidgetLines(
-    step.children,
-    theme,
-    width,
-    expanded,
-    job.updatedAt,
-    expanded ? 12 : 1,
-    isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt),
-    phraseNow,
-  )) {
-    lines.push(`    ${nestedLine}`);
-  }
   if (resolvedDisplayStatus === "running") {
     if (!expanded) lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
     if (expanded) {
@@ -970,16 +719,6 @@ function foregroundStyleWidgetDetails(
     return [
       ...widgetTkTicketLines(job, theme),
       ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
-      ...formatNestedWidgetLines(
-        job.nestedChildren,
-        theme,
-        width,
-        expanded,
-        job.updatedAt,
-        expanded ? 12 : 1,
-        isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt),
-        phraseNow,
-      ).map((line) => `  ${line}`),
     ];
   const total = job.stepsTotal ?? job.steps.length;
   const itemTitle = job.mode === "parallel" ? "Agent" : "Step";
@@ -999,22 +738,6 @@ function foregroundStyleWidgetDetails(
         phraseNow,
       ),
     );
-  }
-  const attached = new Set(
-    job.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []),
-  );
-  const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-  for (const nestedLine of formatNestedWidgetLines(
-    unattached,
-    theme,
-    width,
-    expanded,
-    job.updatedAt,
-    expanded ? 12 : 1,
-    isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt),
-    phraseNow,
-  )) {
-    lines.push(`  ${nestedLine}`);
   }
   return lines;
 }
@@ -1042,20 +765,6 @@ function singleWidgetAgentDetails(
     );
     const ticketLines = widgetTkTicketLines(job, theme, "    ");
     const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
-    const attached = new Set(step.children?.map((child) => child.id) ?? []);
-    const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-    for (const nestedLine of formatNestedWidgetLines(
-      unattached,
-      theme,
-      width,
-      expanded,
-      job.updatedAt,
-      expanded ? 12 : 1,
-      isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt),
-      phraseNow,
-    )) {
-      lines.push(`  ${nestedLine}`);
-    }
     return lines;
   }
 
@@ -1067,16 +776,6 @@ function singleWidgetAgentDetails(
     `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)}${statusSuffix}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ...widgetTkTicketLines(job, theme),
     ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
-    ...formatNestedWidgetLines(
-      job.nestedChildren,
-      theme,
-      width,
-      expanded,
-      job.updatedAt,
-      expanded ? 12 : 1,
-      isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt),
-      phraseNow,
-    ).map((line) => `  ${line}`),
   ];
 }
 
@@ -1134,7 +833,7 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 // logical line in the render — only the header and the agent row precede it.
 // At normal terminal widths it is far inside the kept prefix. buildSingleWidgetLines
 // splices it immediately after the agent row, and singleModeHealthWarningLines
-// handles placement (nested under the agent row at 4-space indent) with
+// handles placement under the agent row at 4-space indent with
 // step-level dedup: when the step's widgetStepActivityLines already surfaces the
 // same health text, the job-level line is suppressed to avoid a duplicate.
 function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
@@ -1214,7 +913,7 @@ function buildSingleWidgetLines(
     const healthLines = singleModeHealthWarningLines(job, theme, contentWidth, expanded);
     // Splice the health line immediately after the agent row (details[0]) so it lands
     // as the 3rd logical line of the render – before the ticket line, step activity
-    // lines, nested child lines, and the live-detail hint (which stays last).
+    // lines, and the live-detail hint (which stays last).
     // singleWidgetAgentDetails always returns at least the agent row, and
     // singleModeHealthWarningLines returns [] when job.steps is empty, so both the
     // no-steps and the no-health-state paths are safe.
@@ -1334,17 +1033,6 @@ function compactSingleWidgetLines(
     // distinction — we just place it on its own line right after.
     const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
     if (compactChildLocLine) lines.push(compactChildLocLine);
-    for (const nestedLine of formatNestedWidgetLines(
-      step.children,
-      theme,
-      contentWidth,
-      false,
-      job.updatedAt,
-      1,
-      isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt),
-      phraseNow,
-    ))
-      lines.push(`    ${nestedLine}`);
   }
   if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
     lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));

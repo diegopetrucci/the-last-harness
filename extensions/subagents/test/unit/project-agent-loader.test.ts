@@ -136,26 +136,14 @@ afterEach(() => {
 });
 
 describe("trusted project-agent loader", () => {
-  it("resolves a validated worktree without invoking the injected Git command seam", () => {
+  it("resolves only the validated metadata-only Git worktree root", () => {
     const project = tempProject();
     fs.mkdirSync(path.join(project, "src"));
-    let invoked = false;
     assert.equal(
-      resolveCanonicalGitWorktreeRoot(path.join(project, "src"), {
-        git: {
-          showToplevel: () => {
-            invoked = true;
-            return project;
-          },
-        },
-      }),
+      resolveCanonicalGitWorktreeRoot(path.join(project, "src")),
       fs.realpathSync(project),
     );
-    assert.equal(invoked, false);
-    assert.equal(
-      resolveCanonicalGitWorktreeRoot(project, { git: { showToplevel: () => project } }),
-      fs.realpathSync(project),
-    );
+    assert.equal(resolveCanonicalGitWorktreeRoot(project), fs.realpathSync(project));
 
     const outside = tempProject({ git: false });
     assert.equal(resolveCanonicalGitWorktreeRoot(outside), undefined);
@@ -169,7 +157,8 @@ describe("trusted project-agent loader", () => {
     const project = tempProject();
     const filePath = writeDefinition(project, "REVIEWER.md", {
       tools: "read,bash,write,edit,mcp:ignored",
-      extraFrontmatter: "model: openai/reviewer\nsupervisorBridge: false\ncustomField: retained",
+      extraFrontmatter:
+        "model: openai/reviewer\nsupervisorBridge: false\ninteractive: true\ncustomField: retained",
       body: "Review the repository.",
     });
     const bytes = fs.readFileSync(filePath);
@@ -182,6 +171,8 @@ describe("trusted project-agent loader", () => {
     assert.deepEqual(entry.agent.tools, ["read", "bash", "write", "edit"]);
     assert.equal(entry.agent.model, "openai/reviewer");
     assert.equal(entry.agent.supervisorBridge, false);
+    assert.equal(Object.hasOwn(entry.agent, "interactive"), false);
+    assert.equal(entry.agent.extraFields?.interactive, undefined);
     assert.equal(entry.agent.extraFields?.customField, "retained");
     assert.deepEqual(entry.frontmatterFields, [
       "name",
@@ -190,6 +181,7 @@ describe("trusted project-agent loader", () => {
       "tools",
       "model",
       "supervisorBridge",
+      "interactive",
       "customField",
     ]);
     assert.equal(entry.digest, createHash("sha256").update(bytes).digest("hex"));

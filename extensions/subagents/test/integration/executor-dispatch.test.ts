@@ -5,7 +5,13 @@ import * as path from "node:path";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import type { discoverAgents } from "../../src/agents/agents.ts";
-import type { ExtensionConfig } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  DEFAULT_MAX_OUTPUT,
+  RESULTS_DIR,
+  type ExtensionConfig,
+} from "../../src/shared/types.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createEventBus,
   createMockPi,
@@ -204,6 +210,7 @@ describe("subagent executor dispatch wiring", () => {
       projectAgentsDir: null,
     }),
     config: ExtensionConfig = {},
+    overrides: { runSync?: typeof runSync } = {},
   ) {
     return createSubagentExecutor({
       pi: makeExtensionAPI({ events: createEventBus() }),
@@ -213,6 +220,7 @@ describe("subagent executor dispatch wiring", () => {
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (value: string) => value,
       discoverAgents: discoverAgentsImpl,
+      ...overrides,
     });
   }
 
@@ -344,6 +352,19 @@ describe("subagent executor dispatch wiring", () => {
         params: { agent: "echo", task: "task one", includeProgress: true },
         guidance: /includeProgress is no longer supported.*tracked automatically/,
       },
+      {
+        label: "top-level maxOutput",
+        params: { agent: "echo", task: "task one", maxOutput: { lines: 1, bytes: 100 } },
+        guidance: /maxOutput is no longer supported.*Output bounds are managed internally/,
+      },
+      {
+        label: "parallel-task maxOutput",
+        params: {
+          tasks: [{ agent: "echo", task: "task one", maxOutput: { lines: 1, bytes: 100 } }],
+        },
+        guidance:
+          /tasks\[0\]\.maxOutput is no longer supported.*Output bounds are managed internally/,
+      },
     ];
 
     for (const testCase of cases) {
@@ -362,6 +383,85 @@ describe("subagent executor dispatch wiring", () => {
         assert.match(result.content[0]?.text ?? "", testCase.guidance);
         assert.equal(result.details?.asyncId, undefined);
         assert.equal(mockPi.callCount(), 0);
+      }
+    }
+  });
+
+  it("leaves maxOutput absent across foreground and async dispatch paths", async () => {
+    const observedForeground: string[] = [];
+    const observedRunSync: typeof runSync = async (
+      runtimeCwd,
+      agents,
+      agentName,
+      task,
+      options,
+    ) => {
+      assert.equal(options.maxOutput, undefined);
+      observedForeground.push(agentName);
+      return runSync(runtimeCwd, agents, agentName, task, options);
+    };
+    const tailSentinel = "ASYNC_DEFAULT_MAX_OUTPUT_TAIL_SENTINEL";
+    const longOutput = `${Array.from(
+      { length: DEFAULT_MAX_OUTPUT.lines + 25 },
+      (_, index) => `output-line-${index}`,
+    ).join("\n")}\n${tailSentinel}`;
+    mockPi.onCall({ output: longOutput });
+    mockPi.onCall({ output: longOutput });
+    const executor = makeExecutorWithDiscoverAgents(undefined, {}, { runSync: observedRunSync });
+    const asyncIds: string[] = [];
+    try {
+      const foregroundSingle = await executor.execute(
+        "default-absence-foreground-single",
+        { agent: "echo", task: "single" },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(foregroundSingle.isError, undefined);
+
+      const foregroundParallel = await executor.execute(
+        "default-absence-foreground-parallel",
+        { tasks: [{ agent: "echo", task: "parallel" }] },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(foregroundParallel.isError, undefined);
+
+      const asyncSingle = await executor.execute(
+        "default-absence-async-single",
+        { agent: "echo", task: "async single", async: true },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(asyncSingle.isError, undefined);
+      assert.ok(asyncSingle.details?.asyncId);
+      asyncIds.push(asyncSingle.details.asyncId);
+
+      const asyncParallel = await executor.execute(
+        "default-absence-async-parallel",
+        { tasks: [{ agent: "echo", task: "async parallel" }], async: true },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(asyncParallel.isError, undefined);
+      assert.ok(asyncParallel.details?.asyncId);
+      asyncIds.push(asyncParallel.details.asyncId);
+
+      const payloads = await Promise.all(asyncIds.map((id) => readAsyncPayload(id)));
+      for (const payload of payloads) {
+        assert.equal(payload.state, "complete");
+        assert.equal(payload.success, true);
+        assert.equal(payload.truncated, false);
+        assert.ok(payload.summary.includes(tailSentinel));
+      }
+      assert.deepEqual(observedForeground, ["echo", "echo"]);
+    } finally {
+      for (const id of asyncIds) {
+        fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+        fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
       }
     }
   });

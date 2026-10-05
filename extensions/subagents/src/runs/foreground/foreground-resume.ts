@@ -80,11 +80,6 @@ import {
 } from "./project-agent-control.ts";
 import type { ExecutorDeps, SubagentParamsLike } from "./subagent-executor.ts";
 import { resolveForegroundResumeTarget } from "./foreground-run-state.ts";
-import {
-  resolveNestedResumeTarget,
-  resumeLiveNestedRun,
-  type NestedResumeSourceTarget,
-} from "./foreground-nested-control.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
   indexedLifecycleContinuation,
@@ -110,10 +105,7 @@ type ForegroundResumeSourceTarget = NonNullable<
   kind: "revive";
   source: "foreground";
 };
-type ResumeSourceTarget =
-  | AsyncResumeSourceTarget
-  | ForegroundResumeSourceTarget
-  | NestedResumeSourceTarget;
+type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget;
 
 function resolveTargetTkTicketId(target: ResumeSourceTarget): string | undefined {
   return target.agent === "developer" && "tkTicketId" in target
@@ -312,8 +304,8 @@ function claimPausedAwaitingSupervisorTarget(
 ): ContinuationClaimDecision {
   if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir) return undefined;
   const asyncDir = target.asyncDir;
-  // A result-only or nested target can retain a historical async-dir path even
-  // after that lifecycle directory has been removed. Do not recreate it merely
+  // A result-only target can retain a historical async-dir path even after
+  // that lifecycle directory has been removed. Do not recreate it merely
   // to discover that there is no persisted lifecycle state. A paused target is
   // still fail-closed when its lifecycle directory is absent.
   if (!fs.existsSync(asyncDir)) {
@@ -770,20 +762,7 @@ async function resolveResumeActionTarget(input: {
       if (!isResumeAmbiguity(error) || !message.includes("foreground:") || asyncMatches !== 1)
         throw error;
     }
-    if (resolved?.kind === "nested") {
-      if (input.privateProjectLookup.status === "found") {
-        throw projectRunAuthorizationError(
-          "the retained project-agent run resolved to an unsupported nested control target.",
-        );
-      }
-      if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-        return resumeLiveNestedRun(resolved);
-      }
-      const trustedSessionRoots = input.parentSessionFile
-        ? [input.deps.getSubagentSessionRoot(input.parentSessionFile)]
-        : [];
-      target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
-    } else if (resolved?.kind === "async" || input.params.dir) {
+    if (resolved?.kind === "async" || input.params.dir) {
       const preResolutionDir =
         resolved?.kind === "async"
           ? resolved.location.asyncDir
@@ -1087,7 +1066,7 @@ async function prepareResume(input: ResumeAsyncInput): Promise<ResumePreparation
   const { blocked, depth, maxDepth } = checkSubagentDepth(input.deps.config.maxSubagentDepth);
   if (blocked) {
     return managementError(
-      `Nested subagent resume blocked (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
+      `Subagent resume blocked at the configured recursion depth (depth=${depth}, max=${maxDepth}). Complete the follow-up directly instead.`,
     );
   }
 
@@ -1279,13 +1258,10 @@ export async function resumeAsyncRun(
         modelScope,
       },
       cwd: effectiveCwd,
-      maxOutput: input.params.maxOutput,
       artifactsDir,
       artifactConfig: input.artifactConfig,
-      shareEnabled: input.params.share === true,
       sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
       sessionFile: target.sessionFile,
-      acceptance: input.params.acceptance,
       continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
       activeRuntimeMs,
       ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
@@ -1294,7 +1270,7 @@ export async function resumeAsyncRun(
       timeoutMs: runTimeoutMs,
       outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
       maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
-      controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
+      controlConfig: resolveControlConfig(input.deps.config.control),
       availableModels,
       modelRegistry: modelRegistrySnapshot.evidence,
       providerFallbackModels: providerFallbackModelsForTarget(input.params),

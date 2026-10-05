@@ -16,15 +16,11 @@ import {
   type SubagentAsyncRestoredEvent,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
-import {
-  hasLiveNestedDescendants,
-  updateAsyncJobNestedProjection,
-} from "../shared/nested-events.ts";
 import { scanAsyncRunsForRestore, type AsyncRunSummary } from "./async-status.ts";
 import {
   quarantineCorruptAsyncRun,
@@ -222,7 +218,6 @@ export function createAsyncJobTracker(
           controlEventSkippingOversizedLine: restoredCursor.skippingOversizedLine,
         };
       })(),
-      nestedChildren: run.nestedChildren,
       tkTicket: run.tkTicket,
       projectAgents: run.projectAgents,
     };
@@ -301,8 +296,8 @@ export function createAsyncJobTracker(
         ) {
           retainOrReleaseProjectReference(asyncId, job.asyncDir);
         } else if (!projectReferenceCleanupTimers.has(asyncId)) {
-          // This is only a fallback for terminal jobs whose project retention
-          // was deferred while nested descendants were still live.
+          // This is a fallback for terminal jobs whose project retention
+          // was deferred while sibling references were still live.
           scheduleProjectReferenceCleanup(asyncId, job.asyncDir, { siblingSafe: false });
         }
       }
@@ -487,38 +482,8 @@ export function createAsyncJobTracker(
       const phraseSlotNow = nowMs();
       for (const job of state.asyncJobs.values()) {
         const widgetStateBefore = widgetRenderKey(job);
-        let nestedRefreshFailed = false;
-        const refreshNestedProjection = () => {
-          try {
-            updateAsyncJobNestedProjection(job);
-          } catch (error) {
-            nestedRefreshFailed = true;
-            console.error(
-              `Failed to refresh nested async descendants for '${job.asyncDir}':`,
-              error,
-            );
-          }
-        };
-        const reconcileNestedDescendants = () => {
-          try {
-            if (job.nestedRoute)
-              reconcileNestedAsyncDescendants(job.nestedRoute, {
-                resultsDir,
-                kill: options.kill,
-                now: options.now,
-              });
-          } catch (error) {
-            nestedRefreshFailed = true;
-            console.error(
-              `Failed to refresh nested async descendants for '${job.asyncDir}':`,
-              error,
-            );
-          }
-          refreshNestedProjection();
-        };
         try {
           emitNewControlEvents(job);
-          reconcileNestedDescendants();
           const reconciliation = reconcileAsyncRun(job.asyncDir, {
             resultsDir,
             kill: options.kill,
@@ -589,7 +554,6 @@ export function createAsyncJobTracker(
               }));
               job.agents = visibleSteps.map((step) => step.agent);
               job.steps = visibleSteps;
-              refreshNestedProjection();
               job.stepsTotal = visibleSteps.length;
               job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
               job.completedSteps = visibleSteps.filter(
@@ -611,20 +575,14 @@ export function createAsyncJobTracker(
             if (status.tkTicket !== undefined)
               job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
             if (status.projectAgents !== undefined) job.projectAgents = status.projectAgents;
-            const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
             if (
               (job.status === "complete" || job.status === "failed") &&
-              !nestedRefreshFailed &&
-              !liveNestedDescendants &&
               !projectReferenceCleanupTimers.has(job.asyncId)
             ) {
               scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
             }
-            if (liveNestedDescendants) cancelCleanup(job.asyncId);
             if (
               COMPLETION_RETENTION_STATES.has(job.status) &&
-              !nestedRefreshFailed &&
-              !liveNestedDescendants &&
               (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))
             ) {
               scheduleCleanup(job.asyncId);
@@ -633,17 +591,13 @@ export function createAsyncJobTracker(
               widgetChanged = true;
             continue;
           }
-          const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
           if (
             (job.status === "complete" || job.status === "failed") &&
-            !liveNestedDescendants &&
             !projectReferenceCleanupTimers.has(job.asyncId)
           ) {
             scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
           }
-          if (liveNestedDescendants) {
-            cancelCleanup(job.asyncId);
-          } else if (
+          if (
             COMPLETION_RETENTION_STATES.has(job.status) &&
             !state.cleanupTimers.has(job.asyncId)
           ) {
@@ -659,11 +613,7 @@ export function createAsyncJobTracker(
             job.status = "failed";
             job.updatedAt = Date.now();
           }
-          if (hasLiveNestedDescendants(job.nestedChildren)) {
-            cancelCleanup(job.asyncId);
-          } else if (!state.cleanupTimers.has(job.asyncId)) {
-            scheduleCleanup(job.asyncId);
-          }
+          if (!state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
         }
         if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
           widgetChanged = true;
@@ -694,7 +644,6 @@ export function createAsyncJobTracker(
       ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
       mode: normalizeSubagentRunMode(info.mode),
       agents,
-      nestedRoute: info.nestedRoute,
       stepsTotal: agents?.length,
       startedAt: now,
       updatedAt: now,
@@ -728,7 +677,6 @@ export function createAsyncJobTracker(
     const job = state.asyncJobs.get(asyncId);
     const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
     if (job && telemetry) job.telemetry = telemetry;
-    let nestedRefreshFailed = false;
     if (job) {
       job.status =
         result.state === "continued" || result.state === "cancelled"
@@ -738,19 +686,11 @@ export function createAsyncJobTracker(
             : "failed";
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
-      try {
-        updateAsyncJobNestedProjection(job);
-      } catch (error) {
-        nestedRefreshFailed = true;
-        console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
-      }
     }
     if (result.state === "cancelled" || result.state === "continued") {
       retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
     } else if (
       (job?.status === "complete" || job?.status === "failed") &&
-      !nestedRefreshFailed &&
-      !hasLiveNestedDescendants(job?.nestedChildren) &&
       !projectReferenceCleanupTimers.has(asyncId)
     ) {
       scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
@@ -760,11 +700,7 @@ export function createAsyncJobTracker(
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
     }
-    if (hasLiveNestedDescendants(job?.nestedChildren)) {
-      cancelCleanup(asyncId);
-    } else if (!nestedRefreshFailed) {
-      scheduleCleanup(asyncId);
-    }
+    scheduleCleanup(asyncId);
   };
 
   const resetJobs = (ctx?: ExtensionContext) => {

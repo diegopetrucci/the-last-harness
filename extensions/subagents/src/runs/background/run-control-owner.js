@@ -3,8 +3,6 @@ import * as path from "node:path";
 import { acceptChildMessageRequest, enqueueStepChildMessage, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest, } from "./control-channel.js";
 import { contextWindowForModel, runtimeModelReference } from "./pi-streaming.js";
 import { buildControlEvent, claimControlNotification, deriveActivityState, formatControlNoticeMessage, } from "../shared/subagent-control.js";
-import { projectNestedEvents, resolveNestedAsyncDir } from "../shared/nested-events.js";
-import { deliverInterruptRequest, deliverTimeoutRequest } from "./control-channel.js";
 import { childUsageNumber } from "../shared/child-protocol.js";
 import { appendRecentProgressItem } from "../../shared/recent-progress.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
@@ -34,7 +32,7 @@ function resolveSupervisorPauseMetadata(input) {
     return undefined;
 }
 export function createBackgroundRunControlOwner(input) {
-    const { status, id, asyncDir, overallStartTime, controlConfig, nestedRoute, appendEvent, appendDiagnosticEvent, } = input;
+    const { status, id, asyncDir, overallStartTime, controlConfig, appendEvent, appendDiagnosticEvent, } = input;
     const statusPayload = status.statusPayload;
     const flatSteps = status.flatSteps;
     const activeChildInterrupts = new Map();
@@ -75,103 +73,6 @@ export function createBackgroundRunControlOwner(input) {
     function timeoutActiveChildren() {
         for (const interrupt of Array.from(activeChildTimeouts.values()))
             interrupt();
-    }
-    function* nestedRuns(children) {
-        for (const child of children ?? []) {
-            yield child;
-            yield* nestedRuns(child.children);
-            yield* nestedRuns(child.steps?.flatMap((step) => step.children ?? []));
-        }
-    }
-    function interruptNestedAsyncDescendants() {
-        if (!nestedRoute)
-            return;
-        let registry;
-        try {
-            registry = projectNestedEvents(nestedRoute);
-        }
-        catch (error) {
-            appendEvent(JSON.stringify({
-                type: "subagent.nested.interrupt_failed",
-                ts: Date.now(),
-                runId: id,
-                message: error instanceof Error ? error.message : String(error),
-            }));
-            return;
-        }
-        for (const run of nestedRuns(registry.children)) {
-            if (run.state !== "running" && run.state !== "queued")
-                continue;
-            const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(nestedRoute.rootRunId, run);
-            if (!nestedAsyncDir)
-                continue;
-            try {
-                deliverInterruptRequest({
-                    asyncDir: nestedAsyncDir,
-                    pid: run.pid,
-                    source: "ancestor-interrupt",
-                });
-            }
-            catch (error) {
-                appendEvent(JSON.stringify({
-                    type: "subagent.nested.interrupt_failed",
-                    ts: Date.now(),
-                    runId: id,
-                    targetRunId: run.id,
-                    message: error instanceof Error ? error.message : String(error),
-                }));
-            }
-        }
-    }
-    function hasLiveNestedAsyncDescendants() {
-        if (!nestedRoute)
-            return false;
-        try {
-            return [...nestedRuns(projectNestedEvents(nestedRoute).children)].some((run) => run.id !== id && (run.state === "running" || run.state === "queued"));
-        }
-        catch {
-            return true;
-        }
-    }
-    function timeoutNestedAsyncDescendants() {
-        if (!nestedRoute)
-            return;
-        let registry;
-        try {
-            registry = projectNestedEvents(nestedRoute);
-        }
-        catch (error) {
-            appendEvent(JSON.stringify({
-                type: "subagent.nested.timeout_failed",
-                ts: Date.now(),
-                runId: id,
-                message: error instanceof Error ? error.message : String(error),
-            }));
-            return;
-        }
-        for (const run of nestedRuns(registry.children)) {
-            if (run.state !== "running" && run.state !== "queued")
-                continue;
-            const nestedAsyncDir = run.asyncDir ?? resolveNestedAsyncDir(nestedRoute.rootRunId, run);
-            if (!nestedAsyncDir)
-                continue;
-            try {
-                deliverTimeoutRequest({
-                    asyncDir: nestedAsyncDir,
-                    pid: run.pid,
-                    source: "ancestor-timeout",
-                });
-            }
-            catch (error) {
-                appendEvent(JSON.stringify({
-                    type: "subagent.nested.timeout_failed",
-                    ts: Date.now(),
-                    runId: id,
-                    targetRunId: run.id,
-                    message: error instanceof Error ? error.message : String(error),
-                }));
-            }
-        }
     }
     function appendControlEvent(event) {
         if (!controlConfig.enabled)
@@ -643,9 +544,6 @@ export function createBackgroundRunControlOwner(input) {
         registerStepTimeout,
         interruptActiveChildren,
         timeoutActiveChildren,
-        interruptNestedAsyncDescendants,
-        timeoutNestedAsyncDescendants,
-        hasLiveNestedAsyncDescendants,
         appendControlEvent,
         updateStepModel,
         updateStepFromChildEvent,

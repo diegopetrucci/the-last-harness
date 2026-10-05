@@ -94,9 +94,6 @@ function applyTerminalStatus(input) {
     statusPayload.lastUpdate = input.runEndedAt;
     statusPayload.sessionFile = input.effectiveSessionFile;
     statusPayload.totalCost = input.finalTotalCost;
-    statusPayload.shareUrl = input.shareUrl;
-    statusPayload.gistUrl = input.gistUrl;
-    statusPayload.shareError = input.shareError;
     if (statusPayload.state === "failed" && !statusPayload.error) {
         const failedStep = timedOut
             ? statusPayload.steps.find((step) => step.status === "failed" && step.timedOut === true)
@@ -223,9 +220,9 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
     const deadlineAt = canonicalStatusValue(input, input.statusPayload.deadlineAt, input.config.deadlineAt);
     const totalCost = canonicalStatusValue(input, input.statusPayload.totalCost, input.finalTotalCost);
     const sessionFile = canonicalStatusValue(input, input.statusPayload.sessionFile, input.effectiveSessionFile);
-    const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, input.shareUrl);
-    const gistUrl = canonicalStatusValue(input, input.statusPayload.gistUrl, input.gistUrl);
-    const shareError = canonicalStatusValue(input, input.statusPayload.shareError, input.shareError);
+    const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, undefined);
+    const gistUrl = canonicalStatusValue(input, input.statusPayload.gistUrl, undefined);
+    const shareError = canonicalStatusValue(input, input.statusPayload.shareError, undefined);
     const artifactsDir = canonicalStatusValue(input, input.statusPayload.artifactsDir, input.artifactsDir);
     const cwd = canonicalStatusValue(input, input.statusPayload.cwd, input.cwd) ?? input.cwd;
     const sessionId = canonicalStatusValue(input, input.statusPayload.sessionId, input.config.sessionId ?? undefined);
@@ -273,10 +270,10 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         asyncDir: input.asyncDir,
         ...(sessionId !== undefined ? { sessionId } : {}),
         ...(projectAgents ? { projectAgents } : {}),
-        sessionFile,
-        shareUrl,
-        gistUrl,
-        shareError,
+        ...(sessionFile !== undefined ? { sessionFile } : {}),
+        ...(shareUrl !== undefined ? { shareUrl } : {}),
+        ...(gistUrl !== undefined ? { gistUrl } : {}),
+        ...(shareError !== undefined ? { shareError } : {}),
         ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
         ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
     };
@@ -401,9 +398,6 @@ export function persistRunnerTerminalRun(input) {
     const artifactsDir = canonicalStatusValue(input, input.statusPayload.artifactsDir, input.artifactsDir);
     const cwd = canonicalStatusValue(input, input.statusPayload.cwd, input.cwd) ?? input.cwd;
     const sessionFile = canonicalStatusValue(input, input.statusPayload.sessionFile, input.effectiveSessionFile);
-    const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, input.shareUrl);
-    const shareError = canonicalStatusValue(input, input.statusPayload.shareError, input.shareError);
-    input.statusOwner.emitNestedSelfEvent("subagent.nested.completed");
     input.appendEvent(JSON.stringify({
         type: "subagent.run.completed",
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -430,8 +424,6 @@ export function persistRunnerTerminalRun(input) {
         truncated: input.truncated,
         artifactsDir,
         sessionFile,
-        shareUrl,
-        shareError,
     });
     writeResultArtifact(input, finalTelemetry, state, resultPaused, startedAt, endedAt);
 }

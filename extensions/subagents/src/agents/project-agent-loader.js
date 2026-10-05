@@ -13,8 +13,6 @@ export const PROJECT_AGENT_PACKAGE = "embedded";
 export const MAX_PROJECT_AGENT_FILE_BYTES = 64 * 1024;
 export const MAX_PROJECT_AGENT_FILES = 128;
 export const MAX_PROJECT_AGENT_TOTAL_BYTES = 8 * 1024 * 1024;
-export const MAX_PROJECT_AGENT_DEPTH = 0;
-export const MAX_PROJECT_AGENT_DIRECTORIES = 4;
 export const MAX_PROJECT_AGENT_SCAN_ATTEMPTS = 3;
 const PROJECT_AGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const PROJECT_AGENT_FILE_BASENAME_PATTERN = /^[A-Z0-9][A-Z0-9-]*$/;
@@ -773,7 +771,6 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         ? undefined
         : parseStrictBoolean(frontmatter, "supervisorBridge", false, filePath);
     const defaultProgress = parseStrictBoolean(frontmatter, "defaultProgress", false, filePath);
-    const interactive = parseStrictBoolean(frontmatter, "interactive", false, filePath);
     const inheritProjectContext = parseStrictBoolean(frontmatter, "inheritProjectContext", localName === "delegate", filePath);
     const inheritSkills = parseStrictBoolean(frontmatter, "inheritSkills", false, filePath);
     const extraFields = {};
@@ -807,7 +804,6 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         output: frontmatter.output,
         defaultReads,
         defaultProgress,
-        interactive,
         maxSubagentDepth: parsedMaxSubagentDepth,
         completionGuard,
         supervisorBridge,
@@ -1051,8 +1047,6 @@ export function scanProjectAgentDefinitions(projectRoot, options = {}) {
         maxFileBytes: normalizeBound(options.maxFileBytes, MAX_PROJECT_AGENT_FILE_BYTES),
         maxFiles: normalizeBound(options.maxFiles, MAX_PROJECT_AGENT_FILES),
         maxTotalBytes: normalizeBound(options.maxTotalBytes, MAX_PROJECT_AGENT_TOTAL_BYTES),
-        maxDepth: normalizeBound(options.maxDepth, MAX_PROJECT_AGENT_DEPTH),
-        maxDirectories: normalizeBound(options.maxDirectories, MAX_PROJECT_AGENT_DIRECTORIES),
     };
     return scanProjectAgentsOnce(canonicalRoot, scanOptions);
 }
@@ -1106,10 +1100,7 @@ function mergeTrustOptions(options) {
 }
 export async function loadProjectAgentSnapshot(options) {
     const fileSystem = options.fileSystem ?? DEFAULT_FILE_SYSTEM;
-    const projectRoot = resolveCanonicalGitWorktreeRoot(options.cwd, {
-        git: options.git,
-        fileSystem,
-    });
+    const projectRoot = resolveCanonicalGitWorktreeRoot(options.cwd, { fileSystem });
     if (!projectRoot) {
         return {
             status: "unavailable",
@@ -1157,8 +1148,6 @@ export async function loadProjectAgentSnapshot(options) {
         maxFileBytes: options.maxFileBytes,
         maxFiles: options.maxFiles,
         maxTotalBytes: options.maxTotalBytes,
-        maxDepth: options.maxDepth,
-        maxDirectories: options.maxDirectories,
     };
     const maxAttempts = normalizeAttempts(options.maxAttempts);
     let scan = emptyScanResult(projectRoot, "unstable");

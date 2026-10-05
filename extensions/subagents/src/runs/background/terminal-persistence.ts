@@ -101,8 +101,6 @@ type RunnerLogInput = {
   truncated: boolean;
   artifactsDir?: string;
   sessionFile?: string;
-  shareUrl?: string;
-  shareError?: string;
 };
 
 interface TerminalPersistenceInput {
@@ -120,9 +118,6 @@ interface TerminalPersistenceInput {
   truncated: boolean;
   agentName: string;
   timeoutMessage?: string;
-  shareUrl?: string;
-  gistUrl?: string;
-  shareError?: string;
   resultPath: string;
   cwd: string;
   artifactsDir?: string;
@@ -270,9 +265,6 @@ function applyTerminalStatus(input: TerminalPersistenceInput): SubagentRunTeleme
   statusPayload.lastUpdate = input.runEndedAt;
   statusPayload.sessionFile = input.effectiveSessionFile;
   statusPayload.totalCost = input.finalTotalCost;
-  statusPayload.shareUrl = input.shareUrl;
-  statusPayload.gistUrl = input.gistUrl;
-  statusPayload.shareError = input.shareError;
   if (statusPayload.state === "failed" && !statusPayload.error) {
     const failedStep = timedOut
       ? statusPayload.steps.find((step) => step.status === "failed" && step.timedOut === true)
@@ -445,9 +437,9 @@ function writeResultArtifact(
     input.statusPayload.sessionFile,
     input.effectiveSessionFile,
   );
-  const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, input.shareUrl);
-  const gistUrl = canonicalStatusValue(input, input.statusPayload.gistUrl, input.gistUrl);
-  const shareError = canonicalStatusValue(input, input.statusPayload.shareError, input.shareError);
+  const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, undefined);
+  const gistUrl = canonicalStatusValue(input, input.statusPayload.gistUrl, undefined);
+  const shareError = canonicalStatusValue(input, input.statusPayload.shareError, undefined);
   const artifactsDir = canonicalStatusValue(
     input,
     input.statusPayload.artifactsDir,
@@ -509,10 +501,10 @@ function writeResultArtifact(
     asyncDir: input.asyncDir,
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(projectAgents ? { projectAgents } : {}),
-    sessionFile,
-    shareUrl,
-    gistUrl,
-    shareError,
+    ...(sessionFile !== undefined ? { sessionFile } : {}),
+    ...(shareUrl !== undefined ? { shareUrl } : {}),
+    ...(gistUrl !== undefined ? { gistUrl } : {}),
+    ...(shareError !== undefined ? { shareError } : {}),
     ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
     ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
   };
@@ -666,16 +658,6 @@ export function persistRunnerTerminalRun(input: TerminalPersistenceInput): void 
     input.statusPayload.sessionFile,
     input.effectiveSessionFile,
   );
-  const shareUrl = canonicalStatusValue(input, input.statusPayload.shareUrl, input.shareUrl);
-  const shareError = canonicalStatusValue(input, input.statusPayload.shareError, input.shareError);
-
-  // Nested completion is independent of telemetry. In particular, the paused
-  // supervisor path may have no telemetry envelope, and concurrent terminal
-  // adoption may skip the ordinary terminal status write. The status owner
-  // de-duplicates this lifecycle edge when an earlier terminal write already
-  // published it.
-  input.statusOwner.emitNestedSelfEvent("subagent.nested.completed");
-
   input.appendEvent(
     JSON.stringify({
       type: "subagent.run.completed",
@@ -707,8 +689,6 @@ export function persistRunnerTerminalRun(input: TerminalPersistenceInput): void 
     truncated: input.truncated,
     artifactsDir,
     sessionFile,
-    shareUrl,
-    shareError,
   });
   writeResultArtifact(input, finalTelemetry, state, resultPaused, startedAt, endedAt);
 }

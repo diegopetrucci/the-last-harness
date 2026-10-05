@@ -250,7 +250,6 @@ describe("registerSubagentNotify", () => {
           agent: "b",
           status: "failed",
           summary: "B failed\n\nOutput:\nResult from b",
-          children: [{ agent: "nested-b", state: "failed" }],
         },
       ],
     });
@@ -264,10 +263,7 @@ describe("registerSubagentNotify", () => {
       content,
       /1\/2\. a — completed\nResult from a\nOutput artifact: \/tmp\/a-output\.md\nSession: \/tmp\/a-session\.jsonl/,
     );
-    assert.match(
-      content,
-      /2\/2\. b — failed\nB failed\n\nOutput:\nResult from b\nNested subagents:\n   ↳ nested-b — failed/,
-    );
+    assert.match(content, /2\/2\. b — failed\nB failed\n\nOutput:\nResult from b/);
     // sendMessage has no options (no triggerTurn)
     assert.equal(sentMessages[0]!.options, undefined);
     // nudge is sent once (idle path, fails bypass grouping)
@@ -356,23 +352,6 @@ describe("registerSubagentNotify", () => {
 
   it("bounds oversized single-notice content and attached preview while retaining status and safe references", () => {
     const { events, sentMessages, sentUserMessages } = createPi();
-    const deepNested = [
-      {
-        agent: "nested-root",
-        state: "complete",
-        children: [
-          {
-            agent: "nested-level-2",
-            state: "complete",
-            children: [{ agent: "nested-too-deep", state: "complete" }],
-          },
-        ],
-      },
-      ...Array.from({ length: 10 }, (_, index) => ({
-        agent: `nested-sibling-${index}`,
-        state: "complete",
-      })),
-    ];
     const results = Array.from({ length: 10 }, (_, index) => ({
       agent: `worker-${index}`,
       status: index === 9 ? "failed" : "completed",
@@ -382,7 +361,6 @@ describe("registerSubagentNotify", () => {
             artifactPath: "/safe/artifacts/worker-0.md",
             sessionPath: "/safe/sessions/worker-0.jsonl",
             intercomTarget: "stale-target-must-not-appear",
-            children: deepNested,
           }
         : {}),
     }));
@@ -418,8 +396,6 @@ describe("registerSubagentNotify", () => {
     assert.match(content, /… \[summary truncated\]/);
     assert.match(content, /Output artifact: \/safe\/artifacts\/worker-0\.md/);
     assert.match(content, /Session: \/safe\/sessions\/worker-0\.jsonl/);
-    assert.match(content, /… \[nested depth limit reached\]/);
-    assert.match(content, /… \[additional nested entries omitted\]/);
     // Oversized per-child summaries are clamped to the fixed per-child budget, so the
     // assembled message fits the envelope without the backstop firing. This is what keeps the
     // trailing recovery references (asserted above) from being truncated away.

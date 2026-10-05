@@ -35,7 +35,6 @@ import {
 import { boundChildError, formatProtocolOutputLimit } from "../shared/child-protocol.ts";
 import {
   getFinalOutput,
-  findLatestSessionFile,
   detectSubagentError,
   formatErrorWithOutput,
   synthesizeChildExitDiagnostic,
@@ -311,16 +310,9 @@ export function snapshotResult(result: SingleResult, progress: AgentProgress): S
   };
 }
 
-export function resolveResultSessionFile(
-  result: SingleResult,
-  options: RunSyncOptions,
-  shareEnabled: boolean,
-): void {
+export function resolveResultSessionFile(result: SingleResult, options: RunSyncOptions): void {
   if (options.sessionFile && (existsSync(options.sessionFile) || result.messages?.length)) {
     result.sessionFile = options.sessionFile;
-  } else if (shareEnabled && options.sessionDir) {
-    const sessionFile = findLatestSessionFile(options.sessionDir);
-    if (sessionFile) result.sessionFile = sessionFile;
   }
 }
 
@@ -378,7 +370,6 @@ type SingleAttemptFinalizationInput = {
   agent: AgentConfig;
   task: string;
   options: RunSyncOptions;
-  sessionEnabled: boolean;
   originalTask?: string;
   outputSnapshot?: SingleOutputSnapshot;
   supervisorPauseRequested: boolean;
@@ -573,12 +564,11 @@ export function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): Si
     startTime,
     agent,
     options,
-    sessionEnabled,
     supervisorPauseRequested,
     interruptedByControl,
   } = input;
   if (!result.protocolOutputLimit && supervisorPauseRequested) {
-    resolveResultSessionFile(result, options, sessionEnabled);
+    resolveResultSessionFile(result, options);
     result.exitCode = 0;
     result.interrupted = true;
     result.error = undefined;
@@ -602,7 +592,7 @@ export function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): Si
     return result;
   }
   if (!result.protocolOutputLimit && interruptedByControl) {
-    resolveResultSessionFile(result, options, sessionEnabled);
+    resolveResultSessionFile(result, options);
     result.exitCode = 0;
     result.interrupted = true;
     result.error = undefined;
@@ -640,14 +630,13 @@ export function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): Si
 type ForegroundRunFinalizationInput = {
   result: SingleResult;
   options: RunSyncOptions;
-  shareEnabled: boolean;
   artifactPathsResult?: ArtifactPaths;
   transcriptWriter?: ChildTranscriptWriter;
 };
 
 export function prepareForegroundRunFinalization(input: ForegroundRunFinalizationInput): void {
-  const { result, options, shareEnabled, artifactPathsResult, transcriptWriter } = input;
-  resolveResultSessionFile(result, options, shareEnabled);
+  const { result, options, artifactPathsResult, transcriptWriter } = input;
+  resolveResultSessionFile(result, options);
   if (result.timedOut) {
     const timeoutDiagnostics = formatTimeoutDiagnostics(
       result,

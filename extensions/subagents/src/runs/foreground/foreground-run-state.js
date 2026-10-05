@@ -4,7 +4,6 @@ import { PROJECT_AGENT_TERMINAL_RETENTION_MS, normalizeProjectAgentRunCapture, r
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "../../shared/foreground-pause.js";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.js";
 import { lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, } from "../shared/lifecycle-state.js";
-import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { readStatus } from "../../shared/utils.js";
 import {} from "../../shared/types.js";
@@ -12,7 +11,6 @@ import { transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry
 import { isClaimedPausedLifecycle, pausedForegroundStatusPath, pausedForegroundTerminationReason, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
-import { updateForegroundNestedProjection } from "../shared/nested-events.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
@@ -55,21 +53,7 @@ function formatForegroundActivity(control) {
         return [`no activity for ${seconds}s`, ...facts].join(" | ");
     return [`active ${seconds}s ago`, ...facts].join(" | ");
 }
-export function trustedSessionRootsForStatus(ctx, deps) {
-    const roots = [];
-    const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-    if (parentSessionFile)
-        roots.push(deps.getSubagentSessionRoot(parentSessionFile));
-    return [...new Set(roots)];
-}
 export function foregroundStatusResult(control) {
-    let nestedWarning;
-    try {
-        updateForegroundNestedProjection(control);
-    }
-    catch (error) {
-        nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
-    }
     const activity = formatForegroundActivity(control);
     const lines = [
         `Run: ${control.runId}`,
@@ -80,13 +64,6 @@ export function foregroundStatusResult(control) {
             : undefined,
         activity ? `Activity: ${activity}` : undefined,
     ].filter((line) => Boolean(line));
-    lines.push(...formatNestedRunStatusLines(control.nestedChildren, {
-        indent: "",
-        commandHints: true,
-        maxLines: 20,
-    }));
-    if (nestedWarning)
-        lines.push(`Warning: ${nestedWarning}`);
     return {
         content: [{ type: "text", text: lines.join("\n") }],
         details: { mode: "management", results: [] },

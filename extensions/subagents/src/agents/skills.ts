@@ -22,15 +22,11 @@ export type SkillSource =
   | "project-claude"
   | "user-claude"
   | "project-settings"
-  | "user-settings"
-  | "extension"
-  | "builtin"
-  | "unknown";
+  | "user-settings";
 
 interface ResolvedSkill {
   name: string;
   path: string;
-  content: string;
   description?: string;
   source: SkillSource;
 }
@@ -82,7 +78,7 @@ const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 //   2. ~/.claude/skills is curated for a different tool, not for tlh; tlh's own
 //      curated skills should win any name collision.
 //   3. It keeps the subagent resolver consistent with the primary agent, where
-//      extension-provided paths are appended after all defaults and therefore lose
+//      these lower-priority roots are appended after all defaults and therefore lose
 //      every same-name collision.
 export const SOURCE_PRIORITY: Record<SkillSource, number> = {
   project: 700,
@@ -96,25 +92,7 @@ export const SOURCE_PRIORITY: Record<SkillSource, number> = {
   // collide with each other, the project-local one wins over the user-home one.
   "project-claude": 180,
   "user-claude": 170,
-  extension: 150,
-  builtin: 100,
-  unknown: 0,
 };
-
-function stripSkillFrontmatter(content: string): string {
-  const normalized = content.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---")) return normalized;
-
-  const endIndex = normalized.indexOf("\n---", 3);
-  if (endIndex === -1) return normalized;
-
-  return normalized.slice(endIndex + 4).trim();
-}
-
-function isWithinPath(filePath: string, dir: string): boolean {
-  const relative = path.relative(dir, filePath);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
 
 function isJsonValue(value: unknown): value is JsonValue {
   if (value === null) return true;
@@ -463,54 +441,6 @@ function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
   return [...deduped.values()];
 }
 
-function inferSkillSource(
-  filePath: string,
-  cwd: string,
-  agentDir: string,
-  sourceHint?: SkillSource,
-): SkillSource {
-  if (sourceHint) return sourceHint;
-
-  const projectConfigRoot = path.resolve(getProjectConfigDir(cwd));
-  const projectSkillsRoot = path.resolve(projectConfigRoot, "skills");
-  const projectPackagesRoot = path.resolve(projectConfigRoot, "npm", "node_modules");
-  const rawProjectAgentsRoot = path.resolve(cwd, ".agents");
-  const projectAgentsRoot =
-    hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
-      ? undefined
-      : rawProjectAgentsRoot;
-  const projectClaudeSkillsRoot = path.resolve(cwd, ".claude", "skills");
-  const userSkillsRoot = path.resolve(agentDir, "skills");
-  const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
-  const userAgentRoot = path.resolve(agentDir);
-  const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
-  const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
-  const userClaudeSkillsRoot = path.resolve(os.homedir(), ".claude", "skills");
-
-  if (isWithinPath(filePath, projectPackagesRoot)) return "project-package";
-  if (isWithinPath(filePath, projectClaudeSkillsRoot)) return "project-claude";
-  if (
-    isWithinPath(filePath, projectSkillsRoot) ||
-    (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot))
-  )
-    return "project";
-  if (isWithinPath(filePath, projectConfigRoot)) return "project-settings";
-
-  if (isWithinPath(filePath, userPackagesRoot)) return "user-package";
-  if (isWithinPath(filePath, userClaudeSkillsRoot)) return "user-claude";
-  if (
-    isWithinPath(filePath, userSkillsRoot) ||
-    (userAgentsRoot && isWithinPath(filePath, userAgentsRoot))
-  )
-    return "user";
-  if (isWithinPath(filePath, userAgentRoot)) return "user-settings";
-
-  const globalRoot = getGlobalNpmRoot();
-  if (globalRoot && isWithinPath(filePath, globalRoot)) return "user-package";
-
-  return "unknown";
-}
-
 function chooseHigherPrioritySkill(
   existing: CachedSkillEntry | undefined,
   candidate: CachedSkillEntry,
@@ -523,39 +453,37 @@ function chooseHigherPrioritySkill(
   return candidate.order < existing.order ? candidate : existing;
 }
 
+function parseSkillDescription(content: string): string | undefined {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (!normalized.startsWith("---")) return undefined;
+
+  const endIndex = normalized.indexOf("\n---", 3);
+  if (endIndex === -1) return undefined;
+
+  const frontmatter = normalized.slice(3, endIndex).trim();
+  const match = frontmatter.match(/^description:\s*(.+)$/m);
+  if (!match) return undefined;
+  return match[1]?.trim().replace(/^['"]|['"]$/g, "");
+}
+
 function maybeReadSkillDescription(filePath: string): string | undefined {
   try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const normalized = content.replace(/\r\n/g, "\n");
-    if (!normalized.startsWith("---")) return undefined;
-
-    const endIndex = normalized.indexOf("\n---", 3);
-    if (endIndex === -1) return undefined;
-
-    const frontmatter = normalized.slice(3, endIndex).trim();
-    const match = frontmatter.match(/^description:\s*(.+)$/m);
-    if (!match) return undefined;
-    return match[1]?.trim().replace(/^['"]|['"]$/g, "");
+    return parseSkillDescription(fs.readFileSync(filePath, "utf-8"));
   } catch {
     // Description parsing is best-effort metadata extraction.
     return undefined;
   }
 }
 
-function collectFilesystemSkills(
-  cwd: string,
-  agentDir: string,
-  skillPaths: SkillSearchPath[],
-): CachedSkillEntry[] {
+function collectFilesystemSkills(skillPaths: SkillSearchPath[]): CachedSkillEntry[] {
   const entries: CachedSkillEntry[] = [];
   const seen = new Map<string, number>();
   const visitedDirectories = new Map<string, number>();
   let order = 0;
 
-  const pushEntry = (name: string, filePath: string, sourceHint?: SkillSource) => {
+  const pushEntry = (name: string, filePath: string, source: SkillSource) => {
     const resolvedFile = path.resolve(filePath);
     if (!fs.existsSync(resolvedFile)) return;
-    const source = inferSkillSource(resolvedFile, cwd, agentDir, sourceHint);
     const existingIndex = seen.get(resolvedFile);
     if (existingIndex !== undefined) {
       const existing = entries[existingIndex];
@@ -581,26 +509,26 @@ function collectFilesystemSkills(
 
   const shouldSkipDirectory = (name: string) => name.startsWith(".") || name === "node_modules";
 
-  const markDirectoryVisited = (dirPath: string, sourceHint?: SkillSource): boolean => {
+  const markDirectoryVisited = (dirPath: string, source: SkillSource): boolean => {
     let resolvedDir: string;
     try {
       resolvedDir = fs.realpathSync(dirPath);
     } catch {
       resolvedDir = path.resolve(dirPath);
     }
-    const priority = sourceHint ? (SOURCE_PRIORITY[sourceHint] ?? 0) : SOURCE_PRIORITY.unknown;
+    const priority = SOURCE_PRIORITY[source] ?? 0;
     const previousPriority = visitedDirectories.get(resolvedDir);
     if (previousPriority !== undefined && previousPriority >= priority) return false;
     visitedDirectories.set(resolvedDir, priority);
     return true;
   };
 
-  const walkSkillDirectories = (dirPath: string, sourceHint?: SkillSource) => {
-    if (!markDirectoryVisited(dirPath, sourceHint)) return;
+  const walkSkillDirectories = (dirPath: string, source: SkillSource) => {
+    if (!markDirectoryVisited(dirPath, source)) return;
 
     const skillFile = path.join(dirPath, "SKILL.md");
     if (fs.existsSync(skillFile)) {
-      pushEntry(path.basename(dirPath), skillFile, sourceHint);
+      pushEntry(path.basename(dirPath), skillFile, source);
       return;
     }
 
@@ -623,7 +551,7 @@ function collectFilesystemSkills(
         continue;
       }
       if (stat.isDirectory()) {
-        walkSkillDirectories(entryPath, sourceHint);
+        walkSkillDirectories(entryPath, source);
       }
     }
   };
@@ -702,7 +630,7 @@ function getCachedSkills(cwd: string): CachedSkillEntry[] {
   }
 
   const skillPaths = buildSkillPaths(cwd, agentDir);
-  const loaded = collectFilesystemSkills(cwd, agentDir, skillPaths);
+  const loaded = collectFilesystemSkills(skillPaths);
   const dedupedByName = new Map<string, CachedSkillEntry>();
 
   for (const entry of loaded) {
@@ -738,13 +666,10 @@ function readSkill(
     }
 
     const raw = fs.readFileSync(skillPath, "utf-8");
-    const content = stripSkillFrontmatter(raw);
-    const description = maybeReadSkillDescription(skillPath);
     const skill: ResolvedSkill = {
       name: skillName,
       path: skillPath,
-      content,
-      description,
+      description: parseSkillDescription(raw),
       source,
     };
 

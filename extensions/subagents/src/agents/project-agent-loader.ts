@@ -31,10 +31,6 @@ export const PROJECT_AGENT_PACKAGE = "embedded";
 export const MAX_PROJECT_AGENT_FILE_BYTES = 64 * 1024;
 export const MAX_PROJECT_AGENT_FILES = 128;
 export const MAX_PROJECT_AGENT_TOTAL_BYTES = 8 * 1024 * 1024;
-/** Retained for API compatibility; custom-agent inventory is non-recursive. */
-export const MAX_PROJECT_AGENT_DEPTH = 0;
-/** Retained for API compatibility; only the fixed path components are inspected. */
-export const MAX_PROJECT_AGENT_DIRECTORIES = 4;
 export const MAX_PROJECT_AGENT_SCAN_ATTEMPTS = 3;
 
 const PROJECT_AGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -63,6 +59,7 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
   "output",
   "defaultReads",
   "defaultProgress",
+  // Accepted as a retired definition field but deliberately not stored or executed.
   "interactive",
   "maxSubagentDepth",
   "maxExecutionTimeMs",
@@ -104,15 +101,6 @@ const DEFAULT_FILE_SYSTEM: ProjectAgentLoaderFileSystem = {
   closeSync: (fd) => fs.closeSync(fd),
   noFollowFlag: fs.constants.O_NOFOLLOW,
 };
-
-/**
- * Retained as a structural compatibility type for callers that previously
- * injected Git command resolution. The loader no longer invokes Git; root
- * validation is performed by the shared metadata-only resolver.
- */
-export interface ProjectAgentGit {
-  showToplevel(cwd: string): string | undefined;
-}
 
 export interface ProjectAgentTrustStore {
   /** Return the nearest persisted entry so the loader can verify its source path. */
@@ -168,8 +156,6 @@ export interface ProjectAgentDefinitionScanOptions {
   maxFileBytes?: number;
   maxFiles?: number;
   maxTotalBytes?: number;
-  maxDepth?: number;
-  maxDirectories?: number;
 }
 
 export interface ProjectAgentSnapshotLoadOptions {
@@ -180,14 +166,11 @@ export interface ProjectAgentSnapshotLoadOptions {
   trustOverride?: boolean;
   trust?: ProjectAgentTrustOptions;
   trustDependencies?: ProjectAgentTrustDependencies;
-  git?: ProjectAgentGit;
   fileSystem?: ProjectAgentLoaderFileSystem;
   maxAttempts?: number;
   maxFileBytes?: number;
   maxFiles?: number;
   maxTotalBytes?: number;
-  maxDepth?: number;
-  maxDirectories?: number;
 }
 
 export interface LoadedProjectAgentSnapshot {
@@ -356,17 +339,10 @@ function normalizeAttempts(value: number | undefined): number {
     : MAX_PROJECT_AGENT_SCAN_ATTEMPTS;
 }
 
-/**
- * Resolve the session's project identity without invoking Git or trusting a
- * caller-supplied project path. The `git` option remains accepted only for
- * source compatibility with the pre-#588 loader and is intentionally ignored.
- */
+/** Resolve the session's project identity through the metadata-only root validator. */
 export function resolveCanonicalGitWorktreeRoot(
   cwd: string,
-  options: {
-    git?: ProjectAgentGit;
-    fileSystem?: ProjectAgentLoaderFileSystem;
-  } = {},
+  options: { fileSystem?: ProjectAgentLoaderFileSystem } = {},
 ): string | undefined {
   return resolveValidatedGitWorktreeRoot(cwd, {
     fileSystem: options.fileSystem ?? DEFAULT_FILE_SYSTEM,
@@ -1151,7 +1127,6 @@ function parseProjectAgentDefinitionFromText(
       ? undefined
       : parseStrictBoolean(frontmatter, "supervisorBridge", false, filePath);
   const defaultProgress = parseStrictBoolean(frontmatter, "defaultProgress", false, filePath);
-  const interactive = parseStrictBoolean(frontmatter, "interactive", false, filePath);
   const inheritProjectContext = parseStrictBoolean(
     frontmatter,
     "inheritProjectContext",
@@ -1192,7 +1167,6 @@ function parseProjectAgentDefinitionFromText(
     output: frontmatter.output,
     defaultReads,
     defaultProgress,
-    interactive,
     maxSubagentDepth: parsedMaxSubagentDepth,
     completionGuard,
     supervisorBridge,
@@ -1383,10 +1357,7 @@ function emptyScanResult(
 function scanProjectAgentsOnce(
   projectRoot: string,
   options: Required<
-    Pick<
-      ProjectAgentDefinitionScanOptions,
-      "maxFileBytes" | "maxFiles" | "maxTotalBytes" | "maxDepth" | "maxDirectories"
-    >
+    Pick<ProjectAgentDefinitionScanOptions, "maxFileBytes" | "maxFiles" | "maxTotalBytes">
   > & {
     fileSystem: ProjectAgentLoaderFileSystem;
   },
@@ -1496,8 +1467,6 @@ export function scanProjectAgentDefinitions(
     maxFileBytes: normalizeBound(options.maxFileBytes, MAX_PROJECT_AGENT_FILE_BYTES),
     maxFiles: normalizeBound(options.maxFiles, MAX_PROJECT_AGENT_FILES),
     maxTotalBytes: normalizeBound(options.maxTotalBytes, MAX_PROJECT_AGENT_TOTAL_BYTES),
-    maxDepth: normalizeBound(options.maxDepth, MAX_PROJECT_AGENT_DEPTH),
-    maxDirectories: normalizeBound(options.maxDirectories, MAX_PROJECT_AGENT_DIRECTORIES),
   };
   return scanProjectAgentsOnce(canonicalRoot, scanOptions);
 }
@@ -1583,10 +1552,7 @@ export async function loadProjectAgentSnapshot(
   options: ProjectAgentSnapshotLoadOptions,
 ): Promise<LoadedProjectAgentSnapshot> {
   const fileSystem = options.fileSystem ?? DEFAULT_FILE_SYSTEM;
-  const projectRoot = resolveCanonicalGitWorktreeRoot(options.cwd, {
-    git: options.git,
-    fileSystem,
-  });
+  const projectRoot = resolveCanonicalGitWorktreeRoot(options.cwd, { fileSystem });
   if (!projectRoot) {
     return {
       status: "unavailable",
@@ -1648,8 +1614,6 @@ export async function loadProjectAgentSnapshot(
     maxFileBytes: options.maxFileBytes,
     maxFiles: options.maxFiles,
     maxTotalBytes: options.maxTotalBytes,
-    maxDepth: options.maxDepth,
-    maxDirectories: options.maxDirectories,
   };
   const maxAttempts = normalizeAttempts(options.maxAttempts);
   let scan: ProjectAgentDefinitionScanResult = emptyScanResult(projectRoot, "unstable");

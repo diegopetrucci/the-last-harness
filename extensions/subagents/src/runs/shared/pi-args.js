@@ -30,6 +30,33 @@ export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILI
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
+export const RETIRED_NESTED_ROUTE_ENV_VARS = [
+    SUBAGENT_PARENT_EVENT_SINK_ENV,
+    SUBAGENT_PARENT_CONTROL_INBOX_ENV,
+    SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
+    SUBAGENT_PARENT_RUN_ID_ENV,
+    SUBAGENT_PARENT_CHILD_INDEX_ENV,
+    SUBAGENT_PARENT_DEPTH_ENV,
+    SUBAGENT_PARENT_PATH_ENV,
+    SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
+];
+export const RETIRED_NESTED_ORCHESTRATION_ERROR = "Nested subagent orchestration is retired; start a direct single or parallel run without legacy nested route metadata.";
+export function hasRetiredNestedRouteEnv(env = process.env) {
+    return RETIRED_NESTED_ROUTE_ENV_VARS.some((name) => Object.hasOwn(env, name));
+}
+function isRetiredNestedChildRuntime(env = process.env) {
+    return env[SUBAGENT_CHILD_ENV] === "1";
+}
+export function retiredNestedLaunchError(value) {
+    if (value !== null &&
+        typeof value === "object" &&
+        (Object.hasOwn(value, "nestedRoute") || Object.hasOwn(value, "nestedSelf"))) {
+        return RETIRED_NESTED_ORCHESTRATION_ERROR;
+    }
+    return hasRetiredNestedRouteEnv() || isRetiredNestedChildRuntime()
+        ? RETIRED_NESTED_ORCHESTRATION_ERROR
+        : undefined;
+}
 function isExtensionToolPath(tool) {
     return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
