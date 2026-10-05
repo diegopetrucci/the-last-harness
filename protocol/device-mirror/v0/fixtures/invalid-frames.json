@@ -1,0 +1,11 @@
+{
+  "expectedCodes": [
+    "frame-too-large",
+    "malformed-frame",
+    "invalid-utf8",
+    "invalid-json",
+    "control-frame-too-large"
+  ],
+  "truncatedBodyLength": 5,
+  "trailingBodyLength": 2
+}

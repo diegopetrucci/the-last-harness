@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,7 +21,7 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "0.87.1";
+export const TLH_PINNED_PI_VERSION = "1.0.3";
 export const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
 
 // ---------------------------------------------------------------------------
@@ -95,6 +103,31 @@ export function writeFakeTk(fakebin) {
   writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
 }
 
+/**
+ * Write a fake npm that handles `npm ci --ignore-scripts --no-audit --no-fund`
+ * called with cwd = the staging dir (the new lockfile-based install path).
+ * The fake npm creates the staged node_modules structure relative to its cwd.
+ */
+export function writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath }) {
+  writeFakeCommand(
+    fakebin,
+    "npm",
+    [
+      `printf '%s\\n' "$*" >>"${npmLog}"`,
+      `if [[ "$1" == "ci" ]]; then`,
+      `  mkdir -p "node_modules/@earendil-works/pi-coding-agent/dist/bundle"`,
+      `  cp "${templatePiPath}" "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `  chmod +x "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `fi`,
+    ].join("\n"),
+  );
+}
+
+/**
+ * Write a fake npm that handles the OLD `npm install -g --prefix` approach.
+ * Kept for any tests that still need to simulate the legacy path.
+ * @deprecated Use writeFakeNpmCiInstaller for the lockfile-based install path.
+ */
 export function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
   writeFakeCommand(
     fakebin,
@@ -128,6 +161,17 @@ export function writeVersionedWrapperPi(commandDir, logPath, version = TLH_PINNE
       "exit 0",
     ].join("\n"),
   );
+}
+
+/**
+ * Seed a runtime's lib/package-lock.json with the shipped lock so that the
+ * reuse-check (byte-identical comparison) passes for the given runtimeDir.
+ */
+export function seedRuntimeLock(runtimeDir) {
+  const shippedLock = join(repoRoot, "config", "pi-runtime", "package-lock.json");
+  if (!existsSync(shippedLock)) return; // shipped lock not present (shouldn't happen in tests)
+  mkdirSync(join(runtimeDir, "lib"), { recursive: true });
+  copyFileSync(shippedLock, join(runtimeDir, "lib", "package-lock.json"));
 }
 
 export function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {
@@ -178,12 +222,11 @@ export function runStage1LocalPackageInstall(
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   // Fake npm so installPiIfNeeded never hits the network. The fake npm copies a
-  // template pi (reporting the pinned version) into the private runtime path.
+  // template pi (reporting the pinned version) into the staged node_modules path.
   writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
   if (existingLibrarianConfig !== undefined) {
     mkdirSync(join(agentDir, "extensions"), { recursive: true });

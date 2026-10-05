@@ -147,6 +147,17 @@ const defaultExtensionAPI = {
   setThinkingLevel(_level: unknown): void {},
   registerProvider(_provider: unknown, _config?: unknown): void {},
   unregisterProvider(_name: string): void {},
+  getSettings() {
+    return {};
+  },
+  registerMcpServer(_name: string, _config: unknown): void {},
+  unregisterMcpServer(_name: string): void {},
+  getMcpServers(): never[] {
+    return [];
+  },
+  registerVirtualModel(_model: unknown): void {},
+  unregisterVirtualModel(_provider: string, _id: string): void {},
+  registerToolRenderer(_resolver: unknown): void {},
 } satisfies Omit<ExtensionAPI, "on" | "events">;
 
 // AgentConfig is imported from production so test fixtures stay in sync with the

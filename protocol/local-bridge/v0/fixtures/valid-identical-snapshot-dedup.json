@@ -1,0 +1,18 @@
+{
+  "scenario": "identical-snapshot-dedup",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-dedup",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "sourceInstanceId": "13131313131313131313131313131313",
+  "expected": {
+    "outcomes": ["accepted", "deduplicated", "duplicate"],
+    "bridgeRevisions": [1, 1, 1]
+  },
+  "snapshot": {
+    "eventId": "g1-e1",
+    "revision": 1,
+    "cursor": "g1-c1",
+    "snapshotId": "g1-s1",
+    "status": "idle"
+  }
+}

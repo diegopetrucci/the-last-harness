@@ -1,0 +1,12 @@
+{
+  "scenario": "bridge-restart",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-restart-bridge",
+  "oldLaunchToken": "0123456789abcdef0123456789abcdef",
+  "newLaunchToken": "fedcba9876543210fedcba9876543210",
+  "sourceInstanceId": "14141414141414141414141414141414",
+  "expected": {
+    "newBridgeRevision": 0,
+    "oldTokenCode": "token-mismatch"
+  }
+}

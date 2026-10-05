@@ -6,7 +6,13 @@ When the MCP status line is visible, TLH appends an approximate retained-context
 
 ## Default usage
 
-TLH uses the adapter in a proxy-first way: by default you get one `mcp` tool that routes requests to your configured MCP servers, instead of exposing every MCP tool directly. The packaged `test-runner` receives this generic `mcp` gateway alongside `bash`, so an assigned final-validation step can discover, connect to, and invoke any configured server/tool, including tools that change server-side state. The runner still may not edit the repository, install or fix anything, mutate tickets, delegate, or use direct `mcp:*` child tools. Its `MCP_DIRECT_TOOLS=__none__` sentinel prevents an unset direct-tool setting from bootstrapping configured direct tools.
+TLH uses the adapter in a proxy-first way: by default you get one `mcp` tool that routes requests to your configured MCP servers, instead of exposing every MCP tool directly. All four packaged primary agents and all nine packaged minor agents declare this generic gateway while preserving their other tools.
+
+- Primary agents and `developer` may call the gateway within their authorized task scope and existing role boundaries.
+- Read-only minors are instructed to avoid mutations and escalate uncertain side effects. This is prompt guidance, not gateway enforcement; the gateway itself may still expose a tool with side effects.
+- The packaged `test-runner` is the intentional unrestricted exception: it may use assigned generic MCP steps to discover, connect to, and invoke any configured server/tool, including tools that change server-side state. Its exact validation-ticket and repository/ticket restrictions still apply.
+
+Direct `mcp:*` child tools remain filtered out, and `MCP_DIRECT_TOOLS=__none__` prevents an unset direct-tool setting from bootstrapping configured direct tools.
 
 Common slash commands:
 
@@ -28,6 +34,8 @@ Common slash commands:
   - Project-local Pi config: `.pi/mcp.json`
 
 Use the isolated-profile or project-local files when you want TLH-specific or repo-specific MCP server definitions without changing shared machine-wide config.
+
+> **Note (Pi 1.0.1+):** Pi 1.0.1 documents per-server `enabled`, `exposure`, and `toolExposure` overrides for `.pi/mcp.json`. These fields are read by Pi's built-in `mcp` extension — which TLH disables while `mcporter` owns `/mcp`. The `mcporter` adapter honours `"disabled": true` to disable a server; it does **not** honour `"enabled": false`. Setting `"enabled": false` will not disable a server under TLH. Use `"disabled": true` instead.
 
 The adapter expects a top-level `mcpServers` object. Minimal examples:
 
@@ -54,11 +62,31 @@ For OAuth-backed servers, configure an HTTP `url` for the server and then run `/
 
 `directTools` is opt-in. It exposes individual MCP tools directly instead of going through the proxy `mcp` tool, but it is more token-expensive and may need cache warm-up or a manual `/mcp reconnect <server>` before the direct tool list is ready.
 
+## Built-in MCP compatibility
+
+Pi 1.0.0 and later include a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
+
+This is temporary compatibility behavior while `mcporter` owns `/mcp`. Install/update adds the exclusion only when `mcporter` is present and enabled in the bundled default-extension manifest. When TLH inserts it, the isolated settings record `tlh.builtinMcpExclusionManaged: true` as ownership evidence. A pre-existing exclusion without that marker is user-owned: TLH preserves it during opt-out and does not claim it when the adapter is enabled. Disabling `mcporter`, opting it out by package filter, or removing it from the manifest removes only a TLH-managed exclusion and clears the marker; unrelated extension settings remain unchanged.
+
+Keep the adapter enabled — it is the intended TLH MCP integration. To switch to native MCP, run `tlh defaults disable mcporter`; Pi's built-in `builtin:mcp` will load on next session start without a warning only if no `-builtin:mcp` exclusion remains in the isolated settings. TLH removes only a TLH-managed exclusion; a preserved user-owned exclusion continues to prevent native MCP from loading. If TLH migrates away from `mcporter`, that migration must explicitly remove any TLH-managed `-builtin:mcp` entry and its ownership marker while preserving unmarked user exclusions. Tracking upstream `builtin:mcp` progress is recorded in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705), but that native migration is a non-goal of the per-agent gateway contract.
+
+If `mcporter` is disabled and native `builtin:mcp` loads, this provides core MCP connectivity without TLH's adapter-specific features (status-bar footer, proxy `mcp` tool). In particular, the packaged agents' generic proxy-gateway contract is lost while the adapter is disabled; enabling the native extension does not recreate that contract. Direct `mcp:*` child tools remain filtered out.
+
+## Rollback and re-enable
+
+To undo an adapter opt-out and restore the packaged generic `mcp` gateway, re-enable the bundled adapter and restart or reload TLH:
+
+```sh
+tlh defaults enable mcporter
+```
+
+This restores the adapter-specific proxy gateway and footer behavior; it does not migrate the profile to native MCP or change the child direct-tool safety sentinel.
+
 ## Opt out
 
 If you do not want TLH to manage the bundled adapter for that isolated profile:
 
 ```sh
-tlh defaults disable mcporter   # opt out
-tlh defaults enable mcporter    # re-enable
+tlh defaults disable mcporter   # opt out; reload uses native MCP without TLH's proxy gateway
+tlh defaults enable mcporter    # re-enable the TLH gateway
 ```

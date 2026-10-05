@@ -86,6 +86,14 @@
       "rules": {
         "complexity": "off"
       }
+    },
+    {
+      // This normative conformance source is frozen by the bridge manifests;
+      // keep its byte-pinned contract while retaining every other lint rule.
+      "files": ["protocol/session-mirror/v1/conformance.ts"],
+      "rules": {
+        "max-lines": "off"
+      }
     }
   ]
 }

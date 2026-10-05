@@ -23,7 +23,7 @@ import {
   runInstaller,
   scrubInstallerEnv,
   writeFakeCommand,
-  writeFakeNpmInstaller,
+  writeFakeNpmCiInstaller,
   writeFakePi,
   writeFakeTk,
   writeLoggingPi,
@@ -1375,12 +1375,12 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
   mkdirSync(cwdDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  // Pinned pi at 0.87.1 — still prepended for --extensions.
+  // Pinned pi at current pin — still prepended for --extensions.
   writeFakePi(
     pinnedPiDir,
     [
       `printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-      `if [[ "\${1:-}" == "--version" ]]; then printf '0.87.1\\n'; exit 0; fi`,
+      `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
       "exit 85",
     ].join("\n"),
   );
@@ -1616,10 +1616,9 @@ test("stage-1 wrapper summary emits done header, blank line, and backtick-wrappe
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   writeLoggingPi(templateDir, piLog);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
 
   const env = scrubInstallerEnv({
@@ -1664,10 +1663,9 @@ test("stage-1 wrapper summary PATH warning appears before summary block when bin
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   writeLoggingPi(templateDir, piLog);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
 
   // binDir intentionally NOT on PATH so the PATH warning fires.

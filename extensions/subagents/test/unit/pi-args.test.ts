@@ -667,6 +667,39 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(args.includes("--no-extensions"), false);
   });
 
+  // Pi 0.99.2: --no-extensions now also disables built-in providers (builtin:mcp, builtin:codemode,
+  // builtin:tool-search). An explicit extensions policy still emits --no-extensions, but a
+  // builtin:<name> entry in the list must be passed through via --extension so the child can
+  // selectively re-enable one built-in extension.
+  it("emits --no-extensions and passes through an explicit builtin:<name> extension", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      extensions: ["builtin:mcp", "./custom-ext.ts"],
+    });
+
+    // With an explicit extensions list, --no-extensions must be emitted (disables all extensions
+    // including built-ins in Pi 0.99.2).
+    assert.ok(args.includes("--no-extensions"));
+
+    const loadedExtensions = args.filter((_arg, index) => args[index - 1] === "--extension");
+    // The builtin:<name> identifier must be passed through as-is so Pi can re-enable it.
+    assert.ok(
+      loadedExtensions.includes("builtin:mcp"),
+      `expected --extension builtin:mcp in args; got: ${JSON.stringify(loadedExtensions)}`,
+    );
+    // The regular extension path must also be present.
+    assert.ok(
+      loadedExtensions.includes("./custom-ext.ts"),
+      `expected --extension ./custom-ext.ts in args; got: ${JSON.stringify(loadedExtensions)}`,
+    );
+    // The runtime must remain last.
+    assert.match(loadedExtensions.at(-1) ?? "", /subagent-prompt-runtime\.ts$/);
+  });
+
   it("passes tool budget through env", () => {
     const { env } = buildPiArgs({
       baseArgs: ["-p"],
@@ -841,6 +874,25 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
+    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+  });
+
+  it("keeps the generic MCP gateway for MCP-only declarations while direct tools stay filtered", () => {
+    const { args, env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      supervisorBridge: false,
+      tools: ["mcp", "mcp:server/lookup"],
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
     assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
   });
 

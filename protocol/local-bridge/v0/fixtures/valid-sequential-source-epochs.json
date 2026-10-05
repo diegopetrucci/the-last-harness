@@ -1,0 +1,33 @@
+{
+  "scenario": "sequential-source-epochs",
+  "installationId": "fixture-installation",
+  "sessionId": "conversation-restart",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "epochs": [
+    {
+      "sourceInstanceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "snapshot": {
+        "eventId": "g1-e1",
+        "revision": 1,
+        "cursor": "g1-c1",
+        "snapshotId": "g1-s1",
+        "status": "idle"
+      }
+    },
+    {
+      "sourceInstanceId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "snapshot": {
+        "eventId": "g1-e1",
+        "revision": 1,
+        "cursor": "g1-c1",
+        "snapshotId": "g1-s1",
+        "status": "active"
+      }
+    }
+  ],
+  "expected": {
+    "sourceEpochs": [1, 2],
+    "bridgeRevisions": [1, 2],
+    "outcomes": ["accepted", "accepted"]
+  }
+}
