@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.0.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.0.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 
@@ -239,7 +239,8 @@ TLH records ownership of the private Pi runtime via a marker file (`.tlh-runtime
 
 | Condition | Effect |
 |---|---|
-| valid `.tlh-runtime-owned` marker present | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| valid `.tlh-runtime-owned` marker, `origin=created` | private runtime (`~/.the-last-harness/runtime`) removed (`rm -rf`); legacy `~/.local` pi is **not** removed unless `--force-include-pi` is also passed |
+| valid `.tlh-runtime-owned` marker, `origin=migrated` | surgical removal: `npm uninstall -g --prefix …` removes Pi only; `lib/package.json` and `lib/package-lock.json` are also removed when their `name` is exactly `tlh-pi-runtime` (the TLH runtime manifest); foreign files are preserved |
 | marker absent or invalid (unmarked or pre-marker runtime) | private runtime **skipped** — manual-removal hint printed; `piInstalledByTlh=true` alone does not override this |
 | `--force-include-pi` flag | removes private runtime when a valid marker is present; runtime skipped with a hint if unmarked; removes legacy `~/.local/bin/pi` if present and private runtime is absent |
 | `--keep-pi` flag | keeps everything — skips runtime and pi removal |

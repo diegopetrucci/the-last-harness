@@ -25,7 +25,7 @@ import {
   runStage1LocalPackageInstall,
   scrubInstallerEnv,
   writeFakeCommand,
-  writeFakeNpmInstaller,
+  writeFakeNpmCiInstaller,
   writeFakePi,
   writeFakeTk,
 } from "./install-stage1-core-test-helpers.mjs";
@@ -137,10 +137,9 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
     "pnpm",
     [`printf '%s\\n' "$*" >>"${pnpmLog}"`, 'mkdir -p "$PWD/node_modules/some-dep"'].join("\n"),
   );
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog: join(root, "npm.log"),
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(root, "runtime", "bin", "pi"),
   });
 
   const result = runInstaller(
@@ -719,11 +718,12 @@ test("stage-1 normalizes absolute file: sources for Pi while preserving raw inst
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, output);
+  // Two --version calls (pre-swap + post-swap staging validation) precede install.
   assert.deepEqual(
     readPiLogRecords(piLog)
       .map((record) => record.command)
-      .slice(0, 3),
-    ["--version", `install ${repoRoot}`, `update ${repoRoot}`],
+      .slice(0, 4),
+    ["--version", "--version", `install ${repoRoot}`, `update ${repoRoot}`],
   );
   const state = readJson(join(agentDir, "tlh", "install-state.json"));
   assert.equal(state.packageSource, filePackageSource);

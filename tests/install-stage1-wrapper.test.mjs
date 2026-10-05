@@ -23,7 +23,7 @@ import {
   runInstaller,
   scrubInstallerEnv,
   writeFakeCommand,
-  writeFakeNpmInstaller,
+  writeFakeNpmCiInstaller,
   writeFakePi,
   writeFakeTk,
   writeLoggingPi,
@@ -1616,10 +1616,9 @@ test("stage-1 wrapper summary emits done header, blank line, and backtick-wrappe
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   writeLoggingPi(templateDir, piLog);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
 
   const env = scrubInstallerEnv({
@@ -1664,10 +1663,9 @@ test("stage-1 wrapper summary PATH warning appears before summary block when bin
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   writeLoggingPi(templateDir, piLog);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
 
   // binDir intentionally NOT on PATH so the PATH warning fires.

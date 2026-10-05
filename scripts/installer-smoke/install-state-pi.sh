@@ -132,6 +132,10 @@ if [ "${1:-}" = "--version" ]; then printf '1.0.0\n'; exit 0; fi
 printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
 EOF_PRESENT_RUNTIME_PI
   chmod +x "${present_runtime_bin}/pi"
+  # Seed lib/package-lock.json matching the shipped lock so the reuse check passes.
+  # Without this, the lock mismatch triggers reinstall \ the fake npm exits 98.
+  mkdir -p "${present_dir}/runtime/lib"
+  cp "${ROOT_DIR}/config/pi-runtime/package-lock.json" "${present_dir}/runtime/lib/package-lock.json"
 
   run_scrubbed_installer_env HOME="${present_dir}/home" PATH="${present_fakebin}" TLH_SKIP_GNOSIS_INSTALL=1 "${node_cmd}" scripts/tlh-install.mjs --dry-run --agent-dir "${present_agent}" --bin-dir "${present_bin}" >"${present_stdout}" 2>"${present_stderr}"
   combine_output "${present_stdout}" "${present_stderr}" "${present_combined}"
