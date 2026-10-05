@@ -144,7 +144,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following Pi 1.0.0 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following Pi 1.0.3 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -155,9 +155,9 @@ The following Pi 1.0.0 checks are also required release-preparation work, remain
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `1.0.0`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises Pi `1.0.3`, verify update convergence from that published ref.
 
-The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. The 1.0.0 live checks are pending the next release candidate. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
+The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05. The full release-tier checklist above remains pending the next release candidate. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 
 ## Final validation guidance
 

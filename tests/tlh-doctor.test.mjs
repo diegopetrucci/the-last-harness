@@ -16,6 +16,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { TLH_PINNED_PI_VERSION } from "./install-stage1-core-test-helpers.mjs";
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -83,7 +84,7 @@ function configureHealthyFixture(t) {
   const runtimeLib = join(fixture.runtimeDir, "lib");
   mkdirSync(runtimeBin, { recursive: true });
   mkdirSync(runtimeLib, { recursive: true });
-  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 1.0.0'\n");
+  writeExecutable(join(runtimeBin, "pi"), `#!/bin/sh\necho 'pi ${TLH_PINNED_PI_VERSION}'\n`);
   // Copy the shipped lock into the runtime so the lockfile check passes OK.
   cpSync(
     join(repoRoot, "config", "pi-runtime", "package-lock.json"),
