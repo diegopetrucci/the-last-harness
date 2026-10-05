@@ -408,7 +408,7 @@ describe("TUI display boundaries", () => {
     assert.match(rendered, /^paused worker(?:\n|$)/);
   });
 
-  it("sanitizes async widget metadata, output, and nested child failures", () => {
+  it("sanitizes async widget metadata, output, and step failures", () => {
     const job: AsyncJobState = {
       asyncId: "display-widget",
       asyncDir: "/tmp/display-widget",
@@ -425,18 +425,6 @@ describe("TUI display boundaries", () => {
           currentToolArgs: unsafe,
           recentTools: [{ tool: unsafe, args: unsafe, endMs: 1 }],
           recentOutput: [unsafe],
-          children: [
-            {
-              id: "nested-widget",
-              parentRunId: "display-widget",
-              parentStepIndex: 0,
-              depth: 1,
-              path: [],
-              state: "failed",
-              agent: unsafe,
-              error: unsafe,
-            },
-          ],
         },
       ],
       stepsTotal: 1,

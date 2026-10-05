@@ -138,15 +138,24 @@ EOF_MANAGED_WRAPPER
 }
 
 write_tlh_pi_runtime() {
-  # Seed the TLH pi runtime layout produced by:
-  #   npm install -g --ignore-scripts --prefix <runtime_dir> @earendil-works/pi-coding-agent
+  # Seed the TLH pi runtime layout produced by the staged npm-ci installer.
   # Presence of both runtime_dir/bin/pi and
   # runtime_dir/lib/node_modules/@earendil-works/pi-coding-agent is the base
   # ownership/layout predicate checked by the uninstaller.
+  # Optional second argument: "with-manifest" — also writes lib/package.json and
+  # lib/package-lock.json with the TLH runtime manifest name ("tlh-pi-runtime"),
+  # matching the lockfile-installed runtime layout (tlh-install-runtime.mts).
   local runtime_dir="$1"
+  local with_manifest="${2:-}"
   mkdir -p "${runtime_dir}/bin" "${runtime_dir}/lib/node_modules/@earendil-works/pi-coding-agent"
   printf '#!/bin/sh\n' >"${runtime_dir}/bin/pi"
   chmod +x "${runtime_dir}/bin/pi"
+  if [[ "${with_manifest}" == "with-manifest" ]]; then
+    # Write pretty-printed JSON matching the generator (JSON.stringify, 2-space
+    # indent) and npm output so the uninstaller's line-based detection works.
+    printf '{\n  "name": "tlh-pi-runtime",\n  "version": "1.0.0",\n  "private": true\n}\n' >"${runtime_dir}/lib/package.json"
+    printf '{\n  "name": "tlh-pi-runtime",\n  "lockfileVersion": 3\n}\n' >"${runtime_dir}/lib/package-lock.json"
+  fi
 }
 
 write_tlh_runtime_marker() {

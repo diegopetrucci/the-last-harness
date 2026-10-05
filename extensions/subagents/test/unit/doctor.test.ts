@@ -72,7 +72,6 @@ describe("buildDoctorReport", () => {
         state: makeState(root),
         currentSessionFile: path.join(root, "sessions", "parent.jsonl"),
         currentSessionId: "session-abc123",
-        expandTilde: (value) => value.replace(/^~\//, `${root}/home/`),
         paths,
         deps: {
           isAsyncAvailable: () => true,
@@ -98,7 +97,7 @@ describe("buildDoctorReport", () => {
       assert.match(report, /^Subagents doctor report/);
       assert.ok(report.includes(`- cwd: ${root}`));
       assert.match(report, /- async support: available/);
-      assert.match(report, /- configured session dir: not configured/);
+      assert.doesNotMatch(report, /configured session dir/);
       assert.match(report, /- current session file: .*parent\.jsonl/);
       assert.match(report, /- temp root: ok /);
       assert.match(

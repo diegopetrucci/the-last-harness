@@ -85,7 +85,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -140,7 +139,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -267,7 +265,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -409,7 +406,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -524,7 +520,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -673,7 +668,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -825,7 +819,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -979,7 +972,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1042,7 +1034,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1125,7 +1116,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {

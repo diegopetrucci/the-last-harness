@@ -5,12 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import type {
-  AgentProgress,
-  PublicNestedRunSummary,
-  NestedRunState,
-  SubagentState,
-} from "../../src/shared/types.ts";
+import type { AgentProgress, SubagentState } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import type { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import {
@@ -162,6 +157,7 @@ const defaultExtensionAPI = {
   },
   registerVirtualModel(_model: unknown): void {},
   unregisterVirtualModel(_provider: string, _id: string): void {},
+  registerToolRenderer(_resolver: unknown): void {},
 } satisfies Omit<ExtensionAPI, "on" | "events">;
 
 // AgentConfig is imported from production so test fixtures stay in sync with the
@@ -232,24 +228,6 @@ export function makeAgentProgress(
     toolCount: 0,
     tokens: 0,
     durationMs: 0,
-    ...overrides,
-  };
-}
-
-/**
- * Creates a complete PublicNestedRunSummary fixture typed from the production type.
- * `id` is required; required address fields default to inert values.
- */
-export function makePublicNestedRunSummary(
-  id: string,
-  overrides: Partial<PublicNestedRunSummary> & { state?: NestedRunState } = {},
-): PublicNestedRunSummary {
-  return {
-    id,
-    parentRunId: "root",
-    depth: 1,
-    path: [{ runId: "root" }],
-    state: "complete",
     ...overrides,
   };
 }

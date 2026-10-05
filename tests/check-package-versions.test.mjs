@@ -45,7 +45,15 @@ function tempFixture({
     "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
     typebox: "*",
   },
-  overrides = {},
+  overrides = {
+    "@earendil-works/chord": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-codemode": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-mcp": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-telemetry": FIXTURE_MANAGED_PI_VERSION,
+    "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+  },
   defaultExtensions = [{ id: "helper", source: "npm:helper@1.2.3" }],
   gnosisVersion = FIXTURE_MANAGED_GNOSIS_VERSION,
   gnosisMtsVersion = gnosisVersion,
@@ -60,6 +68,8 @@ function tempFixture({
   missingInstalledPackages = [],
   missingLockfilePackages = [],
   lockfileDependencyVersions = {},
+  /** Arbitrary extra entries to merge into the root lock packages map (key \ version entry). */
+  extraLockPackages = {},
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
   _tmpDirs.push(dir);
@@ -119,6 +129,7 @@ function tempFixture({
   for (const name of missingLockfilePackages) {
     delete lockPackages[`node_modules/${name}`];
   }
+  Object.assign(lockPackages, extraLockPackages);
 
   writeFileSync(
     lockfilePath,
@@ -196,7 +207,7 @@ function tempFixture({
   };
 }
 
-function runCheckPackageVersions(fixture) {
+function runCheckPackageVersions(fixture, extraArgs = []) {
   return spawnSync(
     process.execPath,
     [
@@ -223,6 +234,10 @@ function runCheckPackageVersions(fixture) {
       fixture.installMjsPath,
       "--node-modules-dir",
       fixture.nodeModulesDir,
+      // Skip runtime manifest check unless the caller provides a fixture dir
+      "--runtime-manifest-dir",
+      "",
+      ...extraArgs,
     ],
     {
       cwd: repoRoot,
@@ -258,6 +273,13 @@ test("check-package-versions passes with pinned dependency exceptions and ignore
       typebox: "*",
     },
     overrides: {
+      "@earendil-works/chord": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-codemode": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-mcp": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-telemetry": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
       dompurify: "3.4.11",
       "parent-package": {
         "child-package": "1.2.3",
@@ -792,4 +814,500 @@ test("check-package-versions keeps managed Pi installed-version freshness checks
   assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
   assert.match(result.stderr, /@earendil-works\/pi-coding-agent/);
   assert.match(result.stderr, /expected "9\.8\.7", got "9\.8\.6"/);
+});
+
+// ---------------------------------------------------------------------------
+// Runtime manifest validation tests
+// ---------------------------------------------------------------------------
+
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_RUNTIME_TOP_LEVEL_KEY = `node_modules/${PI_CODING_AGENT_PACKAGE}`;
+
+function makeRuntimeManifestDir({
+  piVersion = FIXTURE_MANAGED_PI_VERSION,
+  lockfileVersion = 3,
+  extraTopLevel = [],
+  missingResolved = false,
+  missingIntegrity = false,
+  missingIntegrityWithoutShrinkwrap = false,
+  missingIntegrityBeneathShrinkwrap = false,
+  earendilSiblings = {},
+  /** Arbitrary extra packages to merge into the lock (key → entry object). */
+  extraLockPackages = {},
+  /**
+   * npm overrides for the runtime package.json.
+   * - undefined (default): auto-computed when earendilSiblings is non-empty,
+   *   covering every sibling in earendilSiblings at FIXTURE_MANAGED_PI_VERSION;
+   *   omitted when earendilSiblings is empty.
+   * - null: explicitly omit the overrides field (use to test the "no overrides" case).
+   * - object: used as-is.
+   */
+  overrides = undefined,
+} = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "tlh-runtime-manifest-test-"));
+  _tmpDirs.push(dir);
+
+  // Resolve overrides: auto-compute from earendilSiblings when not explicitly set.
+  const hasSiblings = Object.keys(earendilSiblings).length > 0;
+  const resolvedOverrides =
+    overrides === undefined
+      ? hasSiblings
+        ? Object.fromEntries(
+            Object.keys(earendilSiblings).map((s) => [
+              `@earendil-works/${s}`,
+              FIXTURE_MANAGED_PI_VERSION,
+            ]),
+          )
+        : undefined
+      : overrides === null
+        ? undefined
+        : overrides;
+
+  const packageJson = {
+    name: "tlh-pi-runtime",
+    version: piVersion,
+    private: true,
+    dependencies: { [PI_CODING_AGENT_PACKAGE]: piVersion },
+    ...(resolvedOverrides !== undefined ? { overrides: resolvedOverrides } : {}),
+  };
+  writeFileSync(join(dir, "package.json"), JSON.stringify(packageJson, null, 2), "utf8");
+
+  // Build a minimal but structurally-valid lockfile.
+  // Pi 1.0.1 does not use npm shrinkwrap, so the top-level entry has no
+  // hasShrinkwrap flag and every entry must carry integrity.
+  const topLevelEntry = {
+    version: piVersion,
+    resolved: `https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-${piVersion}.tgz`,
+    integrity:
+      "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+  };
+  const nestedKey = `${PI_RUNTIME_TOP_LEVEL_KEY}/node_modules/some-dep`;
+  const nestedEntry = {
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/some-dep/-/some-dep-1.0.0.tgz",
+    integrity:
+      "sha512-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB==",
+  };
+
+  const packages = {
+    "": {
+      name: "tlh-pi-runtime",
+      version: piVersion,
+      dependencies: { [PI_CODING_AGENT_PACKAGE]: piVersion },
+    },
+    [PI_RUNTIME_TOP_LEVEL_KEY]: topLevelEntry,
+    [nestedKey]: nestedEntry,
+  };
+
+  for (const extraKey of extraTopLevel) {
+    packages[`node_modules/${extraKey}`] = {
+      version: "1.0.0",
+      resolved: `https://registry.npmjs.org/${extraKey}/-/${extraKey}-1.0.0.tgz`,
+      integrity:
+        "sha512-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ==",
+    };
+  }
+
+  if (missingResolved) {
+    delete packages[PI_RUNTIME_TOP_LEVEL_KEY].resolved;
+  }
+
+  if (missingIntegrity) {
+    delete packages[PI_RUNTIME_TOP_LEVEL_KEY].integrity;
+  }
+
+  if (missingIntegrityWithoutShrinkwrap) {
+    // Add a top-level package with no integrity
+    packages["node_modules/orphan-no-integrity"] = {
+      version: "1.0.0",
+      resolved: "https://registry.npmjs.org/orphan-no-integrity/-/orphan-no-integrity-1.0.0.tgz",
+    };
+  }
+
+  if (missingIntegrityBeneathShrinkwrap) {
+    // Mark the top-level entry as having a shrinkwrap and add a nested dep
+    // without integrity: this used to be exempt but must now fail.
+    packages[PI_RUNTIME_TOP_LEVEL_KEY].hasShrinkwrap = true;
+    delete packages[nestedKey].integrity;
+  }
+
+  // Inject @earendil-works/* sibling entries into the lock.
+  // Keys map package name suffix (e.g. "chord") to version string.
+  for (const [suffix, version] of Object.entries(earendilSiblings)) {
+    const siblingKey = `${PI_RUNTIME_TOP_LEVEL_KEY}/node_modules/@earendil-works/${suffix}`;
+    packages[siblingKey] = {
+      version,
+      resolved: `https://registry.npmjs.org/@earendil-works/${suffix}/-/${suffix}-${version}.tgz`,
+      integrity:
+        "sha512-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC==",
+    };
+  }
+
+  // Merge arbitrary extra lock entries supplied by the caller.
+  Object.assign(packages, extraLockPackages);
+
+  const lock = {
+    name: "tlh-pi-runtime",
+    version: piVersion,
+    lockfileVersion,
+    requires: true,
+    packages,
+  };
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify(lock, null, 2), "utf8");
+
+  return dir;
+}
+
+test("check-package-versions passes with a valid runtime manifest", () => {
+  const runtimeDir = makeRuntimeManifestDir();
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+});
+
+test("check-package-versions fails when runtime manifest dep version mismatches managed Pi pin", () => {
+  const runtimeDir = makeRuntimeManifestDir({ piVersion: FIXTURE_MANAGED_PI_DRIFT_VERSION });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /dependencies\["@earendil-works\/pi-coding-agent"\]/);
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_DRIFT_VERSION));
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_VERSION));
+});
+
+test("check-package-versions fails when runtime lockfile has wrong lockfileVersion", () => {
+  const runtimeDir = makeRuntimeManifestDir({ lockfileVersion: 2 });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /lockfileVersion must be 3/);
+  assert.match(result.stderr, /found 2/);
+});
+
+test("check-package-versions fails when runtime lockfile has extra top-level packages", () => {
+  const runtimeDir = makeRuntimeManifestDir({ extraTopLevel: ["unexpected-extra-package"] });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /exactly one top-level package/);
+  assert.match(result.stderr, /unexpected-extra-package/);
+});
+
+test("check-package-versions fails when runtime lockfile entry is missing resolved", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingResolved: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing resolved/);
+});
+
+test("check-package-versions fails when top-level runtime package is missing integrity", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingIntegrity: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing integrity/);
+});
+
+test("check-package-versions fails when a non-shrinkwrap-covered package is missing integrity", () => {
+  const runtimeDir = makeRuntimeManifestDir({ missingIntegrityWithoutShrinkwrap: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing integrity/);
+  assert.match(result.stderr, /orphan-no-integrity/);
+});
+
+test("check-package-versions fails when a package nested beneath a hasShrinkwrap parent is missing integrity", () => {
+  // Pi 1.0.1 has no inner shrinkwrap; the hasShrinkwrap integrity exemption was
+  // removed. Even if a future package sets hasShrinkwrap, every nested entry
+  // must still carry integrity.
+  const runtimeDir = makeRuntimeManifestDir({ missingIntegrityBeneathShrinkwrap: true });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing integrity/);
+  assert.match(result.stderr, /some-dep/);
+});
+
+test("check-package-versions skips runtime manifest check when dir is empty string", () => {
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  // No --runtime-manifest-dir passed = uses the "" override from runCheckPackageVersions
+  const result = runCheckPackageVersions(fixture);
+
+  // Should still pass (fixture has no config/pi-runtime but we skip the check)
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("check-package-versions fails when runtime manifest package.json is missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tlh-runtime-manifest-missing-"));
+  _tmpDirs.push(dir);
+  // Create lock but no package.json
+  writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ lockfileVersion: 3 }), "utf8");
+
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", dir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json/);
+});
+
+// ---------------------------------------------------------------------------
+// @earendil-works/* sibling version constraint tests
+// ---------------------------------------------------------------------------
+
+test("check-package-versions passes when runtime lock earendil siblings match managed Pi pin", () => {
+  // Siblings at the managed Pi pin version should not trigger the check.
+  const runtimeDir = makeRuntimeManifestDir({
+    earendilSiblings: { chord: FIXTURE_MANAGED_PI_VERSION, "pi-mcp": FIXTURE_MANAGED_PI_VERSION },
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+});
+
+test("check-package-versions fails when runtime lock earendil sibling version mismatches managed Pi pin", () => {
+  // Simulates chord at 1.0.2 while managed Pi pin is FIXTURE_MANAGED_PI_VERSION (9.8.7).
+  const runtimeDir = makeRuntimeManifestDir({
+    earendilSiblings: { chord: "1.0.2" },
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@earendil-works\/chord/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+test("check-package-versions fails when root lock earendil sibling version mismatches managed Pi pin", () => {
+  // Inject a sibling @earendil-works/chord entry at a drifted version into the
+  // root lock fixture. The managed Pi pin is FIXTURE_MANAGED_PI_VERSION (9.8.7).
+  const driftVersion = "1.0.2";
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    devDependencies: {
+      "@earendil-works/chord": "1.0.1",
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+    },
+    peerDependencies: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      typebox: "*",
+    },
+    // Make the lock say chord resolved to driftVersion, not the spec version.
+    lockfileDependencyVersions: { "@earendil-works/chord": driftVersion },
+    // Make the installed package match the lock so validateInstalledDependencies passes.
+    installedVersions: { "@earendil-works/chord": driftVersion },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@earendil-works\/chord/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+// ---------------------------------------------------------------------------
+// Override drift validation tests (Task 1)
+// ---------------------------------------------------------------------------
+
+test("check-package-versions fails when root package.json has an @earendil-works override at wrong version", () => {
+  // chord is at 1.0.2 but managed Pi pin is FIXTURE_MANAGED_PI_VERSION.
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    overrides: {
+      "@earendil-works/chord": "1.0.2",
+      "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-codemode": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-mcp": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-telemetry": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /overrides\["@earendil-works\/chord"\]/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+test("check-package-versions fails when runtime manifest has an @earendil-works override at wrong version", () => {
+  // chord is at 1.0.2 in the runtime manifest overrides.
+  const runtimeDir = makeRuntimeManifestDir({
+    overrides: {
+      "@earendil-works/chord": "1.0.2",
+      "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-codemode": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-mcp": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-telemetry": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+    },
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /overrides\["@earendil-works\/chord"\]/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+test("check-package-versions fails when root package.json overrides are missing a lock sibling", () => {
+  // pi-agent-core is in the root lock (via devDependencies) but absent from overrides;
+  // the check is now driven by what the lock contains, not a static sibling list.
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    overrides: {
+      // pi-agent-core intentionally omitted — it IS in the lock
+      "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@earendil-works\/pi-agent-core/);
+  assert.match(result.stderr, /missing/);
+});
+
+// ---------------------------------------------------------------------------
+// End-anchored sibling matching tests (Task 2)
+// ---------------------------------------------------------------------------
+
+test("check-package-versions end-anchored: path inside @earendil-works package is not a sibling violation", () => {
+  // node_modules/@earendil-works/chord/extra is a path inside the chord
+  // package (not a separately installed package).  The earendil sibling check
+  // uses an end-anchored regex, so this key must NOT trigger a version error
+  // even though its version field differs from the managed Pi pin.
+  // Tested against the root lock (no single-top-level constraint there).
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    extraLockPackages: {
+      "node_modules/@earendil-works/chord/extra": { version: "1.0.2" },
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("check-package-versions end-anchored: non-earendil nested inside earendil is not a sibling violation", () => {
+  // node_modules/@earendil-works/pi-ai/node_modules/@anthropic-ai/sdk is a
+  // non-earendil package nested inside pi-ai.  Because the key does not end
+  // with node_modules/@earendil-works/<name>, the sibling check must not flag
+  // it regardless of its version.
+  // Tested against the root lock (no single-top-level constraint there).
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    extraLockPackages: {
+      "node_modules/@earendil-works/pi-ai/node_modules/@anthropic-ai/sdk": { version: "3.0.0" },
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("check-package-versions end-anchored: hoisted sibling key at non-pin version still fails", () => {
+  // A standard hoisted entry for @earendil-works/chord at a drifted version
+  // must still be caught even with end-anchored matching.
+  const runtimeDir = makeRuntimeManifestDir({
+    earendilSiblings: { chord: "1.0.2" },
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@earendil-works\/chord/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+test("check-package-versions end-anchored: nested sibling key at non-pin version still fails", () => {
+  // An @earendil-works/chord entry nested inside another package must still
+  // be caught: some-package/node_modules/@earendil-works/chord ends with the
+  // canonical sibling segment and is a real package installation.
+  const runtimeDir = makeRuntimeManifestDir({
+    extraLockPackages: {
+      "node_modules/some-package/node_modules/@earendil-works/chord": {
+        version: "1.0.2",
+        resolved: "https://registry.npmjs.org/@earendil-works/chord/-/chord-1.0.2.tgz",
+        integrity:
+          "sha512-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF==",
+      },
+    },
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /@earendil-works\/chord/);
+  assert.match(result.stderr, /managed Pi pin/);
+});
+
+// ---------------------------------------------------------------------------
+// Override required when lock has siblings (follow-up: non-vacuous enforcement)
+// ---------------------------------------------------------------------------
+
+test("check-package-versions fails when root overrides are absent while lock has earendil siblings", () => {
+  // The default fixture lock always contains pi-agent-core, pi-ai, pi-tui as
+  // earendil siblings (via devDependencies).  Removing the overrides field
+  // entirely must therefore be caught — siblings would float on regeneration.
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    overrides: {},
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /overrides is missing/);
+  assert.match(result.stderr, /@earendil-works\//);
+});
+
+test("check-package-versions fails when runtime manifest overrides are absent while lock has earendil siblings", () => {
+  // The runtime lock has a chord sibling; removing the overrides field from the
+  // runtime package.json must be flagged so the next lock regeneration cannot
+  // resolve chord to a drifted version.
+  const runtimeDir = makeRuntimeManifestDir({
+    earendilSiblings: { chord: FIXTURE_MANAGED_PI_VERSION },
+    overrides: null, // explicitly no overrides field
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /overrides is missing/);
+  assert.match(result.stderr, /@earendil-works\/chord/);
 });

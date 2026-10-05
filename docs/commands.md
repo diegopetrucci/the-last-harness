@@ -145,7 +145,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", view: "fleet" })` shows active dispatch status; neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status" })` shows active direct dispatch status; pass `id` to inspect one run. Neither command changes these overrides.
 
 ### `/reconcile`
 

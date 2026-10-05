@@ -51,6 +51,7 @@ Options:
   --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
+  --runtime-manifest-dir <dir> Directory with package.json+package-lock.json for Pi runtime lock validation (default: config/pi-runtime; pass "" to skip)
   -h, --help                   Show this help
 `;
 }
@@ -63,6 +64,7 @@ function parseArgs(argv) {
     installShPath: DEFAULT_INSTALL_SH_PATH,
     modelSelectionScopePath: DEFAULT_MODEL_SELECTION_SCOPE_PATH,
     nodeModulesDir: "",
+    runtimeManifestDir: "config/pi-runtime",
     gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
     piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
     help: false,
@@ -103,6 +105,12 @@ function parseArgs(argv) {
     }
     if (arg === "--node-modules-dir") {
       args.nodeModulesDir = requiredValue(argv, index + 1, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--runtime-manifest-dir") {
+      // Empty string is a valid value meaning "skip runtime manifest check"
+      args.runtimeManifestDir = argv[index + 1] ?? "";
       index += 1;
       continue;
     }
@@ -153,6 +161,11 @@ function parseArgs(argv) {
     if (arg.startsWith("--node-modules-dir=")) {
       args.nodeModulesDir = arg.slice("--node-modules-dir=".length);
       if (!args.nodeModulesDir) throw new Error("--node-modules-dir requires a value");
+      continue;
+    }
+    if (arg.startsWith("--runtime-manifest-dir=")) {
+      // Empty string value means "skip runtime manifest check"
+      args.runtimeManifestDir = arg.slice("--runtime-manifest-dir=".length);
       continue;
     }
     if (arg.startsWith("--gnosis-script=")) {
@@ -699,6 +712,219 @@ function validateManagedPiPins(args, packageJson, problems) {
   }
 }
 
+/**
+ * Read the canonical managed Pi version from install.sh (TLH_PINNED_PI_VERSION).
+ * Returns undefined if the version cannot be read or is not pinned.
+ */
+function readManagedPiVersion(args) {
+  try {
+    const version = readShellStringVariable(args.installShPath, "TLH_PINNED_PI_VERSION");
+    return isPinnedExactVersion(version) ? version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_RUNTIME_TOP_LEVEL_KEY = `node_modules/${PI_CODING_AGENT_PACKAGE}`;
+
+/**
+ * End-anchored pattern that matches a lock-file key only when the key's final
+ * path segment is a direct @earendil-works/* package.  This correctly excludes:
+ * - paths *inside* an earendil package  (e.g. node_modules/@earendil-works/chord/extra)
+ * - non-earendil packages nested *inside* an earendil package
+ *   (e.g. node_modules/@earendil-works/pi-ai/node_modules/@anthropic-ai/sdk)
+ * Capture group 1 is the sibling name (e.g. "chord", "pi-mcp").
+ */
+const EARENDIL_SIBLING_KEY_RE = /(?:^|\/)node_modules\/@earendil-works\/([^/]+)$/;
+
+/**
+ * Verify every @earendil-works/* sibling entry in a lock file has a version
+ * equal to the managed Pi pin.  pi-coding-agent itself (the one pinned
+ * top-level package) is excluded; all others (chord, pi-agent-core, pi-ai,
+ * pi-codemode, pi-mcp, pi-telemetry, pi-tui, …) must match exactly.
+ *
+ * Uses EARENDIL_SIBLING_KEY_RE (end-anchored) so that:
+ * - paths inside an earendil package (e.g. chord/extra) are excluded, and
+ * - non-earendil packages nested inside earendil (e.g. pi-ai/…/@anthropic-ai/sdk)
+ *   are excluded.
+ * Hoisted and doubly-nested earendil siblings are still caught.
+ */
+function validateEarendilSiblingVersions(lockPath, lock, managedPiVersion, problems) {
+  if (!managedPiVersion) return;
+
+  const packages = isPlainObject(lock.packages) ? lock.packages : {};
+
+  for (const [key, entry] of Object.entries(packages)) {
+    // End-anchored match: only count keys whose final segment is @earendil-works/<name>.
+    const match = EARENDIL_SIBLING_KEY_RE.exec(key);
+    if (!match) continue;
+
+    const siblingName = match[1];
+    if (siblingName === "pi-coding-agent") continue;
+
+    const version = entry?.version;
+    if (version !== managedPiVersion) {
+      problems.push(
+        `${lockPath}: ${JSON.stringify(key)} is an @earendil-works/* sibling at version ${JSON.stringify(
+          version,
+        )} but managed Pi pin is ${JSON.stringify(managedPiVersion)}; add npm overrides to constrain all @earendil-works/* siblings to the pinned version`,
+      );
+    }
+  }
+}
+
+/**
+ * Validate the npm `overrides` field of a manifest for @earendil-works/* drift.
+ *
+ * The required sibling set is derived from the corresponding lock file: any
+ * @earendil-works/* package (other than pi-coding-agent) found in the lock MUST
+ * be covered by an override equal to the managed Pi pin.  This makes the check
+ * required (not vacuous) — removing the overrides object while siblings remain
+ * in the lock is caught immediately.
+ *
+ * Extra earendil override keys that are not in the lock are still version-checked
+ * so that hand-maintained entries cannot drift either.
+ */
+function validateEarendilOverrides(manifestPath, overrides, lock, managedPiVersion, problems) {
+  if (!managedPiVersion) return;
+
+  // Derive the sibling set expected from the lock.
+  const lockPackages = isPlainObject(lock?.packages) ? lock.packages : {};
+  const lockSiblings = new Set();
+  for (const key of Object.keys(lockPackages)) {
+    const match = EARENDIL_SIBLING_KEY_RE.exec(key);
+    if (!match || match[1] === "pi-coding-agent") continue;
+    lockSiblings.add(match[1]);
+  }
+
+  const resolvedOverrides = isPlainObject(overrides) ? overrides : {};
+  const earendilKeys = Object.keys(resolvedOverrides).filter((k) =>
+    k.startsWith("@earendil-works/"),
+  );
+
+  // If the lock has no earendil siblings AND there are no earendil override keys,
+  // there is nothing to validate.
+  if (lockSiblings.size === 0 && earendilKeys.length === 0) return;
+
+  // Every sibling present in the lock must be covered by an override at the managed pin.
+  for (const sibling of lockSiblings) {
+    const key = `@earendil-works/${sibling}`;
+    if (!(key in resolvedOverrides)) {
+      problems.push(
+        `${manifestPath}#overrides is missing "${key}"; add an override set to ${JSON.stringify(managedPiVersion)} to constrain all @earendil-works/* siblings to the pinned Pi version`,
+      );
+    } else if (resolvedOverrides[key] !== managedPiVersion) {
+      problems.push(
+        `${manifestPath}#overrides["${key}"] is ${JSON.stringify(resolvedOverrides[key])} but managed Pi pin is ${JSON.stringify(managedPiVersion)}; update all @earendil-works/* overrides to match the pinned Pi version`,
+      );
+    }
+  }
+
+  // Also validate earendil override keys not derived from the lock (e.g. hand-maintained
+  // entries for siblings that happen to be deduped away).  Version must still match pin.
+  for (const key of earendilKeys) {
+    const sibling = key.slice("@earendil-works/".length);
+    if (lockSiblings.has(sibling)) continue; // already checked in the loop above
+    if (resolvedOverrides[key] !== managedPiVersion) {
+      problems.push(
+        `${manifestPath}#overrides["${key}"] is ${JSON.stringify(resolvedOverrides[key])} but managed Pi pin is ${JSON.stringify(managedPiVersion)}; update all @earendil-works/* overrides to match the pinned Pi version`,
+      );
+    }
+  }
+}
+
+/**
+ * Validate config/pi-runtime/{package.json,package-lock.json}:
+ * - manifest dependency matches the managed Pi pin
+ * - lockfileVersion is 3
+ * - exactly one top-level node_modules entry (pi-coding-agent)
+ * - every non-root entry has resolved
+ * - the top-level entry and all packages not covered by a hasShrinkwrap parent have integrity
+ * - every @earendil-works/* sibling resolves to the managed Pi pin
+ */
+function validateRuntimeManifest(args, managedPiVersion, problems) {
+  if (!args.runtimeManifestDir) return;
+
+  const manifestPath = join(args.runtimeManifestDir, "package.json");
+  const lockPath = join(args.runtimeManifestDir, "package-lock.json");
+
+  let manifest;
+  try {
+    manifest = readJsonFile(manifestPath);
+  } catch (error) {
+    problems.push(error.message);
+    return;
+  }
+
+  const piDep = manifest.dependencies?.[PI_CODING_AGENT_PACKAGE];
+  if (managedPiVersion === undefined) {
+    // If we can't read the managed pin, only check the manifest is structurally valid
+    if (typeof piDep !== "string" || !isPinnedExactVersion(piDep)) {
+      problems.push(
+        `${manifestPath}#dependencies["${PI_CODING_AGENT_PACKAGE}"] must be an exact version pin, found ${JSON.stringify(piDep)}`,
+      );
+    }
+  } else if (piDep !== managedPiVersion) {
+    problems.push(
+      `${manifestPath}#dependencies["${PI_CODING_AGENT_PACKAGE}"] must be ${JSON.stringify(managedPiVersion)} (matching managed Pi pin), found ${JSON.stringify(piDep)}`,
+    );
+  }
+
+  let lock;
+  try {
+    lock = readJsonFile(lockPath);
+  } catch (error) {
+    problems.push(error.message);
+    return;
+  }
+
+  if (lock.lockfileVersion !== 3) {
+    problems.push(
+      `${lockPath}#lockfileVersion must be 3, found ${JSON.stringify(lock.lockfileVersion)}`,
+    );
+  }
+
+  const packages = isPlainObject(lock.packages) ? lock.packages : {};
+  const nonRootKeys = Object.keys(packages).filter((k) => k !== "");
+
+  // Check exactly one top-level package
+  const topLevelKeys = nonRootKeys.filter((k) => {
+    if (!k.startsWith("node_modules/")) return false;
+    const rest = k.slice("node_modules/".length);
+    return !rest.includes("/node_modules/");
+  });
+
+  if (topLevelKeys.length !== 1 || topLevelKeys[0] !== PI_RUNTIME_TOP_LEVEL_KEY) {
+    const found = topLevelKeys.length === 0 ? "none" : topLevelKeys.join(", ");
+    problems.push(
+      `${lockPath} must have exactly one top-level package (${PI_RUNTIME_TOP_LEVEL_KEY}), found: ${found}`,
+    );
+  }
+
+  // Every non-root entry must have resolved
+  const missingResolved = nonRootKeys.filter((k) => !packages[k].resolved);
+  if (missingResolved.length > 0) {
+    const sample = missingResolved.slice(0, 3).join(", ");
+    problems.push(
+      `${lockPath}: ${missingResolved.length} package(s) missing resolved (e.g. ${sample})`,
+    );
+  }
+
+  // Every non-root entry must have integrity
+  const missingIntegrity = nonRootKeys.filter((k) => !packages[k].integrity);
+
+  if (missingIntegrity.length > 0) {
+    const sample = missingIntegrity.slice(0, 3).join(", ");
+    problems.push(
+      `${lockPath}: ${missingIntegrity.length} package(s) missing integrity (e.g. ${sample})`,
+    );
+  }
+
+  validateEarendilSiblingVersions(lockPath, lock, managedPiVersion, problems);
+  validateEarendilOverrides(manifestPath, manifest.overrides, lock, managedPiVersion, problems);
+}
+
 function collectProblems(args) {
   const packageJson = readJsonFile(args.packagePath);
   const packageLock = readJsonFile(args.lockfilePath);
@@ -723,6 +949,17 @@ function collectProblems(args) {
     "Managed Gnosis",
     problems,
   );
+
+  const managedPiVersion = readManagedPiVersion(args);
+  validateEarendilSiblingVersions(args.lockfilePath, packageLock, managedPiVersion, problems);
+  validateEarendilOverrides(
+    args.packagePath,
+    packageJson.overrides,
+    packageLock,
+    managedPiVersion,
+    problems,
+  );
+  validateRuntimeManifest(args, managedPiVersion, problems);
 
   return { version, problems };
 }

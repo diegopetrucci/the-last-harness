@@ -5,7 +5,7 @@ REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
 # Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
-TLH_PINNED_PI_VERSION="1.0.0"
+TLH_PINNED_PI_VERSION="1.0.3"
 
 # Keep stage-0 remote support downloads bounded so an unavailable raw-file
 # request cannot hold up the installer indefinitely, especially in parallel.
@@ -575,6 +575,9 @@ required|scripts/lib/tlh-install-subagents.mjs
 required|scripts/lib/tlh-install-npm.mjs
 required|scripts/lib/tlh-install-profile-cleanup.mjs
 required|scripts/lib/tlh-install-support-files.mjs
+required|scripts/lib/tlh-install-runtime.mjs
+required|config/pi-runtime/package.json
+required|config/pi-runtime/package-lock.json
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs

@@ -11,20 +11,12 @@ import {
   type ContextPressureThreshold,
   type ContextUsageDiagnostics,
   type DurableAttentionReason,
-  type NestedRunSummary,
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
   type SubagentTerminationReason,
   normalizeSubagentRunMode,
 } from "../../shared/types.ts";
-import {
-  nestedSummaryFromAsyncStatus,
-  projectNestedEvents,
-  resolveNestedAsyncDir,
-  writeNestedEvent,
-  type NestedRoute,
-} from "../shared/nested-events.ts";
 import {
   checkPidLiveness,
   normalizeActiveRuntimeCheckpointAt,
@@ -52,7 +44,6 @@ import {
   type SubagentRunTelemetry,
   type SubagentTelemetryOutcome,
 } from "../../shared/telemetry.ts";
-import { isAsyncStatusUnsafeError } from "./async-status-corruption.ts";
 import { readStatus } from "../../shared/utils.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -825,64 +816,6 @@ function writeFailedRepair(
     message: repair.message,
   });
   return { status: repair.status, repaired: true, resultPath, message: repair.message };
-}
-
-function terminal(state: AsyncStatus["state"]): boolean {
-  return (
-    state === "complete" ||
-    state === "failed" ||
-    state === "paused" ||
-    state === "cancelled" ||
-    state === "continued"
-  );
-}
-
-function* nestedRuns(children: NestedRunSummary[] | undefined): Generator<NestedRunSummary> {
-  for (const child of children ?? []) {
-    yield child;
-    yield* nestedRuns(child.children);
-    yield* nestedRuns(child.steps?.flatMap((step) => step.children ?? []));
-  }
-}
-
-export function reconcileNestedAsyncDescendants(
-  route: NestedRoute,
-  options: ReconcileAsyncRunOptions = {},
-): void {
-  const registry = projectNestedEvents(route);
-  for (const run of nestedRuns(registry.children)) {
-    if (run.state !== "running" && run.state !== "queued") continue;
-    try {
-      const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
-      if (!asyncDir) continue;
-      const result = reconcileAsyncRun(asyncDir, {
-        ...options,
-        resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-      });
-      const status = result.status;
-      if (!status) continue;
-      if (!result.repaired && !terminal(status.state)) continue;
-      const ts = options.now?.() ?? Date.now();
-      writeNestedEvent(route, {
-        type: terminal(status.state) ? "subagent.nested.completed" : "subagent.nested.updated",
-        ts,
-        parentRunId: run.parentRunId,
-        parentStepIndex: run.parentStepIndex,
-        child: nestedSummaryFromAsyncStatus(status, asyncDir, {
-          id: run.id,
-          parentRunId: run.parentRunId,
-          parentStepIndex: run.parentStepIndex,
-          depth: run.depth,
-          path: run.path,
-          mode: run.mode,
-          ts,
-        }),
-      });
-    } catch (error) {
-      if (isAsyncStatusUnsafeError(error)) continue;
-      throw error;
-    }
-  }
 }
 
 export { checkPidLiveness };

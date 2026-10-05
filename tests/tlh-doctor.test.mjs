@@ -16,6 +16,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+import { TLH_PINNED_PI_VERSION } from "./install-stage1-core-test-helpers.mjs";
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -80,8 +81,15 @@ function configureHealthyFixture(t) {
   cpSync(join(repoRoot, "agents", "subagents"), subagentsDir, { recursive: true });
 
   const runtimeBin = join(fixture.runtimeDir, "bin");
+  const runtimeLib = join(fixture.runtimeDir, "lib");
   mkdirSync(runtimeBin, { recursive: true });
-  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 1.0.0'\n");
+  mkdirSync(runtimeLib, { recursive: true });
+  writeExecutable(join(runtimeBin, "pi"), `#!/bin/sh\necho 'pi ${TLH_PINNED_PI_VERSION}'\n`);
+  // Copy the shipped lock into the runtime so the lockfile check passes OK.
+  cpSync(
+    join(repoRoot, "config", "pi-runtime", "package-lock.json"),
+    join(runtimeLib, "package-lock.json"),
+  );
   writeFileSync(
     join(fixture.runtimeDir, ".tlh-runtime-owned"),
     JSON.stringify(
@@ -153,9 +161,14 @@ esac
 function createFakeDoctorPackageRoot(root, { gnosisDelayMs = 0 } = {}) {
   const packageRoot = join(root, "fake-package-root");
   mkdirSync(join(packageRoot, "config"), { recursive: true });
+  mkdirSync(join(packageRoot, "config", "pi-runtime"), { recursive: true });
   mkdirSync(join(packageRoot, "scripts"), { recursive: true });
   cpSync(settingsDefaultsPath, join(packageRoot, "config", "settings.defaults.json"));
   cpSync(defaultExtensionsPath, join(packageRoot, "config", "default-extensions.json"));
+  cpSync(
+    join(repoRoot, "config", "pi-runtime", "package-lock.json"),
+    join(packageRoot, "config", "pi-runtime", "package-lock.json"),
+  );
   cpSync(join(repoRoot, "agents", "subagents"), join(packageRoot, "agents", "subagents"), {
     recursive: true,
   });
@@ -361,6 +374,7 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
   assert.match(output, /OK\s+settings drift:/);
   assert.match(output, /OK\s+bundled subagent resources:/);
   assert.match(output, /OK\s+private runtime marker\/version hints:/);
+  assert.match(output, /OK\s+runtime lockfile:/);
   assert.match(output, /OK\s+managed gn validation:/);
   assert.match(output, /OK\s+managed tk validation:/);
   assert.match(output, /OK\s+gh availability\/auth:/);
@@ -935,4 +949,65 @@ test("tlh doctor --repair refuses normal Pi targets before reading settings or i
   assert.equal(readFileSync(protectedSettings, "utf8"), "{ not valid json\n");
   assert.equal(existsSync(join(fixture.root, "gnosis-helper.log")), false);
   assert.equal(existsSync(join(fixture.root, "tickets-helper.log")), false);
+});
+
+test("tlh doctor warns when runtime lib/package-lock.json is missing", (t) => {
+  const fixture = configureHealthyFixture(t);
+  // Remove the lockfile that configureHealthyFixture added so we get a WARN.
+  const runtimeLock = join(fixture.runtimeDir, "lib", "package-lock.json");
+  rmSync(runtimeLock, { force: true });
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(output, /WARN\s+runtime lockfile:.*missing.*tlh update/);
+});
+
+test("tlh doctor warns when runtime lib/package-lock.json differs from shipped lock", (t) => {
+  const fixture = configureHealthyFixture(t);
+  // Overwrite the runtime lock with different content.
+  const runtimeLock = join(fixture.runtimeDir, "lib", "package-lock.json");
+  writeFileSync(runtimeLock, '{"name":"tlh-pi-runtime","version":"0.0.0","modified":true}\n');
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(output, /WARN\s+runtime lockfile:.*differs.*tlh update/);
+});
+
+test("tlh doctor skips lockfile check when shipped config/pi-runtime/package-lock.json is absent", (t) => {
+  const fixture = configureHealthyFixture(t);
+  // Use a fake package root that has no config/pi-runtime/package-lock.json.
+  const barePackageRoot = join(fixture.root, "bare-package-root");
+  mkdirSync(join(barePackageRoot, "config"), { recursive: true });
+  // Provide the minimum needed for other checks to run.
+  cpSync(settingsDefaultsPath, join(barePackageRoot, "config", "settings.defaults.json"));
+  cpSync(defaultExtensionsPath, join(barePackageRoot, "config", "default-extensions.json"));
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", barePackageRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  // Status may be non-zero due to other missing helpers, but no FAIL for lockfile.
+  assert.match(output, /OK\s+runtime lockfile:.*skipping lockfile check/);
+  assert.doesNotMatch(output, /WARN\s+runtime lockfile:/);
 });

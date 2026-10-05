@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
-import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
@@ -11,7 +10,6 @@ import { parseThinkingLevel } from "../../shared/model-info.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
 import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
-import { isAsyncStatusUnsafeError } from "./async-status-corruption.js";
 import { readStatus } from "../../shared/utils.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -586,62 +584,6 @@ function writeFailedRepair(asyncDir, status, resultPath, now, reason) {
         message: repair.message,
     });
     return { status: repair.status, repaired: true, resultPath, message: repair.message };
-}
-function terminal(state) {
-    return (state === "complete" ||
-        state === "failed" ||
-        state === "paused" ||
-        state === "cancelled" ||
-        state === "continued");
-}
-function* nestedRuns(children) {
-    for (const child of children ?? []) {
-        yield child;
-        yield* nestedRuns(child.children);
-        yield* nestedRuns(child.steps?.flatMap((step) => step.children ?? []));
-    }
-}
-export function reconcileNestedAsyncDescendants(route, options = {}) {
-    const registry = projectNestedEvents(route);
-    for (const run of nestedRuns(registry.children)) {
-        if (run.state !== "running" && run.state !== "queued")
-            continue;
-        try {
-            const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
-            if (!asyncDir)
-                continue;
-            const result = reconcileAsyncRun(asyncDir, {
-                ...options,
-                resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-            });
-            const status = result.status;
-            if (!status)
-                continue;
-            if (!result.repaired && !terminal(status.state))
-                continue;
-            const ts = options.now?.() ?? Date.now();
-            writeNestedEvent(route, {
-                type: terminal(status.state) ? "subagent.nested.completed" : "subagent.nested.updated",
-                ts,
-                parentRunId: run.parentRunId,
-                parentStepIndex: run.parentStepIndex,
-                child: nestedSummaryFromAsyncStatus(status, asyncDir, {
-                    id: run.id,
-                    parentRunId: run.parentRunId,
-                    parentStepIndex: run.parentStepIndex,
-                    depth: run.depth,
-                    path: run.path,
-                    mode: run.mode,
-                    ts,
-                }),
-            });
-        }
-        catch (error) {
-            if (isAsyncStatusUnsafeError(error))
-                continue;
-            throw error;
-        }
-    }
 }
 export { checkPidLiveness };
 export function reconcileAsyncRun(asyncDir, options = {}) {

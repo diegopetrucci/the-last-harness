@@ -40,16 +40,6 @@ describe("subagent async widget rendering", () => {
               agent: "worker",
               status: "paused",
               currentPath: "/private/root/project/file.ts",
-              children: [
-                {
-                  id: "nested-private",
-                  parentRunId: "paused-1",
-                  depth: 1,
-                  path: [],
-                  state: "paused",
-                  error: "cleanup failed at /private/root/nested.log for pid 54321",
-                },
-              ],
             },
           ],
         },
@@ -61,8 +51,7 @@ describe("subagent async widget rendering", () => {
 
     const text = lines.join("\n");
     assert.match(text, /paused/);
-    assert.match(text, /lifecycle status requires attention/);
-    assert.doesNotMatch(text, /\/private\/|54321|cleanup failed/);
+    assert.doesNotMatch(text, /\/private\//);
   });
 
   it("projects continued lifecycles as healthy across single, parallel, and compact layouts", () => {

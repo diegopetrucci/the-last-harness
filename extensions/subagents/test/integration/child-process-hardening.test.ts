@@ -270,7 +270,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -414,7 +413,6 @@ describe(
           }),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: compactArtifactConfig(),
-          shareEnabled: false,
           maxSubagentDepth: 2,
         });
         assert.equal(start.isError, undefined);
@@ -466,7 +464,6 @@ describe(
           agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: compactArtifactConfig(),
-          shareEnabled: false,
           maxSubagentDepth: 2,
         });
         assert.equal(start.isError, undefined);
@@ -566,7 +563,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -636,7 +632,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);

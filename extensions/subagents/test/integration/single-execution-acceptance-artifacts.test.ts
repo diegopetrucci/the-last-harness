@@ -27,7 +27,6 @@ import {
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import {
   escapeRegExp,
-  explicitAcceptanceRejectionOutput,
   inferredAcceptanceRejectionOutput,
   writePackageSkill,
   type ProgressSummary,
@@ -635,14 +634,12 @@ describe(
     });
 
     it(
-      "foreground acceptance rejection preserves an inline saved-output reference",
+      "rejects retired explicit acceptance before foreground launch",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
         const outputPath = path.join(tempDir, "acceptance-rejected-inline.md");
-        const savedContent = "saved deliverable from an otherwise successful run";
-        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
         const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
 
         const result = await executor.execute(
@@ -658,33 +655,22 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        const child = result.details?.results?.[0];
         const display = result.content.map((item) => item.text ?? "").join("\n");
 
         assert.equal(result.isError, true);
-        assert.equal(child?.exitCode, 1);
-        assert.equal(child?.acceptance?.explicit, true);
-        assert.equal(child?.acceptance?.status, "rejected");
-        assert.equal(child?.savedOutputPath, outputPath);
-        const savedBytes = fs.readFileSync(outputPath);
-        assert.equal(savedBytes.toString("utf-8"), savedContent);
-        const artifactOutputPath = child?.artifactPaths?.outputPath;
-        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
-        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
-        assert.match(child?.error ?? "", /Acceptance rejected/);
-        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
+        assert.match(display, /acceptance is no longer supported/i);
+        assert.equal(mockPi.callCount(), 0);
+        assert.equal(fs.existsSync(outputPath), false);
       },
     );
 
     it(
-      "foreground file-only acceptance rejection preserves only the saved-output reference",
+      "rejects retired explicit acceptance before file-only launch",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
         const outputPath = path.join(tempDir, "acceptance-rejected-file-only.md");
-        const savedContent = "saved file-only deliverable";
-        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
         const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
 
         const result = await executor.execute(
@@ -701,22 +687,12 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        const child = result.details?.results?.[0];
         const display = result.content.map((item) => item.text ?? "").join("\n");
 
         assert.equal(result.isError, true);
-        assert.equal(child?.exitCode, 1);
-        assert.equal(child?.acceptance?.explicit, true);
-        assert.equal(child?.acceptance?.status, "rejected");
-        assert.equal(child?.savedOutputPath, outputPath);
-        const savedBytes = fs.readFileSync(outputPath);
-        assert.equal(savedBytes.toString("utf-8"), savedContent);
-        const artifactOutputPath = child?.artifactPaths?.outputPath;
-        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
-        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
-        assert.match(child?.error ?? "", /Acceptance rejected/);
-        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
-        assert.doesNotMatch(display, new RegExp(escapeRegExp(savedContent)));
+        assert.match(display, /acceptance is no longer supported/i);
+        assert.equal(mockPi.callCount(), 0);
+        assert.equal(fs.existsSync(outputPath), false);
       },
     );
 

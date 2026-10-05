@@ -13,7 +13,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Bumped the bundled Pi runtime from `0.87.1` to `1.0.0`. Pi sessions now start in fullscreen TUI mode by default; to keep normal terminal scrollback set `tuiMode` to `"regular"` via `/settings` → **TUI mode**, `~/.the-last-harness/agent/settings.json`, or `--tui-mode regular`.
+- Bumped the bundled Pi runtime from `0.87.1` to `1.0.3`, adding Anthropic capacity-error retries and provider fixes. Pi sessions now start in fullscreen TUI mode by default; to keep normal terminal scrollback set `tuiMode` to `"regular"` via `/settings` → **TUI mode**, `~/.the-last-harness/agent/settings.json`, or `--tui-mode regular`.
+- **Pi 1.0.3: Azure provider rename.** If you use Azure OpenAI, rename the provider key from `azure-openai-responses` to `azure` in your `auth.json`, `models.json`, and `settings.json`; the old key is no longer recognized by Pi. TLH itself writes no Azure configuration.
+- **Pi 1.0.3: Home/End keybinding change.** In fullscreen TUI mode, Home and End now always move the editor cursor to line start/end. Scrolling to the top or bottom of the transcript has moved to Ctrl+Home and Ctrl+End (`tui.altScreen.top`/`tui.altScreen.bottom`).
 - TLH's packaged default theme is now Pi's terminal-adaptive `system` theme when no theme is set in the isolated profile; existing explicit theme values (including `the-last-harness`) are preserved by normal install and `tlh update`. Running `tlh update --force` or `bash install.sh --force` resets it to `system`.
 - `typebox` is no longer a runtime dependency of the TLH package: it is pinned as an exact dev dependency and declared as a `"*"` peer dependency because Pi provides it to extensions at runtime.
 - Updated the bundled OpenAI Codex defaults: Architect, Product, and Bug Hunter now use GPT-6.1 Sol at medium effort (was GPT-5.6 Sol at high); Rush now uses GPT-6.1 Sol at low effort (was GPT-5.6 Luna at medium); code-reviewer now uses GPT-6.1 Sol at medium effort (was GPT-5.6 Sol); and Contrarian now uses GPT-6 Astra at medium effort (was GPT-5.6 Sol at high). Oracle remains on GPT-6 Astra at medium effort, while all other packaged OpenAI Codex, Anthropic, xAI, and OpenRouter defaults remain unchanged.
@@ -23,6 +25,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.
 - TLH launch time should be ~25/30% faster.
 - Opus 5.5 is the default for many things, now.
+- The private Pi runtime is now installed via `npm ci` from a TLH-shipped lockfile in `config/pi-runtime/`, keeping Pi's dependency graph pinned even when upstream stops shipping a shrinkwrap; existing runtimes are reinstalled once from the lockfile on the next `tlh update` or fresh install, a failed install preserves the previous runtime, and `tlh doctor` warns when the runtime does not match the shipped lockfile.
 
 ### Removed
 

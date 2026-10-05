@@ -6,9 +6,7 @@ import { parsePersistedChildLocationSnapshot, } from "../../shared/child-locatio
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
-import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
-import { formatNestedRunStatusLines } from "../shared/nested-render.js";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
+import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, isAsyncStatusUnsafeError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
@@ -184,19 +182,10 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
     }
 }
-function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
+function statusToSummary(asyncDir, status) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
     const interruptRequestedAt = status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
     const steps = status.steps ?? [];
-    let nestedChildren = [];
-    if (nestedWarnings.length === 0 && nestedRoute) {
-        try {
-            nestedChildren = projectNestedEvents(nestedRoute)?.children ?? [];
-        }
-        catch (error) {
-            nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-        }
-    }
     const summarizedSteps = steps.map((step, index) => {
         const stepActivityState = step.activityState;
         const stepLastActivityAt = step.lastActivityAt;
@@ -249,11 +238,9 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
             ...(step.error ? { error: step.error } : {}),
             ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-            ...(step.children?.length ? { children: step.children } : {}),
             ...(step.childLocation ? { childLocation: step.childLocation } : {}),
         };
     });
-    attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
     const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
     const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     return {
@@ -292,8 +279,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         currentStep: status.currentStep,
         ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
         steps: summarizedSteps,
-        ...(nestedChildren.length ? { nestedChildren } : {}),
-        ...(nestedWarnings.length ? { nestedWarnings } : {}),
         ...(status.sessionDir ? { sessionDir: status.sessionDir } : {}),
         ...(status.outputFile ? { outputFile: status.outputFile } : {}),
         ...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
@@ -350,12 +335,6 @@ function listAsyncRunEntries(asyncDirRoot) {
 function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict") {
     const allowedStates = options.states ? new Set(options.states) : undefined;
     const runs = [];
-    let nestedRouteIndex;
-    const resolveNestedRoute = (rootRunId) => {
-        if (!nestedRouteIndex)
-            nestedRouteIndex = buildNestedRouteIndex();
-        return nestedRouteIndex.get(rootRunId);
-    };
     const collectEntry = (entry) => {
         const asyncDir = path.join(asyncDirRoot, entry);
         const reconciliation = options.reconcile === false
@@ -376,21 +355,7 @@ function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict
             return;
         if (validationOrder === "strict")
             validatePersistedAsyncStatus(asyncDir, status);
-        const nestedWarnings = [];
-        let nestedRoute;
-        try {
-            nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-            if (nestedRoute)
-                reconcileNestedAsyncDescendants(nestedRoute, {
-                    resultsDir: options.resultsDir,
-                    kill: options.kill,
-                    now: options.now,
-                });
-        }
-        catch (error) {
-            nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
-        }
-        runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
+        runs.push(statusToSummary(asyncDir, status));
     };
     return { runs, collectEntry };
 }
@@ -526,23 +491,9 @@ export function formatAsyncRunList(runs, heading = "Active async runs") {
         lines.push(`- ${formatRunHeader(run)}`);
         for (const step of run.steps) {
             lines.push(`  ${formatStepLine(step, privacySafe)}`);
-            lines.push(...formatNestedRunStatusLines(step.children, {
-                indent: "    ",
-                maxLines: 12,
-                redactSensitiveDetails: privacySafe,
-            }));
         }
-        const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
-        const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-        lines.push(...formatNestedRunStatusLines(unattached, {
-            indent: "  ",
-            maxLines: 12,
-            redactSensitiveDetails: privacySafe,
-        }));
         if (run.error)
             lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : safeTerminalText(run.error)}`);
-        for (const warning of run.nestedWarnings ?? [])
-            lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : safeTerminalText(warning)}`);
         const outputPath = formatAsyncRunOutputPath(run);
         if (!privacySafe && outputPath)
             lines.push(`  output: ${safeTerminalText(shortenPath(outputPath))}`);

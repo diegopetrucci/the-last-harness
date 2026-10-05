@@ -65,6 +65,9 @@ after(() => {
   }
 });
 
+const { RETIRED_NESTED_ROUTE_ENV_VARS, SUBAGENT_CHILD_ENV } = await jiti.import(
+  "../extensions/subagents/src/runs/shared/pi-args.ts",
+);
 const { ASYNC_DIR } = await jiti.import("../extensions/subagents/src/shared/types.ts");
 const { createSubagentExecutor } = await jiti.import(
   "../extensions/subagents/src/runs/foreground/subagent-executor.ts",
@@ -395,12 +398,32 @@ test("native project-agent marker probe returns every expected persisted outcome
       expected: "absent",
     },
     {
-      name: "nested marker",
-      input: { id: "nested-marker" },
+      name: "status-only nested marker",
+      input: { id: "status-only-nested-marker" },
       setup: () =>
-        writeStatus("nested-marker", {
-          runId: "nested-marker",
-          nestedChildren: [{ results: [{ projectAgents: [] }] }],
+        writeStatus("status-only-nested-marker", {
+          runId: "status-only-nested-marker",
+          steps: [{ children: [{ projectAgents: [{}] }] }],
+        }),
+      expected: "present",
+    },
+    {
+      name: "parallel result marker",
+      input: { id: "parallel-result-marker" },
+      setup: () =>
+        writeStatus("parallel-result-marker", {
+          runId: "parallel-result-marker",
+          results: [{ projectAgents: [{}] }],
+        }),
+      expected: "present",
+    },
+    {
+      name: "result-only nested marker",
+      input: { id: "result-only-nested-marker" },
+      setup: () =>
+        writeResult("result-only-nested-marker", {
+          runId: "result-only-nested-marker",
+          nestedChildren: [{ results: [{ projectAgents: [{}] }] }],
         }),
       expected: "present",
     },
@@ -1537,7 +1560,22 @@ test("primary tool authorization gates retained project controls while leaving s
   await runtime.applySessionStart(contextFor("architect"));
 });
 
-test("executor authorizes the selected no-id and dir-only interrupt target before fallback signaling", async (t) => {
+test("executor authorizes the selected no-id interrupt target and rejects a retired dir selector", async (t) => {
+  // Full validation may inherit child/retired-route flags from a TLH minor. This
+  // fixture exercises parent controls, so temporarily clear only those markers;
+  // keep its isolated temp root and all unrelated environment.
+  const parentRouteEnv = new Map([
+    [SUBAGENT_CHILD_ENV, process.env[SUBAGENT_CHILD_ENV]],
+    ...RETIRED_NESTED_ROUTE_ENV_VARS.map((name) => [name, process.env[name]]),
+  ]);
+  for (const name of parentRouteEnv.keys()) delete process.env[name];
+  t.after(() => {
+    for (const [name, value] of parentRouteEnv) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
   const fixture = mkdtempSync(join(tmpdir(), "tlh-project-agent-interrupt-fallback-"));
   const projectRoot = join(fixture, "project");
   mkdirSync(projectRoot, { recursive: true });
@@ -1592,8 +1630,9 @@ test("executor authorizes the selected no-id and dir-only interrupt target befor
     createContext(projectRoot, "lifecycle-session"),
   );
   assert.equal(dirOnly.isError, true);
-  assert.match(dirOnly.content[0]?.text ?? "", /private reference|project-agent|fallback/i);
+  assert.match(dirOnly.content[0]?.text ?? "", /^dir is no longer supported\./i);
   assert.equal(signals.length, 0);
+  assert.equal(existsSync(join(projectAsyncDir, "control", "interrupt.json")), false);
 
   ordinaryAsyncDir = writeRunningControlStatus(ordinaryRunId, capture, { projectAgent: false });
   state.asyncJobs.set(ordinaryRunId, {

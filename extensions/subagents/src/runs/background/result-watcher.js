@@ -3,29 +3,13 @@ import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
 import { createFileCoalescer } from "../../shared/file-coalescer.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
-import { attachNestedChildrenToResultChildren, compactNestedResultChildren, resolveSubagentResultStatus, } from "../../shared/result-formatting.js";
+import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
-import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.js";
 import { readStatus } from "../../shared/utils.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
-function sanitizeNestedResultChildren(value, resultPath, label) {
-    if (value === undefined)
-        return undefined;
-    if (!Array.isArray(value)) {
-        console.error(`Ignoring invalid nested children in subagent result file '${resultPath}' at ${label}: expected an array.`);
-        return undefined;
-    }
-    const children = value
-        .map((child) => sanitizeSummary(child))
-        .filter((child) => Boolean(child));
-    if (children.length !== value.length) {
-        console.error(`Ignoring ${value.length - children.length} invalid nested child record(s) in subagent result file '${resultPath}' at ${label}.`);
-    }
-    return children.length ? children : undefined;
-}
 function getErrorCode(error) {
     return typeof error === "object" && error !== null && "code" in error
         ? error.code
@@ -195,17 +179,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId)
                 return;
             const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
-            const hasExplicitNestedChildren = data.nestedChildren !== undefined;
-            let nestedChildren = compactNestedResultChildren(sanitizeNestedResultChildren(data.nestedChildren, resultPath, "nestedChildren"));
-            if (!nestedChildren?.length && !hasExplicitNestedChildren) {
-                try {
-                    nestedChildren = compactNestedResultChildren(projectNestedRegistryForRoot(runId)?.children);
-                }
-                catch (error) {
-                    console.error(`Failed to enrich subagent result file '${resultPath}' with nested registry children; will retry later:`, error);
-                    return;
-                }
-            }
             const now = Date.now();
             const pausedDecision = resolvePausedArtifactDecision(data);
             if (pausedDecision === "retry")
@@ -225,7 +198,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                         success: data.success,
                     },
                 ];
-            const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, arrayIndex) => {
+            const normalizedChildren = resultChildren.map((result = {}, arrayIndex) => {
                 const baseOutput = result.output ?? data.summary;
                 const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
                 const output = hasRealOutput ? baseOutput : "(no output)";
@@ -233,7 +206,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     ? `${result.error}${hasRealOutput ? `\n\nOutput:\n${baseOutput}` : ""}`
                     : output;
                 const sessionPath = result.sessionFile ?? (resultChildren.length === 1 ? data.sessionFile : undefined);
-                const childNestedChildren = sanitizeNestedResultChildren(result.children, resultPath, `results[${arrayIndex}].children`);
                 return {
                     agent: result.agent ?? data.agent ?? `step-${arrayIndex + 1}`,
                     status: resolveResultFileChildStatus(result, data.state),
@@ -243,9 +215,8 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     ...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath)
                         ? { sessionPath }
                         : {}),
-                    ...(childNestedChildren ? { children: childNestedChildren } : {}),
                 };
-            }), nestedChildren);
+            });
             const completionKey = buildCompletionKey(data, `result:${file}`);
             if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
                 if (data.state === "cancelled" || data.state === "continued") {
@@ -259,7 +230,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                 ...data,
                 runId,
                 ...(telemetry ? { telemetry } : { telemetry: undefined }),
-                ...(nestedChildren?.length ? { nestedChildren } : {}),
                 ...(Array.isArray(data.results)
                     ? {
                         results: hasResultChildren
@@ -271,7 +241,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                                 index: child.index,
                                 artifactPath: child.artifactPath,
                                 sessionPath: child.sessionPath,
-                                children: child.children,
                             }))
                             : [],
                     }

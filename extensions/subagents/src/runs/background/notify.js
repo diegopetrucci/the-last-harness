@@ -20,8 +20,6 @@ export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch";
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
-const MAX_NESTED_ENTRIES = 8;
-const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
@@ -295,38 +293,6 @@ function countChildStatuses(children) {
         .filter((part) => Boolean(part));
     return parts.length ? parts.join(", ") : undefined;
 }
-function formatNestedChildren(children, indent = "   ", budget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() }) {
-    if (!children?.length)
-        return [];
-    const entries = [];
-    const markOmitted = (currentIndent, marker) => {
-        if (budget.omissionMarkers.has(marker))
-            return;
-        budget.omissionMarkers.add(marker);
-        entries.push(`${currentIndent}${marker}`);
-    };
-    const append = (runs, currentIndent, depth) => {
-        if (!runs?.length)
-            return;
-        if (depth >= MAX_NESTED_DEPTH) {
-            markOmitted(currentIndent, "… [nested depth limit reached]");
-            return;
-        }
-        for (const child of runs) {
-            if (budget.remaining <= 0) {
-                markOmitted(currentIndent, "… [additional nested entries omitted]");
-                return;
-            }
-            budget.remaining--;
-            const label = boundedLabel(child.agent ?? child.id ?? "nested");
-            const state = child.state ? boundedLabel(child.state) : undefined;
-            entries.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
-            append(child.children, `${currentIndent}  `, depth + 1);
-        }
-    };
-    append(children, indent, 0);
-    return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
-}
 function formatChildReferences(child, privacySafe = false) {
     if (privacySafe)
         return [];
@@ -359,14 +325,9 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const nestedBudgetForCost = {
-        remaining: MAX_NESTED_ENTRIES,
-        omissionMarkers: new Set(),
-    };
     const childCosts = displayedChildren.map(({ child, index, status }) => {
         const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
-        const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
-        return joinedLineCost([labelLine, ...nested, ""]);
+        return joinedLineCost([labelLine, ""]);
     });
     let effectiveCount = displayedChildren.length;
     while (effectiveCount > 0) {
@@ -387,10 +348,6 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
     const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
     const showCountsLine = !!counts && optionalLinesAffordable;
     const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
-    const nestedBudget = {
-        remaining: MAX_NESTED_ENTRIES,
-        omissionMarkers: new Set(),
-    };
     const lines = [];
     if (showCountsLine)
         lines.push(`Children: ${counts}`, "");
@@ -398,7 +355,6 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
         lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
     for (const { child, index, status } of effectiveDisplayedChildren) {
         lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-        lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         lines.push("");
     }
     return lines.join("\n").trimEnd();
@@ -411,10 +367,6 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     if (privacySafe)
         return formatProtectedLifecyclePreview(result, ceilingForPreview);
     const children = Array.isArray(result.results) ? result.results : [];
-    const nestedBudget = {
-        remaining: MAX_NESTED_ENTRIES,
-        omissionMarkers: new Set(),
-    };
     if (children.length === 0)
         return boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
     const isUnrepresentedOuterFailure = resolveOuterStatus(result) === "failed" &&
@@ -422,13 +374,10 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     if (children.length === 1) {
         const child = children[0];
         const singleChildRefs = formatChildReferences(child, privacySafe);
-        const singleChildNested = formatNestedChildren(child.children, "   ", nestedBudget);
         const refsCost = joinedLineCost(singleChildRefs);
-        const nestedCost = joinedLineCost(singleChildNested);
-        const scaffoldFits = refsCost + nestedCost <= ceilingForPreview;
+        const scaffoldFits = refsCost <= ceilingForPreview;
         const effectiveRefs = scaffoldFits ? singleChildRefs : [];
-        const effectiveNested = scaffoldFits ? singleChildNested : [];
-        const effectiveScaffoldCost = scaffoldFits ? refsCost + nestedCost : 0;
+        const effectiveScaffoldCost = scaffoldFits ? refsCost : 0;
         const outerSummaryBudget = isUnrepresentedOuterFailure
             ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - 2))
             : 0;
@@ -450,7 +399,6 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
         if (showSummaryLine)
             lines.push(childDisplayText);
         lines.push(...effectiveRefs);
-        lines.push(...effectiveNested);
         return lines.join("\n").trim();
     }
     const counts = countChildStatuses(children);
@@ -460,15 +408,10 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const nestedBudgetForCost = {
-        remaining: MAX_NESTED_ENTRIES,
-        omissionMarkers: new Set(),
-    };
     const childCosts = displayedChildren.map(({ child, index, status }) => {
         const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
         const refs = formatChildReferences(child, privacySafe);
-        const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
-        return joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+        return joinedLineCost([labelLine, "", ...refs, ""]);
     });
     let effectiveCount = displayedChildren.length;
     while (effectiveCount > 0) {
@@ -529,7 +472,6 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
             lines.push(boundedSummary(rawSummary, perChildBudget));
         }
         lines.push(...formatChildReferences(child, privacySafe));
-        lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         lines.push("");
     }
     return lines.join("\n").trimEnd();

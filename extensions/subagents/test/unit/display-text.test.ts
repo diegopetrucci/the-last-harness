@@ -13,16 +13,8 @@ import {
   formatAsyncRunList,
   type AsyncRunSummary,
 } from "../../src/runs/background/async-status.ts";
-import {
-  formatAsyncResultTranscript,
-  formatAsyncRunTranscript,
-  formatNestedRunTranscript,
-  inspectSubagentFleet,
-} from "../../src/runs/background/fleet-view.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
-import { formatNestedRunStatusLines } from "../../src/runs/shared/nested-render.ts";
 import { formatForegroundNativeSubagentResult } from "../../src/shared/result-formatting.ts";
-import type { AsyncJobStep, AsyncStatus, NestedRunSummary } from "../../src/shared/types.ts";
 
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
 
@@ -37,17 +29,6 @@ function textContent(result: { content: Array<{ type: string; text?: string }> }
     .filter((part) => part.type === "text")
     .map((part) => part.text ?? "")
     .join("\n");
-}
-
-function makeStatus(overrides: Partial<AsyncStatus> = {}): AsyncStatus {
-  return {
-    runId: "run-display",
-    state: "running",
-    mode: "single",
-    startedAt: 100,
-    steps: [],
-    ...overrides,
-  } as AsyncStatus;
 }
 
 describe("safeTerminalText", () => {
@@ -117,44 +98,6 @@ describe("background display boundaries", () => {
     assert.deepEqual(run, snapshot);
   });
 
-  it("sanitizes fleet-view output while leaving persisted status bytes untouched", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-display-fleet-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      const resultsRoot = path.join(root, "results");
-      const asyncDir = path.join(asyncRoot, "run-fleet");
-      fs.mkdirSync(asyncDir, { recursive: true });
-      const statusPath = path.join(asyncDir, "status.json");
-      const statusText = JSON.stringify({
-        runId: "run-fleet",
-        state: "running",
-        mode: "single",
-        startedAt: 100,
-        lastUpdate: 200,
-        error: unsafe,
-        steps: [
-          {
-            agent: "worker",
-            status: "running",
-            recentOutput: [unsafe],
-          },
-        ],
-      });
-      fs.writeFileSync(statusPath, statusText, "utf8");
-      const before = fs.readFileSync(statusPath);
-
-      const result = inspectSubagentFleet(
-        {},
-        { asyncDirRoot: asyncRoot, resultsDir: resultsRoot, kill: () => true, now: () => 250 },
-      );
-
-      assertTerminalSafe(textContent(result));
-      assert.deepEqual(fs.readFileSync(statusPath), before);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("sanitizes run-status output for top-level and step diagnostics", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-display-status-"));
     try {
@@ -188,58 +131,6 @@ describe("background display boundaries", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it("sanitizes nested status and transcript text at their display boundaries", () => {
-    const child = {
-      id: "nested-display",
-      parentRunId: "run-display",
-      depth: 1,
-      path: [],
-      state: "failed" as const,
-      agent: "nested-agent",
-      error: unsafe,
-      steps: [{ agent: "leaf", status: "failed" as const, error: unsafe }],
-    } satisfies NestedRunSummary;
-    assertTerminalSafe(formatNestedRunStatusLines([child]).join("\n"));
-
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-display-transcript-"));
-    try {
-      const sessionFile = path.join(root, "session.jsonl");
-      const sessionText = `${JSON.stringify({ message: { role: "assistant", content: unsafe } })}\n`;
-      fs.writeFileSync(sessionFile, sessionText, "utf8");
-      const before = fs.readFileSync(sessionFile);
-      const rendered = formatNestedRunTranscript(
-        { ...child, state: "complete", sessionFile },
-        { sessionRoots: [root] },
-      );
-      assertTerminalSafe(rendered);
-      assert.deepEqual(fs.readFileSync(sessionFile), before);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("sanitizes async transcript and result output without changing source payloads", () => {
-    const step: AsyncJobStep = {
-      agent: "worker",
-      status: "running",
-      recentOutput: [unsafe],
-      index: 0,
-    };
-    const status = makeStatus({ steps: [step] });
-    const statusSnapshot = structuredClone(status);
-    assertTerminalSafe(formatAsyncRunTranscript(status, "/tmp/nonexistent-display-run"));
-    assert.deepEqual(status, statusSnapshot);
-
-    const data = {
-      id: "result-display",
-      state: "complete",
-      output: unsafe,
-    };
-    const dataSnapshot = structuredClone(data);
-    assertTerminalSafe(formatAsyncResultTranscript(data, "/tmp/result-display.json"));
-    assert.deepEqual(data, dataSnapshot);
   });
 });
 

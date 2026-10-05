@@ -358,26 +358,12 @@ export function sumResultsUsage(results) {
     }
     return usage;
 }
-function addNestedCost(total, children) {
-    for (const child of children ?? []) {
-        if (child.totalCost) {
-            total.inputTokens += child.totalCost.inputTokens;
-            total.outputTokens += child.totalCost.outputTokens;
-            total.costUsd += child.totalCost.costUsd;
-            continue;
-        }
-        addNestedCost(total, child.children);
-        for (const step of child.steps ?? [])
-            addNestedCost(total, step.children);
-    }
-}
 export function sumResultsCost(results) {
     const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
     for (const result of results) {
         total.inputTokens += result.usage.input;
         total.outputTokens += result.usage.output;
         total.costUsd += result.usage.cost;
-        addNestedCost(total, result.children);
     }
     return total;
 }

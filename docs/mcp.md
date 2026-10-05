@@ -35,6 +35,8 @@ Common slash commands:
 
 Use the isolated-profile or project-local files when you want TLH-specific or repo-specific MCP server definitions without changing shared machine-wide config.
 
+> **Note (Pi 1.0.1+):** Pi 1.0.1 documents per-server `enabled`, `exposure`, and `toolExposure` overrides for `.pi/mcp.json`. These fields are read by Pi's built-in `mcp` extension — which TLH disables while `mcporter` owns `/mcp`. The `mcporter` adapter honours `"disabled": true` to disable a server; it does **not** honour `"enabled": false`. Setting `"enabled": false` will not disable a server under TLH. Use `"disabled": true` instead.
+
 The adapter expects a top-level `mcpServers` object. Minimal examples:
 
 ```json
@@ -62,7 +64,7 @@ For OAuth-backed servers, configure an HTTP `url` for the server and then run `/
 
 ## Built-in MCP compatibility
 
-Pi 1.0.0 includes a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
+Pi 1.0.0 and later include a built-in `mcp` extension (`builtin:mcp`) that also registers the `/mcp` command. TLH's packaged settings defaults persist `-builtin:mcp` in the isolated profile before the bundled `mcporter` adapter loads. This keeps the adapter as the sole `/mcp` owner and prevents Pi's built-in-extension replacement warning; the warning should not appear in a normal TLH session.
 
 This is temporary compatibility behavior while `mcporter` owns `/mcp`. Install/update adds the exclusion only when `mcporter` is present and enabled in the bundled default-extension manifest. When TLH inserts it, the isolated settings record `tlh.builtinMcpExclusionManaged: true` as ownership evidence. A pre-existing exclusion without that marker is user-owned: TLH preserves it during opt-out and does not claim it when the adapter is enabled. Disabling `mcporter`, opting it out by package filter, or removing it from the manifest removes only a TLH-managed exclusion and clears the marker; unrelated extension settings remain unchanged.
 
