@@ -15,6 +15,7 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
@@ -487,8 +488,10 @@ describe(
         });
         mockPi.onCall({ output: "Recovered on the preserved fallback" });
 
-        const ctx = makeMinimalCtx(tempDir);
-        ctx.modelRegistry.getAvailable = () => [primary];
+        const { context: ctx } = await makeModelRegistryContext(tempDir, [
+          { provider: "openai", models: [primary] },
+          { provider: "anthropic", models: [backup], authenticated: false },
+        ]);
         if (variant === "missing-catalog") {
           Object.defineProperty(ctx.modelRegistry, "getAll", {
             configurable: true,
@@ -679,11 +682,12 @@ describe(
             fallbackModels: ["google/gemini-2.5-pro"],
           }),
         ]);
-        const ctx = makeMinimalCtx(tempDir);
         const primary = makeModel("gpt-5-mini", { provider: "openai" });
         const agentFallback = makeModel("gemini-2.5-pro", { provider: "google" });
-        ctx.modelRegistry.getAvailable = () => [primary, agentFallback];
-        ctx.modelRegistry.getAll = () => [primary, agentFallback];
+        const { context: ctx } = await makeModelRegistryContext(tempDir, [
+          { provider: "openai", models: [primary] },
+          { provider: "google", models: [agentFallback] },
+        ]);
 
         const result = await executor.execute(
           "single-agent-fallback-order",

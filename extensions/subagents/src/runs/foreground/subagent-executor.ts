@@ -616,7 +616,7 @@ function runAsyncPath(
       },
     );
     return releaseAsyncProjectRunOnError(
-      executeAsyncSingle(id, {
+      (deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
         agent: params.agent!,
         task: params.task ?? "",
         agentConfig: a,
