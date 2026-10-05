@@ -115,6 +115,29 @@ test("parses and formats ahead and behind counts", () => {
   assert.equal(formatTlhGitFooterSegments(status).join(" • "), "main • ↑3 ↓2");
 });
 
+test("parses branch.upstream into the status snapshot", () => {
+  const status = parseGitStatusPorcelainV2(`# branch.oid ${HASH}
+# branch.head feature/my-work
+# branch.upstream origin/feature/my-work
+# branch.ab +2 -0
+`);
+
+  assert.equal(status.branch, "feature/my-work");
+  assert.equal(status.upstream, "origin/feature/my-work");
+  assert.equal(status.ahead, 2);
+  assert.equal(status.behind, 0);
+});
+
+test("leaves upstream absent when porcelain status has no tracking ref", () => {
+  const status = parseGitStatusPorcelainV2(`# branch.oid ${HASH}
+# branch.head feature/no-tracking
+`);
+
+  assert.equal(status.branch, "feature/no-tracking");
+  assert.equal(status.upstream, undefined);
+  assert.equal(Object.prototype.hasOwnProperty.call(status, "upstream"), false);
+});
+
 test("formats pull request metadata as a footer segment", () => {
   const status = parseGitStatusPorcelainV2(`# branch.head feature/pr
 # branch.ab +1 -0
