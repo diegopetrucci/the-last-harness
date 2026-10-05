@@ -196,7 +196,6 @@ export function runStage1LocalPackageInstall(
     verbose = false,
     existingSupportFiles,
     existingAgentFiles,
-    existingLibrarianConfig,
     existingManagedRtk = false,
     envOverrides = {},
   } = {},
@@ -228,13 +227,6 @@ export function runStage1LocalPackageInstall(
     npmLog,
     templatePiPath: join(templateDir, "pi"),
   });
-  if (existingLibrarianConfig !== undefined) {
-    mkdirSync(join(agentDir, "extensions"), { recursive: true });
-    writeFileSync(
-      join(agentDir, "extensions", "librarian.json"),
-      JSON.stringify(existingLibrarianConfig, null, 2),
-    );
-  }
   if (existingSupportFiles) {
     for (const [relativePath, content] of Object.entries(existingSupportFiles)) {
       const target = join(agentDir, "tlh", relativePath);
