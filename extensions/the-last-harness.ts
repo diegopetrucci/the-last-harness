@@ -26,6 +26,7 @@ import {
 } from "./the-last-harness/provider-auth-health.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { maybeNotifyLegacyThemeNotice } from "./the-last-harness/legacy-theme-notice.js";
 import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
@@ -446,6 +447,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
       } catch {
         // Telemetry failures are non-fatal.
       }
+      maybeNotifyLegacyThemeNotice(ctx, event.reason);
     }
     ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
 
