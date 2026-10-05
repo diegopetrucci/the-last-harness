@@ -357,20 +357,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/import`        | Import and resume a session from a JSONL file                                  |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling                                    |
 
-### Hidden skill commands
-
-| Command            | Description                                                                       |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-
-### Hidden bundled extension commands
-
-| Command      | Extension       | Description                                     |
-| ------------ | --------------- | ----------------------------------------------- |
-| `/curator`   | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/search`    | `pi-web-access` | Browse stored web search results                |
-| `/websearch` | `pi-web-access` | Open the web search curator                     |
-
 ---
 
 ## TLH CLI subcommands

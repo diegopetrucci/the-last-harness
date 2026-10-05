@@ -13,6 +13,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped bundled defaults: `pi-fast` `0.1.4` → `0.1.6`, `pi-anthropic-auth` `3.3.2` → `3.4.2`, `pi-web-access` `0.10.10` → `0.29.2`, and `pi-context-inspector` `0.1.13` → `0.1.15`. The web-access fork now exposes only its Exa-backed three-tool surface, without curator/search commands, alternate providers, GitHub/PDF/video/browser workflows, or a bundled skill; migrate supported isolated settings manually as described in [docs/web-search.md](docs/web-search.md).
 - Bumped the bundled Pi runtime from `0.87.1` to `1.0.3`, adding Anthropic capacity-error retries and provider fixes. Pi sessions now start in fullscreen TUI mode by default; to keep normal terminal scrollback set `tuiMode` to `"regular"` via `/settings` → **TUI mode**, `~/.the-last-harness/agent/settings.json`, or `--tui-mode regular`.
 - **Pi 1.0.3: Azure provider rename.** If you use Azure OpenAI, rename the provider key from `azure-openai-responses` to `azure` in your `auth.json`, `models.json`, and `settings.json`; the old key is no longer recognized by Pi. TLH itself writes no Azure configuration.
 - **Pi 1.0.3: Home/End keybinding change.** In fullscreen TUI mode, Home and End now always move the editor cursor to line start/end. Scrolling to the top or bottom of the transcript has moved to Ctrl+Home and Ctrl+End (`tui.altScreen.top`/`tui.altScreen.bottom`).
