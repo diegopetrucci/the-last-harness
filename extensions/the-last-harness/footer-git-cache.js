@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { parseGitStatusPorcelainV2 } from "./footer-git.js";
+import { parseGitStatusPorcelainV2, } from "./footer-git.js";
 const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
 const DEFAULT_GIT_TIMEOUT_MS = 1_500;
 const DEFAULT_GH_TIMEOUT_MS = 3_000;

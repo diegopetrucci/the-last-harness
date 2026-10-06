@@ -18,7 +18,7 @@ npm ci
 
 This is also how CI (`.github/workflows/ci.yml`, `release.yml`) and `.symphony/setup` install dependencies — always from the lockfile, never from a loose install.
 
-This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; and finishes with the settings merge dry-run.
 
 The validation scripts retain Oxlint's built-in default rule selection while `.oxlintrc.json` registers the vendored anti-slop plugin for deliberate per-rule adoption. The global `max-lines` rule is enabled at error severity with a 2,000 physical-line ceiling (including blank lines and comments) for every file under `scripts/`, `tests/`, and `extensions/`; source, test, and generated mirror files share this limit without exemptions. The current rollout enables `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` at error severity; the other 6 anti-slop rule entries remain visibly commented out. `npm run lint` runs `oxlint --deny-warnings scripts tests extensions`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check`, which only selects Oxfmt check mode. The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
@@ -144,7 +144,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following Pi 1.0.3 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following Pi 1.0.4 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -155,7 +155,7 @@ The following Pi 1.0.3 checks are also required release-preparation work, remain
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `1.0.3`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises Pi `1.0.4`, verify update convergence from that published ref.
 
 The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05. The full release-tier checklist above remains pending the next release candidate. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 

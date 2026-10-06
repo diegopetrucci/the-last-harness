@@ -1,34 +1,15 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord } from "./common.js";
 import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
 import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
+import { getTlhSubagentOverrides, parseTlhSettingsContent, } from "./primary-agent-runtime-settings.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 const SUBAGENT_SETTINGS_COMMAND = "subagent-settings";
 const INDEPENDENCE_SENSITIVE_AGENTS = new Set(["code-reviewer", "oracle", "contrarian"]);
 const INDEPENDENCE_WARNING = "Provider independence is not guaranteed when a fixed model override is configured for this role.";
 const SETTINGS_WRITE_ERROR = "Refusing to write minor-agent settings outside the isolated TLH profile.";
-function getTlhGlobalSettings(cwd) {
-    try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
-        return isRecord(settings) ? settings : {};
-    }
-    catch {
-        return {};
-    }
-}
-function parseTlhSettingsContent(content) {
-    if (!content) {
-        return {};
-    }
-    const parsed = JSON.parse(content);
-    if (!isRecord(parsed)) {
-        throw new Error("settings.json must contain a JSON object");
-    }
-    return parsed;
-}
 function bundledSubagentMap(subagents) {
     return new Map(subagents.map((agent) => [agent.name, agent]));
 }
@@ -48,15 +29,6 @@ function availableModels(ctx) {
     catch {
         return [];
     }
-}
-function getStoredOverrides(cwd) {
-    const overrides = getTlhGlobalSettings(cwd).subagents?.agentOverrides;
-    if (!isRecord(overrides)) {
-        return new Map();
-    }
-    return new Map(Object.entries(overrides)
-        .filter(([, value]) => isRecord(value))
-        .map(([agent, value]) => [agent, value]));
 }
 function availableThinkingLevels(model) {
     return getAvailableThinkingLevels(model);
@@ -278,7 +250,7 @@ function formatStatusForAgent(agent, override, ctx) {
     return lines.join("\n");
 }
 function formatStatusMessage(ctx, subagents, selectedAgentName) {
-    const overrides = getStoredOverrides(ctx.cwd);
+    const overrides = getTlhSubagentOverrides(ctx.cwd);
     const selectedAgents = selectedAgentName
         ? subagents.filter((agent) => agent.name === selectedAgentName)
         : subagents;
@@ -388,7 +360,7 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
         return;
     }
     while (true) {
-        const overrides = getStoredOverrides(ctx.cwd);
+        const overrides = getTlhSubagentOverrides(ctx.cwd);
         const optionToAgent = new Map(subagents.map((agent) => [subagentPickerOption(agent, overrides.get(agent.name), ctx), agent.name]));
         const selectedOption = await ctx.ui.select("TLH minor-agent settings", [
             ...optionToAgent.keys(),
@@ -419,11 +391,11 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
             continue;
         }
         if (action === "reset model") {
-            notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "model"), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+            notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "model"), fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)));
             continue;
         }
         if (action === "reset effort") {
-            notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "thinking"), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+            notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "thinking"), fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)));
             continue;
         }
         if (action === "reset role") {
@@ -491,7 +463,7 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
         }
         const hadEffortOverride = hasMeaningfulSubagentOverride(override);
         const effortWriteResult = writeSubagentOverridePatch(ctx.cwd, agentName, { thinking });
-        notifyWriteResult(ctx, effortWriteResult, fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+        notifyWriteResult(ctx, effortWriteResult, fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)));
         if (effortWriteResult.changed && !hadEffortOverride) {
             recordOverrideBaseline(agentName, agent, ctx.model?.provider);
         }
@@ -554,14 +526,14 @@ export function registerSubagentSettingsCommand(pi) {
                     }
                     const resetField = field === "effort" ? "thinking" : field === "model" ? "model" : undefined;
                     const result = resetSubagentOverride(ctx.cwd, rawAgentName, resetField);
-                    notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, getStoredOverrides(ctx.cwd).get(rawAgentName)));
+                    notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, getTlhSubagentOverrides(ctx.cwd).get(rawAgentName)));
                     return;
                 }
                 if (command !== "set") {
                     throw new Error(usageMessage());
                 }
                 const models = availableModels(ctx);
-                const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
+                const currentOverride = getTlhSubagentOverrides(ctx.cwd).get(rawAgentName);
                 const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
                 const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);
                 if (!(await confirmFixedModelOverride(ctx, rawAgentName, patch.model))) {
