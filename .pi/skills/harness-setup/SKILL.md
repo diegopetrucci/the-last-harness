@@ -38,7 +38,7 @@ Before release, run:
 npm run validate
 ```
 
-The aggregate validation script runs installer smoke checks, `npm test`, and `npm run lint`; Oxlint retains its built-in defaults while `.oxlintrc.json` registers the vendored anti-slop plugin for per-rule adoption. The global `max-lines` rule is active at error severity with a 2,000 physical-line ceiling (including blank lines and comments) across `scripts/`, `tests/`, and `extensions/`, including source, test, and generated mirror files without exemptions. `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity; the other 6 anti-slop entries remain visibly commented out. `npm run lint` uses `--deny-warnings` over `scripts/`, `tests/`, and `extensions/`, so any warning or error fails validation. It then enforces `npm run format:check`, performs the settings merge dry-run, and runs `npm pack --dry-run`; the CI validation lane reuses the same `npm run lint` script. The smoke script includes syntax checks for stage-0, stage-1, helper CLIs, and `scripts/lib/`, plus a manifest check that keeps the bootstrapper aligned with the stage-1 support manifest.
+The aggregate validation script runs installer smoke checks, `npm test`, and `npm run lint`; Oxlint retains its built-in defaults while `.oxlintrc.json` registers the vendored anti-slop plugin for per-rule adoption. The global `max-lines` rule is active at error severity with a 2,000 physical-line ceiling (including blank lines and comments) across `scripts/`, `tests/`, and `extensions/`, including source, test, and generated mirror files without exemptions. `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity; the other 6 anti-slop entries remain visibly commented out. `npm run lint` uses `--deny-warnings` over `scripts/`, `tests/`, and `extensions/`, so any warning or error fails validation. It then enforces `npm run format:check` and performs the settings merge dry-run; the CI validation lane reuses the same `npm run lint` script. The smoke script includes syntax checks for stage-0, stage-1, helper CLIs, and `scripts/lib/`, plus a manifest check that keeps the bootstrapper aligned with the stage-1 support manifest.
 
 For install behavior, test with temporary isolated paths:
 
@@ -57,11 +57,10 @@ test ! -e "$bin_dir/tlh"
 
 ## Rollback guidance
 
-Tell users they can remove the isolated wrapper and profile with:
+Tell users they can remove the isolated wrapper and profile with the documented uninstaller:
 
 ```bash
-rm -f ~/.local/bin/tlh
-rm -rf ~/.the-last-harness
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-Normal `~/.pi/agent` settings are intentionally not modified by this installer.
+Append `--dry-run` (`bash -s -- --dry-run`) to preview the plan without performing removals. Normal `~/.pi/agent` settings are intentionally not modified by this installer.

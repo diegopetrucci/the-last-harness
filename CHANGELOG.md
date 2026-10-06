@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.
 - Session names now propagate to the terminal title (`tlh - <name> - <cwd basename>` when named, `tlh - <cwd basename>` when unnamed) and to Herdr as a pane metadata title, fixing a regression where TLH's title branding dropped session-name awareness.
 - Async status reads now reject non-regular artifacts without blocking or following path replacements.
 - The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
@@ -14,6 +15,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
 - Install and update no longer clean up settings left by extensions retired in v0.34.0 or earlier (context-cap, oracle, rtk, intercom, fff, and subagents opt-outs in `tlh.disabledDefaultExtensions`; `tlh.gnosis`, `tlh.rtk`, and `subagents.disableBuiltins` keys). Leftover values from those versions are now silently ignored. Package-level force-removal for the same retired extensions is unaffected.
 - Bumped bundled defaults: `pi-fast` `0.1.4` → `0.1.6`, `pi-anthropic-auth` `3.3.2` → `3.4.2`, `pi-web-access` `0.10.10` → `0.29.2`, and `pi-context-inspector` `0.1.13` → `0.1.15`. The web-access fork now exposes only its Exa-backed three-tool surface, without curator/search commands, alternate providers, GitHub/PDF/video/browser workflows, or a bundled skill; migrate supported isolated settings manually as described in [docs/web-search.md](docs/web-search.md).
 - Bumped the bundled Pi runtime from `0.87.1` to `1.0.3`, adding Anthropic capacity-error retries and provider fixes. Pi sessions now start in fullscreen TUI mode by default; to keep normal terminal scrollback set `tuiMode` to `"regular"` via `/settings` → **TUI mode**, `~/.the-last-harness/agent/settings.json`, or `--tui-mode regular`.

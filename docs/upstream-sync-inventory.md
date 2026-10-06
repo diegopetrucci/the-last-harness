@@ -19,6 +19,26 @@ Explicitly excluded here:
 - **Pi-sensitive items**: re-review on every `@earendil-works/pi-coding-agent` version bump.
 - **`annotate-git-diff`**: re-review at least quarterly and on upstream package/repo releases affecting the review UI/flow. It is not a Pi-cadence row and is intentionally not restamped by the Pi 1.0.1 review below.
 
+## Pi 1.0.4 review evidence
+
+Reviewed 2026-10-06 by diffing the 1.0.3 and 1.0.4 tarballs of `pi-coding-agent`, `pi-ai`, `pi-tui`, `pi-agent-core`, `pi-codemode`, `pi-mcp`, `chord`, and `pi-telemetry`.
+
+### Changes reviewed in Pi 1.0.4
+
+| Area | Upstream path | Finding | TLH impact |
+| --- | --- | --- | --- |
+| `--tools` pattern matching and MCP retention | `pi-coding-agent` → `dist/cli.js`, CLI arg parsing (1.0.4) | `--tools` and `--exclude-tools` now accept `*` patterns (e.g. `mcp__radius__*`). Critically, `--tools` no longer removes MCP tools unless an entry starts with `mcp__`; previously, a `--tools read,codemode` invocation silently dropped all MCP servers. | TLH subagent `pi-args.ts` builds `--tools` allowlists from named tool names (no MCP entries). Since none of those entries starts with `mcp__`, Pi 1.0.4 retains unmatched MCP tools — but they are never declared directly to the model; they remain callable only from codemode scripts or via `tool_search`. TLH children additionally use `-builtin:mcp` in isolated settings, so no Pi-native MCP servers are loaded regardless. mcporter's direct-tools bridge is controlled by the fail-closed sentinel `MCP_DIRECT_TOOLS = "__none__"`, which `buildPiArgs` in `pi-args.ts` always sets to prevent the adapter from bootstrapping direct MCP tools in children. Net effect: no behavioral change for TLH subagents; the allowlist contract is unchanged. No TLH code change required for this release. |
+| `--no-mcp` flag | `pi-coding-agent` → CLI (1.0.4) | New `--no-mcp` flag disables the built-in MCP support for a single run; does not affect an extension replacing built-in MCP. | TLH does not pass `--no-mcp` anywhere. mcporter (bundled) replaces built-in MCP and is explicitly excluded via `-builtin:mcp`, so this flag would be redundant even if used. No TLH change required. |
+| Codemode `tools.read()` image support | `pi-coding-agent` → codemode extension (1.0.4) | `tools.read()` on an image file now resolves to an image block that `image()` can display, fixing a regression where codemode scripts could not pass images between tools. | TLH does not override codemode. No TLH impact. |
+| Syntax highlighting fix in fenced code blocks | `pi-tui` → TUI renderer (1.0.4) | Fixes multiline string/comment fenced-block color loss after the first line. | TLH does not override syntax highlighting. No TLH impact. |
+| MCP OAuth `invalid_redirect_uri` fix | `pi-mcp` (1.0.4) | Pi now registers as a native client for OpenID Connect servers, fixing sign-in failures on servers like `mcp.modem.dev`. | TLH's MCP is handled by mcporter; Pi-native MCP is excluded. No TLH impact. |
+| MCP session shutdown fix | `pi-mcp` (1.0.4) | Fixes transport staying open when shutdown returned while a server was still connecting. | No TLH impact; native MCP excluded. |
+| `ToolLoadout.getPromptGuidelines()` / hidden-tool prompt fix | `pi-coding-agent` → `dist/core/tool-loadout.js` (1.0.4) | Hidden tools are removed from system-prompt rules; skills hint names no tool when the file reader is hidden; codemode shows per-tool prompt guidelines. `ToolLoadout` gains `getPromptGuidelines()`. | TLH does not patch `ToolLoadout`. No TLH impact. |
+| Bedrock HTTP/2 stall retry | `pi-ai` → Bedrock provider (1.0.4) | Bedrock requests that fail with `The pending stream has been canceled` are now retried automatically. | No TLH impact. |
+| Codemode built-in freeze / crash fix | `pi-coding-agent` → codemode extension (1.0.4) | Built-ins are frozen before a codemode script runs, preventing script patches like `Array.prototype.toJSON = ...` from crashing Pi. | TLH does not override codemode. No TLH impact. |
+| Byte-identical TLH seams | `pi-ai` → `dist/api/anthropic-messages.js`, `pi-coding-agent` → `dist/core/settings-manager.js`, `dist/core/resource-loader.js`, `dist/core/cache-stats.js` | These files are byte-identical between 1.0.3 and 1.0.4. | No TLH changes required. Existing seam contracts remain current. |
+| Packaging | `package.json`, sibling packages | No shrinkwrap in any `@earendil-works` package. `pi-coding-agent` 1.0.4 non-earendil dependencies and engines are unchanged from 1.0.3 (including `typebox` at `1.3.27`). All `@earendil-works/*` siblings bump to caret ranges pinned to 1.0.4. | TLH's `npm ci` lockfile approach and `overrides` block continue to hold the full dependency graph at the managed pin. `typebox` pin stays at `1.3.27`. No production code change beyond the pin bump. |
+
 ## Pi 1.0.3 review evidence
 
 Reviewed 2026-10-05 by diffing the 1.0.1 and 1.0.3 tarballs of `pi-coding-agent`, `pi-ai`, `pi-tui`, and `pi-agent-core`. Pi 1.0.2 was reviewed via its changelog (a single `models.json` addition) and is covered by the 1.0.1 → 1.0.3 tarball diff below; TLH skipped the 1.0.2 pin.

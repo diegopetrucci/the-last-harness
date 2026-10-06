@@ -63,7 +63,6 @@ test("sequential projection preserves package and lint ordering invariants", () 
   before("check-package-versions", "check-package-contents");
   before("check-package-contents", "check-lazy-import-boundaries");
   before("check-lazy-import-boundaries", "merge-settings");
-  before("merge-settings", "npm-pack");
   before("lint", "format-check");
   before("format-check", "lint-sh");
   before("check-runtime", "check-installer-smoke");

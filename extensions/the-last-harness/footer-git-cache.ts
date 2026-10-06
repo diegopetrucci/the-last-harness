@@ -1,30 +1,9 @@
 import { spawn } from "node:child_process";
-import { parseGitStatusPorcelainV2 } from "./footer-git.js";
-
-/**
- * Snapshot shape used by `formatTlhGitFooterSegments` in `./footer-git.js`.
- * Kept structurally compatible with the return value of `parseGitStatusPorcelainV2`.
- */
-export type GitStatusSnapshot = {
-  branch?: string;
-  /** Upstream tracking ref, when configured locally; absence is not proof a branch is unpushed. */
-  upstream?: string;
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  conflict: number;
-  ahead: number;
-  behind: number;
-};
-
-/** Minimal pull-request shape consumed by `formatPullRequestFooterSegment`. */
-export type PullRequestSnapshot = {
-  number?: number | string;
-  state?: string;
-  isDraft?: boolean;
-  url?: string;
-  title?: string;
-};
+import {
+  parseGitStatusPorcelainV2,
+  type GitStatusSnapshot,
+  type PullRequestSnapshot,
+} from "./footer-git.js";
 
 export type CommandResult = {
   stdout: string;
