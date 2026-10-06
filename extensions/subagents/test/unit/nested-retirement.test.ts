@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import type { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   clearForegroundMessageInbox,
   registerForegroundMessageInbox,
@@ -50,7 +51,11 @@ class CapturingForegroundControls extends Map<string, ForegroundRunControl> {
   }
 }
 
-function createExecutor(state: SubagentState, sessionRoot?: string) {
+function createExecutor(
+  state: SubagentState,
+  sessionRoot?: string,
+  runSyncOverride?: typeof runSync,
+) {
   const config: ExtensionConfig = { maxSubagentDepth: 2, control: {} };
   return createSubagentExecutor({
     pi: makeExtensionAPI({ getSessionName: () => "parent" }),
@@ -64,6 +69,7 @@ function createExecutor(state: SubagentState, sessionRoot?: string) {
         : fs.mkdtempSync(path.join(os.tmpdir(), "tlh-retirement-session-"))),
     expandTilde: (value) => value,
     discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+    runSync: runSyncOverride,
   });
 }
 
@@ -103,22 +109,21 @@ describe("nested orchestration retirement", () => {
     const controls = new CapturingForegroundControls();
     state.foregroundControls = controls;
     try {
-      const throwingContext = makeMinimalCtx(root);
-      throwingContext.modelRegistry.getAvailable = () => {
-        throw new Error("ordinary root model lookup failed");
+      const throwingRunSync: typeof runSync = async () => {
+        throw new Error("ordinary root runSync failed");
       };
-      const result = await createExecutor(state, root).execute(
+      const result = await createExecutor(state, root, throwingRunSync).execute(
         "run",
         { agent: "worker", task: "go" },
         new AbortController().signal,
         undefined,
-        throwingContext,
+        makeMinimalCtx(root),
       );
 
       assert.equal(result.isError, true);
       const content = result.content[0];
       const text = content?.type === "text" ? content.text : "";
-      assert.match(text, /ordinary root model lookup failed/);
+      assert.match(text, /ordinary root runSync failed/);
       assert.equal(controls.capturedRunIds.length, 1);
       const runId = controls.capturedRunIds[0];
       assert.ok(runId);

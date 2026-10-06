@@ -13,6 +13,7 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   removeTempDir,
 } from "../support/helpers.ts";
 import {
@@ -99,13 +100,16 @@ describe(
           },
         },
       });
-      const pressureContext = () => {
-        const context = makeMinimalCtx(tempDir);
-        context.model = makeModel("test-model", { provider: "mock" });
-        context.modelRegistry.getAvailable = () => [
-          makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
-          makeModel("resume-model", { provider: "mock", contextWindow: 2000 }),
-        ];
+      const pressureContext = async () => {
+        const testModel = makeModel("test-model", { provider: "mock", contextWindow: 1000 });
+        const resumeModel = makeModel("resume-model", {
+          provider: "mock",
+          contextWindow: 2000,
+        });
+        const { context } = await makeModelRegistryContext(tempDir, [
+          { provider: "mock", models: [testModel, resumeModel] },
+        ]);
+        context.model = testModel;
         return context;
       };
       mockPi.onCall({
@@ -141,7 +145,7 @@ describe(
         { agent: "a", task: "ask supervisor" },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       const runId = original.details?.runId;
       assert.ok(runId, "expected foreground run id");
@@ -172,7 +176,7 @@ describe(
         { action: "status", id: runId },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       const statusText = status.content[0]?.text ?? "";
       assert.match(statusText, /State: remembered foreground/);
@@ -198,7 +202,7 @@ describe(
         },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       assert.equal(revived.isError, undefined);
       assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
@@ -561,12 +565,20 @@ describe(
         ],
         config: { parallel: { concurrency: 3 } },
       });
-      const cohortContext = makeMinimalCtx(tempDir);
-      cohortContext.model = makeModel("test-model", { provider: "mock" });
-      cohortContext.modelRegistry.getAvailable = () => [
-        makeModel("claude-sonnet-4", { provider: "anthropic", contextWindow: 1000 }),
-        makeModel("gpt-5-mini", { provider: "openai", contextWindow: 1000 }),
-      ];
+      const cohortTestModel = makeModel("test-model", { provider: "mock" });
+      const cohortAnthropicModel = makeModel("claude-sonnet-4", {
+        provider: "anthropic",
+        contextWindow: 1000,
+      });
+      const cohortOpenAiModel = makeModel("gpt-5-mini", {
+        provider: "openai",
+        contextWindow: 1000,
+      });
+      const { context: cohortContext } = await makeModelRegistryContext(tempDir, [
+        { provider: "anthropic", models: [cohortAnthropicModel] },
+        { provider: "openai", models: [cohortOpenAiModel] },
+      ]);
+      cohortContext.model = cohortTestModel;
       const originalPromise = first.executor.execute(
         "foreground-parallel-pause-original",
         {

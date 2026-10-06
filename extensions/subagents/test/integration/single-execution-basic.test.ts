@@ -14,6 +14,7 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
@@ -600,11 +601,11 @@ describe(
           },
         ],
       });
-      const context = makeMinimalCtx(tempDir);
-      context.model = makeModel("test-model", { provider: "mock" });
-      context.modelRegistry.getAvailable = () => [
-        makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
-      ];
+      const testModel = makeModel("test-model", { provider: "mock", contextWindow: 1000 });
+      const { context } = await makeModelRegistryContext(tempDir, [
+        { provider: "mock", models: [testModel] },
+      ]);
+      context.model = testModel;
       const executor = makeExecutor(
         [makeAgent("echo", { model: "mock/test-model", completionGuard: false })],
         {},
