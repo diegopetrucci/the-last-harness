@@ -20,7 +20,6 @@ export const TLH_STARTUP_TIPS = [
   "Run `/tokens` to know what's eating up your subscription limit.",
   "Ask the contrarian to stress-test a plan or decision by steelmanning the strongest opposing case.",
   "TLH can search the web, just ask it to.",
-  "With `/experimental enable ci-failure-investigation` TLH auto-investigates failed CI checks, so you don't have to.",
   "After opening a PR, TLH automatically monitors CI and reports failures.",
   "Ask for a diagram or visual explanation and TLH will sketch logic, flows, or UI structure (show-me skill).",
 ] as const;

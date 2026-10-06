@@ -8,7 +8,7 @@ const { registerToggleTlhGitAttributionCommand } = await jiti.import(
   "../extensions/the-last-harness/attribution.ts",
 );
 const { registerEffortCommand } = await jiti.import("../extensions/the-last-harness/effort.ts");
-const { registerExperimentalCommand, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
+const { registerExperimentalCommand, SESSION_MIRROR_OBSERVER_FEATURE } = await jiti.import(
   "../extensions/the-last-harness/experimental.ts",
 );
 const { registerUsageCommand } = await jiti.import(
@@ -64,9 +64,9 @@ test("experimental facade registers experimental command with correct completion
   assert.equal(typeof command?.handler, "function");
   assert.ok(
     command
-      .getArgumentCompletions(`toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`)
-      ?.some((item) => item.value === `toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`),
-    "completions must include toggle for the delta-follow-up-reviews feature",
+      .getArgumentCompletions(`toggle ${SESSION_MIRROR_OBSERVER_FEATURE}`)
+      ?.some((item) => item.value === `toggle ${SESSION_MIRROR_OBSERVER_FEATURE}`),
+    "completions must include toggle for the session-mirror-observer feature",
   );
 });
 

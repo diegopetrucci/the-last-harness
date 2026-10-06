@@ -10,6 +10,11 @@ const { TLH_STARTUP_TIPS, getTlhStartupTip, selectTlhStartupTip } = await jiti.i
 
 test("selectTlhStartupTip chooses from the curated TLH startup tip list", () => {
   assert.ok(TLH_STARTUP_TIPS.length > 0, "expected at least one curated TLH startup tip");
+  assert.deepEqual(
+    TLH_STARTUP_TIPS.filter((tip) => /delta-follow-up-reviews|ci-failure-investigation/.test(tip)),
+    [],
+    "retired experiments must not be advertised in startup tips",
+  );
   assert.equal(
     selectTlhStartupTip(() => 0),
     TLH_STARTUP_TIPS[0],
