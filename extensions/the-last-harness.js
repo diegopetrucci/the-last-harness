@@ -48,7 +48,16 @@ function setTlhTerminalTitle(ctx) {
         const cwdLabel = basename(ctx.cwd) || ctx.cwd;
         if (!cwdLabel)
             return;
-        ctx.ui.setTitle(`tlh - ${cwdLabel}`);
+        let sessionName;
+        try {
+            const raw = ctx.sessionManager?.getSessionName?.();
+            if (typeof raw === "string")
+                sessionName = raw.trim() || undefined;
+        }
+        catch {
+        }
+        const title = sessionName ? `tlh - ${sessionName} - ${cwdLabel}` : `tlh - ${cwdLabel}`;
+        ctx.ui.setTitle(title);
     }
     catch {
     }

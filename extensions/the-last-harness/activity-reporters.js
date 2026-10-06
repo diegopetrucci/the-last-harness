@@ -162,6 +162,18 @@ function readSessionRef(ctx) {
     }
     return { agentSessionId, agentSessionPath };
 }
+function readSessionName(ctx) {
+    try {
+        const name = ctx.sessionManager.getSessionName();
+        if (typeof name !== "string")
+            return undefined;
+        const trimmed = name.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 function withSessionRef(params, sessionRef) {
     if (sessionRef.agentSessionPath) {
         return { ...params, agent_session_path: sessionRef.agentSessionPath };
@@ -271,6 +283,8 @@ export function createHerdrActivityReporter(options = {}) {
     let heartbeatStarted = false;
     let displayMetadataPending = false;
     let displayMetadataInFlight = false;
+    let displayMetadataDirty = false;
+    let currentSessionTitle;
     let outboundChain = Promise.resolve();
     const nextReportSeq = () => {
         reportSeq = Math.max(reportSeq + 1, now() * 1000);
@@ -295,6 +309,7 @@ export function createHerdrActivityReporter(options = {}) {
         });
     };
     const sendDisplayMetadata = async () => {
+        const titleParam = currentSessionTitle !== undefined ? { title: currentSessionTitle } : { clear_title: true };
         try {
             await sendRequest({
                 id: `${HERDR_METADATA_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
@@ -305,6 +320,7 @@ export function createHerdrActivityReporter(options = {}) {
                     agent: HERDR_AGENT,
                     applies_to_source: HERDR_SOURCE,
                     display_agent: HERDR_DISPLAY_AGENT,
+                    ...titleParam,
                 },
             });
         }
@@ -315,8 +331,12 @@ export function createHerdrActivityReporter(options = {}) {
         if (!displayMetadataPending || displayMetadataInFlight || !rootSession || disposed)
             return;
         displayMetadataInFlight = true;
+        displayMetadataDirty = false;
         void sendDisplayMetadata().finally(() => {
             displayMetadataInFlight = false;
+            if (displayMetadataDirty && rootSession && !disposed) {
+                retryDisplayMetadata();
+            }
         });
     };
     const stopHeartbeat = () => {
@@ -383,6 +403,7 @@ export function createHerdrActivityReporter(options = {}) {
             }
             rootSession = true;
             sessionRef = readSessionRef(ctx);
+            currentSessionTitle = readSessionName(ctx);
             const startedSessionRef = sessionRef;
             if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
                 void sendRequest({
@@ -397,6 +418,7 @@ export function createHerdrActivityReporter(options = {}) {
                 }).catch(() => undefined);
             }
             displayMetadataPending = true;
+            displayMetadataDirty = true;
             retryDisplayMetadata();
         },
         handleSnapshot(snapshot) {
@@ -404,11 +426,26 @@ export function createHerdrActivityReporter(options = {}) {
                 return;
             queuedReporter.handleSnapshot(snapshot);
         },
+        handleSessionInfoChanged(ctx) {
+            if (!rootSession || disposed)
+                return;
+            const name = readSessionName(ctx);
+            if (name === currentSessionTitle)
+                return;
+            currentSessionTitle = name;
+            if (displayMetadataInFlight) {
+                displayMetadataDirty = true;
+                return;
+            }
+            displayMetadataPending = true;
+            retryDisplayMetadata();
+        },
         handleSessionShutdown() {
             if (!rootSession)
                 return;
             rootSession = false;
             displayMetadataPending = false;
+            displayMetadataDirty = false;
             stopHeartbeat();
             queuedReporter.handleSessionShutdown();
         },
@@ -416,6 +453,7 @@ export function createHerdrActivityReporter(options = {}) {
             disposed = true;
             rootSession = false;
             displayMetadataPending = false;
+            displayMetadataDirty = false;
             stopHeartbeat();
             queuedReporter.dispose();
         },
@@ -542,6 +580,11 @@ export function registerTlhActivityReporters(pi, tracker, options = {}) {
         const snapshot = tracker.getSnapshot();
         for (const reporter of reporters) {
             reporter.handleSnapshot(snapshot);
+        }
+    });
+    pi.on("session_info_changed", (_event, ctx) => {
+        for (const reporter of reporters) {
+            reporter.handleSessionInfoChanged?.(ctx);
         }
     });
     pi.on("session_shutdown", () => {

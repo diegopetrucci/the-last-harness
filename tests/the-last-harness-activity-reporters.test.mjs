@@ -451,6 +451,7 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
     agent: "pi",
     applies_to_source: "herdr:tlh",
     display_agent: "tlh",
+    clear_title: true,
   });
 
   const workingSnapshot = {
