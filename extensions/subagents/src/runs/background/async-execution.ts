@@ -233,6 +233,36 @@ export function formatAsyncStartedMessage(headline: string): string {
 }
 
 /**
+ * Build a launch receipt for a new background dispatch.
+ * Shows the run ID, agent name or count, status location, and a note that
+ * completion arrives separately. Never implies the run has completed.
+ */
+export function buildAsyncLaunchReceipt(params: {
+  id: string;
+  asyncDir: string;
+  /** Single-agent name (single dispatch). */
+  agent?: string;
+  /** All agent names (parallel dispatch). */
+  agentNames?: string[];
+}): string {
+  const { id, asyncDir, agent, agentNames } = params;
+  const lines: string[] = ["Background run started"];
+  if (agent) {
+    lines.push(`Agent: ${agent}`);
+  } else if (agentNames && agentNames.length > 0) {
+    if (agentNames.length === 1) {
+      lines.push(`Agent: ${agentNames[0]}`);
+    } else {
+      lines.push(`Agents: ${agentNames.length} (${agentNames.join(", ")})`);
+    }
+  }
+  lines.push(`Run ID: ${id}`);
+  lines.push(`Status/artifacts: ${asyncDir}/status.json`);
+  lines.push("Completion arrives separately.");
+  return lines.join("\n");
+}
+
+/**
  * Resolve a named runner module alongside a given source module.
  * The runner extension (.ts or .js) matches the referencing module so that
  * source loaders pick up TypeScript and generated runtime picks up JavaScript.
@@ -996,7 +1026,7 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
     content: [
       {
         type: "text",
-        text: formatAsyncStartedMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
+        text: buildAsyncLaunchReceipt({ id, asyncDir, agentNames: flatAgents }),
       },
     ],
     details: {
@@ -1459,7 +1489,7 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
   }
 
   return {
-    content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`) }],
+    content: [{ type: "text", text: buildAsyncLaunchReceipt({ id, asyncDir, agent }) }],
     details: {
       mode: "single",
       runId: id,

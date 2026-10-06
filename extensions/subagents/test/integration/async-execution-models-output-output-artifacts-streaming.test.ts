@@ -1737,4 +1737,143 @@ describe("async execution output and event streaming", () => {
     assert.deepEqual(preservedEvent?.extraField, unknownEvent.extraField);
     assert.deepEqual(preservedEvent?.anotherField, unknownEvent.anotherField);
   });
+
+  // ---------------------------------------------------------------------------
+  // Items 1–3 (tlhf-5veu review): parallel output behavior gaps
+  // These tests restore coverage that existed in the foreground parallel tests.
+  // ---------------------------------------------------------------------------
+
+  it("parallel async runs write to independent per-task output destinations", async () => {
+    // Item 1: two parallel tasks each write their own distinct output file.
+    // The removed foreground test "top-level parallel output saves use per-task output paths"
+    // only exercised a single task; independent sibling destinations were never re-covered.
+    const outputA = path.join(tempDir, "parallel-task-a-report.md");
+    const outputB = path.join(tempDir, "parallel-task-b-report.md");
+    mockPi.onCall({ matchArgIncludes: "Task A work", output: "Content from task A" });
+    mockPi.onCall({ matchArgIncludes: "Task B work", output: "Content from task B" });
+    const id = `async-parallel-independent-outputs-${Date.now().toString(36)}`;
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "task-a", task: "Task A work", output: outputA },
+        { agent: "task-b", task: "Task B work", output: outputB },
+      ],
+      agents: [
+        makeAgent("task-a", { completionGuard: false }),
+        makeAgent("task-b", { completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results.length, 2);
+    // Both output files must have been written independently.
+    assert.equal(fs.readFileSync(outputA, "utf-8"), "Content from task A");
+    assert.equal(fs.readFileSync(outputB, "utf-8"), "Content from task B");
+    // Each result references its own output.
+    assert.match(payload.results[0]?.output ?? "", /Content from task A/);
+    assert.match(payload.results[1]?.output ?? "", /Content from task B/);
+  });
+
+  it("parallel file-only output aggregation returns concise file references per task", async () => {
+    // Item 2: parallel tasks in file-only mode should each produce a concise file reference
+    // ("Output saved to:") in the async result — not inline content.
+    // The removed foreground test "top-level parallel file-only output aggregates concise
+    // file references" exercised this; the single-run file-only test is not equivalent.
+    const outputA = path.join(tempDir, "parallel-file-only-a.md");
+    const outputB = path.join(tempDir, "parallel-file-only-b.md");
+    mockPi.onCall({
+      matchArgIncludes: "File-only work A",
+      output: "Full file-only output A\nwith extra details",
+    });
+    mockPi.onCall({
+      matchArgIncludes: "File-only work B",
+      output: "Full file-only output B\nwith extra details",
+    });
+    const id = `async-parallel-file-only-${Date.now().toString(36)}`;
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "worker-a", task: "File-only work A", output: outputA, outputMode: "file-only" },
+        { agent: "worker-b", task: "File-only work B", output: outputB, outputMode: "file-only" },
+      ],
+      agents: [
+        makeAgent("worker-a", { completionGuard: false }),
+        makeAgent("worker-b", { completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results.length, 2);
+    // Each result output is a concise file reference, not the full content.
+    assert.match(payload.results[0]?.output ?? "", /Output saved to:/);
+    assert.doesNotMatch(payload.results[0]?.output ?? "", /Full file-only output A/);
+    assert.match(payload.results[1]?.output ?? "", /Output saved to:/);
+    assert.doesNotMatch(payload.results[1]?.output ?? "", /Full file-only output B/);
+    // Both files must contain the full content.
+    assert.equal(fs.readFileSync(outputA, "utf-8"), "Full file-only output A\nwith extra details");
+    assert.equal(fs.readFileSync(outputB, "utf-8"), "Full file-only output B\nwith extra details");
+  });
+
+  it("background parallel runs treat string false as disabled output", async () => {
+    // Item 3: string "false" as output disables file saving for parallel tasks.
+    // The removed foreground test "treats string false as disabled output in top-level parallel
+    // runs" tested this; only the single-run variant was re-covered in the async migration.
+    mockPi.onCall({ matchArgIncludes: "Review A", output: "Review A inline content" });
+    mockPi.onCall({ matchArgIncludes: "Review B", output: "Review B inline content" });
+    const id = `async-parallel-string-false-${Date.now().toString(36)}`;
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "reviewer-a", task: "Review A", output: "false" },
+        { agent: "reviewer-b", task: "Review B", output: "false" },
+      ],
+      agents: [
+        makeAgent("reviewer-a", { output: "default-report.md", completionGuard: false }),
+        makeAgent("reviewer-b", { output: "default-report.md", completionGuard: false }),
+      ],
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results.length, 2);
+    // No file named "false" must be created.
+    assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
+    // Agent default output must also not be created.
+    assert.equal(fs.existsSync(path.join(tempDir, "default-report.md")), false);
+    // The inline content must appear in each result's output.
+    assert.match(payload.results[0]?.output ?? "", /Review A inline content/);
+    assert.match(payload.results[1]?.output ?? "", /Review B inline content/);
+  });
 });

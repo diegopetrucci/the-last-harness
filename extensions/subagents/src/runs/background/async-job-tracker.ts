@@ -30,6 +30,12 @@ import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 import {
+  getCompletionDelivery,
+  getGlobalSeenMap,
+  isSeenWithTtl,
+  markSeen,
+} from "./completion-dedupe.ts";
+import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   lookupProjectAgentRunReference,
   releaseProjectAgentRunReference,
@@ -674,6 +680,18 @@ export function createAsyncJobTracker(
       return;
     const asyncId = result.id;
     if (!asyncId) return;
+    // B+D: Replay protection keyed on eventId from COMPLETION_DELIVERY Symbol metadata.
+    // Only guard watcher-sourced events (those carrying metadata); direct handleComplete
+    // calls (tests, in-process signals) without metadata are never blocked.
+    const meta = getCompletionDelivery(data);
+    if (meta) {
+      const trackerSeen = getGlobalSeenMap("__pi_subagents_job_tracker_complete_seen__");
+      const trackerNow = Date.now();
+      const trackerKey = `result-event:${meta.eventId}:${asyncId}`;
+      if (isSeenWithTtl(trackerSeen, trackerKey, trackerNow, projectAgentTerminalRetentionMs))
+        return;
+      markSeen(trackerSeen, trackerKey, trackerNow);
+    }
     const job = state.asyncJobs.get(asyncId);
     const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
     if (job && telemetry) job.telemetry = telemetry;
@@ -687,15 +705,25 @@ export function createAsyncJobTracker(
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
     }
-    if (result.state === "cancelled" || result.state === "continued") {
-      retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
-    } else if (
-      (job?.status === "complete" || job?.status === "failed") &&
-      !projectReferenceCleanupTimers.has(asyncId)
-    ) {
-      scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
-        siblingSafe: false,
-      });
+    // F: Project-reference management deferred to after delivery confirmation
+    // when the event carries COMPLETION_DELIVERY metadata.  For events without
+    // metadata (legacy, direct calls), run immediately (backward-compatible).
+    const asyncDir = job?.asyncDir ?? result.asyncDir;
+    const jobStatus = job?.status;
+    const runProjectRefs = () => {
+      if (result.state === "cancelled" || result.state === "continued") {
+        retainOrReleaseProjectReference(asyncId, asyncDir);
+      } else if (
+        (jobStatus === "complete" || jobStatus === "failed") &&
+        !projectReferenceCleanupTimers.has(asyncId)
+      ) {
+        scheduleProjectReferenceCleanup(asyncId, asyncDir, { siblingSafe: false });
+      }
+    };
+    if (meta) {
+      meta.onAcknowledged(runProjectRefs);
+    } else {
+      runProjectRefs();
     }
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);

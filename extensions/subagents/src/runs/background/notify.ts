@@ -12,7 +12,13 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.ts";
+import {
+  buildCompletionKey,
+  getCompletionDelivery,
+  getGlobalSeenMap,
+  isSeenWithTtl,
+  markSeen,
+} from "./completion-dedupe.ts";
 import {
   type CompletionBatchConfig,
   type CompletionBatcher,
@@ -286,6 +292,20 @@ interface SubagentResult {
   totalTasks?: number;
   sessionId?: string | null;
   telemetry?: unknown;
+}
+
+/**
+ * Internal batcher item that carries delivery-ack metadata alongside the
+ * display details.  Never sent to pi.sendMessage \\ the emit callback strips
+ * it before calling sendCompletion.
+ */
+interface NotifyBatchItem {
+  readonly details: SubagentNotifyDetails;
+  /** D: Dedupe key at the result-file's durable eventId (or completionKey fallback). */
+  readonly eventId: string;
+  readonly timestamp: number;
+  /** E: Per-item callback fired after the sendMessage chunk containing this item succeeds. */
+  readonly onPersisted: (() => void) | null;
 }
 
 type NotifyTimerHandle = ReturnType<typeof setTimeout> | number;
@@ -920,13 +940,37 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
   return [...headLines, preview, ...tailLines].join("\n");
 }
 
-export function formatGroupedCompletion(details: SubagentNotifyDetails[]): string {
+/**
+ * Optional context for multi-chunk grouped sends.  When present the header
+ * includes a "part X/Y" qualifier so the reader can tell that this message
+ * is one chunk of a larger batch rather than a self-contained summary.
+ */
+export interface GroupedCompletionChunkContext {
+  /** 0-based index of this chunk within the overall flush. */
+  chunkIndex: number;
+  /** Total number of chunks in the overall flush. */
+  chunkCount: number;
+  /** Total number of items across all chunks. */
+  totalItems: number;
+}
+
+export function formatGroupedCompletion(
+  details: SubagentNotifyDetails[],
+  chunkContext?: GroupedCompletionChunkContext,
+): string {
   // Cap displayed entries so reserved scaffolding always fits within the ceiling and the
   // assembled message remains bounded regardless of how many completions batch together.
   const displayedDetails = details.slice(0, MAX_GROUPED_ENTRIES);
   const omittedCount = details.length - displayedDetails.length;
   const omissionMarker = omittedCount > 0 ? `… [${omittedCount} entries omitted]` : null;
-  const header = `Background tasks completed (${details.length}): ${displayedDetails.map((d) => `**${d.agent}**${d.taskInfo ?? ""}`).join(", ")}`;
+  // When this is one chunk of a multi-chunk flush, include "part X/Y" so the
+  // reader knows the overall batch size and that more chunks follow.  For a
+  // single-chunk flush the qualifier is omitted to keep the header concise.
+  const countLabel =
+    chunkContext && chunkContext.chunkCount > 1
+      ? `part ${chunkContext.chunkIndex + 1}/${chunkContext.chunkCount}, ${details.length} of ${chunkContext.totalItems}`
+      : String(details.length);
+  const header = `Background tasks completed (${countLabel}): ${displayedDetails.map((d) => `**${d.agent}**${d.taskInfo ?? ""}`).join(", ")}`;
   // Reserve every entry's scaffolding — including each trailing session line — before
   // sizing previews, so an over-ceiling grouped notice loses preview body rather than the
   // per-entry recovery pointers.
@@ -1045,21 +1089,36 @@ function sendNudge(
   }
 }
 
+/**
+ * E: Send a completion notification and acknowledge each item once its message
+ * chunk is persisted via pi.sendMessage.  Per-chunk acking ensures that a
+ * grouped send where chunk N throws leaves chunk-0..N-1 items acked (not
+ * re-sent on recovery) while chunk-N items remain unacked (re-sent).
+ *
+ * For grouped (>1) sends, each chunk of ≤MAX_GROUPED_ENTRIES items receives its
+ * OWN prose block from formatGroupedCompletion so that every completion is
+ * model-visible in exactly one message.  Only the items belonging to a chunk are
+ * acked after that chunk's sendMessage succeeds; items in later chunks that
+ * throw remain unacked and stay recoverable.
+ *
+ * A failing sendUserMessage (nudge) does NOT prevent acks — all acks fire
+ * before the nudge is attempted.
+ */
 function sendCompletion(
   pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
-  details: SubagentNotifyDetails[],
+  items: { details: SubagentNotifyDetails; onPersisted?: () => void }[],
   options: { triggerTurn: boolean; isIdle?: () => boolean } = { triggerTurn: true },
 ): void {
-  if (details.length === 0) return;
-  const formatted =
-    details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
-  const content = truncateWithMarker(
-    formatted,
-    MAX_COMPLETION_MESSAGE_CHARS,
-    "\n… [completion message truncated]",
-  );
+  if (items.length === 0) return;
+  const details = items.map((i) => i.details);
 
   if (details.length === 1) {
+    const formatted = formatSingleCompletion(details[0]!);
+    const content = truncateWithMarker(
+      formatted,
+      MAX_COMPLETION_MESSAGE_CHARS,
+      "\n… [completion message truncated]",
+    );
     // Exclude the internal _reformatPreview closure from the serialised structured
     // details — it is a non-serialisable function and must not appear in the message.
     const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0]!;
@@ -1087,16 +1146,33 @@ function sendCompletion(
           : {}),
       },
     });
-    sendNudge(pi, options);
+    // E: Ack before nudge — nudge failure must not prevent acknowledgement.
+    items[0]!.onPersisted?.();
+    try {
+      sendNudge(pi, options);
+    } catch {
+      // E: Nudge failure is non-fatal; delivery was already confirmed above.
+    }
     return;
   }
+
+  // Grouped path (multiple items).
+  //
+  // P1 fix: each chunk of ≤MAX_GROUPED_ENTRIES items gets its own
+  // formatGroupedCompletion prose so every item is model-visible exactly once.
+  // A 'part X/Y' header qualifier is added when there are multiple chunks.
+  const totalChunks = Math.ceil(items.length / MAX_GROUPED_ENTRIES);
 
   const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
   const flushId = createCompletionBatchIdentity();
   const completions = details.map(serializeCompletionBatchEntry);
   let triggersTurn = false;
+  // Running offset into the flat items[] array so we slice the right chunk.
+  let globalItemOffset = 0;
+  let globalChunkIndex = 0;
   for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
     const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
+    const logicalDetails = details.slice(logicalStart, logicalStart + MAX_COMPLETION_BATCH_ENTRIES);
     const logicalCompletions = completions.slice(
       logicalStart,
       logicalStart + MAX_COMPLETION_BATCH_ENTRIES,
@@ -1105,10 +1181,27 @@ function sendCompletion(
     const batchId = createCompletionBatchIdentity();
     for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
       const start = batchIndex * MAX_GROUPED_ENTRIES;
+      const chunkDetails = logicalDetails.slice(start, start + MAX_GROUPED_ENTRIES);
       const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
+      // Items in this chunk — the subset of items[] this send acks.
+      const chunkItemCount = chunkDetails.length;
+      const chunkItems = items.slice(globalItemOffset, globalItemOffset + chunkItemCount);
+
       const isFinalChunk =
         logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
       triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+
+      // P1 fix: format prose for this chunk's items only.
+      const chunkContext: GroupedCompletionChunkContext | undefined =
+        totalChunks > 1
+          ? { chunkIndex: globalChunkIndex, chunkCount: totalChunks, totalItems: items.length }
+          : undefined;
+      const chunkContent = truncateWithMarker(
+        formatGroupedCompletion(chunkDetails, chunkContext),
+        MAX_COMPLETION_MESSAGE_CHARS,
+        "\n… [completion message truncated]",
+      );
+
       const batchDetails: SubagentCompletionBatchDetails = {
         schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
         kind: SUBAGENT_COMPLETION_BATCH_KIND,
@@ -1121,18 +1214,31 @@ function sendCompletion(
         triggersTurn,
         completions: batchCompletions,
       };
+      // Every chunk is display:true with its own prose — all items are model-visible.
       pi.sendMessage({
         customType: "subagent-notify",
-        // The grouped prose is persisted/displayed exactly once; subsequent chunk
-        // records carry only their bounded structured details.
-        content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
-        display: logicalBatchIndex === 0 && batchIndex === 0,
+        content: chunkContent,
+        display: true,
         details: batchDetails,
       });
+      // E: Ack ONLY the items in this chunk after its sendMessage succeeds.
+      // Items in later chunks stay unacked and remain recoverable if a later
+      // sendMessage throws.
+      for (const item of chunkItems) {
+        item.onPersisted?.();
+      }
+
+      globalItemOffset += chunkItemCount;
+      globalChunkIndex++;
     }
   }
+  // E: Nudge fires after all chunks succeed; failure is non-fatal.
   if (triggersTurn) {
-    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+    try {
+      pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+    } catch {
+      // Nudge failure is non-fatal; all items were already acked chunk by chunk.
+    }
   }
 }
 
@@ -1257,9 +1363,12 @@ export default function registerSubagentNotify(
   const ttlMs = 10 * 60 * 1000;
   const nowFn = options.now ?? Date.now;
   const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
+  // NotifyBatchItem carries delivery-ack metadata through the batcher.
+  // The emit callback extracts .details before calling sendCompletion so that
+  // function references never reach pi.sendMessage or serialised message state.
   const batchers = new Map<
     string,
-    { ownerSessionId: string; batcher: CompletionBatcher<SubagentNotifyDetails> }
+    { ownerSessionId: string; batcher: CompletionBatcher<NotifyBatchItem> }
   >();
   let shuttingDownSessionId: string | null = null;
   globalStore[batcherStoreKey] = {
@@ -1271,25 +1380,53 @@ export default function registerSubagentNotify(
 
   const handleComplete = (data: unknown) => {
     const result = data as SubagentResult;
+    // Session-exact delivery: foreign or unowned results are ignored so that
+    // the delivery metadata is NOT accessed and the result file survives for
+    // the session that owns it.
     if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId) return;
+    // B: Read delivery metadata from the Symbol key (never serialised).
+    const meta = getCompletionDelivery(data);
+    const ack = meta?.acknowledgeDelivery ?? null;
     const now = nowFn();
-    const key = buildCompletionKey(result, "notify");
-    if (markSeenWithTtl(seen, key, now, ttlMs)) return;
+    // D: Key the seen map on the durable eventId stamped at write time, falling
+    // back to the content-based completionKey for events without metadata.
+    const eventId = meta?.eventId ?? buildCompletionKey(result, "notify");
+
+    // 'seen' now means 'delivered': the key is only written after sendCompletion
+    // succeeds. A pre-existing entry means a prior delivery attempt succeeded
+    // (possibly across a process reload). Ack immediately to clean up any
+    // surviving result file, then return without re-sending.
+    if (isSeenWithTtl(seen, eventId, now, ttlMs)) {
+      ack?.();
+      return;
+    }
 
     const details = buildCompletionDetails(result);
     const batchKey = completionBatchKey(result);
     let batcherEntry = batchers.get(batchKey);
     if (!batcherEntry) {
       const ownerSessionId = result.sessionId;
-      const batcher = createCompletionBatcher<SubagentNotifyDetails>({
+      const batcher = createCompletionBatcher<NotifyBatchItem>({
         config: batchConfig,
-        emit: (items) => {
+        emit: (batchItems) => {
           const lifecycleFlush = shuttingDownSessionId === ownerSessionId;
           if (state.currentSessionId !== ownerSessionId && !lifecycleFlush) {
+            // Session switched before the batch fired. Items are dropped without
+            // marking seen or calling ack so the result files survive for
+            // re-delivery in the owning session.
             batchers.delete(batchKey);
             return;
           }
-          sendCompletion(pi, items, {
+          // E: Pass per-item onPersisted into sendCompletion for per-chunk acking.
+          // D+E: markSeen and ack fire together inside onPersisted.
+          const sendItems = batchItems.map((item) => ({
+            details: item.details,
+            onPersisted: () => {
+              markSeen(seen, item.eventId, item.timestamp);
+              item.onPersisted?.();
+            },
+          }));
+          sendCompletion(pi, sendItems, {
             triggerTurn: !lifecycleFlush && !suppressFlushNudge,
             isIdle,
           });
@@ -1309,13 +1446,29 @@ export default function registerSubagentNotify(
       suppressFlushNudge = true;
       try {
         batcherEntry.batcher.flush();
+      } catch {
+        // P2 fix: a held-success send failure must not abort the urgent failure/
+        // pause notice below.  Unacked items retain their files for recovery.
       } finally {
         suppressFlushNudge = false;
       }
-      sendCompletion(pi, [details], { triggerTurn: true, isIdle });
+      // E: Per-item ack — onPersisted fires inside sendCompletion after sendMessage.
+      sendCompletion(
+        pi,
+        [
+          {
+            details,
+            onPersisted: () => {
+              markSeen(seen, eventId, now);
+              ack?.();
+            },
+          },
+        ],
+        { triggerTurn: true, isIdle },
+      );
       return;
     }
-    batcherEntry.batcher.push(details);
+    batcherEntry.batcher.push({ details, eventId, timestamp: now, onPersisted: ack });
   };
 
   pi.on("session_shutdown", () => {
@@ -1333,7 +1486,14 @@ export default function registerSubagentNotify(
           batchers.delete(key);
           continue;
         }
-        entry.batcher.flush();
+        // P2 fix: catch per-batcher flush failures so a failed chunk does not
+        // abort remaining batchers.  Unacked items retain their files for recovery
+        // on the next session start.
+        try {
+          entry.batcher.flush();
+        } catch {
+          // ignore \ unacked items remain on disk for recovery
+        }
       }
     } finally {
       shuttingDownSessionId = null;

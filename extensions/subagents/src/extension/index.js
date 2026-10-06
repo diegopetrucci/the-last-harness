@@ -319,7 +319,7 @@ export default function registerSubagentExtension(pi) {
         });
     };
     const supervisorChannel = createNativeSupervisorChannel(pi, state);
-    const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(pi, state, RESULTS_DIR, PROJECT_AGENT_TERMINAL_RETENTION_MS);
+    const { startResultWatcher, primeExistingResults, stopResultWatcher, clearPendingAcks, sweepStaleResultFiles, } = createResultWatcher(pi, state, RESULTS_DIR, PROJECT_AGENT_TERMINAL_RETENTION_MS);
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
@@ -591,6 +591,8 @@ export default function registerSubagentExtension(pi) {
             resetJobs(ctx);
             restoreAttempted = true;
             restoreActiveJobs(ctx);
+            clearPendingAcks();
+            sweepStaleResultFiles();
             primeExistingResults();
         }
         catch (error) {

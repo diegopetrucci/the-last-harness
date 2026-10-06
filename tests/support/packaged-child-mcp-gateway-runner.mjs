@@ -85,32 +85,47 @@ const modelRuntime = await ModelRuntime.create({
 });
 modelRuntime.registerNativeProvider(faux.provider);
 const model = faux.getModel();
+// In async-only mode the dispatch returns a receipt. The real child output arrives via a
+// notification-driven turn (triggered when the background runner completes). The respond
+// function handles three turns: dispatch → receipt acknowledgement → notification check.
 const respond = async (context) => {
-  const childResult = latestSubagentResult(context.messages);
-  if (childResult === undefined) {
+  // Notification turn: [tlh] nudge appears in user messages when the background run completes.
+  const allUserText = context.messages
+    .filter((m) => m?.role === "user")
+    .map((m) => textContent(m.content))
+    .join("\n");
+  if (allUserText.includes("[tlh]")) {
     return fauxAssistantMessage(
-      fauxToolCall(
-        "subagent",
-        {
-          agent: "repo-scout",
-          task: "Use the generic mcp gateway to connect to fixture and call read_fixture once, then return its exact deterministic result.",
-          agentScope: "user",
-        },
-        { id: "run-packaged-mcp-child" },
+      fauxText(
+        allUserText.includes("FIXTURE_MCP_OK")
+          ? "PARENT_MCP_CHILD_OK"
+          : "PARENT_MCP_CHILD_RESULT_MISSING",
       ),
-      { stopReason: "toolUse" },
+      { stopReason: "stop" },
     );
   }
+
+  // Receipt turn: acknowledge the launch receipt and wait for the notification.
+  const childResult = latestSubagentResult(context.messages);
+  if (childResult !== undefined) {
+    return fauxAssistantMessage(fauxText("Launch receipt acknowledged."), { stopReason: "stop" });
+  }
+
+  // Turn 1: dispatch the subagent.
   return fauxAssistantMessage(
-    fauxText(
-      childResult.includes("FIXTURE_MCP_OK")
-        ? "PARENT_MCP_CHILD_OK"
-        : "PARENT_MCP_CHILD_RESULT_MISSING",
+    fauxToolCall(
+      "subagent",
+      {
+        agent: "repo-scout",
+        task: "Use the generic mcp gateway to connect to fixture and call read_fixture once, then return its exact deterministic result.",
+        agentScope: "user",
+      },
+      { id: "run-packaged-mcp-child" },
     ),
-    { stopReason: "stop" },
+    { stopReason: "toolUse" },
   );
 };
-faux.setResponses(Array.from({ length: 8 }, () => respond));
+faux.setResponses(Array.from({ length: 12 }, () => respond));
 
 const session = (
   await createAgentSession({
@@ -123,12 +138,58 @@ const session = (
     settingsManager,
   })
 ).session;
+
+// Subscribe before binding extensions so fast-child notifications are not missed.
+let agentSettledCount = 0;
+let notifyCount = 0;
+let resolveNotifyTurn;
+let rejectNotifyTurn;
+const notifyTurnDone = new Promise((resolve, reject) => {
+  resolveNotifyTurn = resolve;
+  rejectNotifyTurn = reject;
+});
+session.subscribe((event) => {
+  if (
+    event.type === "message_start" &&
+    event.message?.role === "custom" &&
+    event.message?.customType === "subagent-notify"
+  ) {
+    notifyCount++;
+  }
+  if (event.type === "agent_settled") {
+    agentSettledCount++;
+    if (agentSettledCount >= 2 && notifyCount > 0) {
+      resolveNotifyTurn();
+    }
+  }
+});
+
 try {
-  await session.bindExtensions({});
+  await session.bindExtensions({ mode: "tui" });
   await session.prompt("Delegate the deterministic fixture check.", {
     expandPromptTemplates: false,
   });
-  const childResult = latestSubagentResult(session.messages) ?? "";
+  // Wait for the notification-driven turn (background child completes → result watcher fires).
+  await Promise.race([
+    notifyTurnDone,
+    new Promise((resolve) =>
+      setTimeout(() => {
+        rejectNotifyTurn(new Error("notification turn timed out after 90s"));
+        resolve(undefined);
+      }, 90_000),
+    ),
+  ]);
+  // Extract child result from the subagent-notify message content.
+  function latestNotifyContent(messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg?.role === "custom" && msg?.customType === "subagent-notify") {
+        return typeof msg.content === "string" ? msg.content : textContent(msg.content);
+      }
+    }
+    return "";
+  }
+  const childResult = latestNotifyContent(session.messages);
   process.stdout.write(
     JSON.stringify({
       parentResponse: session.getLastAssistantText(),

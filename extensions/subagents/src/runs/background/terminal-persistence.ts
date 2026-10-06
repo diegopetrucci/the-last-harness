@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -507,6 +508,7 @@ function writeResultArtifact(
     ...(shareError !== undefined ? { shareError } : {}),
     ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
     ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
+    eventId: randomUUID(),
   };
   try {
     writeAtomicJson(input.resultPath, result);
@@ -595,6 +597,7 @@ export function persistContinuationGateRejection(input: ContinuationGateRejectio
       asyncDir: input.asyncDir,
       sessionId: input.config.sessionId,
       ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
+      eventId: randomUUID(),
     } satisfies AsyncResultArtifact);
   } catch (error) {
     console.error(`Failed to write gate-rejection result file ${input.resultPath}:`, error);

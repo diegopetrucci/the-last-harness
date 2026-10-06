@@ -5,7 +5,7 @@ import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.js";
 import { ASYNC_DIR, TEMP_ROOT_DIR } from "../shared/types.js";
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const NESTED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const ROUTE_FILE = "route.json";

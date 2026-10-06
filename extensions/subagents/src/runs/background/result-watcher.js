@@ -1,15 +1,22 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
+import { COMPLETION_DELIVERY, isSeenWithTtl, markSeen, } from "./completion-dedupe.js";
 import { createFileCoalescer } from "../../shared/file-coalescer.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
 import { lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { readStatus } from "../../shared/utils.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
+import { TERMINAL_ASYNC_DIR_MAX_AGE_MS } from "../../extension/runtime-cleanup.js";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
+function unrefTimer(handle) {
+    if (handle != null && typeof handle.unref === "function") {
+        handle.unref();
+    }
+}
 function getErrorCode(error) {
     return typeof error === "object" && error !== null && "code" in error
         ? error.code
@@ -134,6 +141,8 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
     const fsApi = deps.fs ?? fs;
     const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
     const projectAgentTerminalRetentionMs = deps.projectAgentTerminalRetentionMs ?? PROJECT_AGENT_TERMINAL_RETENTION_MS;
+    let watcherActive = true;
+    const pendingAcks = new Set();
     const projectReferenceReleaseTimers = new Map();
     const cancelProjectReferenceRelease = (runId) => {
         const timer = projectReferenceReleaseTimers.get(runId);
@@ -157,7 +166,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             }
             releaseProjectAgentRunReference(runId);
         }, projectAgentTerminalRetentionMs);
-        timer.unref?.();
+        unrefTimer(timer);
         projectReferenceReleaseTimers.set(runId, timer);
     };
     const retainOrReleaseProjectReference = (data, runId) => {
@@ -175,7 +184,11 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
         if (!fsApi.existsSync(resultPath))
             return;
         try {
-            const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8"));
+            const rawBytes = fsApi.readFileSync(resultPath, "utf-8");
+            const data = JSON.parse(rawBytes);
+            const eventId = typeof data.eventId === "string" && data.eventId.length > 0
+                ? data.eventId
+                : createHash("sha256").update(rawBytes).digest("hex");
             if (typeof data.sessionId !== "string" || data.sessionId !== state.currentSessionId)
                 return;
             const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
@@ -217,18 +230,113 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                         : {}),
                 };
             });
-            const completionKey = buildCompletionKey(data, `result:${file}`);
-            if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
+            if (isSeenWithTtl(state.completionSeen, eventId, now, completionTtlMs)) {
+                try {
+                    const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
+                    const currentData = JSON.parse(currentRaw);
+                    const currentId = typeof currentData.eventId === "string" && currentData.eventId.length > 0
+                        ? currentData.eventId
+                        : createHash("sha256").update(currentRaw).digest("hex");
+                    if (currentId === eventId)
+                        fsApi.unlinkSync(resultPath);
+                }
+                catch {
+                }
+                return;
+            }
+            if (pendingAcks.has(eventId)) {
+                return;
+            }
+            let ackReceived = false;
+            let ackFired = false;
+            const tryUnlinkResultFile = () => {
+                try {
+                    const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
+                    const currentData = JSON.parse(currentRaw);
+                    const currentId = typeof currentData.eventId === "string" && currentData.eventId.length > 0
+                        ? currentData.eventId
+                        : createHash("sha256").update(currentRaw).digest("hex");
+                    if (currentId !== eventId) {
+                        ackFired = true;
+                        timers.clearTimeout(orphanTimer);
+                        return;
+                    }
+                    fsApi.unlinkSync(resultPath);
+                    ackFired = true;
+                    timers.clearTimeout(orphanTimer);
+                }
+                catch (unlinkErr) {
+                    if (isNotFoundError(unlinkErr)) {
+                        ackFired = true;
+                        timers.clearTimeout(orphanTimer);
+                    }
+                    else {
+                        console.error(`Failed to remove subagent result file '${resultPath}':`, unlinkErr);
+                    }
+                }
+            };
+            const runProjectReferenceMgmt = () => {
                 if (data.state === "cancelled" || data.state === "continued") {
                     retainOrReleaseProjectReference(data, runId);
                 }
-                fsApi.unlinkSync(resultPath);
-                return;
-            }
+                else if (data.state === "complete" || data.state === "failed") {
+                    scheduleProjectReferenceRelease(data, runId);
+                }
+            };
+            const orphanTimer = timers.setTimeout(() => {
+                if (ackFired)
+                    return;
+                if (ackReceived) {
+                    tryUnlinkResultFile();
+                    return;
+                }
+                pendingAcks.delete(eventId);
+                runProjectReferenceMgmt();
+                if (watcherActive)
+                    state.resultFileCoalescer.schedule(file, 0);
+            }, completionTtlMs);
+            unrefTimer(orphanTimer);
+            const onAcknowledgedCallbacks = [];
+            const acknowledgeDelivery = () => {
+                if (ackReceived)
+                    return;
+                ackReceived = true;
+                markSeen(state.completionSeen, eventId, now);
+                pendingAcks.delete(eventId);
+                for (const cb of onAcknowledgedCallbacks) {
+                    try {
+                        cb();
+                    }
+                    catch (cbErr) {
+                        console.error("onAcknowledged callback error:", cbErr);
+                    }
+                }
+                runProjectReferenceMgmt();
+                tryUnlinkResultFile();
+            };
+            const onAcknowledged = (cb) => {
+                if (ackReceived) {
+                    try {
+                        cb();
+                    }
+                    catch (cbErr) {
+                        console.error("onAcknowledged callback error:", cbErr);
+                    }
+                    return;
+                }
+                onAcknowledgedCallbacks.push(cb);
+            };
+            pendingAcks.add(eventId);
             const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
+            const deliveryMetadata = {
+                eventId,
+                acknowledgeDelivery,
+                onAcknowledged,
+            };
             pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
                 ...data,
                 runId,
+                [COMPLETION_DELIVERY]: deliveryMetadata,
                 ...(telemetry ? { telemetry } : { telemetry: undefined }),
                 ...(Array.isArray(data.results)
                     ? {
@@ -246,13 +354,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     }
                     : {}),
             });
-            if (data.state === "cancelled" || data.state === "continued") {
-                retainOrReleaseProjectReference(data, runId);
-            }
-            else if (data.state === "complete" || data.state === "failed") {
-                scheduleProjectReferenceRelease(data, runId);
-            }
-            fsApi.unlinkSync(resultPath);
         }
         catch (error) {
             if (isNotFoundError(error))
@@ -284,7 +385,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
         console.error(`Subagent result watcher for '${resultsDir}' fell back to polling because native fs.watch is unavailable (${getErrorCode(reason) ?? "unknown error"}).`);
         primeExistingResults();
         state.watcherRestartTimer = timers.setInterval(primeExistingResults, POLL_INTERVAL_MS);
-        state.watcherRestartTimer.unref?.();
+        unrefTimer(state.watcherRestartTimer);
     };
     const scheduleRestart = () => {
         if (state.watcherRestartTimer)
@@ -304,7 +405,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                 scheduleRestart();
             }
         }, WATCHER_RESTART_DELAY_MS);
-        state.watcherRestartTimer.unref?.();
+        unrefTimer(state.watcherRestartTimer);
     };
     const startResultWatcher = () => {
         if (state.watcher)
@@ -347,6 +448,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
         }
     };
     const stopResultWatcher = () => {
+        watcherActive = false;
         state.watcher?.close();
         state.watcher = null;
         if (state.watcherRestartTimer) {
@@ -356,5 +458,134 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
         state.watcherRestartTimer = null;
         state.resultFileCoalescer.clear();
     };
-    return { startResultWatcher, primeExistingResults, stopResultWatcher };
+    const sweepStaleResultFiles = (nowMs) => {
+        const now = nowMs ?? Date.now();
+        let files;
+        try {
+            files = fsApi.readdirSync(resultsDir).filter((f) => f.endsWith(".json"));
+        }
+        catch {
+            return;
+        }
+        for (const file of files) {
+            const resultPath = path.join(resultsDir, file);
+            try {
+                let mtimeMs;
+                try {
+                    mtimeMs = fsApi.statSync(resultPath).mtimeMs;
+                }
+                catch {
+                    continue;
+                }
+                if (now - mtimeMs < TERMINAL_ASYNC_DIR_MAX_AGE_MS)
+                    continue;
+                let rawBytes;
+                let data;
+                try {
+                    rawBytes = fsApi.readFileSync(resultPath, "utf-8");
+                    data = JSON.parse(rawBytes);
+                }
+                catch {
+                    continue;
+                }
+                const fileEventId = typeof data.eventId === "string" && data.eventId.length > 0
+                    ? data.eventId
+                    : createHash("sha256").update(rawBytes).digest("hex");
+                if (typeof data.sessionId === "string" &&
+                    data.sessionId === state.currentSessionId &&
+                    !isSeenWithTtl(state.completionSeen, fileEventId, now, completionTtlMs)) {
+                    continue;
+                }
+                if (pendingAcks.has(fileEventId))
+                    continue;
+                const runId = data.runId ?? data.id ?? file.replace(/\.json$/i, "");
+                if (isSeenWithTtl(state.completionSeen, fileEventId, now, completionTtlMs)) {
+                    try {
+                        const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
+                        const currentData = JSON.parse(currentRaw);
+                        const currentId = typeof currentData.eventId === "string" && currentData.eventId.length > 0
+                            ? currentData.eventId
+                            : createHash("sha256").update(currentRaw).digest("hex");
+                        if (currentId === fileEventId)
+                            fsApi.unlinkSync(resultPath);
+                    }
+                    catch {
+                    }
+                    continue;
+                }
+                const hasVerifiableReport = (() => {
+                    const children = Array.isArray(data.results) ? data.results : [];
+                    const isSingleChild = children.length <= 1;
+                    let statusSteps;
+                    if (data.asyncDir) {
+                        try {
+                            const statusRaw = fsApi.readFileSync(path.join(data.asyncDir, "status.json"), "utf-8");
+                            const status = JSON.parse(statusRaw);
+                            if (Array.isArray(status.steps)) {
+                                statusSteps = status.steps;
+                            }
+                        }
+                        catch {
+                        }
+                    }
+                    const canRead = (filePath) => {
+                        if (!filePath)
+                            return false;
+                        try {
+                            fsApi.readFileSync(filePath, "utf-8");
+                            return true;
+                        }
+                        catch {
+                            return false;
+                        }
+                    };
+                    if (children.length === 0) {
+                        return canRead(data.sessionFile);
+                    }
+                    for (let i = 0; i < children.length; i++) {
+                        const child = children[i];
+                        const childVerified = canRead(child.artifactPaths?.outputPath) ||
+                            canRead(child.sessionFile) ||
+                            canRead(statusSteps?.[i]?.sessionFile) ||
+                            (isSingleChild && canRead(data.sessionFile));
+                        if (!childVerified)
+                            return false;
+                    }
+                    return true;
+                })();
+                if (!hasVerifiableReport) {
+                    console.error(`sweepStaleResultFiles: skipping '${resultPath}' (aged past retention but no verifiable full-report source found; will retry on next sweep).`);
+                    continue;
+                }
+                if (data.state === "cancelled" || data.state === "continued") {
+                    retainOrReleaseProjectReference(data, runId);
+                }
+                else if (data.state === "complete" || data.state === "failed") {
+                    scheduleProjectReferenceRelease(data, runId);
+                }
+                try {
+                    const currentRaw = fsApi.readFileSync(resultPath, "utf-8");
+                    const currentData = JSON.parse(currentRaw);
+                    const currentId = typeof currentData.eventId === "string" && currentData.eventId.length > 0
+                        ? currentData.eventId
+                        : createHash("sha256").update(currentRaw).digest("hex");
+                    if (currentId !== fileEventId)
+                        continue;
+                    fsApi.unlinkSync(resultPath);
+                }
+                catch {
+                }
+            }
+            catch (error) {
+                console.error(`sweepStaleResultFiles: error processing '${resultPath}':`, error);
+            }
+        }
+    };
+    return {
+        startResultWatcher,
+        primeExistingResults,
+        stopResultWatcher,
+        clearPendingAcks: () => pendingAcks.clear(),
+        sweepStaleResultFiles,
+    };
 }

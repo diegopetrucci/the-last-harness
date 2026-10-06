@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
@@ -568,6 +569,7 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             sessionId: status.sessionId,
             ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
             sessionFile: status.sessionFile,
+            eventId: randomUUID(),
         },
     };
 }

@@ -126,6 +126,10 @@ function makeExecutor(
       task: string,
       options: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    executeAsyncSingle?: (
+      runId: string,
+      params: Record<string, unknown>,
+    ) => Record<string, unknown>;
   } = {},
 ) {
   const pi = asFixture<ExtensionAPI>({
@@ -152,6 +156,9 @@ function makeExecutor(
       ...(options.canInitiate !== undefined ? { canInitiate: options.canInitiate } : {}),
     }),
     runSync: options.runSync as never,
+    ...(options.executeAsyncSingle
+      ? { executeAsyncSingle: options.executeAsyncSingle as never }
+      : {}),
   });
 }
 
@@ -585,32 +592,18 @@ Profile developer prompt.
     assert.equal(discoverCalls.count, 0);
   });
 
-  it("routes foreground project execution through the exact capture and provider model policy", async () => {
+  it("routes background project execution through the exact capture and provider model policy", async () => {
     const projectRoot = makeProject();
     const agent = makeAgent(projectRoot);
     agent.model = "anthropic/file-model";
     const snapshot = registerSnapshot(projectRoot, agent);
     const discoverCalls = { count: 0 };
-    const calls: Array<{
-      agents: AgentConfig[];
-      agentName: string;
-      options: Record<string, unknown>;
-    }> = [];
-    const runSync = async (
-      _runtimeCwd: string,
-      agents: AgentConfig[],
-      agentName: string,
-      _task: string,
-      options: Record<string, unknown>,
-    ) => {
-      calls.push({ agents, agentName, options });
+    const calls: Array<{ agentName: string; params: Record<string, unknown> }> = [];
+    const executeAsyncSingle = (runId: string, params: Record<string, unknown>) => {
+      calls.push({ agentName: params.agent as string, params });
       return {
-        agent: agentName,
-        task: "project task",
-        exitCode: 0,
-        messages: [],
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-        finalOutput: "project result",
+        content: [{ type: "text", text: "async-project-seam" }],
+        details: { asyncId: runId, results: [] },
       };
     };
     const executor = makeExecutor(
@@ -619,7 +612,7 @@ Profile developer prompt.
       snapshot.expected,
       discoverCalls,
       true,
-      { runSync },
+      { executeAsyncSingle },
     );
     const baseParams = {
       agent: "embedded.xyz",
@@ -637,12 +630,16 @@ Profile developer prompt.
     );
     assert.equal(fileModelResult.isError, undefined);
     assert.equal(calls[0]?.agentName, "embedded.xyz");
-    assert.equal(calls[0]?.options.modelOverride, "anthropic/file-model");
-    assert.deepEqual(calls[0]?.agents.find((entry) => entry.name === "embedded.xyz")?.tools, [
-      "read",
-    ]);
+    assert.equal(calls[0]?.params.modelOverride, "anthropic/file-model");
+    // Item 7 (tlhf-5veu review): restore the exact captured launch tool policy assertion.
+    // The project agent definition has tools:["read"]; verify it reaches the launch boundary.
+    assert.deepEqual(
+      (calls[0]?.params.agentConfig as { tools?: string[] } | undefined)?.tools,
+      ["read"],
+      'expected launch tool policy to be exactly ["read"] at the executeAsyncSingle boundary',
+    );
     assert.equal(
-      (calls[0]?.options.projectAgent as { provenance?: { digest?: string } } | undefined)
+      (calls[0]?.params.projectAgent as { provenance?: { digest?: string } } | undefined)
         ?.provenance?.digest,
       "digest-execution-test",
     );
@@ -655,7 +652,7 @@ Profile developer prompt.
       makeContext(projectRoot, { provider: "openrouter", id: "openai/live-model" }),
     );
     assert.equal(openRouterResult.isError, undefined);
-    assert.equal(calls[1]?.options.modelOverride, "openrouter/openai/live-model");
+    assert.equal(calls[1]?.params.modelOverride, "openrouter/openai/live-model");
 
     const explicitResult = await executor.execute(
       "project-explicit-model",
@@ -665,7 +662,7 @@ Profile developer prompt.
       makeContext(projectRoot, { provider: "openrouter", id: "openai/live-model" }),
     );
     assert.equal(explicitResult.isError, undefined);
-    assert.equal(calls[2]?.options.modelOverride, "openai/explicit-model");
+    assert.equal(calls[2]?.params.modelOverride, "openai/explicit-model");
   });
 
   it("allows disabled mode to initiate a project run only with explicit capability access", async () => {
@@ -681,15 +678,12 @@ Profile developer prompt.
       false,
       {
         canInitiate: true,
-        runSync: async (_runtimeCwd, _agents, agentName, task) => {
+        executeAsyncSingle: (runId: string, params: Record<string, unknown>) => {
           spawned = true;
           return {
-            agent: agentName,
-            task,
-            exitCode: 0,
-            messages: [],
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-            finalOutput: "disabled result",
+            content: [{ type: "text", text: "disabled-async-seam" }],
+            details: { asyncId: runId, results: [] },
+            params,
           };
         },
       },

@@ -90,7 +90,8 @@ import {
 } from "../background/async-execution.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveControlConfig } from "../shared/subagent-control.ts";
-import { normalizeSingleOutputOverride } from "../shared/single-output.ts";
+import { normalizeSingleOutputOverride, resolveSingleOutputPath } from "../shared/single-output.ts";
+import { resolveStepBehavior } from "../../shared/settings.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { retiredNestedLaunchError } from "../shared/pi-args.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
@@ -210,6 +211,8 @@ export interface ExecutorDeps {
   telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
   /** Narrow functional seam for exercising continuation authorization without spawning a child. */
   executeAsyncSingle?: typeof executeAsyncSingle;
+  /** Narrow functional seam for parallel dispatch tests without spawning runners. */
+  executeAsyncParallel?: typeof executeAsyncParallel;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -412,6 +415,32 @@ function validateExecutionInput(
   return null;
 }
 
+const ASYNC_FALSE_REJECTION_MESSAGE =
+  "async:false is no longer supported. All subagent dispatch now runs in background. " +
+  "Remove the async:false parameter (or omit async entirely) and retry.";
+
+function buildPrintRpcModeError(
+  params: SubagentParamsLike,
+  operation: "dispatch" | "resume",
+): SubagentToolResult<Details> {
+  const modeLabel = operation === "dispatch" ? "New subagent dispatch" : "Subagent resume";
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `${modeLabel} is not available in non-interactive mode. ` +
+          "Observational actions (list, get, status, interrupt, steer, doctor) remain available.",
+      },
+    ],
+    isError: true,
+    details: {
+      mode: operation === "dispatch" ? ("single" as const) : ("management" as const),
+      results: [],
+    },
+  };
+}
+
 function buildRequestedModeError(
   params: SubagentParamsLike,
   message: string,
@@ -563,8 +592,40 @@ function runAsyncPath(
           : {}),
       ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
     }));
+    // Validate: reject duplicate output paths before any async launch side effects.
+    // Resolution must mirror the runner: use agent-default outputs and resolve relative
+    // paths against the artifact output directory when artifacts are enabled.
+    const outputBaseDir = artifactConfig.enabled
+      ? path.join(artifactsDir, "outputs", id)
+      : undefined;
+    const seenAsyncOutputPaths = new Map<string, { index: number; agent: string }>();
+    for (let asyncTaskIdx = 0; asyncTaskIdx < parallelTasks.length; asyncTaskIdx++) {
+      const asyncTask = parallelTasks[asyncTaskIdx]!;
+      const agentCfg = agentConfigs[asyncTaskIdx];
+      // Use resolveStepBehavior (the runner\'s own resolution function) to get the
+      // effective output, including agent-default fallback when no task override is set.
+      const effectiveOutput: string | false = agentCfg
+        ? resolveStepBehavior(agentCfg, {
+            output: asyncTask.output as string | false | undefined,
+          }).output
+        : asyncTask.output || false;
+      if (!effectiveOutput) continue;
+      const taskCwd = asyncTask.cwd ? path.resolve(effectiveCwd, asyncTask.cwd) : effectiveCwd;
+      const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, taskCwd, outputBaseDir);
+      if (!outputPath) continue;
+      const previous = seenAsyncOutputPaths.get(outputPath);
+      if (previous) {
+        return releaseAsyncProjectRunOnError(
+          buildParallelModeError(
+            `Parallel tasks ${previous.index + 1} (${previous.agent}) and ${asyncTaskIdx + 1} (${asyncTask.agent}) resolve output to the same path: ${outputPath}. Use distinct output paths.`,
+          ),
+        );
+      }
+      seenAsyncOutputPaths.set(outputPath, { index: asyncTaskIdx, agent: asyncTask.agent });
+    }
+    const executeAsyncParallelFn = deps.executeAsyncParallel ?? executeAsyncParallel;
     return releaseAsyncProjectRunOnError(
-      executeAsyncParallel(id, {
+      executeAsyncParallelFn(id, {
         tasks: parallelTasks,
         concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
         agents,
@@ -615,8 +676,9 @@ function runAsyncPath(
         source: (params.model as string | undefined) ? "explicit" : "inherited",
       },
     );
+    const executeAsyncSingleFn = deps.executeAsyncSingle ?? executeAsyncSingle;
     return releaseAsyncProjectRunOnError(
-      executeAsyncSingle(id, {
+      executeAsyncSingleFn(id, {
         agent: params.agent!,
         task: params.task ?? "",
         agentConfig: a,
@@ -1115,10 +1177,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     onUpdate: ((r: SubagentToolResult<Details>) => void) | undefined,
     ctx: ExtensionContext,
   ): Promise<SubagentToolResult<Details>> => {
-    deps.state.baseCwd = ctx.cwd;
-    deps.state.foregroundRuns ??= new Map();
-    deps.state.foregroundControls ??= new Map();
-    deps.state.lastForegroundControlId ??= null;
+    // State mutation helper — called only after rejection gates pass.
+    const initState = () => {
+      deps.state.baseCwd = ctx.cwd;
+      deps.state.foregroundRuns ??= new Map();
+      deps.state.foregroundControls ??= new Map();
+      deps.state.lastForegroundControlId ??= null;
+    };
     const requestParams = params;
     const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
     const paramsWithResolvedCwd =
@@ -1134,10 +1199,27 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       return buildRequestedModeError(paramsWithResolvedCwd, retiredNestedError);
     const action = paramsWithResolvedCwd.action;
     if (action) {
-      if (action === "doctor")
+      if (action === "doctor") {
+        initState();
         return executeDoctorAction(paramsWithResolvedCwd, requestCwd, ctx, deps);
-      if (action === "status") return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
+      }
+      if (action === "status") {
+        initState();
+        return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
+      }
       if (action === "resume") {
+        // Gates must run before any state mutation.
+        if (paramsWithResolvedCwd.async === false) {
+          return {
+            content: [{ type: "text", text: ASYNC_FALSE_REJECTION_MESSAGE }],
+            isError: true,
+            details: { mode: "management" as const, results: [] },
+          };
+        }
+        if (ctx.mode === "print" || ctx.mode === "rpc") {
+          return buildPrintRpcModeError(paramsWithResolvedCwd, "resume");
+        }
+        initState();
         return resumeAsyncRun({
           params: paramsWithResolvedCwd,
           requestCwd,
@@ -1150,8 +1232,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
           executionPolicy,
         });
       }
-      if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
-      if (action === "interrupt") return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
+      if (action === "steer") {
+        initState();
+        return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
+      }
+      if (action === "interrupt") {
+        initState();
+        return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
+      }
       if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
         return {
           content: [
@@ -1164,6 +1252,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
           details: { mode: "management" as const, results: [] },
         };
       }
+      initState();
       return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
         ...ctx,
         cwd: requestCwd,
@@ -1191,6 +1280,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const normalized = normalizeRepeatedParallelCounts(paramsWithResolvedCwd);
     if (normalized.error) return normalized.error;
     const normalizedParams = normalized.params!;
+
+    // Gate: print/rpc mode rejects new dispatch before any state mutation.
+    if (ctx.mode === "print" || ctx.mode === "rpc") {
+      return buildPrintRpcModeError(normalizedParams, "dispatch");
+    }
+    // Gate: async:false is rejected before any state mutation or directory creation.
+    if (normalizedParams.async === false) {
+      return buildRequestedModeError(normalizedParams, ASYNC_FALSE_REJECTION_MESSAGE);
+    }
+    // Gates passed: initialize executor state.
+    initState();
 
     let effectiveParams = normalizedParams;
     const runTimeoutMs =
@@ -1232,8 +1332,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     );
     if (validationError) return validationError;
 
-    const requestedAsync = effectiveParams.async ?? false;
-    const effectiveAsync = requestedAsync;
+    // All new dispatch is background-only; async:false is rejected before this point.
+    const effectiveAsync = true;
     const controlConfig = resolveControlConfig(deps.config.control);
 
     const artifactConfig: ResolvedArtifactConfig = {
@@ -1392,6 +1492,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
   ): Promise<SubagentToolResult<Details>> => {
     const requestParams = params;
     if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
+    // Pre-check rejection gates before mutating subagentInProgress.
+    if (ctx.mode === "print" || ctx.mode === "rpc") {
+      return buildPrintRpcModeError(requestParams, "dispatch");
+    }
+    if (requestParams.async === false) {
+      return buildRequestedModeError(requestParams, ASYNC_FALSE_REJECTION_MESSAGE);
+    }
     if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
     deps.state.subagentInProgress = true;
     try {

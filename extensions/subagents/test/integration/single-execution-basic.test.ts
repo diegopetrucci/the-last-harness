@@ -13,7 +13,6 @@ import {
   makeAgentConfigs,
   makeAgent,
   makeMinimalCtx,
-  makeModel,
   events,
 } from "../support/helpers.ts";
 import {
@@ -25,18 +24,16 @@ import {
   type ExecuteAsyncSingleOverride,
   type ProgressSummary,
 } from "../support/single-execution-fixtures.ts";
-import { ASYNC_DIR } from "../../src/shared/types.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
 import {
   getFinalOutput,
-  escapeRegExp,
   mockAssistantMessage,
   type RunSyncResult,
 } from "../support/single-execution-fixtures.ts";
@@ -291,7 +288,9 @@ describe(
       }
     });
 
-    it("propagates each packaged child identity through a foreground parallel launch", async () => {
+    it("propagates each packaged child identity through an async parallel launch", async () => {
+      // After async-only: parallel dispatch returns a launch receipt; wait for the
+      // background payload to read per-agent child identity env vars.
       mockPi.onCall({
         echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
       });
@@ -302,6 +301,7 @@ describe(
       const result = await executor.execute(
         "parallel-packaged-identities",
         {
+          async: true,
           tasks: [
             { agent: "developer", task: "Echo the developer identity." },
             { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
@@ -313,8 +313,12 @@ describe(
       );
 
       assert.equal(result.isError, undefined);
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId, "expected asyncId for background parallel launch");
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.success, true);
       assert.deepEqual(
-        result.details?.results?.map((child) => JSON.parse(child.finalOutput ?? "{}")),
+        payload.results.map((child) => JSON.parse(child.output ?? "{}")),
         [
           {
             [SUBAGENT_CHILD_AGENT_ENV]: "developer",
@@ -558,125 +562,20 @@ describe(
       );
     });
 
-    it("preserves remembered foreground pressure projection and history only for same-segment revival", async () => {
-      const runId = "foreground-pressure-revival";
-      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
-      fs.writeFileSync(
-        sessionFile,
-        '{"type":"session","id":"foreground-pressure-revival"}\n',
-        "utf-8",
-      );
-      const state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      };
-      const persistedPressure = {
-        severity: "warning",
-        crossedThreshold: "warning",
-        contextTokens: 799,
-        contextWindow: 1000,
-        contextPercent: 79.9,
-        remainingTokens: 201,
-        warnedAt: 123,
-      };
-      state.foregroundRuns.set(runId, {
-        runId,
-        mode: "single",
-        cwd: tempDir,
-        updatedAt: 1,
-        children: [
-          {
-            agent: "echo",
-            index: 0,
-            status: "completed",
-            sessionFile,
-            contextUsage: { contextTokens: 799, contextWindow: 1000, peakTokens: 799 },
-            contextPressure: { ...persistedPressure, unexpected: "drop at boundary" },
-            contextPressureCrossedThresholds: ["warning"],
-          },
-        ],
-      });
-      const context = makeMinimalCtx(tempDir);
-      context.model = makeModel("test-model", { provider: "mock" });
-      context.modelRegistry.getAvailable = () => [
-        makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
-      ];
-      const executor = makeExecutor(
-        [makeAgent("echo", { model: "mock/test-model", completionGuard: false })],
-        {},
-        state,
-      );
-      const terminalPressure = {
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "continued" }],
-          model: "mock/test-model",
-          stopReason: "stop",
-          usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
-        },
-      };
-      mockPi.onCall({ jsonl: [terminalPressure] });
-      const revived = await executor.execute(
-        "foreground-pressure-revival-call",
-        { action: "resume", id: runId, message: "Continue the same segment." },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      const revivedId = revived.details?.asyncId;
-      assert.ok(revivedId, "expected revived async id");
-      const revivedPayload = JSON.parse(
-        fs.readFileSync(await waitForAsyncResultFile(revivedId), "utf-8"),
-      ) as {
-        results?: Array<{
-          contextPressure?: Record<string, unknown>;
-          contextPressureCrossedThresholds?: string[];
-        }>;
-      };
-      assert.deepEqual(revivedPayload.results?.[0]?.contextPressure, persistedPressure);
-      assert.deepEqual(revivedPayload.results?.[0]?.contextPressureCrossedThresholds, ["warning"]);
-      const revivedStatus = JSON.parse(
-        fs.readFileSync(path.join(ASYNC_DIR, revivedId, "status.json"), "utf-8"),
-      ) as {
-        steps?: Array<{
-          contextPressure?: Record<string, unknown>;
-          contextPressureCrossedThresholds?: string[];
-        }>;
-      };
-      assert.deepEqual(revivedStatus.steps?.[0]?.contextPressure, persistedPressure);
-      assert.deepEqual(revivedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
-      const revivedEvents = fs
-        .readFileSync(path.join(ASYNC_DIR, revivedId, "events.jsonl"), "utf-8")
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } });
-      assert.equal(
-        revivedEvents.filter(
-          (event) =>
-            event.type === "subagent.control" && event.event?.reason === "context_pressure",
-        ).length,
-        0,
-      );
-
-      mockPi.onCall({ jsonl: [terminalPressure] });
-      const fresh = await executor.execute(
-        "foreground-pressure-new-run",
-        { agent: "echo", task: "Start an independent continuation." },
-        new AbortController().signal,
-        undefined,
-        context,
-      );
-      const freshResult = fresh.details?.results?.[0];
-      assert.deepEqual(
-        freshResult?.controlEvents?.map((event) => event.contextPressureSeverity),
-        ["warning"],
-      );
-    });
+    // Removed: "preserves remembered foreground pressure projection and history only for
+    // same-segment revival" — foreground-only test deleted after async-only migration.
+    //
+    // Status-file pressure preservation through foreground revival is covered by
+    // native-result-lifecycle-revival.test.ts: parametrized "preserves context pressure and
+    // pressure-crossed-thresholds through foreground revival into async steps" (uses
+    // state.foregroundRuns.set with contextPressureCrossedThresholds, verifies status.steps).
+    //
+    // The "same-segment only" isolation assertion (no pressure bleed to a fresh dispatch)
+    // is foreground-only: in async-only mode, a fresh dispatch returns a receipt with no
+    // immediate result to check for pressure control events.
+    //
+    // The result-file contextPressureCrossedThresholds for revival is a known gap; the
+    // status-file path is tested in native-result-lifecycle-revival.test.ts.
 
     it("does not classify a raw acceptance-report terminal as context exhausted", async () => {
       const acceptanceReport = [
@@ -858,8 +757,18 @@ describe(
     );
 
     it("rejects duplicate concurrent subagent execution calls", async () => {
-      mockPi.onCall({ output: "first call completed", delay: 100 });
-      const executor = makeExecutor([makeAgent("echo")]);
+      // After async-only: the first call returns a background receipt immediately;
+      // the second call is rejected before the background child has called mockPi.
+      // mockPi.callCount() is not checked (async child runs are non-blocking);
+      // the receipt asyncId confirms the first call was accepted.
+      // Use an executeAsyncSingle seam so no real runner is spawned — a real
+      // detached runner would recreate tempDir after afterEach cleanup, leaking
+      // it into the guard's TMPDIR scan.
+      const asyncSeam: ExecuteAsyncSingleOverride = (id) => ({
+        content: [{ type: "text", text: "seam-ok" }],
+        details: { asyncId: id, results: [] },
+      });
+      const executor = makeExecutor([makeAgent("echo")], {}, undefined, runSync, asyncSeam);
       const ctx = makeMinimalCtx(tempDir);
 
       const first = executor.execute(
@@ -879,18 +788,30 @@ describe(
       const firstResult = await first;
 
       assert.equal(firstResult.isError, undefined);
+      assert.ok(firstResult.details?.asyncId, "expected asyncId for accepted background dispatch");
       assert.equal(second.isError, true);
       assert.match(second.content[0]?.text ?? "", /Issue exactly ONE subagent call per turn/);
-      assert.equal(mockPi.callCount(), 1);
     });
 
     it("ignores legacy per-session spawn quota config and env values", async () => {
+      // After async-only: each call returns a background receipt (not the immediate output);
+      // verify neither dispatch is rejected by quota logic (isError remains undefined).
+      // Use an executeAsyncSingle seam so no real runner is spawned \ 
+      // a real detached runner would recreate tempDir after afterEach cleanup.
       const savedMaxSpawns = process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
       process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "0";
       try {
-        mockPi.onCall({ output: "first call completed" });
-        mockPi.onCall({ output: "second call completed" });
-        const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 });
+        const asyncSeam: ExecuteAsyncSingleOverride = (id) => ({
+          content: [{ type: "text", text: "seam-ok" }],
+          details: { asyncId: id, results: [] },
+        });
+        const executor = makeExecutor(
+          [makeAgent("echo")],
+          { maxSubagentSpawnsPerSession: 1 },
+          undefined,
+          runSync,
+          asyncSeam,
+        );
         const ctx = makeMinimalCtx(tempDir);
 
         const first = await executor.execute(
@@ -909,10 +830,9 @@ describe(
         );
 
         assert.equal(first.isError, undefined);
-        assert.match(first.content[0]?.text ?? "", /first call completed/);
+        assert.ok(first.details?.asyncId, "expected asyncId for first background dispatch");
         assert.equal(second.isError, undefined);
-        assert.match(second.content[0]?.text ?? "", /second call completed/);
-        assert.equal(mockPi.callCount(), 2);
+        assert.ok(second.details?.asyncId, "expected asyncId for second background dispatch");
       } finally {
         if (savedMaxSpawns === undefined) delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
         else process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = savedMaxSpawns;
@@ -920,8 +840,16 @@ describe(
     });
 
     it("allows management actions while an execution call is in progress", async () => {
-      mockPi.onCall({ output: "first call completed", delay: 100 });
-      const executor = makeExecutor([makeAgent("echo")]);
+      // After async-only: the first call returns a background receipt immediately;
+      // a concurrent status action must not be rejected.
+      // mockPi.callCount() is not checked (async child call is non-blocking).
+      // Use an executeAsyncSingle seam so no real runner is spawned \ 
+      // a real detached runner would recreate tempDir after afterEach cleanup.
+      const asyncSeam: ExecuteAsyncSingleOverride = (id) => ({
+        content: [{ type: "text", text: "seam-ok" }],
+        details: { asyncId: id, results: [] },
+      });
+      const executor = makeExecutor([makeAgent("echo")], {}, undefined, runSync, asyncSeam);
       const ctx = makeMinimalCtx(tempDir);
 
       const first = executor.execute(
@@ -946,10 +874,11 @@ describe(
         status.content[0]?.text ?? "",
         /Rejected: a subagent call is already in progress/,
       );
-      assert.equal(mockPi.callCount(), 1);
     });
 
     it("allows intentional parallel tasks inside one subagent execution call", async () => {
+      // After async-only: parallel dispatch returns a receipt; wait for the background
+      // result to verify total cost across two parallel agents.
       mockPi.onCall({ output: "first parallel result" });
       mockPi.onCall({ output: "second parallel result" });
       const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
@@ -957,6 +886,7 @@ describe(
       const result = await executor.execute(
         "parallel",
         {
+          async: true,
           tasks: [
             { agent: "echo", task: "First task" },
             { agent: "second", task: "Second task" },
@@ -968,8 +898,12 @@ describe(
       );
 
       assert.equal(result.isError, undefined);
-      assert.equal(mockPi.callCount(), 2);
-      assert.deepEqual(result.details?.totalCost, {
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId, "expected asyncId for background parallel dispatch");
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.success, true);
+      assert.equal(payload.results.length, 2);
+      assert.deepEqual(payload.totalCost, {
         inputTokens: 200,
         outputTokens: 100,
         costUsd: 0.002,
@@ -977,24 +911,29 @@ describe(
     });
 
     it(
-      "reports total cost for foreground single runs",
+      "reports total cost for async single runs",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
+        // After async-only: cost is in the background payload, not the receipt.
         mockPi.onCall({ output: "single result" });
         const executor = makeExecutor([makeAgent("echo")]);
 
         const result = await executor.execute(
           "single-cost",
-          { agent: "echo", task: "Single task" },
+          { agent: "echo", task: "Single task", async: true },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
         );
 
         assert.equal(result.isError, undefined);
-        assert.deepEqual(result.details?.totalCost, {
+        const asyncId = result.details?.asyncId;
+        assert.ok(asyncId, "expected asyncId for background single dispatch");
+        const payload = await readAsyncPayload(asyncId);
+        assert.equal(payload.success, true);
+        assert.deepEqual(payload.results[0]?.totalCost, {
           inputTokens: 100,
           outputTokens: 50,
           costUsd: 0.001,
@@ -1002,72 +941,12 @@ describe(
       },
     );
 
-    it(
-      "carries resolved tk ticket metadata through active foreground single updates",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const originalTicketsDir = process.env.TICKETS_DIR;
-        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
-        try {
-          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
-          fs.writeFileSync(
-            path.join(tempDir, ".tickets", "psr-raw4.md"),
-            "---\nid: psr-raw4\n---\n# Show active tk title\n",
-            "utf-8",
-          );
-          mockPi.onCall({
-            steps: [
-              { jsonl: [events.toolStart("read", { path: "README.md" })], delay: 60 },
-              { jsonl: [events.assistantMessage("single ticket done")] },
-            ],
-          });
-          const executor = makeExecutor([makeAgent("echo")]);
-          const updates: Array<{
-            details?: {
-              results?: Array<{
-                tkTicket?: { id: string; title: string };
-                progress?: { status?: string };
-              }>;
-            };
-          }> = [];
-          const runPromise = executor.execute(
-            "single-ticket",
-            { agent: "echo", task: "Run `tk show psr-raw4` first." },
-            new AbortController().signal,
-            (update: unknown) => updates.push(update as (typeof updates)[number]),
-            makeMinimalCtx(tempDir),
-          );
-
-          const deadline = Date.now() + 5_000;
-          while (
-            Date.now() < deadline &&
-            !updates.some((update) =>
-              update.details?.results?.some((result) => result.progress?.status === "running"),
-            )
-          ) {
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          }
-          const running = updates.find((update) =>
-            update.details?.results?.some((result) => result.progress?.status === "running"),
-          );
-          assert.deepEqual(running?.details?.results?.[0]?.tkTicket, {
-            id: "psr-raw4",
-            title: "Show active tk title",
-          });
-
-          const result = await runPromise;
-          assert.deepEqual(result.details?.results?.[0]?.tkTicket, {
-            id: "psr-raw4",
-            title: "Show active tk title",
-          });
-        } finally {
-          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
-          else process.env.TICKETS_DIR = originalTicketsDir;
-        }
-      },
-    );
+    // Removed: "carries resolved tk ticket metadata through active foreground single updates"
+    //
+    // Intermediate synchronous progress callbacks (update callback during foreground execution)
+    // are foreground-only and have no equivalent in async dispatch. tk ticket propagation
+    // through async dispatch is covered by async-execution-runner-launch-config-validation.test.ts:
+    // "assigns fresh tickets through async single and two-child parallel launches".
 
     it("fails implementation runs that complete without mutation attempts", async () => {
       mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });
@@ -1100,27 +979,25 @@ describe(
     });
 
     it("does not fail advisory oracle runs that finish without edits", async () => {
+      // After async-only: dispatch returns a receipt; wait for the background result to
+      // verify that oracle runs (completionGuard:false) complete without error.
       mockPi.onCall({ output: "Oracle review:\n- finding one\n- finding two" });
       const executor = makeExecutor([makeAgent("oracle")]);
 
       const result = await executor.execute(
         "failed-single-output",
-        { agent: "oracle", task: "Implement the approved file changes" },
+        { agent: "oracle", task: "Implement the approved file changes", async: true },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
 
-      const text = result.content[0]?.text ?? "";
       assert.equal(result.isError, undefined);
-      assert.match(text, /^subagent results/m);
-      assert.match(text, /Mode: single/);
-      assert.match(text, /Status: completed/);
-      assert.match(text, /Children: 1 completed/);
-      assert.match(text, /1\/1\. oracle — completed/);
-      const oracleSummary = "Summary:\nOracle review:\n- finding one\n- finding two";
-      assert.match(text, new RegExp(escapeRegExp(oracleSummary)));
-      assert.equal(text.split(oracleSummary).length - 1, 1);
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId, "expected asyncId for background oracle dispatch");
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.success, true);
+      assert.equal(payload.results[0]?.exitCode, 0);
     });
 
     it("fails future-tense implementation summaries when no mutation attempt occurred", async () => {

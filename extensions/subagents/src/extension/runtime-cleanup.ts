@@ -6,7 +6,8 @@ import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.ts";
 import { ASYNC_DIR, TEMP_ROOT_DIR, type AsyncStatus } from "../shared/types.ts";
 
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Maximum age of a terminal (non-active) async-run directory before cleanup. */
+export const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const NESTED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const ROUTE_FILE = "route.json";

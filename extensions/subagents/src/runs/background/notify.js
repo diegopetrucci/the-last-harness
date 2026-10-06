@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.js";
+import { buildCompletionKey, getCompletionDelivery, getGlobalSeenMap, isSeenWithTtl, markSeen, } from "./completion-dedupe.js";
 import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./completion-batcher.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
@@ -509,11 +509,14 @@ export function formatSingleCompletion(details) {
     const preview = fitPreviewWithinCeiling(previewSource.trim() ? previewSource : "(no output)", headCost + tailCost, MAX_COMPLETION_MESSAGE_CHARS);
     return [...headLines, preview, ...tailLines].join("\n");
 }
-export function formatGroupedCompletion(details) {
+export function formatGroupedCompletion(details, chunkContext) {
     const displayedDetails = details.slice(0, MAX_GROUPED_ENTRIES);
     const omittedCount = details.length - displayedDetails.length;
     const omissionMarker = omittedCount > 0 ? `… [${omittedCount} entries omitted]` : null;
-    const header = `Background tasks completed (${details.length}): ${displayedDetails.map((d) => `**${d.agent}**${d.taskInfo ?? ""}`).join(", ")}`;
+    const countLabel = chunkContext && chunkContext.chunkCount > 1
+        ? `part ${chunkContext.chunkIndex + 1}/${chunkContext.chunkCount}, ${details.length} of ${chunkContext.totalItems}`
+        : String(details.length);
+    const header = `Background tasks completed (${countLabel}): ${displayedDetails.map((d) => `**${d.agent}**${d.taskInfo ?? ""}`).join(", ")}`;
     const entries = displayedDetails
         .map((detail, index) => {
         if (!detail)
@@ -582,12 +585,13 @@ function sendNudge(pi, options) {
         pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
     }
 }
-function sendCompletion(pi, details, options = { triggerTurn: true }) {
-    if (details.length === 0)
+function sendCompletion(pi, items, options = { triggerTurn: true }) {
+    if (items.length === 0)
         return;
-    const formatted = details.length === 1 ? formatSingleCompletion(details[0]) : formatGroupedCompletion(details);
-    const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
+    const details = items.map((i) => i.details);
     if (details.length === 1) {
+        const formatted = formatSingleCompletion(details[0]);
+        const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
         const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0];
         pi.sendMessage({
             customType: "subagent-notify",
@@ -613,23 +617,39 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
                     : {}),
             },
         });
-        sendNudge(pi, options);
+        items[0].onPersisted?.();
+        try {
+            sendNudge(pi, options);
+        }
+        catch {
+        }
         return;
     }
+    const totalChunks = Math.ceil(items.length / MAX_GROUPED_ENTRIES);
     const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
     const flushId = createCompletionBatchIdentity();
     const completions = details.map(serializeCompletionBatchEntry);
     let triggersTurn = false;
+    let globalItemOffset = 0;
+    let globalChunkIndex = 0;
     for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
         const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
+        const logicalDetails = details.slice(logicalStart, logicalStart + MAX_COMPLETION_BATCH_ENTRIES);
         const logicalCompletions = completions.slice(logicalStart, logicalStart + MAX_COMPLETION_BATCH_ENTRIES);
         const batchCount = Math.ceil(logicalCompletions.length / MAX_GROUPED_ENTRIES);
         const batchId = createCompletionBatchIdentity();
         for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
             const start = batchIndex * MAX_GROUPED_ENTRIES;
+            const chunkDetails = logicalDetails.slice(start, start + MAX_GROUPED_ENTRIES);
             const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
+            const chunkItemCount = chunkDetails.length;
+            const chunkItems = items.slice(globalItemOffset, globalItemOffset + chunkItemCount);
             const isFinalChunk = logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
             triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+            const chunkContext = totalChunks > 1
+                ? { chunkIndex: globalChunkIndex, chunkCount: totalChunks, totalItems: items.length }
+                : undefined;
+            const chunkContent = truncateWithMarker(formatGroupedCompletion(chunkDetails, chunkContext), MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
             const batchDetails = {
                 schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
                 kind: SUBAGENT_COMPLETION_BATCH_KIND,
@@ -644,14 +664,23 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
             };
             pi.sendMessage({
                 customType: "subagent-notify",
-                content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
-                display: logicalBatchIndex === 0 && batchIndex === 0,
+                content: chunkContent,
+                display: true,
                 details: batchDetails,
             });
+            for (const item of chunkItems) {
+                item.onPersisted?.();
+            }
+            globalItemOffset += chunkItemCount;
+            globalChunkIndex++;
         }
     }
     if (triggersTurn) {
-        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+        try {
+            pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+        }
+        catch {
+        }
     }
 }
 function completionBatchKey(result) {
@@ -762,10 +791,14 @@ export default function registerSubagentNotify(pi, state, options = {}) {
         const result = data;
         if (typeof result.sessionId !== "string" || result.sessionId !== state.currentSessionId)
             return;
+        const meta = getCompletionDelivery(data);
+        const ack = meta?.acknowledgeDelivery ?? null;
         const now = nowFn();
-        const key = buildCompletionKey(result, "notify");
-        if (markSeenWithTtl(seen, key, now, ttlMs))
+        const eventId = meta?.eventId ?? buildCompletionKey(result, "notify");
+        if (isSeenWithTtl(seen, eventId, now, ttlMs)) {
+            ack?.();
             return;
+        }
         const details = buildCompletionDetails(result);
         const batchKey = completionBatchKey(result);
         let batcherEntry = batchers.get(batchKey);
@@ -773,13 +806,20 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             const ownerSessionId = result.sessionId;
             const batcher = createCompletionBatcher({
                 config: batchConfig,
-                emit: (items) => {
+                emit: (batchItems) => {
                     const lifecycleFlush = shuttingDownSessionId === ownerSessionId;
                     if (state.currentSessionId !== ownerSessionId && !lifecycleFlush) {
                         batchers.delete(batchKey);
                         return;
                     }
-                    sendCompletion(pi, items, {
+                    const sendItems = batchItems.map((item) => ({
+                        details: item.details,
+                        onPersisted: () => {
+                            markSeen(seen, item.eventId, item.timestamp);
+                            item.onPersisted?.();
+                        },
+                    }));
+                    sendCompletion(pi, sendItems, {
                         triggerTurn: !lifecycleFlush && !suppressFlushNudge,
                         isIdle,
                     });
@@ -795,13 +835,23 @@ export default function registerSubagentNotify(pi, state, options = {}) {
             try {
                 batcherEntry.batcher.flush();
             }
+            catch {
+            }
             finally {
                 suppressFlushNudge = false;
             }
-            sendCompletion(pi, [details], { triggerTurn: true, isIdle });
+            sendCompletion(pi, [
+                {
+                    details,
+                    onPersisted: () => {
+                        markSeen(seen, eventId, now);
+                        ack?.();
+                    },
+                },
+            ], { triggerTurn: true, isIdle });
             return;
         }
-        batcherEntry.batcher.push(details);
+        batcherEntry.batcher.push({ details, eventId, timestamp: now, onPersisted: ack });
     };
     pi.on("session_shutdown", () => {
         const ownerSessionId = state.currentSessionId;
@@ -819,7 +869,11 @@ export default function registerSubagentNotify(pi, state, options = {}) {
                     batchers.delete(key);
                     continue;
                 }
-                entry.batcher.flush();
+                try {
+                    entry.batcher.flush();
+                }
+                catch {
+                }
             }
         }
         finally {

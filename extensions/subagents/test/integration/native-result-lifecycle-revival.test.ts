@@ -1297,16 +1297,18 @@ describe(
       }
     });
 
-    it("resume action revives a completed foreground child by index", async () => {
+    it("resume action revives a completed async child by index", async () => {
+      // After async-only: original.details.runId and original.details.results[1].sessionFile
+      // are not in the async receipt. Wait for async completion to get sessionFile from payload.
       mockPi.onCall({ output: "first child done" });
       mockPi.onCall({ output: "second child done" });
-      mockPi.onCall({ output: "revived foreground answer" });
+      mockPi.onCall({ output: "revived async answer" });
       const { executor } = makeExecutor({
         agents: [makeAgent("a"), makeAgent("b")],
       });
 
       const original = await executor.execute(
-        "foreground-resume-original",
+        "async-resume-original",
         {
           tasks: [
             { agent: "a", task: "task-a" },
@@ -1317,11 +1319,25 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      const runId = original.details?.runId;
-      assert.ok(runId, "expected foreground run id");
+      const runId = original.details?.asyncId;
+      assert.ok(runId, "expected asyncId from background dispatch");
+
+      // Wait for the original run to complete; get session file for child 1 from result.
+      const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+      const deadline = Date.now() + scaleTestTimeout(15_000);
+      while (!fs.existsSync(resultPath)) {
+        if (Date.now() > deadline)
+          assert.fail(`Timed out waiting for original result: ${resultPath}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const originalPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
+        results?: Array<{ sessionFile?: string }>;
+      };
+      const selectedSession = originalPayload.results?.[1]?.sessionFile;
+      assert.ok(selectedSession, "expected selected child session file in async result");
 
       const revived = await executor.execute(
-        "foreground-resume",
+        "async-resume",
         { action: "resume", id: runId, index: 1, message: "Follow up with b" },
         new AbortController().signal,
         undefined,
@@ -1329,19 +1345,18 @@ describe(
       );
 
       assert.equal(revived.isError, undefined);
-      assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
+      // After async-only: revived runs say "async" not "foreground".
+      assert.match(revived.content[0]?.text ?? "", /Revived async subagent from/);
       assert.match(revived.content[0]?.text ?? "", /Agent: b/);
       const reviveArgs = await readMockCallArgs(2);
-      const selectedSession = original.details?.results?.[1]?.sessionFile;
-      assert.ok(selectedSession, "expected selected child session file");
       assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
       const revivedId = revived.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
-      const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-      const deadline = Date.now() + 10_000;
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline)
-          assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
+      const revivedResultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
+      const revivedDeadline = Date.now() + 10_000;
+      while (!fs.existsSync(revivedResultPath)) {
+        if (Date.now() > revivedDeadline)
+          assert.fail(`Timed out waiting for revived result file: ${revivedResultPath}`);
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     });

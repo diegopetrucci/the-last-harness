@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import {
+import registerSubagentNotify, {
   isSubagentCompletionBatchDetails,
   MAX_COMPLETION_BATCH_ENTRIES,
   MAX_COMPLETION_BATCH_CHUNKS,
@@ -13,6 +13,10 @@ import {
   type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../../src/runs/background/notify.ts";
+import {
+  COMPLETION_DELIVERY,
+  type CompletionDeliveryMetadata,
+} from "../../src/runs/background/completion-dedupe.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import {
   NUDGE_TEXT,
@@ -1007,9 +1011,11 @@ describe("registerSubagentNotify", () => {
         },
       ],
     );
+    // P1 fix: every chunk has display:true and its own prose.
     assert.equal(batches[0]!.display, true);
-    assert.equal(batches[1]!.display, false);
-    assert.equal(batches[1]!.content, "");
+    assert.equal(batches[1]!.display, true);
+    assert.ok(batches[0]!.content.length > 0, "chunk 0 must have prose");
+    assert.ok(batches[1]!.content.length > 0, "chunk 1 must have its own prose");
     assert.ok(batches[0]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
     assert.ok(batches[1]!.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 
@@ -1094,10 +1100,18 @@ describe("registerSubagentNotify", () => {
           : [MAX_COMPLETION_BATCH_CHUNKS, 1];
       assert.equal(messages.length, Math.ceil(entryCount / MAX_GROUPED_ENTRIES));
       assert.equal(sentUserMessages.length, 1, "one nudge must cover the overall flush");
-      assert.equal(messages.filter(({ display }) => display).length, 1);
+      // P1 fix: every chunk has display:true with its own prose.
+      assert.equal(
+        messages.filter(({ display }) => display).length,
+        messages.length,
+        "every chunk must have display:true",
+      );
       assert.equal(messages.filter(({ details }) => details.triggersTurn).length, 1);
-      assert.equal(messages[0]!.content.length > 0, true);
-      assert.ok(messages.slice(1).every(({ content }) => content === ""));
+      // P1 fix: every chunk has non-empty prose.
+      assert.ok(
+        messages.every(({ content }) => content.length > 0),
+        "every chunk must have non-empty prose",
+      );
 
       const batchIds = [...new Set(messages.map(({ details }) => details.batchId))];
       assert.equal(batchIds.length, expectedBatchCounts.length);
@@ -1307,5 +1321,624 @@ describe("registerSubagentNotify", () => {
     );
     assert.doesNotMatch((sentMessages[0]!.message as { content: string }).content, /boom/);
     assert.equal(sentUserMessages.length, 1);
+  });
+
+  // \\ Delivery-hardening tests (ack-after-delivery) \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+  /**
+   * Attach COMPLETION_DELIVERY Symbol metadata to an event payload so that
+   * notify.ts reads acknowledgeDelivery from the Symbol key (never plain property).
+   * Pass the same eventId for both emissions when testing dedup.
+   */
+  function withDelivery(
+    payload: Record<string, unknown>,
+    ack: () => void,
+    eventId = `test-eid-${Math.random().toString(36).slice(2)}`,
+  ): Record<symbol, unknown> {
+    const meta: CompletionDeliveryMetadata = {
+      eventId,
+      acknowledgeDelivery: ack,
+      onAcknowledged: () => {},
+    };
+    return Object.assign({}, payload, { [COMPLETION_DELIVERY]: meta });
+  }
+
+  it("calls acknowledgeDelivery after sendCompletion succeeds on the direct-send path", () => {
+    const { events, sentMessages } = createPi();
+    let ackCalled = false;
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(
+        completionResult({ id: "ack-direct-ok", success: false, sessionId: "session-1" }),
+        () => {
+          ackCalled = true;
+        },
+      ),
+    );
+    assert.equal(sentMessages.length, 1, "failure must deliver immediately");
+    assert.equal(ackCalled, true, "acknowledgeDelivery must be called after sendCompletion");
+  });
+
+  it("does not call acknowledgeDelivery when sendCompletion throws on the direct-send path", () => {
+    const testSessionId = `session-throw-${Date.now()}`;
+    let ackCalled = false;
+    let sendCalled = 0;
+    const throwListeners = new Map<string, Set<(d: unknown) => void>>();
+    const throwEvents = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = throwListeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        throwListeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of throwListeners.get(event) ?? []) h(d);
+      },
+    };
+    const piThrow = {
+      events: throwEvents,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(_m: unknown) {
+        sendCalled++;
+        throw new Error("simulated send failure");
+      },
+      sendUserMessage(_c: unknown) {},
+    };
+    registerSubagentNotify(
+      piThrow as never,
+      { currentSessionId: testSessionId },
+      {
+        batchConfig: { enabled: false },
+      },
+    );
+    const resultId = `throw-ack-${Date.now()}`;
+    try {
+      throwEvents.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(
+          completionResult({ id: resultId, success: false, sessionId: testSessionId }),
+          () => {
+            ackCalled = true;
+          },
+        ),
+      );
+    } catch {
+      // sendCompletion threw; swallow to let assertions run
+    }
+    assert.equal(sendCalled, 1, "sendMessage must be called once");
+    assert.equal(ackCalled, false, "ack must not fire when sendCompletion throws");
+  });
+
+  it("does not call acknowledgeDelivery when sessionId does not match (session ownership)", () => {
+    const { events } = createPi("session-owner");
+    let ackCalled = false;
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(
+        completionResult({ id: "ack-session-mismatch", sessionId: "session-other" }),
+        () => {
+          ackCalled = true;
+        },
+      ),
+    );
+    assert.equal(ackCalled, false, "ack must not fire for a foreign-session completion");
+  });
+
+  it("does not call acknowledgeDelivery when the batcher drops items on session switch", () => {
+    const clock = createFakeClock();
+    const { events, state } = createBatchingPi(clock, "session-a");
+    let ackCalled = false;
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(completionResult({ id: "ack-batcher-drop", sessionId: "session-a" }), () => {
+        ackCalled = true;
+      }),
+    );
+    assert.equal(ackCalled, false, "ack must not fire before batch emits");
+
+    // Switch session before the batcher fires.
+    state.currentSessionId = "session-b";
+    clock.advance(2000);
+
+    assert.equal(
+      ackCalled,
+      false,
+      "ack must not fire when the batcher drops items due to a session switch",
+    );
+  });
+
+  it("calls acknowledgeDelivery after a lifecycle-flush on session_shutdown (counts as delivered)", () => {
+    const clock = createFakeClock();
+    const { events, sentMessages, lifecycleHandlers } = createBatchingPi(clock, "session-a");
+    let ackCalled = false;
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(completionResult({ id: "ack-shutdown-flush", sessionId: "session-a" }), () => {
+        ackCalled = true;
+      }),
+    );
+    assert.equal(ackCalled, false, "ack must not fire before flush");
+
+    lifecycleHandlers.get("session_shutdown")?.({ reason: "switch" });
+
+    assert.equal(sentMessages.length, 1, "lifecycle flush must deliver");
+    assert.equal(ackCalled, true, "ack must fire after lifecycle flush delivers");
+  });
+
+  it("calls acknowledgeDelivery for already-seen items and does not re-send", () => {
+    const { events, sentMessages } = createPi();
+    let ackCalled = 0;
+    const result = completionResult({ id: "ack-dedup", sessionId: "session-1" });
+    const sharedEventId = "ack-dedup-fixed-eid";
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(
+        result,
+        () => {
+          ackCalled++;
+        },
+        sharedEventId,
+      ),
+    );
+    assert.equal(sentMessages.length, 1, "first emission must deliver");
+    assert.equal(ackCalled, 1, "first ack must fire");
+
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(
+        result,
+        () => {
+          ackCalled++;
+        },
+        sharedEventId,
+      ),
+    );
+    assert.equal(sentMessages.length, 1, "second emission must not re-send");
+    assert.equal(ackCalled, 2, "second ack must fire to clean up surviving file");
+  });
+
+  it("never includes function values in the serialised message details", () => {
+    const { events, sentMessages } = createPi();
+    let functionFound = false;
+    events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(completionResult({ id: "details-no-fn", sessionId: "session-1" }), () => {}),
+    );
+    assert.equal(sentMessages.length, 1);
+    const details = (sentMessages[0]!.message as { details?: unknown }).details;
+    const detectFunctions = (value: unknown, depth = 0): void => {
+      if (depth > 10) return;
+      if (typeof value === "function") {
+        functionFound = true;
+        return;
+      }
+      if (typeof value === "object" && value !== null) {
+        for (const v of Object.values(value as Record<string, unknown>)) {
+          detectFunctions(v, depth + 1);
+        }
+      }
+    };
+    detectFunctions(details);
+    assert.equal(functionFound, false, "message details must not contain function values");
+  });
+
+  it("calls acknowledgeDelivery for each item after the batched group fires", () => {
+    const clock = createFakeClock();
+    const { events, sentMessages } = createBatchingPi(clock, "session-a");
+    const ackCounts: Record<string, number> = {};
+    for (const id of ["batch-ack-1", "batch-ack-2"]) {
+      events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(completionResult({ id, sessionId: "session-a" }), () => {
+          ackCounts[id] = (ackCounts[id] ?? 0) + 1;
+        }),
+      );
+    }
+    assert.equal(sentMessages.length, 0, "held by batcher before debounce");
+    assert.deepEqual(ackCounts, {}, "ack must not fire before batcher emits");
+
+    clock.advance(200);
+
+    assert.equal(sentMessages.length, 1, "batch delivered as one message");
+    assert.deepEqual(
+      ackCounts,
+      { "batch-ack-1": 1, "batch-ack-2": 1 },
+      "ack must fire once per item after batch sends",
+    );
+  });
+
+  it("E: sendMessage ok + nudge throws → item is acked and not re-sent", () => {
+    // E: A failing sendUserMessage (nudge) must NOT prevent acknowledgeDelivery.
+    const testSessionId = `session-nudge-throw-${Date.now()}`;
+    let ackCalled = false;
+    let sendMessageCalled = 0;
+    const nudgeListeners = new Map<string, Set<(d: unknown) => void>>();
+    const nudgeEvents = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = nudgeListeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        nudgeListeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of nudgeListeners.get(event) ?? []) h(d);
+      },
+    };
+    const piNudge = {
+      events: nudgeEvents,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(_m: unknown) {
+        sendMessageCalled++;
+      },
+      sendUserMessage(_c: unknown) {
+        throw new Error("simulated nudge failure");
+      },
+    };
+    registerSubagentNotify(
+      piNudge as never,
+      { currentSessionId: testSessionId },
+      { batchConfig: { enabled: false } },
+    );
+    try {
+      nudgeEvents.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(
+          completionResult({ id: "nudge-throw-ok", success: false, sessionId: testSessionId }),
+          () => {
+            ackCalled = true;
+          },
+        ),
+      );
+    } catch {
+      // nudge threw \ handleComplete should swallow it via try/catch
+    }
+    assert.equal(sendMessageCalled, 1, "sendMessage must have been called");
+    assert.equal(ackCalled, true, "ack must fire even when nudge throws");
+  });
+
+  it("E: chunk-1 send throws → only chunk-0 items acked, chunk-1 item stays recoverable", () => {
+    // P1 fix: each chunk has its own prose and is acked independently.
+    // When chunk 1's sendMessage throws, only the MAX_GROUPED_ENTRIES items in
+    // chunk 0 are acked (their prose was already model-visible). The single item
+    // in chunk 1 remains unacked and stays recoverable without re-sending chunk 0.
+    const testSessionId = `session-chunk1-throw-${Date.now()}`;
+    const chunkAcks: Record<number, boolean> = {};
+    const chunk1Listeners = new Map<string, Set<(d: unknown) => void>>();
+    const chunk1Events = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = chunk1Listeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        chunk1Listeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of chunk1Listeners.get(event) ?? []) h(d);
+      },
+    };
+    let sendCount = 0;
+    const pi1 = {
+      events: chunk1Events,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(_m: unknown) {
+        sendCount++;
+        // Throw on 2nd sendMessage (chunk 1 of 2).
+        if (sendCount > 1) throw new Error("simulated chunk-1 failure");
+      },
+      sendUserMessage(_c: unknown) {},
+    };
+    const clock1 = createFakeClock();
+    registerSubagentNotify(
+      pi1 as never,
+      { currentSessionId: testSessionId },
+      {
+        batchConfig: { enabled: true, debounceMs: 100, maxWaitMs: 5000 },
+        timers: clock1.api,
+        now: clock1.now,
+      },
+    );
+    // MAX_GROUPED_ENTRIES + 1 items: chunk 0 has MAX_GROUPED_ENTRIES, chunk 1 has 1.
+    const itemCount = MAX_GROUPED_ENTRIES + 1;
+    for (let i = 0; i < itemCount; i++) {
+      const idx = i;
+      chunk1Events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(completionResult({ id: `c1-item-${i}`, sessionId: testSessionId }), () => {
+          chunkAcks[idx] = true;
+        }),
+      );
+    }
+    assert.deepEqual(chunkAcks, {}, "no acks before batcher fires");
+    // P2: emitGroupSafe catches the exception so clock.advance returns normally.
+    clock1.advance(200);
+    assert.equal(sendCount, 2, "sendMessage called for chunk 0 (ok) and chunk 1 (throw)");
+    // Chunk 0 items (0..MAX_GROUPED_ENTRIES-1) must all be acked.
+    for (let i = 0; i < MAX_GROUPED_ENTRIES; i++) {
+      assert.equal(chunkAcks[i], true, `chunk-0 item ${i} must be acked after chunk 0 succeeds`);
+    }
+    // Chunk 1 item (index MAX_GROUPED_ENTRIES) must NOT be acked — still recoverable.
+    assert.equal(
+      chunkAcks[MAX_GROUPED_ENTRIES],
+      undefined,
+      "chunk-1 item must remain unacked and recoverable when chunk 1 throws",
+    );
+  });
+
+  it("E: grouped send chunk-0 throws → no items acked, all recovered once", () => {
+    const testSessionId = `session-chunk0-throw-${Date.now()}`;
+    const chunkAcks: Record<number, boolean> = {};
+    const chunk0Listeners = new Map<string, Set<(d: unknown) => void>>();
+    const chunk0Events = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = chunk0Listeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        chunk0Listeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of chunk0Listeners.get(event) ?? []) h(d);
+      },
+    };
+    let sendCount0 = 0;
+    const pi0 = {
+      events: chunk0Events,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(_m: unknown) {
+        sendCount0++;
+        throw new Error("simulated chunk-0 failure");
+      },
+      sendUserMessage(_c: unknown) {},
+    };
+    const clock0 = createFakeClock();
+    registerSubagentNotify(
+      pi0 as never,
+      { currentSessionId: testSessionId },
+      {
+        batchConfig: { enabled: true, debounceMs: 100, maxWaitMs: 5000 },
+        timers: clock0.api,
+        now: clock0.now,
+      },
+    );
+    const itemCount0 = MAX_GROUPED_ENTRIES + 1;
+    for (let i = 0; i < itemCount0; i++) {
+      const idx = i;
+      chunk0Events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(completionResult({ id: `chunk0-item-${i}`, sessionId: testSessionId }), () => {
+          chunkAcks[idx] = true;
+        }),
+      );
+    }
+    assert.deepEqual(chunkAcks, {}, "no acks before batcher fires");
+    // P2: emitGroupSafe catches the exception; clock.advance returns normally.
+    clock0.advance(200);
+    assert.equal(sendCount0, 1, "sendMessage called once (chunk 0 threw)");
+    assert.deepEqual(chunkAcks, {}, "no items acked when chunk 0 throws");
+  });
+
+  it("P2: batcher timer exception is caught and does not escape the event loop", async () => {
+    // P2: Verify the P2 fix using a real timer (not a fake clock).
+    // A send failure inside the batcher's setTimeout callback must not escape
+    // and crash the parent process.
+    const testSessionId = `session-p2-real-timer-${Date.now()}`;
+    let sendCalled = 0;
+    let p2AckCalled = false;
+    const p2Listeners = new Map<string, Set<(d: unknown) => void>>();
+    const p2Events = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = p2Listeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        p2Listeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of p2Listeners.get(event) ?? []) h(d);
+      },
+    };
+    const p2Pi = {
+      events: p2Events,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(_m: unknown) {
+        sendCalled++;
+        throw new Error("P2 simulated send failure");
+      },
+      sendUserMessage(_c: unknown) {},
+    };
+    // Use real timers with a very short debounce.
+    registerSubagentNotify(
+      p2Pi as never,
+      { currentSessionId: testSessionId },
+      {
+        batchConfig: { enabled: true, debounceMs: 10, maxWaitMs: 100 },
+        // No timers override \ uses real setTimeout.
+      },
+    );
+    p2Events.emit(
+      SUBAGENT_ASYNC_COMPLETE_EVENT,
+      withDelivery(completionResult({ id: "p2-real-timer-item", sessionId: testSessionId }), () => {
+        // ack should NOT be called since sendMessage throws
+        p2AckCalled = true;
+      }),
+    );
+    // Wait for the real timer to fire (and be caught by P2 fix).
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // If P2 is broken, an uncaught exception would have crashed the process
+    // before reaching here.  Reaching here proves the exception was caught.
+    assert.equal(sendCalled, 1, "sendMessage was called inside the batcher timer");
+    assert.equal(p2AckCalled, false, "ack must not fire when sendMessage throws");
+  });
+
+  it("P2 recovery: after batcher timer exception is caught, re-emitting the item delivers it exactly once", async () => {
+    // After the P2 fix catches the batcher-timer exception, the item ack is not
+    // called.  Re-emitting the event (simulating the orphan-timer coalescer
+    // rescan from fix 1) must deliver it exactly once, not duplicate it.
+    const testSessionId = `session-p2-recovery-${Date.now()}`;
+    let sendCalled = 0;
+    let shouldThrow = true;
+    let ackCount = 0;
+    const p2rListeners = new Map<string, Set<(d: unknown) => void>>();
+    const p2rEvents = {
+      on(event: string, h: (d: unknown) => void) {
+        const s = p2rListeners.get(event) ?? new Set<(d: unknown) => void>();
+        s.add(h);
+        p2rListeners.set(event, s);
+        return () => s.delete(h);
+      },
+      emit(event: string, d: unknown) {
+        for (const h of p2rListeners.get(event) ?? []) h(d);
+      },
+    };
+    const sentContents: string[] = [];
+    const p2rPi = {
+      events: p2rEvents,
+      on(_e: string, _h: (...args: unknown[]) => void) {},
+      sendMessage(m: { content?: string }) {
+        sendCalled++;
+        if (shouldThrow) throw new Error("P2 simulated send failure");
+        sentContents.push(m.content ?? "");
+      },
+      sendUserMessage(_c: unknown) {},
+    };
+    registerSubagentNotify(
+      p2rPi as never,
+      { currentSessionId: testSessionId },
+      { batchConfig: { enabled: true, debounceMs: 10, maxWaitMs: 100 } },
+    );
+    const sharedEventId = `p2r-eid-${Date.now()}`;
+    const emitItem = () =>
+      p2rEvents.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        withDelivery(
+          completionResult({ id: "p2r-item", sessionId: testSessionId }),
+          () => {
+            ackCount++;
+          },
+          sharedEventId,
+        ),
+      );
+    emitItem();
+    // First batcher fire: sendMessage throws, ack not called.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(sendCalled, 1, "first send attempted");
+    assert.equal(ackCount, 0, "no ack after P2 throw");
+    assert.equal(sentContents.length, 0, "no model-visible content yet");
+
+    // Allow sends; re-emit the same item (simulating coalescer retry).
+    shouldThrow = false;
+    emitItem();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(ackCount, 1, "item must be acked exactly once on recovery");
+    assert.equal(sentContents.length, 1, "exactly one model-visible message after recovery");
+    assert.match(
+      sentContents[0]!,
+      /Background task (completed|failed)/,
+      "recovered message must have prose content",
+    );
+  });
+
+  it("5a: 20 completions — each marker appears in exactly one chunk (P1 fix)", () => {
+    // P1 fix: each chunk has its own prose, so every item's marker appears in
+    // exactly ONE chunk's content.  Within that chunk it may appear multiple
+    // times (header, body, summary); the guarantee is no item leaks into another
+    // chunk's prose.
+    const clock = createFakeClock();
+    const { events, sentMessages } = createBatchingPi(clock);
+    // Markers must not be substrings of each other or of common prose words.
+    const markers = Array.from({ length: 20 }, (_, i) => `ZQX${i}ZQXEND`);
+    for (let i = 0; i < 20; i++) {
+      events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        completionResult({
+          id: `marker-${i}`,
+          agent: markers[i]!,
+          summary: `${markers[i]!} summary`,
+        }),
+      );
+    }
+    clock.advance(150);
+
+    // 20 items / 8 per chunk = 3 chunks.
+    assert.equal(sentMessages.length, 3, "20 items split into 3 chunks");
+    const contents = sentMessages.map(({ message }) => (message as { content: string }).content);
+    // Every chunk must have non-empty prose (P1 fix).
+    for (const c of contents) {
+      assert.ok(c.length > 0, "every chunk must have model-visible prose");
+    }
+    // Each marker must appear in exactly ONE chunk's content.
+    for (let i = 0; i < 20; i++) {
+      const marker = markers[i]!;
+      const chunksContaining = contents.filter((c) => c.includes(marker));
+      assert.equal(
+        chunksContaining.length,
+        1,
+        `marker ${marker} must appear in exactly one chunk (got ${chunksContaining.length})`,
+      );
+    }
+    // Partition check: items 0-7 in chunk 0, 8-15 in chunk 1, 16-19 in chunk 2.
+    for (let i = 0; i < 8; i++)
+      assert.ok(contents[0]!.includes(markers[i]!), `item ${i} must be in chunk 0`);
+    for (let i = 8; i < 16; i++)
+      assert.ok(contents[1]!.includes(markers[i]!), `item ${i} must be in chunk 1`);
+    for (let i = 16; i < 20; i++)
+      assert.ok(contents[2]!.includes(markers[i]!), `item ${i} must be in chunk 2`);
+  });
+
+  it("5a boundary: MAX_COMPLETION_BATCH_ENTRIES+1 items — each sampled marker in exactly one chunk", () => {
+    // Crossing MAX_COMPLETION_BATCH_ENTRIES (512 → 513 items) splits into two
+    // logical batches.  Each item's marker must still appear in exactly one chunk.
+    const clock = createFakeClock();
+    const { events, sentMessages } = createBatchingPi(clock);
+    const total = MAX_COMPLETION_BATCH_ENTRIES + 1; // 513
+    const markers = Array.from({ length: total }, (_, i) => `ZQXB${i}ZQXEND`);
+    for (let i = 0; i < total; i++) {
+      events.emit(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        completionResult({
+          id: `bndry-${i}`,
+          agent: markers[i]!,
+          summary: `${markers[i]!} done`,
+        }),
+      );
+    }
+    clock.advance(150);
+
+    // 513 items / 8 per chunk = 65 chunks.
+    assert.equal(sentMessages.length, Math.ceil(total / MAX_GROUPED_ENTRIES));
+    const contents = sentMessages.map(({ message }) => (message as { content: string }).content);
+    // Every chunk must have non-empty prose.
+    for (const c of contents) {
+      assert.ok(c.length > 0, "every chunk must have model-visible prose");
+    }
+    // Sample 20 evenly-spaced markers; each must appear in exactly one chunk.
+    const sampleIndices = Array.from({ length: 20 }, (_, k) => Math.floor((k * total) / 20));
+    for (const idx of sampleIndices) {
+      const marker = markers[idx]!;
+      const chunksContaining = contents.filter((c) => c.includes(marker));
+      assert.equal(
+        chunksContaining.length,
+        1,
+        `marker for item ${idx} must appear in exactly one chunk (got ${chunksContaining.length})`,
+      );
+    }
+    // Explicitly check the items immediately across the logical-batch boundary.
+    // Entry MAX_COMPLETION_BATCH_ENTRIES-1 (511) is the last of the first logical
+    // batch; entry MAX_COMPLETION_BATCH_ENTRIES (512) is the first of the second.
+    const lastOfFirst = MAX_COMPLETION_BATCH_ENTRIES - 1; // 511
+    const firstOfSecond = MAX_COMPLETION_BATCH_ENTRIES; // 512
+    for (const idx of [lastOfFirst, firstOfSecond]) {
+      const marker = markers[idx]!;
+      const chunksContaining = contents.filter((c) => c.includes(marker));
+      assert.equal(
+        chunksContaining.length,
+        1,
+        `boundary marker for item ${idx} must appear in exactly one chunk (got ${chunksContaining.length})`,
+      );
+    }
+    // Boundary items must NOT be in the same chunk.
+    assert.ok(
+      !contents
+        .filter((c) => c.includes(markers[lastOfFirst]!))
+        .some((c) => c.includes(markers[firstOfSecond]!)),
+      "items 511 and 512 must be in different chunks (different logical batches)",
+    );
   });
 });

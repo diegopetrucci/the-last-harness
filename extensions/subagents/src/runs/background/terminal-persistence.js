@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
@@ -276,6 +277,7 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
         ...(shareError !== undefined ? { shareError } : {}),
         ...(input.taskIndex !== undefined ? { taskIndex: input.taskIndex } : {}),
         ...(input.totalTasks !== undefined ? { totalTasks: input.totalTasks } : {}),
+        eventId: randomUUID(),
     };
     try {
         writeAtomicJson(input.resultPath, result);
@@ -361,6 +363,7 @@ export function persistContinuationGateRejection(input) {
             asyncDir: input.asyncDir,
             sessionId: input.config.sessionId,
             ...(input.config.projectAgents ? { projectAgents: input.config.projectAgents } : {}),
+            eventId: randomUUID(),
         });
     }
     catch (error) {

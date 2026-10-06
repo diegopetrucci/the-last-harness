@@ -728,7 +728,7 @@ describe("async execution runner launch and configuration validation", () => {
     }
   });
 
-  it("async launch messages stay concise one-line receipts", async () => {
+  it("async launch messages use the background receipt format", async () => {
     const artifactConfig = {
       enabled: false,
       includeInput: false,
@@ -750,12 +750,13 @@ describe("async execution runner launch and configuration validation", () => {
       agentConfig: makeAgent("worker"),
       ...commonParams,
     });
-    assert.match(singleResult.content[0]?.text ?? "", /^Async: worker \[[^\]\n]+\]$/);
-    assert.doesNotMatch(
-      singleResult.content[0]?.text ?? "",
-      /Do not run sleep timers or polling loops/,
-    );
-    assert.equal(singleResult.content[0]?.text?.includes("\n"), false);
+    const singleText = singleResult.content[0]?.text ?? "";
+    assert.match(singleText, /^Background run started$/m);
+    assert.match(singleText, /^Agent: worker$/m);
+    assert.match(singleText, new RegExp(`^Run ID: ${singleId}$`, "m"));
+    assert.match(singleText, /^Status\/artifacts: .+\/status\.json$/m);
+    assert.match(singleText, /^Completion arrives separately\.$/m);
+    assert.doesNotMatch(singleText, /Do not run sleep timers or polling loops/);
     await waitForAsyncResultFile(singleId, scaleTestTimeout(30_000));
 
     mockPi.onCall({ output: "parallel one done" });
@@ -769,12 +770,13 @@ describe("async execution runner launch and configuration validation", () => {
       agents: [makeAgent("worker"), makeAgent("reviewer")],
       ...commonParams,
     });
-    assert.match(parallelResult.content[0]?.text ?? "", /^Async parallel: .+ \[[^\]\n]+\]$/);
-    assert.doesNotMatch(
-      parallelResult.content[0]?.text ?? "",
-      /Do not run sleep timers or polling loops/,
-    );
-    assert.equal(parallelResult.content[0]?.text?.includes("\n"), false);
+    const parallelText = parallelResult.content[0]?.text ?? "";
+    assert.match(parallelText, /^Background run started$/m);
+    assert.match(parallelText, /^Agents: 2 \(worker, reviewer\)$/m);
+    assert.match(parallelText, new RegExp(`^Run ID: ${parallelId}$`, "m"));
+    assert.match(parallelText, /^Status\/artifacts: .+\/status\.json$/m);
+    assert.match(parallelText, /^Completion arrives separately\.$/m);
+    assert.doesNotMatch(parallelText, /Do not run sleep timers or polling loops/);
     const parallelResultPath = await waitForAsyncResultFile(parallelId);
     const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as {
       agent?: string;
@@ -923,6 +925,57 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(fs.existsSync(progressPath), true);
     assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
     assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
+  });
+
+  it("top-level async parallel reads are injected exactly once with a task/read prefix", async () => {
+    // Item 4 (tlhf-5veu review): the old foreground test checked that defaultReads are
+    // injected with a 'Task: [Read from: ...]' prefix and appear exactly once.
+    // The surviving test above checks inclusion but not once-only or the prefix contract.
+    mockPi.onCall({ output: "Read done" });
+    const executor = makeAsyncExecutor([
+      makeAgent("reader", { defaultReads: ["a.md", "b.md"], completionGuard: false }),
+    ]);
+    const parallelReadId = `async-parallel-reads-once-${Date.now().toString(36)}`;
+
+    const result = await executor.execute(
+      parallelReadId,
+      {
+        tasks: [{ agent: "reader", task: "Inspect the files" }],
+        async: true,
+      },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    const parallelReadAsyncId = result.details?.asyncId;
+    assert.ok(parallelReadAsyncId, "expected asyncId");
+    await waitForAsyncResultFile(parallelReadAsyncId);
+
+    const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
+    assert.ok(callFile, "expected a recorded mock pi call");
+    const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8"))
+      .args as string[];
+    const taskArg = args.at(-1) ?? "";
+    const readFromA = path.join(tempDir, "a.md");
+    const readFromB = path.join(tempDir, "b.md");
+    // Reads must be injected exactly once (not duplicated).
+    const readFromCount = (taskArg.match(/\[Read from:/g) ?? []).length;
+    assert.equal(
+      readFromCount,
+      1,
+      `expected exactly one [Read from:] injection, got ${readFromCount}`,
+    );
+    // The task prefix must include both files in the [Read from: ...] block.
+    assert.ok(
+      taskArg.includes(`[Read from: ${readFromA}, ${readFromB}]`) ||
+        taskArg.includes(`[Read from: ${readFromB}, ${readFromA}]`),
+      `expected [Read from: ${readFromA}, ${readFromB}] in task arg`,
+    );
+    // The task prefix contract: task arg must start with 'Task: [Read from:' (task/read prefix).
+    assert.ok(
+      taskArg.startsWith("Task: [Read from:"),
+      `expected task arg to start with 'Task: [Read from:', got: ${taskArg.slice(0, 80)}`,
+    );
   });
 
   it("async inferred acceptance rejection preserves a saved-output reference", async () => {

@@ -1,12 +1,12 @@
 /**
  * Subagent Tool
  *
- * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
+ * Background-only subagent execution.
+ * - All dispatch runs in background (detached OS child process, emits event when done)
+ * - async:false is rejected with a migration error
+ * - async parameter is deprecated; omit it or pass async:true (both are equivalent)
  *
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
- * Toggle: async parameter (default: false)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
  */
@@ -504,12 +504,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   };
 
   const supervisorChannel = createNativeSupervisorChannel(pi, state);
-  const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(
-    pi,
-    state,
-    RESULTS_DIR,
-    PROJECT_AGENT_TERMINAL_RETENTION_MS,
-  );
+  const {
+    startResultWatcher,
+    primeExistingResults,
+    stopResultWatcher,
+    clearPendingAcks,
+    sweepStaleResultFiles,
+  } = createResultWatcher(pi, state, RESULTS_DIR, PROJECT_AGENT_TERMINAL_RETENTION_MS);
   startResultWatcher();
   primeExistingResults();
 
@@ -847,6 +848,16 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       resetJobs(ctx);
       restoreAttempted = true;
       restoreActiveJobs(ctx);
+      // Clear in-flight pending-ack slots before scanning so that result files
+      // for this (re-)entering session are always eligible for re-emission.
+      clearPendingAcks();
+      // Fix 2: Sweep stale result files BEFORE priming so that prime only
+      // schedules files that survived the sweep.  Result files written by the
+      // current session are always recent (<7 days) and are never swept here;
+      // only genuinely aged files from previous sessions are removed.
+      sweepStaleResultFiles();
+      // Prime after sweep so the owner session gets a delivery attempt on all
+      // remaining (non-stale) result files.
       primeExistingResults();
     } catch (error) {
       // restoreActiveJobs publishes its own empty snapshot for scan/restore

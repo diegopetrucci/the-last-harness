@@ -57,6 +57,8 @@ Use minor subagents only when they materially help:
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
+All subagent dispatch is background-only. Omit the `async` parameter (do not pass `async:false`). Record the run ID from the launch receipt; continue independent work or end the turn after dispatch. Do not poll or sleep while waiting; completion notifications arrive on their own. Use `action:status` only for diagnosis/recovery, never as a wait-poll loop. Treat **launched**, **terminal**, and **report-consumed** as distinct states; never finalize until the required completion report has arrived and been consumed.
+
 ## Fit
 
 Rush is for small bounded implementation work, focused bug fixes, targeted tests, and local refactors.

@@ -38,6 +38,7 @@ import {
   text,
   writeStatus,
 } from "../support/project-agent-control-fixtures.ts";
+import type { ForegroundResumeRun } from "../../src/shared/types.ts";
 
 const testEnvironment = createProjectAgentControlEnvironment();
 
@@ -45,141 +46,189 @@ describe("project-agent control reference lifetime and continuation", () => {
   beforeEach(testEnvironment.setup);
   afterEach(testEnvironment.teardown);
 
-  it("persists a foreground pause capture and resumes it after a generation reload", async () => {
-    const root = fs.realpathSync(
-      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-foreground-pause-")),
-    );
-    execFileSync("git", ["init", "--quiet", root]);
-    const first = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-foreground-one",
-      "embedded.worker",
-      "Foreground original",
-      "foreground-digest-one",
-    );
-    const second = createProjectGeneration(
-      root,
-      "session-project",
-      "generation-foreground-two",
-      "embedded.worker",
-      "Foreground reloaded",
-      "foreground-digest-two",
-    );
-    let active = first;
-    let pausedRunId = "";
-    let resumedRunId = "";
-    const state = createState();
-    const executor = makeExecutor(
-      root,
-      state,
-      {
-        get capability() {
-          return active.capability;
-        },
-      } as any,
-      {
-        runSync: async (
-          _cwd: string,
-          _agents: any[],
-          _agent: string,
-          _task: string,
-          options: any,
-        ) => {
-          pausedRunId = options.runId;
-          fs.mkdirSync(path.dirname(options.sessionFile), { recursive: true });
-          fs.writeFileSync(options.sessionFile, "", "utf8");
-          const result = {
-            agent: "embedded.worker",
-            task: "foreground pause",
-            projectAgent: first.capture,
-            acceptance: buildSkippedAcceptanceLedger({
-              acceptance: resolveEffectiveAcceptance({
-                agentName: "embedded.worker",
-                task: "foreground pause",
-                mode: "single",
-              }),
-              ledgerStatus: "skipped",
-              runtimeCheckStatus: "not-applicable",
-              id: "paused",
-              message: "Acceptance will run after resume.",
-            }),
-            exitCode: 0,
-            interrupted: true,
-            finalOutput: "Paused foreground child.",
-            messages: [],
-            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
-            sessionFile: options.sessionFile,
-            pause: { kind: "awaiting_supervisor", summary: "Need supervisor input." },
-          };
-          options.onSupervisorPauseTransition?.({ stage: "pausing", result, ownerPid: 12345 });
-          options.onSupervisorPauseTransition?.({ stage: "paused", result });
-          return result;
-        },
-        executeAsyncSingle: (runId: string, params: any) => {
-          resumedRunId = runId;
-          return {
-            content: [{ type: "text", text: "resumed" }],
-            details: { asyncId: runId, results: [] },
-            params,
-          };
-        },
-      },
-    );
-    try {
-      const initial = await executor.execute(
-        "foreground",
+  it(
+    "persists a foreground pause capture and resumes it after a generation reload" +
+      " — legacy-fixture: state written directly; foreground dispatch is no longer available",
+    async () => {
+      // This test was originally driven through the old runSync foreground-dispatch
+      // path.  After async-only, new dispatch can no longer create a foreground pause,
+      // so we write the historical paused-foreground state directly (legacy fixture)
+      // in the same format that the old path produced, then verify that the
+      // project-agent authorization / reference-lifetime safeguards survive a
+      // generation reload and produce a correct background continuation.
+      const root = fs.realpathSync(
+        fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-foreground-pause-")),
+      );
+      execFileSync("git", ["init", "--quiet", root]);
+      const first = createProjectGeneration(
+        root,
+        "session-project",
+        "generation-foreground-one",
+        "embedded.worker",
+        "Foreground original",
+        "foreground-digest-one",
+      );
+      const second = createProjectGeneration(
+        root,
+        "session-project",
+        "generation-foreground-two",
+        "embedded.worker",
+        "Foreground reloaded",
+        "foreground-digest-two",
+      );
+      let active = first;
+      let resumedRunId = "";
+      const state = createState();
+      const executor = makeExecutor(
+        root,
+        state,
         {
-          agent: "embedded.worker",
-          task: "foreground pause",
-          agentScope: "project",
+          get capability() {
+            return active.capability;
+          },
+        } as any,
+        {
+          executeAsyncSingle: (runId: string, params: any) => {
+            resumedRunId = runId;
+            return {
+              content: [{ type: "text", text: "resumed" }],
+              details: { asyncId: runId, results: [] },
+              params,
+            };
+          },
         },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
       );
-      assert.equal(initial.isError, undefined);
-      assert.ok(pausedRunId);
-      const persistedPath = path.join(ASYNC_DIR, pausedRunId, "status.json");
-      const persisted = JSON.parse(fs.readFileSync(persistedPath, "utf8"));
-      assert.deepEqual(persisted.steps?.[0]?.projectAgent, first.capture);
-      assert.equal(persisted.steps?.[0]?.projectAgent?.config.systemPrompt, "Foreground original");
-      fs.rmSync(first.capture.config.filePath, { force: true });
-      active = second;
 
-      delete persisted.steps[0].projectAgent;
-      writeJson(persistedPath, persisted);
-      const removedMarker = await executor.execute(
-        "foreground-resume-removed-marker",
-        { action: "resume", id: pausedRunId, message: "Do not bypass." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(removedMarker.isError, true);
-      assert.match(text(removedMarker), /missing|corrupt|project-agent/i);
-      persisted.steps[0].projectAgent = first.capture;
-      writeJson(persistedPath, persisted);
+      // ── Build historical paused-foreground state directly ────────────────
+      // Write the persisted ASYNC_DIR status and the in-memory foreground-run
+      // index that the old foreground-dispatch path would have produced, then
+      // retain the project-agent run reference.
+      const pausedRunId = `paused-fg-${Date.now().toString(36)}`;
+      const asyncDir = path.join(ASYNC_DIR, pausedRunId);
+      const sessionFile = path.join(asyncDir, "worker.jsonl");
+      const acceptance = buildSkippedAcceptanceLedger({
+        acceptance: resolveEffectiveAcceptance({
+          agentName: "embedded.worker",
+          task: "foreground pause",
+          mode: "single",
+        }),
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance will run after resume.",
+      });
 
-      const resumed = await executor.execute(
-        "foreground-resume",
-        { action: "resume", id: pausedRunId, message: "Continue after reload." },
-        new AbortController().signal,
-        undefined,
-        makeContext(root),
-      );
-      assert.equal(resumed.isError, undefined);
-      assert.ok(resumedRunId);
-      assert.equal(lookupProjectAgentRunReference(resumedRunId).status, "found");
-    } finally {
-      releaseProjectAgentRunReference(pausedRunId);
-      if (resumedRunId) releaseProjectAgentRunReference(resumedRunId);
-      revokeIfRegistered(first.capability);
-      revokeIfRegistered(second.capability);
-      fs.rmSync(path.join(ASYNC_DIR, pausedRunId), { recursive: true, force: true });
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf8");
+      const persistedPath = path.join(asyncDir, "status.json");
+      writeJson(persistedPath, {
+        runId: pausedRunId,
+        mode: "single",
+        state: "paused",
+        sessionId: "session-project",
+        cwd: root,
+        startedAt: Date.now() - 10_000,
+        lastUpdate: Date.now(),
+        steps: [
+          {
+            agent: "embedded.worker",
+            status: "paused",
+            sessionFile,
+            projectAgent: first.capture,
+            acceptance,
+            pause: { kind: "awaiting_supervisor", summary: "Need supervisor input." },
+          },
+        ],
+        pause: { kind: "awaiting_supervisor", summary: "Need supervisor input." },
+      });
+
+      // Populate the in-memory foreground-run index (mirrors what rememberForegroundRun
+      // wrote after the old onSupervisorPauseTransition callback fired).
+      state.foregroundRuns ??= new Map();
+      const foregroundEntry: ForegroundResumeRun = {
+        runId: pausedRunId,
+        mode: "single",
+        cwd: root,
+        updatedAt: Date.now(),
+        children: [
+          {
+            agent: "embedded.worker",
+            index: 0,
+            status: "paused",
+            sessionFile,
+            projectAgent: first.capture,
+            acceptance,
+            pause: { kind: "awaiting_supervisor", summary: "Need supervisor input." },
+          },
+        ],
+      };
+      state.foregroundRuns.set(pausedRunId, foregroundEntry);
+      retainProjectAgentRunReference(first.capability, pausedRunId, [first.capture]);
+
+      try {
+        // Verify the fixture looks correct — same assertions as the old live path.
+        const persisted = JSON.parse(fs.readFileSync(persistedPath, "utf8"));
+        assert.deepEqual(persisted.steps?.[0]?.projectAgent, first.capture);
+        assert.equal(
+          persisted.steps?.[0]?.projectAgent?.config.systemPrompt,
+          "Foreground original",
+        );
+
+        // Simulate a generation reload: the first generation's source file is
+        // gone and the active capability has advanced to the second generation.
+        fs.rmSync(first.capture.config.filePath, { force: true });
+        active = second;
+
+        // ── Guard: resume without a projectAgent marker must fail closed ───
+        // A status where the project-agent marker was removed or corrupted
+        // must be rejected before any background launch occurs.
+        delete persisted.steps[0].projectAgent;
+        writeJson(persistedPath, persisted);
+        const removedMarker = await executor.execute(
+          "foreground-resume-removed-marker",
+          { action: "resume", id: pausedRunId, message: "Do not bypass." },
+          new AbortController().signal,
+          undefined,
+          makeContext(root),
+        );
+        assert.equal(removedMarker.isError, true);
+        assert.match(text(removedMarker), /missing|corrupt|project-agent/i);
+
+        // ── Happy path: restore the marker and resume to a background run ──
+        // After a project generation reload the private run reference still
+        // exists (retained for the original runId), so authorization succeeds
+        // using the retained capture.  The executor delegates to the background
+        // seam and retains a reference for the new continuation run id.
+        persisted.steps[0].projectAgent = first.capture;
+        writeJson(persistedPath, persisted);
+        const resumed = await executor.execute(
+          "foreground-resume",
+          { action: "resume", id: pausedRunId, message: "Continue after reload." },
+          new AbortController().signal,
+          undefined,
+          makeContext(root),
+        );
+        // Resume produces a background continuation (not an error).
+        assert.equal(resumed.isError, undefined);
+        // The background seam was called and returned a new run id.
+        assert.ok(resumedRunId, "expected a continuation runId from the background seam");
+        // The project-agent reference-lifetime safeguard retains a reference
+        // for the continuation run so it is accessible after resume.
+        assert.equal(
+          lookupProjectAgentRunReference(resumedRunId).status,
+          "found",
+          "continuation must have a retained project-agent run reference",
+        );
+      } finally {
+        releaseProjectAgentRunReference(pausedRunId);
+        if (resumedRunId) releaseProjectAgentRunReference(resumedRunId);
+        revokeIfRegistered(first.capability);
+        revokeIfRegistered(second.capability);
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
   it("retains complete and failed project generations beyond the UI cleanup window", async () => {
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-terminal-retention-")),

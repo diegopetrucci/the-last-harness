@@ -97,11 +97,9 @@ describe("nested orchestration retirement", () => {
     assert.equal(fs.existsSync(path.dirname(secondInbox)), false);
   });
 
-  it("does not create a retired nested route for an ordinary direct foreground run", async () => {
+  it("does not create a retired nested route for an ordinary direct background run", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-root-no-nested-route-"));
     const state = createState();
-    const controls = new CapturingForegroundControls();
-    state.foregroundControls = controls;
     try {
       const throwingContext = makeMinimalCtx(root);
       throwingContext.modelRegistry.getAvailable = () => {
@@ -119,20 +117,18 @@ describe("nested orchestration retirement", () => {
       const content = result.content[0];
       const text = content?.type === "text" ? content.text : "";
       assert.match(text, /ordinary root model lookup failed/);
-      assert.equal(controls.capturedRunIds.length, 1);
-      const runId = controls.capturedRunIds[0];
-      assert.ok(runId);
-      assert.equal("nestedRoute" in controls.capturedControls[0]!, false);
+      // Background dispatch does not set foregroundControls (foreground engine
+      // is unreachable from new dispatch; deleted in the next ticket).
+      assert.equal(state.foregroundControls.size, 0);
 
-      let routesForRun: string[] = [];
+      // Core regression: no retired nested route files created.
+      let routeFiles: string[] = [];
       try {
-        routesForRun = fs
-          .readdirSync(NESTED_EVENTS_DIR)
-          .filter((entry) => entry.startsWith(`${runId}-`));
+        routeFiles = fs.readdirSync(NESTED_EVENTS_DIR);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      assert.deepEqual(routesForRun, []);
+      assert.deepEqual(routeFiles, []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

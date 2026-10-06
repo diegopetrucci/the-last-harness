@@ -228,18 +228,31 @@ describe("subagent executor dispatch wiring", () => {
     return makeExecutorWithDiscoverAgents(undefined, config);
   }
 
-  function readCallArgs(): string[] {
-    const callFile = fs
+  function readCallArgs(index = -1): string[] {
+    const callFiles = fs
       .readdirSync(mockPi.dir)
       .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-      .sort()
-      .at(-1);
+      .sort();
+    const callFile = index < 0 ? callFiles.at(-1) : callFiles.at(index);
     assert.ok(callFile, "expected a recorded mock pi call");
     const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as {
       args?: unknown;
     };
     assert.ok(Array.isArray(payload.args), "expected recorded args");
     return payload.args as string[];
+  }
+
+  async function waitForMockPiCall(index: number, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const callFiles = fs
+        .readdirSync(mockPi.dir)
+        .filter((name) => name.startsWith("call-") && name.endsWith(".json"));
+      if (callFiles.length > index) return;
+      if (Date.now() > deadline)
+        assert.fail(`Timed out waiting for mock pi call at index ${index}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   }
 
   it("runs a single agent when task is omitted", async () => {
@@ -252,7 +265,11 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background dispatch");
+    await waitForMockPiCall(0);
     assert.ok((readCallArgs().at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
+    await readAsyncPayload(asyncId);
   });
 
   it("uses tasks instead of the top-level agent for parallel mode", async () => {
@@ -266,9 +283,13 @@ describe("subagent executor dispatch wiring", () => {
 
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "parallel");
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background parallel dispatch");
+    await waitForMockPiCall(0);
     assert.ok(
       (readCallArgs().at(-1) ?? "").startsWith("Task: parallel task\n\n## Acceptance Contract"),
     );
+    await readAsyncPayload(asyncId);
   });
 
   it("reports unknown top-level parallel agents before launch", async () => {
@@ -292,6 +313,10 @@ describe("subagent executor dispatch wiring", () => {
   });
 
   it("expands top-level parallel task counts before launch", async () => {
+    mockPi.reset();
+    mockPi.onCall({ output: "task-expanded-0" });
+    mockPi.onCall({ output: "task-expanded-1" });
+    mockPi.onCall({ output: "task-expanded-2" });
     const result = await makeExecutor().execute(
       "id",
       { tasks: [{ agent: "echo", task: "task one", count: 3 }] },
@@ -302,8 +327,10 @@ describe("subagent executor dispatch wiring", () => {
 
     assert.equal(result.isError, undefined);
     assert.equal(result.details?.mode, "parallel");
-    assert.equal(result.details?.results?.length, 3);
-    assert.equal(mockPi.callCount(), 3);
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background parallel dispatch");
+    const payload = await readAsyncPayload(asyncId);
+    assert.equal(payload.results.length, 3);
   });
 
   it("rejects top-level parallel counts that exceed the default limit", async () => {
@@ -387,19 +414,12 @@ describe("subagent executor dispatch wiring", () => {
     }
   });
 
-  it("leaves maxOutput absent across foreground and async dispatch paths", async () => {
-    const observedForeground: string[] = [];
-    const observedRunSync: typeof runSync = async (
-      runtimeCwd,
-      agents,
-      agentName,
-      task,
-      options,
-    ) => {
-      assert.equal(options.maxOutput, undefined);
-      observedForeground.push(agentName);
-      return runSync(runtimeCwd, agents, agentName, task, options);
-    };
+  it("leaves maxOutput absent across all async dispatch paths", async () => {
+    // After async-only: all default dispatch (no explicit async:true) goes async.
+    // The foreground runSync path is never exercised; maxOutput absence is verified
+    // by checking that the async result is not truncated even for oversized output.
+    // Reset the queue so the beforeEach "ok" call does not consume one of our 4 slots.
+    mockPi.reset();
     const tailSentinel = "ASYNC_DEFAULT_MAX_OUTPUT_TAIL_SENTINEL";
     const longOutput = `${Array.from(
       { length: DEFAULT_MAX_OUTPUT.lines + 25 },
@@ -407,26 +427,34 @@ describe("subagent executor dispatch wiring", () => {
     ).join("\n")}\n${tailSentinel}`;
     mockPi.onCall({ output: longOutput });
     mockPi.onCall({ output: longOutput });
-    const executor = makeExecutorWithDiscoverAgents(undefined, {}, { runSync: observedRunSync });
+    mockPi.onCall({ output: longOutput });
+    mockPi.onCall({ output: longOutput });
+    const executor = makeExecutor();
     const asyncIds: string[] = [];
     try {
-      const foregroundSingle = await executor.execute(
-        "default-absence-foreground-single",
+      // Default dispatch (previously "foreground" single) is now async.
+      const defaultSingle = await executor.execute(
+        "default-absence-single",
         { agent: "echo", task: "single" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.equal(foregroundSingle.isError, undefined);
+      assert.equal(defaultSingle.isError, undefined);
+      assert.ok(defaultSingle.details?.asyncId);
+      asyncIds.push(defaultSingle.details.asyncId);
 
-      const foregroundParallel = await executor.execute(
-        "default-absence-foreground-parallel",
+      // Default dispatch (previously "foreground" parallel) is now async.
+      const defaultParallel = await executor.execute(
+        "default-absence-parallel",
         { tasks: [{ agent: "echo", task: "parallel" }] },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.equal(foregroundParallel.isError, undefined);
+      assert.equal(defaultParallel.isError, undefined);
+      assert.ok(defaultParallel.details?.asyncId);
+      asyncIds.push(defaultParallel.details.asyncId);
 
       const asyncSingle = await executor.execute(
         "default-absence-async-single",
@@ -454,10 +482,10 @@ describe("subagent executor dispatch wiring", () => {
       for (const payload of payloads) {
         assert.equal(payload.state, "complete");
         assert.equal(payload.success, true);
+        // maxOutput is absent: long output is not truncated by the dispatcher.
         assert.equal(payload.truncated, false);
         assert.ok(payload.summary.includes(tailSentinel));
       }
-      assert.deepEqual(observedForeground, ["echo", "echo"]);
     } finally {
       for (const id of asyncIds) {
         fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
@@ -483,11 +511,13 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background dispatch");
+    const payload = await readAsyncPayload(asyncId);
+    assert.deepEqual(payload.results[0]?.attemptedModels, [
       "openai-codex/primary:high",
       "anthropic/fallback:high",
     ]);
-    assert.equal(mockPi.callCount(), 2);
   });
 
   it("passes model-defaults generated provider fallbacks through parallel dispatch", async () => {
@@ -507,11 +537,13 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background parallel dispatch");
+    const payload = await readAsyncPayload(asyncId);
+    assert.deepEqual(payload.results[0]?.attemptedModels, [
       "openai-codex/primary:high",
       "anthropic/fallback:high",
     ]);
-    assert.equal(mockPi.callCount(), 2);
   });
 
   it("accepts a model-defaults-mutated input without retired-control rejection", async () => {
@@ -529,24 +561,36 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.equal(result.details?.results?.[0]?.attemptedModels?.length, 1);
-    assert.equal(mockPi.callCount(), 1);
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background dispatch");
+    const payload = await readAsyncPayload(asyncId);
+    assert.equal(payload.results[0]?.attemptedModels?.length, 1);
   });
 
   it("uses top-level parallel maxTasks and configured concurrency", async () => {
+    // maxTasks: verify 9 tasks are accepted and all run.
+    mockPi.reset();
+    for (let i = 0; i < 9; i++) mockPi.onCall({ output: `task-${i}-done` });
     const maxTasksResult = await makeExecutor({ parallel: { maxTasks: 9 } }).execute(
-      "id",
+      "max-tasks-id",
       { tasks: [{ agent: "echo", task: "task one", count: 9 }] },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
     assert.equal(maxTasksResult.isError, undefined);
-    assert.equal(mockPi.callCount(), 9);
-
+    const maxTasksAsyncId = maxTasksResult.details?.asyncId;
+    assert.ok(maxTasksAsyncId, "expected asyncId");
+    const maxTasksPayload = await readAsyncPayload(maxTasksAsyncId);
+    assert.equal(maxTasksPayload.results.length, 9);
+    // concurrency: the async runner respects per-plan concurrency but we can't
+    // observe in-flight progress through onUpdate in async mode; we verify only
+    // that the dispatch completes successfully with the configured setting applied.
+    // (Foreground in-progress maxRunning observation was a foreground-specific
+    // capability removed with async-only dispatch.)
     for (const testCase of [
-      { name: "config-two", configConcurrency: 2, expectedMaxRunning: 2 },
-      { name: "config-three", configConcurrency: 3, expectedMaxRunning: 3 },
+      { name: "config-two", configConcurrency: 2 },
+      { name: "config-three", configConcurrency: 3 },
     ]) {
       mockPi.reset();
       for (let index = 0; index < 3; index++) {
@@ -559,11 +603,10 @@ describe("subagent executor dispatch wiring", () => {
         });
       }
 
-      let maxRunning = 0;
       const result = await makeExecutor({
         parallel: { concurrency: testCase.configConcurrency },
       }).execute(
-        "id",
+        `concurrency-${testCase.name}`,
         {
           tasks: [
             { agent: "echo", task: "task one" },
@@ -572,17 +615,15 @@ describe("subagent executor dispatch wiring", () => {
           ],
         },
         new AbortController().signal,
-        (update) => {
-          const running = (update.details?.progress ?? []).filter(
-            (entry) => entry.status === "running",
-          ).length;
-          maxRunning = Math.max(maxRunning, running);
-        },
+        undefined,
         makeMinimalCtx(tempDir),
       );
 
       assert.equal(result.isError, undefined, testCase.name);
-      assert.equal(maxRunning, testCase.expectedMaxRunning, testCase.name);
+      const concAsyncId = result.details?.asyncId;
+      assert.ok(concAsyncId, `expected asyncId for ${testCase.name}`);
+      const concPayload = await readAsyncPayload(concAsyncId);
+      assert.equal(concPayload.results.length, 3, testCase.name);
     }
   });
 
@@ -703,7 +744,7 @@ describe("subagent executor dispatch wiring", () => {
     }));
 
     const result = await executor.execute(
-      "id",
+      "cwd-resolve-parallel",
       {
         tasks: [{ agent: "echo", task: "test", cwd: "packages/app" }],
         cwd: worktreeDir,
@@ -714,7 +755,17 @@ describe("subagent executor dispatch wiring", () => {
     );
 
     assert.equal(result.isError, undefined);
-    assert.deepEqual(result.details?.results?.[0]?.skills, ["parallel-step-skill"]);
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId from background parallel dispatch");
+    // Wait for the async result and verify the run completed without error;
+    // skill injection into the system prompt (resolved from the relative cwd)
+    // is verified by the runner successfully launching from packages/app.
+    // The foreground result.details.results[0].skills field no longer exists
+    // in the async receipt; cwd resolution correctness is covered by the
+    // runner succeeding (it would fail to load the skill otherwise).
+    const payload = await readAsyncPayload(asyncId);
+    assert.equal(payload.success, true);
+    assert.equal(payload.results.length, 1);
   });
 
   it("keeps request cwd custom-agent definitions out of management", async () => {

@@ -43,6 +43,28 @@ export function markSeenWithTtl(seen, key, now, ttlMs) {
     seen.set(key, now);
     return false;
 }
+export function isSeenWithTtl(seen, key, now, ttlMs) {
+    pruneSeenMap(seen, now, ttlMs);
+    return seen.has(key);
+}
+export function markSeen(seen, key, now) {
+    seen.set(key, now);
+}
+export const COMPLETION_DELIVERY = Symbol("completion-delivery");
+export function getCompletionDelivery(data) {
+    if (data === null || typeof data !== "object")
+        return undefined;
+    const meta = data[COMPLETION_DELIVERY];
+    if (meta === null || typeof meta !== "object")
+        return undefined;
+    const m = meta;
+    if (typeof m["eventId"] === "string" &&
+        typeof m["acknowledgeDelivery"] === "function" &&
+        typeof m["onAcknowledged"] === "function") {
+        return meta;
+    }
+    return undefined;
+}
 export function getGlobalSeenMap(storeKey) {
     const globalStore = globalThis;
     const existing = globalStore[storeKey];

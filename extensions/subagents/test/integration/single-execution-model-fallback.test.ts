@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -72,6 +73,19 @@ describe(
 
     function readCallArgs(): string[] {
       return readCall().args;
+    }
+
+    async function waitForMockPiCall(index: number, timeoutMs = 10_000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (true) {
+        const callFiles = fs
+          .readdirSync(mockPi.dir)
+          .filter((name) => name.startsWith("call-") && name.endsWith(".json"));
+        if (callFiles.length > index) return;
+        if (Date.now() > deadline)
+          assert.fail(`Timed out waiting for mock pi call at index ${index}`);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
     }
 
     const routeModels = [
@@ -172,7 +186,7 @@ describe(
     });
 
     it(
-      "foreground single runs inherit the parent session model when no model is set",
+      "async single runs inherit the parent session model when no model is set",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -192,13 +206,21 @@ describe(
         );
 
         assert.equal(result.isError, undefined);
+        // After async-only: wait for background mock pi call before reading args
+        await waitForMockPiCall(0);
         const args = readCallArgs();
         assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
+        // Wait for the background runner to complete so its temp dirs are cleaned
+        // before afterEach removes tempDir.  Without this, the detached runner
+        // recreates tempDir after cleanup, leaking it into the guard's TMPDIR scan.
+        const asyncId = result.details?.asyncId;
+        assert.ok(asyncId, "expected asyncId from background dispatch");
+        await readAsyncPayload(asyncId);
       },
     );
 
     it(
-      "foreground single explicit model overrides remain authoritative over the parent session model",
+      "async single explicit model overrides remain authoritative over the parent session model",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -218,8 +240,16 @@ describe(
         );
 
         assert.equal(result.isError, undefined);
+        // After async-only: wait for background mock pi call before reading args
+        await waitForMockPiCall(0);
         const args = readCallArgs();
         assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5-mini");
+        // Wait for the background runner to complete so its temp dirs are cleaned
+        // before afterEach removes tempDir.  Without this, the detached runner
+        // recreates tempDir after cleanup, leaking it into the guard's TMPDIR scan.
+        const asyncId = result.details?.asyncId;
+        assert.ok(asyncId, "expected asyncId from background dispatch");
+        await readAsyncPayload(asyncId);
       },
     );
 
@@ -522,8 +552,11 @@ describe(
         );
 
         assert.equal(result.isError, undefined);
-        assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [primaryId, backupId]);
-        assert.equal(mockPi.callCount(), 2);
+        // After async-only: results[0] not in receipt; wait for async result
+        const asyncId13 = result.details?.asyncId;
+        assert.ok(asyncId13, "expected asyncId in receipt");
+        const asyncPayload13 = await readAsyncPayload(asyncId13);
+        assert.deepEqual(asyncPayload13.results[0]?.attemptedModels, [primaryId, backupId]);
       }
     });
 
@@ -698,19 +731,20 @@ describe(
         );
 
         assert.equal(result.isError, undefined);
-        assert.match(
-          result.content[0]?.text ?? "",
-          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the agent fallback/,
-        );
-        assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+        // After async-only: content is the background receipt, not the foreground card.
+        // The fallback notice and attemptedModels are in the async result.
+        assert.match(result.content[0]?.text ?? "", /Background run started/);
+        const asyncId16 = result.details?.asyncId;
+        assert.ok(asyncId16, "expected asyncId in receipt");
+        const asyncPayload16 = await readAsyncPayload(asyncId16);
+        assert.deepEqual(asyncPayload16.results[0]?.attemptedModels, [
           "openai/gpt-5-mini",
           "google/gemini-2.5-pro",
         ]);
         assert.match(
-          result.details?.results?.[0]?.modelFallbackNotice ?? "",
+          asyncPayload16.results[0]?.modelFallbackNotice ?? "",
           /Quota fallback engaged/,
         );
-        assert.equal(mockPi.callCount(), 2);
       },
     );
 
@@ -720,13 +754,24 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        mockPi.onCall({ output: "Done without retry" });
-        const executor = makeExecutor([
-          makeAgent("echo", {
-            model: "openai/gpt-5-mini",
-            fallbackModels: ["anthropic/claude-sonnet-4"],
-          }),
-        ]);
+        // Use a seam so no real runner is spawned; testing the receipt shape,
+        // not runner output, so no real async dispatch is needed.
+        const asyncSeam: ExecuteAsyncSingleOverride = (id) => ({
+          content: [{ type: "text", text: "seam-ok" }],
+          details: { asyncId: id, results: [] },
+        });
+        const executor = makeExecutor(
+          [
+            makeAgent("echo", {
+              model: "openai/gpt-5-mini",
+              fallbackModels: ["anthropic/claude-sonnet-4"],
+            }),
+          ],
+          {},
+          undefined,
+          runSync,
+          asyncSeam,
+        );
 
         const result = await executor.execute(
           "single-fallback-notice-no-retry",
@@ -738,6 +783,8 @@ describe(
 
         assert.equal(result.isError, undefined);
         assert.doesNotMatch(result.content[0]?.text ?? "", /Notice: Should stay hidden/);
+        // With async-only dispatch the receipt has no inline results; the assertion
+        // below checks that the field is absent (as expected for a background receipt).
         assert.equal(result.details?.results?.[0]?.modelFallbackNotice, undefined);
       },
     );

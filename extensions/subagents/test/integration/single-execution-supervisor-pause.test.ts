@@ -13,11 +13,8 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
   createTempDir,
-  createEventBus,
   removeTempDir,
   makeAgentConfigs,
-  makeAgent,
-  makeMinimalCtx,
   events,
   tryImport,
 } from "../support/helpers.ts";
@@ -70,29 +67,11 @@ interface ExecutionModule {
   ): Promise<RunSyncResult>;
 }
 
-interface ExecutorToolResult {
-  content: Array<{ text?: string }>;
-  isError?: boolean;
-}
-
-interface ExecutorModule {
-  createSubagentExecutor?: (...args: unknown[]) => {
-    execute: (...args: unknown[]) => Promise<ExecutorToolResult>;
-  };
-}
-
-type ExecuteAsyncSingleOverride = (
-  id: string,
-  params: Record<string, unknown>,
-) => ExecutorToolResult;
-
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<unknown>("./src/shared/utils.ts");
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
 const available = !!(execution && utils);
 
 const runSync = execution?.runSync;
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -170,33 +149,6 @@ describe(
     afterEach(() => {
       removeTempDir(tempDir);
     });
-
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
 
     it("interrupts acceptance verification and returns a paused foreground result", async () => {
       const report = [
@@ -380,70 +332,24 @@ describe(
       assert.match(result.finalOutput ?? "", /Interrupted/);
     });
 
-    it(
-      "returns paused foreground single guidance with resume and redispatch commands",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        mockPi.onCall({ delay: 10000 });
-        const state = {
-          baseCwd: tempDir,
-          currentSessionId: null,
-          asyncJobs: new Map(),
-          foregroundRuns: new Map(),
-          foregroundControls: new Map(),
-          lastForegroundControlId: null,
-        };
-        const executor = makeExecutor([makeAgent("slow")], {}, state);
-        const runPromise = executor.execute(
-          "single-pause-run",
-          { agent: "slow", task: "Slow task" },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        const readyDeadline = Date.now() + 5000;
-        while (Date.now() < readyDeadline) {
-          if (
-            mockPi.callCount() === 1 &&
-            typeof (
-              [...state.foregroundControls.values()][0] as { interrupt?: unknown } | undefined
-            )?.interrupt === "function"
-          )
-            break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        assert.equal(mockPi.callCount(), 1);
-
-        const interruptResult = await executor.execute(
-          "single-pause-interrupt",
-          { action: "interrupt" },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-        assert.match(
-          interruptResult.content[0]?.text ?? "",
-          /Interrupt requested for foreground run/,
-        );
-
-        const result = await runPromise;
-        const text = result.content[0]?.text ?? "";
-        assert.equal(result.isError, undefined);
-        assert.match(text, /^Foreground run [a-z0-9-]+ paused after interrupt \(slow\)\./);
-        assert.match(
-          text,
-          /Pause succeeded; this foreground run is paused and waiting for your explicit next action, not a dispatch error\./,
-        );
-        assert.match(
-          text,
-          /Resume: subagent\(\{ action: "resume", id: "[a-z0-9-]+", message: "\.\.\." \}\)/,
-        );
-        assert.match(text, /Replace\/re-dispatch: subagent\(\{ agent: "slow", task: "\.\.\." \}\)/);
-      },
-    );
+    // Removed: "returns paused foreground single guidance with resume and redispatch commands"
+    //
+    // Uses foregroundControls.interrupt (foreground-specific state map) to interrupt
+    // a running foreground dispatch and checks for foreground-receipt-specific guidance
+    // strings: /Foreground run .* paused after interrupt/, /Pause succeeded; this foreground
+    // run is paused/, /Resume: subagent({action: "resume", ...})/, and redispatch commands.
+    //
+    // After async-only, new dispatch goes to background; foregroundControls is not
+    // populated for background runs, so the interrupt mechanism and guidance text
+    // are not reachable via the foreground path.
+    //
+    // Covered by:
+    //   - async-execution-supervisor.test.ts: tests {action:"interrupt",id} for async runs
+    //     and verifies paused state ("Paused after interrupt. Waiting for explicit next action.")
+    //   - async-execution-lifecycle-interruptions.test.ts: interrupt semantics for async runs
+    //   - native-result-lifecycle-supervisor.test.ts:
+    //     "interrupt makes a paused foreground supervisor run terminal"
+    //     verifies the interrupt action result for paused async runs.
 
     it("preserves manual interrupt semantics when a timeout is also configured", async () => {
       mockPi.onCall({ delay: 10000 });

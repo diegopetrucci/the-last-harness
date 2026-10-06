@@ -149,6 +149,19 @@ export function createCompletionBatcher<T>(
     options.emit(items);
   };
 
+  // P2: Timer callbacks must not let a send failure escape into the event loop
+  // and crash the parent process.  emitGroup is also called from flush() where
+  // the caller can handle the exception directly, so only this wrapper adds the
+  // safety net.  Result files are retained because ack only fires after
+  // sendMessage succeeds; an unacked item stays recoverable on the next scan.
+  const emitGroupSafe = () => {
+    try {
+      emitGroup();
+    } catch (err) {
+      console.error("CompletionBatcher emit error (result files retained for recovery):", err);
+    }
+  };
+
   return {
     push(item: T) {
       if (pending.length === 0) {
@@ -158,12 +171,12 @@ export function createCompletionBatcher<T>(
 
       if (debounceTimer) timers.clearTimeout(debounceTimer);
       const debounceDelay = straggler ? config.stragglerDebounceMs : config.debounceMs;
-      debounceTimer = timers.setTimeout(emitGroup, debounceDelay);
+      debounceTimer = timers.setTimeout(emitGroupSafe, debounceDelay);
       unrefHandle(debounceTimer);
 
       if (!maxWaitTimer) {
         const maxWaitDelay = straggler ? config.stragglerMaxWaitMs : config.maxWaitMs;
-        maxWaitTimer = timers.setTimeout(emitGroup, maxWaitDelay);
+        maxWaitTimer = timers.setTimeout(emitGroupSafe, maxWaitDelay);
         unrefHandle(maxWaitTimer);
       }
     },

@@ -11,6 +11,7 @@ import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.js";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
+import { getCompletionDelivery, getGlobalSeenMap, isSeenWithTtl, markSeen, } from "./completion-dedupe.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
@@ -569,6 +570,15 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const asyncId = result.id;
         if (!asyncId)
             return;
+        const meta = getCompletionDelivery(data);
+        if (meta) {
+            const trackerSeen = getGlobalSeenMap("__pi_subagents_job_tracker_complete_seen__");
+            const trackerNow = Date.now();
+            const trackerKey = `result-event:${meta.eventId}:${asyncId}`;
+            if (isSeenWithTtl(trackerSeen, trackerKey, trackerNow, projectAgentTerminalRetentionMs))
+                return;
+            markSeen(trackerSeen, trackerKey, trackerNow);
+        }
         const job = state.asyncJobs.get(asyncId);
         const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
         if (job && telemetry)
@@ -584,14 +594,22 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             if (result.asyncDir)
                 job.asyncDir = result.asyncDir;
         }
-        if (result.state === "cancelled" || result.state === "continued") {
-            retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
+        const asyncDir = job?.asyncDir ?? result.asyncDir;
+        const jobStatus = job?.status;
+        const runProjectRefs = () => {
+            if (result.state === "cancelled" || result.state === "continued") {
+                retainOrReleaseProjectReference(asyncId, asyncDir);
+            }
+            else if ((jobStatus === "complete" || jobStatus === "failed") &&
+                !projectReferenceCleanupTimers.has(asyncId)) {
+                scheduleProjectReferenceCleanup(asyncId, asyncDir, { siblingSafe: false });
+            }
+        };
+        if (meta) {
+            meta.onAcknowledged(runProjectRefs);
         }
-        else if ((job?.status === "complete" || job?.status === "failed") &&
-            !projectReferenceCleanupTimers.has(asyncId)) {
-            scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
-                siblingSafe: false,
-            });
+        else {
+            runProjectRefs();
         }
         if (state.lastUiContext) {
             rerenderWidget(state.lastUiContext);

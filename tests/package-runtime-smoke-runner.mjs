@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -71,6 +71,22 @@ function assertGeneratedChildExtensionPaths(paths, label) {
   }
 }
 
+/** Poll for a JSON file to appear (child writes it at startup before running its session). */
+async function waitForJsonFile(filePath, timeoutMs, pollIntervalMs = 200) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(filePath)) {
+      try {
+        return JSON.parse(readFileSync(filePath, "utf8"));
+      } catch {
+        // File may be partially written; retry on next poll.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for ${filePath}`);
+}
+
 function installPackedChildShim() {
   const shimPath = join(cwd, "packed-pi-shim");
   const childCliPath = join(
@@ -121,8 +137,12 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
       .filter((entry) => entry.type === "text")
       .map((entry) => entry.text)
       .join("\n");
-    assert.match(text, new RegExp(marker));
-    const evidence = JSON.parse(readFileSync(extensionEvidencePath, "utf8"));
+    // In async-only mode the immediate result is a background launch receipt, not the child output.
+    assert.match(text, /Background run started/);
+    assert.match(text, /Agent: developer/);
+    // The child CLI (real-session-child-cli.mjs) writes extension evidence before running its
+    // session, so it should be available shortly after the background runner spawns the child.
+    const evidence = await waitForJsonFile(extensionEvidencePath, 30_000);
     assert.deepEqual(evidence.errors, []);
     const resolvedChildExtensionPaths = evidence.resolvedPaths.map((path) => realpathSync(path));
     assertGeneratedChildExtensionPaths(resolvedChildExtensionPaths, "packed child execution");
@@ -198,7 +218,7 @@ function createSessionContext() {
   const installedFactories = { header: [], footer: [] };
   const notifications = [];
   const context = {
-    mode: "rpc",
+    mode: "tui",
     hasUI: true,
     cwd,
     model: undefined,

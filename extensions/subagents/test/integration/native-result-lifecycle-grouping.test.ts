@@ -5,7 +5,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import type { MockPi } from "../support/helpers.ts";
-import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createMockPi,
   createTempDir,
@@ -20,36 +19,9 @@ import {
   type NativeExecutor,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
+import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 
 const nativeResultGroupingAvailable = available;
-
-const boundedNativeRunSync: typeof runSync = async (
-  runtimeCwd,
-  agents,
-  agentName,
-  task,
-  options,
-) => {
-  assert.equal(options.maxOutput, undefined);
-  return runSync(runtimeCwd, agents, agentName, task, {
-    ...options,
-    maxOutput: { lines: 1, bytes: 100 },
-  });
-};
-
-const boundedNativeFileOnlyRunSync: typeof runSync = async (
-  runtimeCwd,
-  agents,
-  agentName,
-  task,
-  options,
-) => {
-  assert.equal(options.maxOutput, undefined);
-  return runSync(runtimeCwd, agents, agentName, task, {
-    ...options,
-    maxOutput: { lines: 1, bytes: 10 },
-  });
-};
 
 describe(
   "native result grouping",
@@ -88,7 +60,13 @@ describe(
       return expectUnsupportedChainRequestFor(executor, requestId, request, tempDir, mockPi);
     }
 
-    it("single foreground runs return one native grouped result", async () => {
+    it("single dispatch returns background receipt for one agent", async () => {
+      // After async-only: foreground native grouped result card ("subagent results",
+      // "Mode: single", "Status: completed", "Children:", inline finalOutput) is gone.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /^subagent results/m, /Mode: single/, /Status: completed/, /Children: 1 completed/
+      //   - /1\/1\. worker — completed/, /Summary:\n.../
+      //   - result.details.results[0].finalOutput
       mockPi.onCall({ output: "Full child output from worker" });
       const { executor } = makeExecutor();
 
@@ -99,20 +77,23 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.match(result.content[0]?.text ?? "", /^subagent results/m);
-      assert.match(result.content[0]?.text ?? "", /Mode: single/);
-      assert.match(result.content[0]?.text ?? "", /Status: completed/);
-      assert.match(result.content[0]?.text ?? "", /Children: 1 completed/);
-      assert.match(result.content[0]?.text ?? "", /1\/1\. worker — completed/);
-      assert.match(result.content[0]?.text ?? "", /Summary:\nFull child output from worker/);
-      assert.equal(
-        (result.content[0]?.text ?? "").match(/Full child output from worker/g)?.length ?? 0,
-        1,
-      );
-      assert.equal(result.details?.results?.[0]?.finalOutput, "Full child output from worker");
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      assert.equal(result.details?.mode, "single");
+      assert.ok(result.details?.asyncId, "expected asyncId from background dispatch");
+      const payload = await readAsyncPayload(result.details.asyncId);
+      assert.equal(payload.success, true);
+      assert.equal(payload.results[0]?.output, "Full child output from worker");
     });
 
     it("public artifacts:false disables child artifacts but keeps file-only output and sessions", async () => {
+      // After async-only: assert on async result payload. Removed foreground-only
+      // assertions (no async equivalent):
+      //   - child.outputMode (not in AsyncResultArtifactResultItem)
+      //   - child.savedOutputPath (not in AsyncResultArtifactResultItem)
+      // Surviving assertions:
+      //   - result.isError === undefined, artifact paths absent, artifacts dir absent,
+      //     output file content, session file path shape, session file exists
       const outputPath = path.join(tempDir, "artifacts-disabled-report.md");
       const parentSessionFile = path.join(tempDir, "parent", "session.jsonl");
       const childArtifactsDir = path.join(path.dirname(parentSessionFile), "subagent-artifacts");
@@ -135,13 +116,18 @@ describe(
         ctx,
       );
 
-      const child = result.details?.results?.[0];
       assert.equal(result.isError, undefined);
-      assert.equal(child?.artifactPaths, undefined);
-      assert.equal(fs.existsSync(childArtifactsDir), false);
-      assert.equal(child?.outputMode, "file-only");
-      assert.equal(child?.savedOutputPath, outputPath);
-      assert.equal(fs.readFileSync(outputPath, "utf8"), "saved output with artifacts disabled");
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId, "expected asyncId from background dispatch");
+      const payload = await readAsyncPayload(asyncId);
+      const child = payload.results[0];
+      assert.equal(child?.artifactPaths, undefined, "artifacts disabled: no artifactPaths");
+      assert.equal(fs.existsSync(childArtifactsDir), false, "artifacts dir absent when disabled");
+      assert.equal(
+        fs.readFileSync(outputPath, "utf8"),
+        "saved output with artifacts disabled",
+        "file-only output was written",
+      );
       assert.ok(child?.sessionFile, "expected canonical child session path");
       assert.equal(path.basename(child.sessionFile), "session.jsonl");
       assert.equal(path.basename(path.dirname(child.sessionFile)), "run-0");
@@ -151,7 +137,13 @@ describe(
       );
     });
 
-    it("native single runs always use the grouped result", async () => {
+    it("default dispatch returns background receipt with mode: single", async () => {
+      // After async-only: foreground "grouped result" card format (/Mode: single/,
+      // /Summary:/, inline output) is replaced by background receipt.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /Mode: single/ in result.content text (was foreground card; async receipt also has mode)
+      //   - /Summary:\nLegacy foreground output/
+      // Covered by: async receipt has mode:"single" in result.details.mode.
       mockPi.onCall({ output: "Legacy foreground output" });
       const { executor } = makeExecutor();
 
@@ -162,11 +154,15 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.match(result.content[0]?.text ?? "", /Mode: single/);
-      assert.match(result.content[0]?.text ?? "", /Summary:\nLegacy foreground output/);
+      assert.equal(result.isError, undefined);
+      assert.equal(result.details?.mode, "single");
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("native foreground results return without external delivery", async () => {
+    it("dispatch returns background receipt without requiring external delivery", async () => {
+      // After async-only: foreground "no external delivery" semantic is replaced by
+      // the background receipt. Removed foreground-only assertion:
+      //   - /Summary:\nUnacknowledged foreground output/
       mockPi.onCall({ output: "Unacknowledged foreground output" });
       const { executor } = makeExecutor();
 
@@ -177,10 +173,15 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.match(result.content[0]?.text ?? "", /Summary:\nUnacknowledged foreground output/);
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("native foreground results are independent of external extension files", async () => {
+    it("dispatch succeeds independently of external extension files", async () => {
+      // After async-only: foreground independence from extension files is not
+      // separately testable via the receipt; the behavior applies to the runner.
+      // Removed foreground-only assertion:
+      //   - /Summary:\nNo external extension foreground output/
       mockPi.onCall({ output: "No external extension foreground output" });
       const { executor } = makeExecutor();
 
@@ -191,16 +192,21 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.match(
-        result.content[0]?.text ?? "",
-        /Summary:\nNo external extension foreground output/,
-      );
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("native foreground summaries honor maxOutput truncation without discarding full structured output", async () => {
+    it("dispatch returns background receipt regardless of output size (maxOutput absent)", async () => {
+      // After async-only: maxOutput is absent from dispatch. Foreground truncation
+      // (\[TRUNCATED:], bounded summaries, inline truncation metadata) is gone.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /\[TRUNCATED: showing first 1 of 3 lines/, result.details.results[0].finalOutput
+      //   - result.details.results[0].truncation.truncated, text.length <= 8_000
+      // Covered by: executor-dispatch.test.ts "leaves maxOutput absent across all
+      //   async dispatch paths" (truncated:false for oversized output).
       const fullOutput = `first visible line\n${"second hidden line".repeat(700)}\nthird hidden line`;
       mockPi.onCall({ output: fullOutput });
-      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-truncated",
@@ -209,91 +215,82 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const text = result.content[0]?.text ?? "";
-      assert.match(text, /\[TRUNCATED: showing first 1 of 3 lines/);
-      assert.match(text, /first visible line/);
-      assert.doesNotMatch(text, /second hidden line/);
-      assert.equal(result.details?.results?.[0]?.finalOutput, fullOutput);
-      assert.equal(result.details?.results?.[0]?.truncation?.truncated, true);
-      assert.doesNotMatch(
-        result.details?.results?.[0]?.truncation?.text ?? "",
-        /second hidden line/,
-      );
-      assert.ok(text.length <= 8_000);
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("native foreground summaries preserve file-only references even when maxOutput is smaller", async () => {
+    it("file-only dispatch returns background receipt", async () => {
+      // After async-only: foreground file-only receipt (/Summary:\nOutput saved to:/,
+      // inline finalOutput, outputMode field) is foreground-specific.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /Summary:\nOutput saved to:/, /native-file-only\.md/ in content text
+      //   - result.details.results[0].finalOutput, result.details.results[0].outputMode
       mockPi.onCall({ output: "full saved native output\nwith hidden details" });
-      const { executor } = makeExecutor({ runSync: boundedNativeFileOnlyRunSync });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-file-only",
         {
           agent: "worker",
           task: "Write report",
-          output: "native-file-only.md",
+          output: path.join(tempDir, "native-file-only.md"),
           outputMode: "file-only",
         },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const text = result.content[0]?.text ?? "";
-      assert.match(text, /Summary:\nOutput saved to:/);
-      assert.match(text, /native-file-only\.md/);
-      assert.doesNotMatch(text, /full saved native output/);
-      assert.doesNotMatch(text, /\[TRUNCATED:/);
-      assert.match(result.details?.results?.[0]?.finalOutput ?? "", /^Output saved to:/);
-      assert.equal(result.details?.results?.[0]?.outputMode, "file-only");
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("failed file-only foreground runs return truncated native error context without leaking full output", async () => {
+    it("failed single dispatch returns background receipt; async result shows failure", async () => {
+      // After async-only: foreground failure card (/Mode: single/, /Status: failed/,
+      // /Children: 1 failed/, /worker — failed/, truncation) is foreground-specific.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /Mode: single/, /Status: failed/, /Children: 1 failed/, /1\/1\. worker/
+      //   - truncation context, result.details.results[0].outputMode/savedOutputPath/finalOutput
+      // Failure is visible in async result file (payload.success === false).
       mockPi.onCall({
         output: "single visible partial\nsingle hidden partial\nsingle final hidden",
         stderr: "single terminal failure",
         exitCode: 1,
       });
-      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-failed",
         {
           agent: "worker",
           task: "Summarize failure",
-          output: "failed-file-only.md",
+          output: path.join(tempDir, "failed-file-only.md"),
           outputMode: "file-only",
         },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const text = result.content[0]?.text ?? "";
-      assert.equal(result.isError, true);
-      assert.match(text, /Mode: single/);
-      assert.match(text, /Status: failed/);
-      assert.match(text, /Children: 1 failed/);
-      assert.match(text, /1\/1\. worker — failed/);
-      assert.match(text, /single terminal failure/);
-      assert.match(text, /Output:\n\[TRUNCATED: showing first 1 of 3 lines/);
-      assert.match(text, /single visible partial/);
-      assert.doesNotMatch(text, /single hidden partial/);
-      assert.equal(result.details?.results?.[0]?.outputMode, "file-only");
-      assert.equal(result.details?.results?.[0]?.savedOutputPath, undefined);
-      assert.equal(
-        result.details?.results?.[0]?.finalOutput,
-        "single visible partial\nsingle hidden partial\nsingle final hidden",
-      );
+      // Receipt is always returned; failure arrives asynchronously.
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId);
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.success, false);
+      assert.equal(payload.results[0]?.exitCode, 1);
     });
 
-    it("file-only output-save failures return truncated output plus an actionable save error", async () => {
+    it("file-only output-save dispatch returns background receipt", async () => {
+      // After async-only: foreground output-save-failure format (/Status: completed/,
+      // truncation, /Output file error:/, outputSaveError, savedOutputPath, finalOutput)
+      // is foreground-specific. Removed foreground-only assertions (no async equivalent):
+      //   - /Status: completed/, /\[TRUNCATED:/, /save visible line/
+      //   - /Output file error:/, outputSaveError, savedOutputPath, finalOutput
       const blockedParent = path.join(tempDir, "not-a-directory");
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
       mockPi.onCall({ output: "save visible line\nsave hidden line\nsave final hidden" });
-      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-file-save-failed",
@@ -307,35 +304,36 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const text = result.content[0]?.text ?? "";
+      // The executor returns a receipt; the save failure surfaces in the async result (item 5a).
       assert.equal(result.isError, undefined);
-      assert.match(text, /Status: completed/);
-      assert.match(text, /\[TRUNCATED: showing first 1 of 3 lines/);
-      assert.match(text, /save visible line/);
-      assert.doesNotMatch(text, /save hidden line/);
-      assert.match(text, /Output file error:/);
-      assert.equal(text.match(/Output file error:/g)?.length ?? 0, 1);
-      assert.match(text, new RegExp(requestedOutput.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-      assert.ok(text.indexOf("Output file error:") < text.indexOf("[TRUNCATED:"));
-      assert.ok(text.length <= 8_000);
-      assert.match(text, /(?:EEXIST|ENOTDIR|not a directory|file already exists)/i);
-      assert.equal(result.details?.results?.[0]?.savedOutputPath, undefined);
-      assert.ok(result.details?.results?.[0]?.outputSaveError);
-      assert.equal(
-        result.details?.results?.[0]?.finalOutput,
-        "save visible line\nsave hidden line\nsave final hidden",
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      // Item 5 (tlhf-5veu review): file-only output-save failure diagnostics must reach the
+      // eventual background result, not just the receipt.  The async runner appends
+      // "Output file error:" to the result output when the save fails.
+      const singleAsyncId = result.details?.asyncId;
+      assert.ok(singleAsyncId, "expected asyncId in receipt");
+      const singlePayload = await readAsyncPayload(singleAsyncId);
+      assert.match(
+        singlePayload.results[0]?.output ?? "",
+        /Output file error:/,
+        "file-only save failure must surface as 'Output file error:' in the async result output",
       );
     });
 
-    it("parallel native summaries retain save errors without leaking output beyond maxOutput", async () => {
+    it("parallel file-only dispatch returns background receipt", async () => {
+      // After async-only: foreground parallel-save-error format (/Status: completed/,
+      // truncation, /Output file error:/, saveError, maxOutput bounds) is foreground-specific.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - /Status: completed/, /\[TRUNCATED:/, /parallel visible line/
+      //   - /Output file error:/, saveError field, finalOutput, text.length <= 8_000
+      // Item 5b (tlhf-5veu review): save-error diagnostics now verified in the async result.
       const blockedParent = path.join(tempDir, "parallel-not-a-directory");
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
       mockPi.onCall({
         output: "parallel visible line\nparallel hidden line\nparallel final hidden",
       });
-      const { executor } = makeExecutor({ runSync: boundedNativeRunSync });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "parallel-file-save-failed",
@@ -353,24 +351,17 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const text = result.content[0]?.text ?? "";
       assert.equal(result.isError, undefined);
-      assert.match(text, /Status: completed/);
-      assert.match(text, /\[TRUNCATED: showing first 1 of 3 lines/);
-      assert.match(text, /parallel visible line/);
-      assert.doesNotMatch(text, /parallel hidden line/);
-      assert.match(text, /Output file error:/);
-      const saveError = result.details?.results?.[0]?.outputSaveError;
-      assert.ok(saveError);
-      assert.match(saveError, new RegExp(blockedParent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-      assert.match(text, new RegExp(saveError.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-      assert.ok(text.indexOf("Output file error:") < text.indexOf("[TRUNCATED:"));
-      assert.equal(
-        result.details?.results?.[0]?.finalOutput,
-        "parallel visible line\nparallel hidden line\nparallel final hidden",
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      // Item 5b: parallel save-failure diagnostics must also reach the async result.
+      const parallelAsyncId = result.details?.asyncId;
+      assert.ok(parallelAsyncId, "expected asyncId in parallel receipt");
+      const parallelPayload = await readAsyncPayload(parallelAsyncId);
+      assert.match(
+        parallelPayload.results[0]?.output ?? "",
+        /Output file error:/,
+        "parallel file-only save failure must surface as 'Output file error:' in the async result output",
       );
-      assert.ok(text.length <= 8_000);
     });
 
     it("chain native requests fail closed before file-save work starts", async () => {
@@ -416,59 +407,41 @@ describe(
       assert.equal(fs.existsSync(requestedOutput), false);
     });
 
-    it("paused foreground runs stay actionable", async () => {
-      mockPi.onCall({ delay: 10_000 });
-      const { executor, state } = makeExecutor({ agents: [makeAgent("slow")] });
+    it("async dispatch returns background receipt immediately (foreground pause removed)", async () => {
+      // After async-only: foreground live-pause via interrupt is not reachable.
+      // The test previously waited for foregroundControls (foreground-specific state)
+      // and interrupted the foreground run while it was running. With async-only
+      // dispatch, the run is background and returns a receipt immediately.
+      // Removed foreground-only assertions (no async equivalent):
+      //   - waiting for foregroundControls.interrupt function
+      //   - /Interrupt requested for foreground run/
+      //   - /^Foreground run .* paused after interrupt/
+      //   - /Pause succeeded; this foreground run is paused/
+      //   - /Resume: subagent({action: "resume", ...})/
+      // Covered by: async-only-dispatch-characterization.test.ts tests for async pause.
+      mockPi.onCall({ output: "async dispatch done" });
+      const { executor } = makeExecutor({ agents: [makeAgent("slow")] });
 
-      const runPromise = executor.execute(
-        "single-pause",
+      const result = await executor.execute(
+        "single-pause-async",
         { agent: "slow", task: "Wait for interrupt" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      const readyDeadline = Date.now() + 5_000;
-      while (Date.now() < readyDeadline) {
-        if (
-          mockPi.callCount() === 1 &&
-          typeof ([...state.foregroundControls.values()][0] as { interrupt?: unknown } | undefined)
-            ?.interrupt === "function"
-        )
-          break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      assert.equal(mockPi.callCount(), 1);
-
-      const interruptResult = await executor.execute(
-        "single-pause-interrupt",
-        { action: "interrupt" },
-        new AbortController().signal,
-        undefined,
-        makeMinimalCtx(tempDir),
-      );
-      assert.match(
-        interruptResult.content[0]?.text ?? "",
-        /Interrupt requested for foreground run/,
-      );
-
-      const result = await runPromise;
-      assert.match(
-        result.content[0]?.text ?? "",
-        /^Foreground run [a-z0-9-]+ paused after interrupt \(slow\)\./,
-      );
-      assert.match(
-        result.content[0]?.text ?? "",
-        /Pause succeeded; this foreground run is paused and waiting for your explicit next action/,
-      );
-      assert.match(
-        result.content[0]?.text ?? "",
-        /Resume: subagent\(\{ action: "resume", id: "[a-z0-9-]+", message: "\.\.\." \}\)/,
-      );
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
     });
 
-    it("top-level parallel runs bound oversized grouped native output while retaining full details", async () => {
+    it("parallel dispatch returns background receipt for multiple agents", async () => {
+      // After async-only: foreground parallel result card (/Mode: parallel/,
+      // /Children: 2 completed/, /1\/2\. a — completed/, inline /Summary:/, details.results[])
+      // is foreground-specific. Removed foreground-only assertions (no async equivalent):
+      //   - /Mode: parallel/, /Children: 2 completed/, /1\/2\. a — completed/
+      //   - /Summary:\nParallel child output/, result.details.results[].finalOutput
+      //   - text.length <= 8_000 (foreground card-size bound)
       const fullOutput = `Parallel child output ${"P".repeat(12_000)}`;
+      mockPi.onCall({ output: fullOutput });
       mockPi.onCall({ output: fullOutput });
       const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
@@ -484,16 +457,14 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-      assert.match(result.content[0]?.text ?? "", /Mode: parallel/);
-      assert.match(result.content[0]?.text ?? "", /Children: 2 completed/);
-      assert.match(result.content[0]?.text ?? "", /1\/2\. a — completed/);
-      assert.match(result.content[0]?.text ?? "", /2\/2\. b — completed/);
-      assert.match(result.content[0]?.text ?? "", /Summary:\nParallel child output/);
-      assert.equal(
-        result.details?.results?.every((entry) => entry.finalOutput === fullOutput),
-        true,
-      );
-      assert.ok((result.content[0]?.text ?? "").length <= 8_000);
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      assert.equal(result.details?.mode, "parallel");
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId);
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.results.length, 2);
+      assert.equal(payload.success, true);
     });
 
     it("chain grouping requests fail closed before native summaries are built", async () => {
@@ -555,7 +526,14 @@ describe(
       });
     });
 
-    it("mixed foreground outcomes produce failed native grouped status and counts", async () => {
+    it("mixed parallel dispatch returns background receipt; async result shows failure", async () => {
+      // After async-only: foreground mixed-outcome card (/Status: failed/,
+      // /Children: 1 completed, 1 failed/, /1\/2\. a — completed/, /2\/2\. b — failed/)
+      // is foreground-specific. Removed foreground-only assertions (no async equivalent):
+      //   - /Status: failed/, /Children: 1 completed, 1 failed/
+      //   - /1\/2\. a — completed/, /2\/2\. b — failed/, inline error content
+      // Mixed outcome is visible in async result (payload.success === false,
+      // one result success, one failure).
       mockPi.onCall({ matchArgIncludes: "task-a", output: "Parallel child success", exitCode: 0 });
       mockPi.onCall({
         matchArgIncludes: "task-b",
@@ -579,11 +557,15 @@ describe(
       );
 
       assert.equal(result.isError, undefined);
-      assert.match(result.content[0]?.text ?? "", /Status: failed/);
-      assert.match(result.content[0]?.text ?? "", /Children: 1 completed, 1 failed/);
-      assert.match(result.content[0]?.text ?? "", /1\/2\. a — completed/);
-      assert.match(result.content[0]?.text ?? "", /2\/2\. b — failed/);
-      assert.match(result.content[0]?.text ?? "", /Parallel child failure/);
+      assert.match(result.content[0]?.text ?? "", /Background run started/);
+      const asyncId = result.details?.asyncId;
+      assert.ok(asyncId);
+      const payload = await readAsyncPayload(asyncId);
+      assert.equal(payload.success, false, "parallel run fails when any child fails");
+      const successes = payload.results.filter((r) => r.success).length;
+      const failures = payload.results.filter((r) => !r.success).length;
+      assert.equal(successes, 1);
+      assert.equal(failures, 1);
     });
   },
 );

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
@@ -379,6 +380,7 @@ function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_
         ...(telemetry ? { telemetry } : {}),
         ...(config.taskIndex !== undefined ? { taskIndex: config.taskIndex } : {}),
         ...(config.totalTasks !== undefined ? { totalTasks: config.totalTasks } : {}),
+        eventId: randomUUID(),
     });
 }
 async function runSubagent(config) {

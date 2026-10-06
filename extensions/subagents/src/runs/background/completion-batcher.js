@@ -74,6 +74,14 @@ export function createCompletionBatcher(options) {
         lastEmitAt = now();
         options.emit(items);
     };
+    const emitGroupSafe = () => {
+        try {
+            emitGroup();
+        }
+        catch (err) {
+            console.error("CompletionBatcher emit error (result files retained for recovery):", err);
+        }
+    };
     return {
         push(item) {
             if (pending.length === 0) {
@@ -83,11 +91,11 @@ export function createCompletionBatcher(options) {
             if (debounceTimer)
                 timers.clearTimeout(debounceTimer);
             const debounceDelay = straggler ? config.stragglerDebounceMs : config.debounceMs;
-            debounceTimer = timers.setTimeout(emitGroup, debounceDelay);
+            debounceTimer = timers.setTimeout(emitGroupSafe, debounceDelay);
             unrefHandle(debounceTimer);
             if (!maxWaitTimer) {
                 const maxWaitDelay = straggler ? config.stragglerMaxWaitMs : config.maxWaitMs;
-                maxWaitTimer = timers.setTimeout(emitGroup, maxWaitDelay);
+                maxWaitTimer = timers.setTimeout(emitGroupSafe, maxWaitDelay);
                 unrefHandle(maxWaitTimer);
             }
         },

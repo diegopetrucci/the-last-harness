@@ -7,7 +7,12 @@ import registerSubagentNotify, {
   MAX_GROUPED_ENTRIES,
   type SubagentCompletionBatchDetails,
 } from "../../src/runs/background/notify.ts";
-import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
+import {
+  createResultWatcher,
+  type ResultWatcherTimers,
+} from "../../src/runs/background/result-watcher.ts";
+import { getCompletionDelivery } from "../../src/runs/background/completion-dedupe.ts";
+import { createFakeClock } from "../support/notify-fixtures.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { buildSubagentRunTelemetry } from "../../src/shared/telemetry.ts";
@@ -415,9 +420,13 @@ describe("result watcher to native notify", () => {
         },
       ],
     );
+    // P1 fix: every chunk has display:true with its own prose.
     assert.equal(sentMessages[0]!.message.display, true);
-    assert.equal(sentMessages[1]!.message.display, false);
-    assert.equal(sentMessages[1]!.message.content, "");
+    assert.equal(sentMessages[1]!.message.display, true);
+    assert.ok(
+      (sentMessages[1]!.message.content ?? "").length > 0,
+      "chunk 1 must have its own prose",
+    );
     const completions = batches.flatMap((details) => details.completions);
     assert.deepEqual(
       completions.map(({ agent, asyncId }) => ({ agent, asyncId })),
@@ -1060,6 +1069,7 @@ describe("result watcher to native notify", () => {
     const fsProxy = {
       existsSync: fs.existsSync.bind(fs),
       readFileSync: fs.readFileSync.bind(fs),
+      statSync: fs.statSync.bind(fs),
       unlinkSync(filePath: fs.PathLike) {
         if (firstUnlinkFailure && String(filePath).endsWith("unlink-retry.json")) {
           firstUnlinkFailure = false;
@@ -1249,6 +1259,7 @@ describe("result watcher to native notify", () => {
         },
         emit(event: string, data: unknown) {
           for (const handler of listeners.get(event) ?? []) handler(data);
+          if (event === "subagent:async-complete") asyncCompleteCount++;
         },
       },
       on(_event: string, _handler: (...args: unknown[]) => void) {},
@@ -1259,6 +1270,11 @@ describe("result watcher to native notify", () => {
         sentUserMessages.push({ content, options });
       },
     };
+    // Track emitted SUBAGENT_ASYNC_COMPLETE_EVENT count so we can wait for the
+    // watcher to process the success file without relying on file deletion.
+    // File deletion now happens only after ack (delivery confirmed), so it no
+    // longer serves as a proxy for "event emitted and received by notify".
+    let asyncCompleteCount = 0;
     const state = createState("session-owner");
     registerSubagentNotify(pi as never, state, {
       batchConfig: {
@@ -1287,7 +1303,9 @@ describe("result watcher to native notify", () => {
         "utf-8",
       );
       watcher.primeExistingResults();
-      await waitUntil(() => !fs.existsSync(successPath));
+      // Wait for the event to be emitted (not file deletion \ the file now
+      // survives until ack which only fires after the batcher sends).
+      await waitUntil(() => asyncCompleteCount >= 1);
       assert.equal(sent.length, 0, "the successful completion should still be held by batching");
 
       const repaired = reconcileAsyncRun(asyncDir, {
@@ -1339,6 +1357,620 @@ describe("result watcher to native notify", () => {
     } finally {
       watcher.stopResultWatcher();
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("send-throws recovery: file survives and is delivered once on retry scan", async () => {
+    // When sendMessage throws:
+    //  - acknowledgeDelivery is NOT called, the file is NOT deleted.
+    //  - pendingAcks entry is cleared by the orphan timer (TTL=50 ms).
+    //  - The next scan re-emits the event; if sendMessage succeeds, ack fires
+    //    and the file is unlinked exactly once.
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-send-fail-"));
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    let shouldThrow = true;
+    const sent: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        if (shouldThrow) {
+          sent.push("(throw)");
+          throw new Error("simulated send failure");
+        }
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-recovery");
+    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+    // Short TTL so the orphan timer fires quickly and clears pendingAcks.
+    const watcher = createResultWatcher(pi, state, resultsDir, 50);
+    const resultPath = path.join(resultsDir, "recovery.json");
+    fs.writeFileSync(
+      resultPath,
+      JSON.stringify({
+        id: "recovery-run",
+        agent: "worker",
+        success: false,
+        state: "failed",
+        summary: "worker failed",
+        results: [{ agent: "worker", output: "worker failed", success: false }],
+        sessionId: "session-recovery",
+      }),
+      "utf-8",
+    );
+    try {
+      watcher.primeExistingResults();
+      // Coalescer fires; sendMessage throws → file survives, ack not called.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(fs.existsSync(resultPath), true, "file must survive send failure");
+      assert.equal(sent.filter((s) => s !== "(throw)").length, 0, "no real message sent yet");
+
+      // Orphan timer fires (at ~50 ms): pendingAcks cleared, file still there.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(fs.existsSync(resultPath), true, "file still present after orphan timer");
+
+      // Now allow sends and retry: file should be re-emitted and delivered once.
+      shouldThrow = false;
+      watcher.primeExistingResults();
+      await waitUntil(() => !fs.existsSync(resultPath));
+
+      const real = sent.filter((s) => s !== "(throw)");
+      assert.equal(real.length, 1, "exactly one delivery after recovery");
+      assert.match(real[0]!, /Background task failed/);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("session-switch recovery: file survives and is delivered once when session returns", async () => {
+    // Verifies that when the batcher drops items on a session switch, the
+    // result file survives (ack never called) and is delivered exactly once
+    // when the owning session is re-entered and primeExistingResults is called.
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-switch-recovery-"));
+    const clock = createFakeClock();
+    const watcherTimers: ResultWatcherTimers = {
+      setTimeout(cb: () => void, ms?: number) {
+        return clock.api.setTimeout(cb, ms ?? 0);
+      },
+      clearTimeout(id) {
+        clock.api.clearTimeout(id as number);
+      },
+      setInterval(_cb: () => void, _ms?: number) {
+        const h = setInterval(() => {}, 999_999_999);
+        clearInterval(h);
+        return h;
+      },
+      clearInterval(_id) {},
+    };
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    const sent: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-A");
+    registerSubagentNotify(pi as never, state, {
+      batchConfig: { enabled: true, debounceMs: 100, maxWaitMs: 5000 },
+      timers: clock.api,
+      now: clock.now,
+    });
+    const watcher = createResultWatcher(pi, state, resultsDir, 200, { timers: watcherTimers });
+    const resultPath = path.join(resultsDir, "switch-result.json");
+    const resultData = {
+      id: "switch-run",
+      agent: "worker",
+      success: true,
+      state: "complete",
+      summary: "done",
+      results: [{ agent: "worker", output: "done", success: true }],
+      sessionId: "session-A",
+    };
+    fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+    try {
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(fs.existsSync(resultPath), true, "file must survive while batcher holds item");
+
+      state.currentSessionId = "session-B";
+
+      clock.advance(100);
+      assert.equal(sent.length, 0, "batcher dropped items on session switch");
+      assert.equal(fs.existsSync(resultPath), true, "file survives when batcher drops");
+
+      clock.advance(100);
+      assert.equal(fs.existsSync(resultPath), true, "file survives after orphan timer");
+
+      state.currentSessionId = "session-A";
+      watcher.clearPendingAcks();
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      clock.advance(100);
+
+      assert.equal(sent.length, 1, "exactly one delivery after session return");
+      assert.match(sent[0]!, /Background task completed/);
+      assert.equal(fs.existsSync(resultPath), false, "file cleaned up after delivery");
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shutdown-reopen recovery: file delivered once after process restart simulation", async () => {
+    const resultsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-result-watcher-restart-recovery-"),
+    );
+    const resultPath = path.join(resultsDir, "restart-result.json");
+    fs.writeFileSync(
+      resultPath,
+      JSON.stringify({
+        id: "restart-run",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        summary: "restart done",
+        results: [{ agent: "worker", output: "restart done", success: true }],
+        sessionId: "session-restart",
+      }),
+      "utf-8",
+    );
+
+    const globalStore = globalThis as Record<string, unknown>;
+    const savedNotifySeen = globalStore["__pi_subagents_notify_seen__"];
+    const savedTrackerSeen = globalStore["__pi_subagents_job_tracker_complete_seen__"];
+    delete globalStore["__pi_subagents_notify_seen__"];
+    delete globalStore["__pi_subagents_job_tracker_complete_seen__"];
+
+    const sent: string[] = [];
+    const { pi } = createNotifyHarness();
+    const freshSent = sent;
+    (pi as { sendMessage: (m: { content?: string }) => void }).sendMessage = (m: {
+      content?: string;
+    }) => {
+      freshSent.push(m.content ?? "");
+    };
+    const freshState = createState("session-restart");
+    registerSubagentNotify(pi as never, freshState, { batchConfig: { enabled: false } });
+    const freshWatcher = createResultWatcher(pi, freshState, resultsDir, 60_000);
+    try {
+      freshWatcher.primeExistingResults();
+      await waitUntil(() => sent.length >= 1 && !fs.existsSync(resultPath));
+      assert.equal(sent.length, 1, "exactly one delivery after restart");
+      assert.match(sent[0]!, /Background task completed/);
+    } finally {
+      freshWatcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+      if (savedNotifySeen !== undefined)
+        globalStore["__pi_subagents_notify_seen__"] = savedNotifySeen;
+      if (savedTrackerSeen !== undefined)
+        globalStore["__pi_subagents_job_tracker_complete_seen__"] = savedTrackerSeen;
+    }
+  });
+
+  it("already-delivered: not re-delivered after reload even when notify seen map cleared", async () => {
+    const resultsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-result-watcher-already-delivered-"),
+    );
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    const sent: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-already-delivered");
+    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const resultData = {
+      id: "already-delivered-run",
+      agent: "worker",
+      success: true,
+      state: "complete",
+      summary: "done",
+      results: [{ agent: "worker", output: "done", success: true }],
+      sessionId: "session-already-delivered",
+    };
+    const resultPath = path.join(resultsDir, "already-delivered.json");
+    try {
+      fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length >= 1 && !fs.existsSync(resultPath));
+      assert.equal(sent.length, 1, "one delivery on first scan");
+
+      // Simulate crash: re-write the file.
+      fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+      watcher.primeExistingResults();
+      await waitUntil(() => !fs.existsSync(resultPath));
+      assert.equal(sent.length, 1, "state.completionSeen prevents re-delivery");
+
+      // Full reload simulation.
+      state.completionSeen.clear();
+      watcher.clearPendingAcks();
+      registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+      fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+      watcher.primeExistingResults();
+      await waitUntil(() => !fs.existsSync(resultPath));
+      assert.equal(sent.length, 1, "notify globalThis seen prevents re-delivery after reload");
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not re-deliver after a session reload when notify already marked the completion seen", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-reload-dedup-"));
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    const sent: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-reload");
+    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+
+    const resultData = {
+      id: "reload-dedup",
+      agent: "worker",
+      success: true,
+      state: "complete",
+      summary: "reload done",
+      results: [{ agent: "worker", output: "reload done", success: true }],
+      sessionId: "session-reload",
+    };
+    const resultPath = path.join(resultsDir, "reload-dedup.json");
+    try {
+      // First delivery.
+      fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length >= 1 && !fs.existsSync(resultPath));
+      assert.equal(sent.length, 1, "first delivery");
+
+      // Simulate crash: re-write file.
+      fs.writeFileSync(resultPath, JSON.stringify(resultData), "utf-8");
+      // Simulate fresh extension load: clear state and re-register notify.
+      state.completionSeen.clear();
+      registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+      watcher.primeExistingResults();
+      // notify's globalThis seen map has the key → ack fires, file cleaned up, no re-send.
+      await waitUntil(() => !fs.existsSync(resultPath));
+      assert.equal(
+        sent.length,
+        1,
+        "no re-delivery after reload when notify globalThis seen map holds the key",
+      );
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("both listeners (watcher-notify) dedupe by eventId: same eventId not re-delivered on replay", async () => {
+    // Verify that replaying a result file with the same eventId produces no
+    // additional sends after the first delivery marks the seen map.
+    const resultsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-result-watcher-dedupe-listeners-"),
+    );
+    const globalStore = globalThis as Record<string, unknown>;
+    const savedNotifySeen = globalStore["__pi_subagents_notify_seen__"];
+    delete globalStore["__pi_subagents_notify_seen__"];
+
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    const sent: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-dedupe");
+    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+
+    const runId = `dedupe-run-${Date.now().toString(36)}`;
+    const eventId = `dedupe-eid-${Date.now().toString(36)}`;
+
+    const writeResult = () => {
+      fs.writeFileSync(
+        path.join(resultsDir, `${runId}.json`),
+        JSON.stringify({
+          id: runId,
+          agent: "worker",
+          success: false,
+          state: "failed",
+          summary: `${runId} summary`,
+          results: [{ agent: "worker", output: `${runId} output`, success: false }],
+          sessionId: "session-dedupe",
+          eventId,
+        }),
+        "utf-8",
+      );
+    };
+
+    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    try {
+      writeResult();
+      watcher.primeExistingResults();
+      await waitUntil(() => !fs.existsSync(path.join(resultsDir, `${runId}.json`)));
+      assert.equal(sent.length, 1, "notify must deliver the result");
+
+      // Replay: re-write file with the same eventId.
+      writeResult();
+      watcher.primeExistingResults();
+      // completionSeen already holds eventId; watcher cleans up without re-emitting.
+      await waitUntil(() => !fs.existsSync(path.join(resultsDir, `${runId}.json`)));
+      assert.equal(sent.length, 1, "notify must not re-deliver on replay");
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+      if (savedNotifySeen !== undefined)
+        globalStore["__pi_subagents_notify_seen__"] = savedNotifySeen;
+      else delete globalStore["__pi_subagents_notify_seen__"];
+    }
+  });
+
+  it("F3: onAcknowledged fires immediately when registered after ack (production registration order)", async () => {
+    // Fix 3: In production, notify is registered before the tracker.
+    // When notify's sendMessage fires synchronously inside the event handler,
+    // acknowledgeDelivery is called before the tracker's second listener can
+    // register its callback via meta.onAcknowledged.
+    //
+    // This test verifies the fix: after ack has already fired, any subsequent
+    // call to onAcknowledged(cb) must invoke cb immediately (once) so
+    // late-registered callbacks (project-reference management) are not skipped.
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-ack-order-"));
+    const globalStore = globalThis as Record<string, unknown>;
+    const savedNotifySeen2 = globalStore["__pi_subagents_notify_seen__"];
+    delete globalStore["__pi_subagents_notify_seen__"];
+
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    const sent: string[] = [];
+    let lateAckCallbackFiredCount = 0;
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sent.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+    const state = createState("session-ack-order");
+    const asyncId = `ack-order-run-${Date.now().toString(36)}`;
+
+    // Production order: notify first, custom consumer second.
+    registerSubagentNotify(pi as never, state, { batchConfig: { enabled: false } });
+
+    // Second listener: registers a callback via onAcknowledged after notify
+    // has already called acknowledgeDelivery.
+    pi.events.on("subagent:async-complete", (data: unknown) => {
+      const meta = getCompletionDelivery(data);
+      if (!meta) return;
+      meta.onAcknowledged(() => {
+        lateAckCallbackFiredCount++;
+      });
+    });
+
+    const resultFile = path.join(resultsDir, `${asyncId}.json`);
+    fs.writeFileSync(
+      resultFile,
+      JSON.stringify({
+        id: asyncId,
+        runId: asyncId,
+        agent: "ack-order-worker",
+        success: false,
+        state: "cancelled",
+        summary: "cancelled",
+        results: [{ agent: "ack-order-worker", output: "", success: false }],
+        sessionId: "session-ack-order",
+        eventId: `ack-order-event-${Date.now().toString(36)}`,
+      }),
+      "utf-8",
+    );
+
+    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    try {
+      watcher.primeExistingResults();
+      await waitUntil(() => sent.length >= 1 && !fs.existsSync(resultFile));
+      assert.equal(sent.length, 1, "notify delivered exactly once");
+      assert.equal(
+        lateAckCallbackFiredCount,
+        1,
+        "onAcknowledged callback must fire exactly once even when registered after ack",
+      );
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+      if (savedNotifySeen2 !== undefined)
+        globalStore["__pi_subagents_notify_seen__"] = savedNotifySeen2;
+      else delete globalStore["__pi_subagents_notify_seen__"];
+    }
+  });
+
+  it("5b: watcher-backed recovery after chunk-1 throw via orphan-timer coalescer (no manual prime)", async () => {
+    // After chunk-1 of a grouped send throws:
+    //   - chunk-0 items (0..MAX_GROUPED_ENTRIES-1) are acked and their files deleted.
+    //   - The chunk-1 file is NOT acked; pendingAcks holds its slot.
+    //   - After the orphan timer fires (TTL=80 ms, fix 1), it clears pendingAcks
+    //     and calls resultFileCoalescer.schedule(file, 0) \ the production retry.
+    //   - The coalescer processes the file again; delivery succeeds.
+    //   - chunk-0 files are NOT re-sent (dedupe via completionSeen).
+    const sessionId = `session-5b-recovery-${Date.now()}`;
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-rw-5b-recovery-"));
+
+    // Write MAX_GROUPED_ENTRIES + 1 result files.
+    const totalItems = MAX_GROUPED_ENTRIES + 1;
+    const markers = Array.from({ length: totalItems }, (_, i) => `5B-MARKER-${i}-END`);
+    for (let i = 0; i < totalItems; i++) {
+      fs.writeFileSync(
+        path.join(resultsDir, `result-5b-${i}.json`),
+        JSON.stringify({
+          id: `5b-run-${i}`,
+          agent: markers[i]!,
+          success: true,
+          state: "complete",
+          summary: `${markers[i]!} summary`,
+          results: [
+            {
+              agent: markers[i]!,
+              output: `${markers[i]!} output`,
+              success: true,
+              artifactPaths: { outputPath: path.join(resultsDir, `artifact-5b-${i}.txt`) },
+            },
+          ],
+          sessionId,
+        }),
+        "utf-8",
+      );
+      // Write a dummy artifact so sweepStaleResultFiles backup check passes.
+      fs.writeFileSync(path.join(resultsDir, `artifact-5b-${i}.txt`), `artifact-5b-${i}`, "utf-8");
+    }
+
+    const listeners = new Map<string, Set<(payload: unknown) => void>>();
+    let sendCount = 0;
+    const sentContents: string[] = [];
+    const pi = {
+      events: {
+        on(event: string, handler: (payload: unknown) => void) {
+          const handlers = listeners.get(event) ?? new Set<(payload: unknown) => void>();
+          handlers.add(handler);
+          listeners.set(event, handlers);
+          return () => handlers.delete(handler);
+        },
+        emit(event: string, data: unknown) {
+          for (const handler of listeners.get(event) ?? []) handler(data);
+        },
+      },
+      on(_event: string, _handler: (...args: unknown[]) => void) {},
+      sendMessage(message: { content?: string }) {
+        sendCount++;
+        // Throw only on the 2nd sendMessage (chunk-1 of the initial grouped send).
+        if (sendCount === 2) throw new Error("simulated chunk-1 send failure");
+        sentContents.push(message.content ?? "");
+      },
+      sendUserMessage(_content: string, _options?: { deliverAs?: string }) {},
+    };
+
+    const state = createState(sessionId);
+    // Short batcher window so all files enter the same flush.
+    registerSubagentNotify(pi as never, state, {
+      batchConfig: { enabled: true, debounceMs: 50, maxWaitMs: 500 },
+    });
+    // TTL of 80 ms so the orphan timer fires quickly in the test.
+    const watcher = createResultWatcher(pi, state, resultsDir, 80);
+    try {
+      watcher.primeExistingResults();
+
+      // Wait for the initial grouped send: chunk-0 succeeds (sendCount=1),
+      // chunk-1 throws (sendCount=2).  After TTL=80ms, orphan timer fires
+      // and reschedules the chunk-1 file via the coalescer.
+      await waitUntil(() => sentContents.length === 2, scaleTestTimeout(3000));
+
+      // sentContents[0]: chunk-0 prose (MAX_GROUPED_ENTRIES markers).
+      // sentContents[1]: chunk-1 retry prose (1 marker), delivered automatically.
+      assert.equal(sentContents.length, 2, "exactly two model-visible messages (chunk-0 + retry)");
+      assert.equal(sendCount, 3, "3 send calls: chunk-0 ok, chunk-1 throw, chunk-1 retry ok");
+
+      // Chunk-0 markers must appear ONLY in sentContents[0] (no cross-chunk leakage).
+      for (let i = 0; i < MAX_GROUPED_ENTRIES; i++) {
+        const marker = markers[i]!;
+        assert.ok(
+          sentContents[0]!.includes(marker),
+          `chunk-0 marker ${marker} must appear in chunk-0 content`,
+        );
+        assert.ok(
+          !sentContents[1]!.includes(marker),
+          `chunk-0 marker ${marker} must NOT appear in the retry message (no duplicate)`,
+        );
+      }
+
+      // Chunk-1 marker must appear only in sentContents[1] (the retry message).
+      const chunk1Marker = markers[MAX_GROUPED_ENTRIES]!;
+      assert.ok(
+        sentContents[1]!.includes(chunk1Marker),
+        "chunk-1 marker must be in the retry message content",
+      );
+      assert.ok(
+        !sentContents[0]!.includes(chunk1Marker),
+        "chunk-1 marker must NOT appear in chunk-0 content",
+      );
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
     }
   });
 });

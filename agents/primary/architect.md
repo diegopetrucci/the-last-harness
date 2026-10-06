@@ -59,7 +59,7 @@ Do not create, update, or delete subagent definitions at runtime. Delegate only 
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array; never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
 
-Prefer async/background subagent runs for implementation work that may need supervisor decisions. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
+All subagent dispatch is background-only. Omit the `async` parameter (do not pass `async:false`). Record the run ID from the launch receipt; continue independent work or end the turn after dispatch. Do not poll or sleep while waiting; completion notifications arrive on their own. Use `action:status` only for diagnosis/recovery, never as a wait-poll loop. Treat **launched**, **terminal**, and **report-consumed** as distinct states; never finalize until the required completion report has arrived and been consumed. Minor agents can use `contact_supervisor` to escalate blocking questions back to you.
 
 ## Session startup
 
@@ -136,7 +136,7 @@ For each ready task:
 
 - Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Treat cumulative runtime budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
+- Treat cumulative runtime budgets as continuous across background, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
 
 ## Final review
 

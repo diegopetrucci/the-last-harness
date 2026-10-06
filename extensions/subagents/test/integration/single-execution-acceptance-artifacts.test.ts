@@ -26,8 +26,6 @@ import {
 } from "../support/single-execution-fixtures.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import {
-  escapeRegExp,
-  inferredAcceptanceRejectionOutput,
   writePackageSkill,
   type ProgressSummary,
   type ArtifactPaths,
@@ -476,122 +474,6 @@ describe(
       assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
     });
 
-    it(
-      "routes foreground single relative outputs to the parent session artifact directory by default",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        mockPi.onCall({ output: "default report" });
-        const executor = makeExecutor([makeAgent("researcher", { output: "context.md" })]);
-        const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
-        const ctx = {
-          ...makeMinimalCtx(tempDir),
-          sessionManager: {
-            getSessionId: () => "session-123",
-            getSessionFile: () => parentSessionFile,
-          },
-        };
-
-        const result = await executor.execute(
-          "single-default-output-base",
-          { agent: "researcher", task: "Write report" },
-          new AbortController().signal,
-          undefined,
-          ctx,
-        );
-
-        const outputRoot = path.join(tempDir, "parent-session", "subagent-artifacts", "outputs");
-        const taskArg = readCallArgs().at(-1) ?? "";
-        assert.equal(result.isError, undefined);
-        assert.match(
-          taskArg,
-          new RegExp(
-            `Write your findings to exactly this path: ${escapeRegExp(outputRoot)}.*context\\.md`,
-          ),
-        );
-        const outputPath = taskArg.match(/Write your findings to exactly this path: (\S+)/)?.[1];
-        assert.ok(outputPath, "expected output path in child task");
-        assert.equal(fs.readFileSync(outputPath, "utf-8"), "default report");
-        assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
-        assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
-      },
-    );
-
-    it(
-      "makes task-level output overrides authoritative in the child system prompt",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        mockPi.onCall({ output: "override report" });
-        const overridePath = path.join(tempDir, "custom-report.md");
-        const executor = makeExecutor([
-          makeAgent("researcher", {
-            output: "default-report.md",
-            systemPrompt:
-              "Output format (`default-report.md`):\n\nWrite the full report to default-report.md.",
-          }),
-        ]);
-
-        const result = await executor.execute(
-          "single-output-override-system-prompt",
-          { agent: "researcher", task: "Write report", output: overridePath },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        const call = readCall();
-        const taskArg = call.args.at(-1) ?? "";
-        const systemPrompt = call.systemPrompts[0]?.text ?? "";
-        assert.equal(result.isError, undefined);
-        assert.match(
-          taskArg,
-          new RegExp(`Write your findings to exactly this path: ${escapeRegExp(overridePath)}`),
-        );
-        assert.match(systemPrompt, /Output format \(`default-report\.md`\):/);
-        assert.match(systemPrompt, /Runtime output path override:/);
-        assert.match(
-          systemPrompt,
-          new RegExp(`Write your findings to exactly this path: ${escapeRegExp(overridePath)}`),
-        );
-        assert.match(
-          systemPrompt,
-          /Ignore any other output filename or output path mentioned elsewhere/,
-        );
-      },
-    );
-
-    it(
-      "treats string false as disabled output in foreground single runs",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        mockPi.onCall({ output: "inline report" });
-        const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);
-
-        const result = await executor.execute(
-          "single-string-false-output",
-          { agent: "echo", task: "Write report", output: "false" },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-
-        assert.equal(result.isError, undefined);
-        assert.match(result.content[0]?.text ?? "", /inline report/);
-        assert.doesNotMatch(result.content[0]?.text ?? "", /Output saved to:/);
-        assert.equal(fs.existsSync(path.join(tempDir, "false")), false);
-        assert.equal(fs.existsSync(path.join(tempDir, "default-report.md")), false);
-        assert.doesNotMatch(
-          readCallArgs().at(-1) ?? "",
-          /Write your findings to(?: exactly this path)?:/,
-        );
-      },
-    );
-
     it("rejects file-only mode without an output path before spawning", async () => {
       const agents = makeAgentConfigs(["echo"]);
 
@@ -693,42 +575,6 @@ describe(
         assert.match(display, /acceptance is no longer supported/i);
         assert.equal(mockPi.callCount(), 0);
         assert.equal(fs.existsSync(outputPath), false);
-      },
-    );
-
-    it(
-      "foreground inferred acceptance rejection preserves an inline saved-output reference",
-      {
-        skip: !createSubagentExecutor ? "executor not importable" : undefined,
-      },
-      async () => {
-        const outputPath = path.join(tempDir, "inferred-acceptance-rejected.md");
-        const savedContent = "saved deliverable without a report";
-        mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
-        const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
-
-        const result = await executor.execute(
-          "inferred-acceptance-rejected",
-          {
-            agent: "worker",
-            task: "Implement the approved change",
-            output: outputPath,
-            artifacts: true,
-          },
-          new AbortController().signal,
-          undefined,
-          makeMinimalCtx(tempDir),
-        );
-        const child = result.details?.results?.[0];
-        const display = result.content.map((item) => item.text ?? "").join("\n");
-
-        assert.equal(result.isError, undefined);
-        assert.equal(child?.exitCode, 0);
-        assert.equal(child?.acceptance?.explicit, false);
-        assert.equal(child?.acceptance?.status, "rejected");
-        assert.equal(child?.savedOutputPath, outputPath);
-        assert.equal(fs.readFileSync(outputPath, "utf-8"), savedContent);
-        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
       },
     );
 

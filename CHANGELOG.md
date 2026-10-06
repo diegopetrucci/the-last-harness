@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Breaking Changes
+
+- **SDK/embedded sessions must bind an interactive extension mode.** The Pi SDK defaults to `"print"` mode when `bindExtensions` is called without a `mode` (e.g. `session.bindExtensions({})`). Sessions in `"print"` or `"rpc"` mode can no longer dispatch or resume subagents; they receive an actionable rejection before any side effects. Observational actions (list, get, status, interrupt, steer, doctor) are unaffected. To enable subagent dispatch in an embedded session, pass `mode: "tui"`: `session.bindExtensions({ mode: "tui" })`.
+- **Subagent dispatch is now background-only.** All `subagent` tool calls (single and parallel) now run as TLH-tracked background work by default. The tool returns a launch receipt with a run ID immediately; completion arrives in a notification. `async:false` is now rejected with a migration error before any side effects; remove it or omit `async` entirely. The `async` parameter is deprecated for one release (omit it, or pass `async:true`, which is now a no-op synonym for the default). Print/rpc mode (`ctx.mode`) rejects new dispatch and resume; observational actions (list, get, status, interrupt, steer, doctor) are unaffected. Completion notifications deliver up to 8 completions per message chunk.
+
 ### Fixed
 
 - Async status reads now reject non-regular artifacts without blocking or following path replacements.

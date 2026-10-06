@@ -932,6 +932,13 @@ export interface AsyncResultArtifact {
   shareError?: string;
   taskIndex?: number;
   totalTasks?: number;
+  /**
+   * Durable identity stamped into the file at write time (crypto.randomUUID).
+   * Used by the result-watcher to key delivery dedupe maps and the safe-unlink
+   * check.  Absent in legacy files produced before this field was introduced;
+   * consumers fall back to a sha256 content digest in that case.
+   */
+  eventId?: string;
 }
 
 export interface AsyncJobState {
@@ -1070,7 +1077,7 @@ export interface SubagentState {
   poller: NodeJS.Timeout | null;
   completionSeen: Map<string, number>;
   watcher: FSWatcher | null;
-  watcherRestartTimer: ReturnType<typeof setTimeout> | null;
+  watcherRestartTimer: ReturnType<typeof setTimeout> | number | null;
   resultFileCoalescer: {
     schedule(file: string, delayMs?: number): boolean;
     clear(): void;
