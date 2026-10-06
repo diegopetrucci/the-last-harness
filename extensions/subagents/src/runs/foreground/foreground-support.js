@@ -1,9 +1,10 @@
 import * as path from "node:path";
 import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
+import { getUnfilteredAvailableModels } from "../../../../the-last-harness/model-visibility.js";
 import { toModelInfo } from "../../shared/model-info.js";
 export function readModelRegistrySnapshot(ctx) {
     const optionalRegistry = ctx.modelRegistry;
-    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry).map(toModelInfo);
     let allModels;
     let error;
     if (typeof optionalRegistry.getAll === "function") {
