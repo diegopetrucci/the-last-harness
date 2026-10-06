@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Session names now propagate to the terminal title (`tlh - <name> - <cwd basename>` when named, `tlh - <cwd basename>` when unnamed) and to Herdr as a pane metadata title, fixing a regression where TLH's title branding dropped session-name awareness.
 - Async status reads now reject non-regular artifacts without blocking or following path replacements.
 - The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).

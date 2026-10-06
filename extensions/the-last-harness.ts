@@ -77,7 +77,15 @@ function setTlhTerminalTitle(ctx: ExtensionContext): void {
     if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.setTitle !== "function") return;
     const cwdLabel = basename(ctx.cwd) || ctx.cwd;
     if (!cwdLabel) return;
-    ctx.ui.setTitle(`tlh - ${cwdLabel}`);
+    let sessionName: string | undefined;
+    try {
+      const raw = ctx.sessionManager?.getSessionName?.();
+      if (typeof raw === "string") sessionName = raw.trim() || undefined;
+    } catch {
+      // Ignore session name read failures; fall back to unnamed format.
+    }
+    const title = sessionName ? `tlh - ${sessionName} - ${cwdLabel}` : `tlh - ${cwdLabel}`;
+    ctx.ui.setTitle(title);
   } catch {
     // Title branding must not make startup fragile in headless/test contexts.
   }
@@ -369,8 +377,8 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
   pi.on("session_info_changed", (_event, ctx) => {
     // Pi updates its title before dispatching this extension event. Re-apply
-    // TLH's title synchronously so supported session-name refreshes cannot
-    // replace the integration branding.
+    // TLH's title synchronously to pick up the new session name and prevent
+    // Pi's format from replacing TLH branding.
     setTlhTerminalTitle(ctx);
   });
 
