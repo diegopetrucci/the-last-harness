@@ -99,11 +99,6 @@ function readCleanupMetadata(config, target, label, io) {
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent files are silently skipped.
 export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze(["bin/rtk", "tlh/tlh-rtk.mjs"]);
-export const RETIRED_PROFILE_FILES = Object.freeze(["extensions/librarian.json"]);
-// Retired state directories left by retired default extensions.
-// Each path is relative to config.agentDir and must not contain '..' components.
-// The cleanup is idempotent: absent directories are silently skipped.
-export const RETIRED_PROFILE_DIRECTORIES = Object.freeze(["intercom"]);
 /**
  * Walk agentDir → relativePath, guarding against symlinks at agentDir and at
  * every existing intermediate directory component.
@@ -144,47 +139,6 @@ function resolveGuardedProfilePath(agentDir, relativePath, label, io) {
         }
     }
     return join(cursor, lastName);
-}
-function cleanupRelativeProfileDirs(config, relativePaths, io) {
-    for (const relativePath of relativePaths) {
-        try {
-            validateProfileRelativePath(relativePath, "retired profile directory path");
-        }
-        catch {
-            io.warn(`Skipping invalid retired profile directory path: ${relativePath}`);
-            continue;
-        }
-        const target = resolveGuardedProfilePath(config.agentDir, relativePath, "retired profile directory cleanup", io);
-        if (target === null)
-            continue;
-        try {
-            assertProfilePathWithinAgent(config, target, "retired profile directory");
-        }
-        catch (error) {
-            io.warn(`Skipping retired profile directory cleanup (unsafe path): ${target}: ${error instanceof Error ? error.message : String(error)}`);
-            continue;
-        }
-        if (isSymlink(target))
-            continue;
-        if (!existsSync(target))
-            continue;
-        if (!lstatSync(target).isDirectory())
-            continue;
-        if (config.dryRun) {
-            io.log(`Would remove retired profile directory: ${target}`);
-            continue;
-        }
-        try {
-            rmSync(target, { recursive: true });
-            io.detailLog(`Removed retired profile directory: ${target}`);
-        }
-        catch (error) {
-            io.warn(`failed to remove retired profile directory ${target}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-}
-export function cleanupRetiredProfileDirectories(config, io) {
-    cleanupRelativeProfileDirs(config, RETIRED_PROFILE_DIRECTORIES, io);
 }
 function cleanupRelativeProfileFiles(config, relativePaths, io) {
     for (const relativePath of relativePaths) {
@@ -227,42 +181,8 @@ export function cleanupLegacyManagedProfileArtifacts(config, io) {
 function isJsonRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-export function cleanupRetiredProfileFiles(config, io) {
-    // FIX 2: Read post-merge settings to decide whether to keep managed files.
-    // Fail safe: if settings cannot be read, skip file removal rather than risk wrong deletion.
-    let postMergePackages = []; // default empty → proceed with removal when no settings present
-    if (config.settingsPath && existsSync(config.settingsPath)) {
-        try {
-            const raw = readFileSync(config.settingsPath, "utf8");
-            const parsed = JSON.parse(raw);
-            if (isJsonRecord(parsed) && Array.isArray(parsed.packages)) {
-                postMergePackages = parsed.packages;
-            }
-        }
-        catch {
-            postMergePackages = null; // fail safe: unreadable settings → skip removal
-        }
-    }
-    for (const relativePath of RETIRED_PROFILE_FILES) {
-        if (relativePath === "extensions/librarian.json") {
-            if (postMergePackages === null) {
-                if (config.dryRun)
-                    io.log(`Would skip removal of retired profile file (settings unreadable, fail safe): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-            const librarianIdentity = packageIdentity("npm:@diegopetrucci/pi-librarian");
-            const librarianPresent = postMergePackages.some((entry) => packageIdentity(entry) === librarianIdentity);
-            if (librarianPresent) {
-                if (config.dryRun)
-                    io.log(`Skipping retired profile file removal (user-added package preserved): ${join(config.agentDir, relativePath)}`);
-                continue;
-            }
-        }
-        cleanupRelativeProfileFiles(config, [relativePath], io);
-    }
-}
 export function cleanupOldSettingsBackups(config, io) {
-    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupRetiredProfileFiles.
+    // Skip entirely when agentDir itself is a symlink — same safety posture as cleanupLegacyManagedProfileArtifacts.
     if (isSymlink(config.agentDir)) {
         io.warn(`Skipping stale settings backup cleanup: agentDir is a symlink: ${config.agentDir}`);
         return;

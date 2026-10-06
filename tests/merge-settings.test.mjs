@@ -381,53 +381,6 @@ test("merge keeps exact append semantics for unrelated arrays", () => {
   ]);
 });
 
-test("merge scrubs tlh.gnosis from existing settings while preserving other fields", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: {
-        gnosis: { enabled: true, installPath: "/some/path" },
-        disabledDefaultExtensions: [],
-      },
-      otherField: "preserved",
-    },
-  );
-
-  runMerge(fixture);
-
-  const result = readJson(fixture.settings);
-  assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "tlh.gnosis should be removed");
-  assert.deepEqual(
-    result.tlh.disabledDefaultExtensions,
-    [],
-    "other tlh fields should be preserved",
-  );
-  assert.equal(result.otherField, "preserved", "unrelated fields should be preserved");
-});
-
-test("merge leaves settings unchanged when tlh.gnosis is absent", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: ["some-ext"] },
-      otherField: "untouched",
-    },
-  );
-
-  runMerge(fixture);
-
-  const result = readJson(fixture.settings);
-  assert.equal(Object.hasOwn(result.tlh ?? {}, "gnosis"), false, "gnosis key should not appear");
-  assert.deepEqual(
-    result.tlh.disabledDefaultExtensions,
-    ["some-ext"],
-    "disabledDefaultExtensions unchanged",
-  );
-  assert.equal(result.otherField, "untouched", "unrelated fields unchanged");
-});
-
 test("merge removes the retired plannotator package from isolated settings and logs it", () => {
   const fixture = tempFixture(
     { packages: [] },
@@ -1101,64 +1054,6 @@ test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a change
   );
 });
 
-test("merge prunes context-cap from tlh.disabledDefaultExtensions and emits a changes line", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: ["context-cap", "notify"] },
-    },
-  );
-
-  const output = runMerge(fixture, { quiet: false });
-
-  const settings = readJson(fixture.settings);
-  assert.deepEqual(
-    settings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "context-cap should be pruned, other entries preserved",
-  );
-  assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
-});
-
-test("merge prunes whitespace-padded context-cap entry from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: [" context-cap ", "notify"] },
-    },
-  );
-
-  const output = runMerge(fixture, { quiet: false });
-
-  const settings = readJson(fixture.settings);
-  assert.deepEqual(
-    settings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "whitespace-padded context-cap should be pruned",
-  );
-  assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
-});
-
-test("merge is a no-op when settings have neither pi-context-cap nor context-cap opt-out", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: ["notify"] },
-    },
-  );
-
-  runMerge(fixture);
-  const afterFirst = readFileSync(fixture.settings, "utf8");
-
-  const output = runMerge(fixture, { quiet: false });
-
-  assert.match(output, /No settings changes needed\./);
-  assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst, "settings should be unchanged");
-});
-
 test("merge cleanup of retired confirmation packages is idempotent after first run", () => {
   const fixture = tempFixture(
     { packages: [] },
@@ -1209,7 +1104,10 @@ test("merge force-removes pi-oracle package while preserving unrelated packages"
   );
 });
 
-test("merge prunes oracle from tlh.disabledDefaultExtensions and emits a changes line", () => {
+test("merge leftover retired opt-out in tlh.disabledDefaultExtensions is preserved and does not change package output", () => {
+  // Retired ids (e.g. 'oracle') that still appear in tlh.disabledDefaultExtensions are no longer
+  // pruned by merge. They are silently preserved
+  // and do not affect force-removal of retired packages.
   const fixture = tempFixture(
     { packages: [] },
     {
@@ -1218,35 +1116,14 @@ test("merge prunes oracle from tlh.disabledDefaultExtensions and emits a changes
     },
   );
 
-  const output = runMerge(fixture, { quiet: false });
+  runMerge(fixture);
 
   const settings = readJson(fixture.settings);
   assert.deepEqual(
     settings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "oracle should be pruned, other entries preserved",
+    ["oracle", "notify"],
+    "leftover retired opt-out must be preserved unchanged",
   );
-  assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
-});
-
-test("merge prunes whitespace-padded oracle entry from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: [" oracle ", "notify"] },
-    },
-  );
-
-  const output = runMerge(fixture, { quiet: false });
-
-  const settings = readJson(fixture.settings);
-  assert.deepEqual(
-    settings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "whitespace-padded oracle should be pruned",
-  );
-  assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
 });
 
 test("merge cleanup of pi-oracle is idempotent after first run", () => {
@@ -1268,8 +1145,8 @@ test("merge cleanup of pi-oracle is idempotent after first run", () => {
   );
   assert.deepEqual(
     firstSettings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "oracle opt-out pruned on first run",
+    ["oracle", "notify"],
+    "leftover oracle opt-out is preserved (no longer pruned)",
   );
 
   const secondOutput = runMerge(fixture, { quiet: false });
@@ -1364,8 +1241,8 @@ test("merge cleanup of pi-context-cap is idempotent after first run", () => {
   );
   assert.deepEqual(
     firstSettings.tlh.disabledDefaultExtensions,
-    ["notify"],
-    "context-cap opt-out pruned on first run",
+    ["context-cap", "notify"],
+    "leftover context-cap opt-out is preserved (no longer pruned)",
   );
 
   const secondOutput = runMerge(fixture, { quiet: false });
@@ -1377,7 +1254,7 @@ test("merge cleanup of pi-context-cap is idempotent after first run", () => {
   );
 });
 
-test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs idempotently", () => {
+test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs are preserved)", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
@@ -1398,8 +1275,16 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs i
   const firstSettings = readJson(fixture.settings);
 
   assert.deepEqual(firstSettings.packages, [harnessPackage, "npm:keep"]);
-  assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"]);
-  assert.equal(Object.hasOwn(firstSettings.tlh, "rtk"), false);
+  assert.deepEqual(
+    firstSettings.tlh.disabledDefaultExtensions,
+    ["rtk", "pi-rtk", "notify"],
+    "stale rtk opt-outs are preserved (no longer pruned)",
+  );
+  assert.deepEqual(
+    firstSettings.tlh.rtk,
+    { disabled: true },
+    "tlh.rtk is preserved (no longer scrubbed)",
+  );
   assert.match(
     firstOutput,
     /force-remove retired default extension package: git:github\.com\/diegopetrucci\/pi-rtk/,
@@ -1413,8 +1298,6 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs i
     firstOutput,
     /force-remove retired default extension package: git:github\.com\/sherif-fanous\/pi-rtk/,
   );
-  assert.match(firstOutput, /remove tlh\.rtk \(one-time cleanup\)/);
-  assert.match(firstOutput, /remove stale rtk opt-out from tlh\.disabledDefaultExtensions/);
 
   const secondOutput = runMerge(fixture, { quiet: false });
   assert.match(secondOutput, /No settings changes needed\./);
@@ -1649,31 +1532,6 @@ test("merge removes TLH-managed fff from a modern profile where provenance alrea
   );
 });
 
-test("merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
-    },
-  );
-
-  const output = runMerge(fixture, { quiet: false });
-  const settings = readJson(fixture.settings);
-
-  assert.match(output, /remove stale fff opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "fff" || v === "pi-fff"),
-    false,
-    "stale fff opt-outs must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
-});
-
 test("merge fff retirement cleanup is idempotent after first run", () => {
   const fixture = tempFixture(
     { packages: [] },
@@ -1794,33 +1652,6 @@ test("merge removes TLH-managed subagents from a modern profile where provenance
   );
 });
 
-test("merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture(
-    { packages: [] },
-    {
-      packages: [harnessPackage],
-      tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
-    },
-  );
-
-  const output = runMerge(fixture, { quiet: false });
-  const settings = readJson(fixture.settings);
-
-  assert.match(output, /remove stale subagents opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "subagents" || v === "pi-subagents",
-    ),
-    false,
-    "stale subagents opt-outs must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
-});
-
 // ── quiet-tools stale opt-out pruner tests ────────────────────────────────
 
 test("merge prunes quiet-tools from tlh.disabledDefaultExtensions and emits a changes line", () => {
@@ -1922,75 +1753,6 @@ test("merge subagents retirement cleanup is idempotent after first run", () => {
   assert.equal(
     readFileSync(fixture.settings, "utf8"),
     afterFirst,
-    "settings unchanged on second run",
-  );
-});
-
-test("merge prune removes subagents.disableBuiltins while preserving user-owned agentDirs", () => {
-  const fixture = tempFixture(
-    {
-      packages: [],
-    },
-    {
-      packages: [harnessPackage],
-      subagents: {
-        disableBuiltins: true,
-        agentDirs: ["custom/subagents"],
-        agentOverrides: {
-          developer: { model: "kept" },
-        },
-      },
-    },
-  );
-
-  runMerge(fixture);
-
-  const settings = readJson(fixture.settings);
-  assert.equal(
-    Object.hasOwn(settings.subagents, "disableBuiltins"),
-    false,
-    "disableBuiltins must be pruned",
-  );
-  assert.deepEqual(
-    settings.subagents.agentDirs,
-    ["custom/subagents"],
-    "user-owned agentDirs must survive without installer additions",
-  );
-  assert.deepEqual(
-    settings.subagents.agentOverrides,
-    { developer: { model: "kept" } },
-    "agentOverrides must survive",
-  );
-});
-
-test("merge prune for subagents.disableBuiltins is idempotent on second run", () => {
-  const fixture = tempFixture(
-    {
-      packages: [],
-    },
-    {
-      packages: [harnessPackage],
-      subagents: {
-        disableBuiltins: true,
-        agentDirs: ["custom/subagents"],
-      },
-    },
-  );
-
-  runMerge(fixture);
-
-  const afterFirstPrune = readFileSync(fixture.settings, "utf8");
-  assert.equal(
-    Object.hasOwn(readJson(fixture.settings).subagents, "disableBuiltins"),
-    false,
-    "disableBuiltins removed on first run",
-  );
-
-  const secondOutput = runMerge(fixture, { quiet: false });
-  assert.match(secondOutput, /No settings changes needed\./);
-  assert.equal(
-    readFileSync(fixture.settings, "utf8"),
-    afterFirstPrune,
     "settings unchanged on second run",
   );
 });

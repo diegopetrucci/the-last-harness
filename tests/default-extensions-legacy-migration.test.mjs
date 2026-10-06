@@ -5,7 +5,6 @@ import test from "node:test";
 import { packageIdentity } from "../scripts/lib/default-extensions.mjs";
 
 import {
-  backupFiles,
   bundledExtension,
   bundledExtensionsPath,
   bundledSource,
@@ -73,8 +72,9 @@ test("merge force-removes all pi-intercom package identities (string and object 
   // All intercom packages must be gone; unrelated packages survive (helper is
   // removed because it stays opted out via disabledDefaultExtensions).
   assert.deepEqual(settings.packages, [harnessPackage]);
-  // Stale intercom opt-outs are pruned while unrelated opt-outs survive.
-  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+  // Leftover intercom opt-outs are not pruned and remain alongside helper.
+  // merge-settings does not reorder disabledDefaultExtensions; original input order is preserved.
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["intercom", "pi-intercom", "helper"]);
 
   // Second merge is idempotent — no changes reported.
   const secondOutput = runNode(mergeScript, [
@@ -155,7 +155,7 @@ test("merge force-removes pi-intercom and post-merge sources/critical-sources co
   );
 });
 
-test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs", () => {
+test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk are preserved)", () => {
   const fixture = tempFixture();
   writeFileSync(
     fixture.extensions,
@@ -200,8 +200,16 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 
   const settings = readJson(fixture.settings);
   assert.deepEqual(settings.packages, [harnessPackage]);
-  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
-  assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
+  assert.deepEqual(
+    settings.tlh.disabledDefaultExtensions,
+    ["rtk", "pi-rtk", "helper"],
+    "stale rtk opt-outs are preserved (no longer pruned)",
+  );
+  assert.deepEqual(
+    settings.tlh.rtk,
+    { disabled: true },
+    "tlh.rtk is preserved (no longer scrubbed)",
+  );
 });
 
 test("merge force-removes pi-quiet-tools and pi-compact-bash (string and object entries, duplicates, idempotent)", () => {
@@ -393,7 +401,9 @@ test("merge no longer reorders a bundled extension upgrade around retired rtk pa
   ]);
 });
 
-test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", () => {
+test("tlh-defaults disable preserves leftover tlh.rtk and stale rtk opt-outs", () => {
+  // tlh.rtk and legacy rtk/pi-rtk opt-outs are not scrubbed or pruned by tlh-defaults.
+  // They remain in settings and do not affect the disable command.
   const fixture = tempFixture();
   writeFileSync(
     fixture.extensions,
@@ -431,60 +441,16 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 
   const settings = readJson(fixture.settings);
   assert.deepEqual(settings.packages, []);
-  assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], ["helper"]);
-  assert.equal(Object.hasOwn(settings.tlh, "rtk"), false);
-});
-
-test("tlh-defaults persists retired tlh.rtk cleanup even when disable is otherwise a no-op", () => {
-  const fixture = tempFixture();
-  writeFileSync(
-    fixture.extensions,
-    JSON.stringify(
-      [
-        {
-          id: "helper",
-          source: "npm:helper",
-        },
-      ],
-      null,
-      2,
-    ),
+  assert.deepEqual(
+    settings.tlh?.disabledDefaultExtensions ?? [],
+    ["helper", "pi-rtk", "rtk"],
+    "stale rtk opt-outs are preserved (no longer pruned); orderedDisabledIds places known helper first, then unknowns sorted",
   );
-  writeFileSync(
-    fixture.settings,
-    JSON.stringify(
-      {
-        tlh: {
-          rtk: { disabled: true },
-          disabledDefaultExtensions: ["helper"],
-        },
-      },
-      null,
-      2,
-    ),
+  assert.deepEqual(
+    settings.tlh?.rtk,
+    { disabled: true },
+    "tlh.rtk is preserved (no longer scrubbed)",
   );
-
-  const output = runNode(defaultsScript, [
-    "--settings",
-    fixture.settings,
-    "--defaults",
-    fixture.extensions,
-    "disable",
-    "helper",
-  ]);
-
-  const settings = readJson(fixture.settings);
-  assert.deepEqual(settings, {
-    packages: [],
-    tlh: {
-      disabledDefaultExtensions: ["helper"],
-      defaultExtensionProvenance: {
-        managedPackageIdentities: [],
-      },
-    },
-  });
-  assert.equal(backupFiles(fixture.settings).length, 1);
-  assert.doesNotMatch(output, /No settings changes were needed\./);
 });
 
 for (const scenario of [
@@ -1276,13 +1242,11 @@ test("bundled merge removes legacy upstream and TLH subagents git installs via r
     settings.packages.some((entry) => packageIdentity(entry) === "npm:unrelated-ext"),
     "unrelated package must be preserved",
   );
-  // pi-subagents opt-out must be pruned; unrelated opt-out must survive.
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "subagents" || v === "pi-subagents",
-    ),
-    false,
-    "stale subagents opt-out must be pruned",
+  // pi-subagents opt-out is not pruned; it must remain alongside
+  // other unrelated opt-outs.
+  assert.ok(
+    (settings.tlh?.disabledDefaultExtensions ?? []).includes("pi-subagents"),
+    "leftover pi-subagents opt-out is preserved (no longer pruned)",
   );
   assert.ok(
     (settings.tlh?.disabledDefaultExtensions ?? []).includes("other-ext"),
@@ -1325,44 +1289,6 @@ test("bundled merge preserves a manually installed subagents npm package (modern
     "user-added subagents package must be preserved when not managed",
   );
   assert.equal(output.includes("pi-subagents"), false, "merge must not log any subagents removal");
-});
-
-test("bundled merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture();
-  const bundledPath = bundledExtensionsPath;
-  writeFileSync(
-    fixture.settings,
-    JSON.stringify(
-      {
-        packages: [harnessPackage],
-        tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
-      },
-      null,
-      2,
-    ),
-  );
-
-  const output = runNode(mergeScript, [
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    bundledPath,
-  ]);
-
-  const settings = readJson(fixture.settings);
-  assert.match(output, /remove stale subagents opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "subagents" || v === "pi-subagents",
-    ),
-    false,
-    "stale subagents opt-outs must be removed",
-  );
-  assert.ok(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    "unrelated opt-out must be preserved",
-  );
 });
 
 test("bundled merge force-removes legacy TLH intercom git installs via the retirement list", () => {
@@ -1533,41 +1459,4 @@ test("bundled merge preserves a manually added fff package (provenance block exi
     "manually added fff package must be preserved",
   );
   assert.equal(output.includes("pi-fff"), false, "merge must not log any fff removal");
-});
-
-test("bundled merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
-  const fixture = tempFixture();
-  const bundledPath = bundledExtensionsPath;
-  writeFileSync(
-    fixture.settings,
-    JSON.stringify(
-      {
-        packages: [harnessPackage],
-        tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
-      },
-      null,
-      2,
-    ),
-  );
-
-  const output = runNode(mergeScript, [
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    bundledPath,
-  ]);
-
-  const settings = readJson(fixture.settings);
-  assert.match(output, /remove stale fff opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "fff" || v === "pi-fff"),
-    false,
-    "stale fff opt-outs must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
 });

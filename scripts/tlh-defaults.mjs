@@ -96,9 +96,6 @@ function ensureMutableSettings(settings) {
 function settingsPackages(settings) {
     return settings.packages ?? [];
 }
-function isLegacyRtkDisabledId(id) {
-    return id === "rtk" || id === "pi-rtk";
-}
 function orderedDisabledIds(ids, defaultExtensions) {
     const knownIds = new Set(defaultExtensions.map((extension) => extension.id));
     const ordered = [];
@@ -106,9 +103,7 @@ function orderedDisabledIds(ids, defaultExtensions) {
         if (ids.has(extension.id))
             ordered.push(extension.id);
     }
-    const unknown = [...ids]
-        .filter((id) => !knownIds.has(id) && !isLegacyRtkDisabledId(id))
-        .sort((a, b) => a.localeCompare(b));
+    const unknown = [...ids].filter((id) => !knownIds.has(id)).sort((a, b) => a.localeCompare(b));
     return [...ordered, ...unknown];
 }
 function setDisabledIds(settings, ids, defaultExtensions) {
@@ -274,16 +269,7 @@ function backupPathFor(settingsPath) {
 function assertNotNormalPiSettings(settingsPath) {
     assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
 }
-function scrubRetiredTlhSettings(settings) {
-    if (!isPlainObject(settings.tlh))
-        return false;
-    if (!Object.hasOwn(settings.tlh, "rtk"))
-        return false;
-    delete settings.tlh.rtk;
-    return true;
-}
 function writeSettings(settingsPath, value, previousRaw) {
-    scrubRetiredTlhSettings(value);
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (formatted === previousRaw)
         return undefined;
@@ -482,8 +468,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandDisable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is disabled for the tlh profile.`);
         if (warningChanged)
@@ -501,8 +486,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandEnable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is enabled for the tlh profile.`);
         if (warningChanged)
