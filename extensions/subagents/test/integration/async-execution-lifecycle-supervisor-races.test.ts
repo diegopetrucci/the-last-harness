@@ -52,10 +52,41 @@ import {
 import {
   getAsyncConfigPath,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_ASYNC_STARTED_EVENT,
   type ResolvedControlConfig,
 } from "../../src/shared/types.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { appendSubagentTelemetryContinuation } from "../../src/shared/telemetry.ts";
+
+function recordStartedPid(pids: Set<number>, payload: unknown): void {
+  if (typeof payload !== "object" || payload === null) return;
+  const pid = "pid" in payload ? payload.pid : undefined;
+  if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) pids.add(pid);
+}
+
+function readPersistedPid(asyncDir: string): number | undefined {
+  try {
+    const status: unknown = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    );
+    if (typeof status !== "object" || status === null || Array.isArray(status)) return undefined;
+    const pid = "pid" in status ? status.pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function killPids(pids: readonly (number | undefined)[]): void {
+  for (const pid of pids) {
+    if (typeof pid !== "number" || pid <= 0 || pid === process.pid) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The process may already have exited before failure cleanup reached it.
+    }
+  }
+}
 
 describe("async execution utilities", () => {
   let tempDir: string;
@@ -472,9 +503,21 @@ describe("async execution utilities", () => {
       fs.mkdirSync(markerDir, { recursive: true });
       const readyMarker = path.join(markerDir, "source-ready");
       const releaseMarker = path.join(markerDir, "source-release");
+      const continuationReadyMarker = path.join(markerDir, "continuation-ready");
+      const continuationReleaseMarker = path.join(markerDir, "continuation-release");
       const sourceRunId = `async-telemetry-adoption-${Date.now().toString(36)}`;
       const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
       const sourceSessionFile = path.join(tempDir, "source-session.jsonl");
+      const sourceRunnerPids = new Set<number>();
+      const continuationRunnerPids = new Set<number>();
+      const sourceEvents = createEventBus();
+      sourceEvents.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+        recordStartedPid(sourceRunnerPids, payload);
+      });
+      const continuationEvents = createEventBus();
+      continuationEvents.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+        recordStartedPid(continuationRunnerPids, payload);
+      });
       const provenance = {
         tlhVersion: "race-tlh",
         piVersion: "race-pi",
@@ -498,16 +541,25 @@ describe("async execution utilities", () => {
         steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
         output: "source work complete",
       });
-      mockPi.onCall({ output: "continuation work complete" });
+      mockPi.onCall({
+        steps: [
+          { writeMarker: continuationReadyMarker },
+          {
+            waitForMarker: continuationReleaseMarker,
+            jsonl: [events.assistantMessage("continuation work complete")],
+          },
+        ],
+      });
 
       let continuationRunId: string | undefined;
+      let cleanupFailure: Error | undefined;
       try {
         const sourceStart = executeAsyncSingle!(sourceRunId, {
           agent: "worker",
           task: "Source work for the telemetry race.",
           agentConfig: makeAgent("worker"),
           ctx: {
-            pi: { events: { emit() {} } },
+            pi: { events: sourceEvents },
             cwd: tempDir,
             currentSessionId: "session-123",
           },
@@ -534,7 +586,7 @@ describe("async execution utilities", () => {
         assert.ok(createSubagentExecutor, "foreground executor fixture is available");
         assert.ok(runSync, "foreground execution fixture is available");
         const executor = createSubagentExecutor({
-          pi: { events: createEventBus(), getSessionName: () => undefined },
+          pi: { events: continuationEvents, getSessionName: () => undefined },
           state: makeSubagentState({ baseCwd: tempDir }),
           config: { maxSubagentDepth: 2, control: controlConfig },
           tempArtifactsDir: tempDir,
@@ -568,6 +620,15 @@ describe("async execution utilities", () => {
           sourceRunId,
           sourceStepIndex: 0,
         });
+
+        // Keep the continuation child live after the source adopts its terminal
+        // telemetry. This makes the teardown race deterministic without sleeps.
+        await waitForMarker(continuationReadyMarker);
+        assert.equal(
+          fs.existsSync(path.join(RESULTS_DIR, `${continuationRunId}.json`)),
+          false,
+          "continuation result must not exist while its child is deliberately held",
+        );
 
         await waitForAsyncStatusPredicate(
           sourceAsyncDir,
@@ -641,20 +702,103 @@ describe("async execution utilities", () => {
           { sourceStepIndex: 0, continuationRunId },
         ]);
         assert.equal(completion.telemetry?.outcome?.state, "continued");
+
+        // The source result is intentionally observed while the continuation is
+        // still live. Release it only after all source telemetry assertions, then
+        // wait for its own terminal artifact before teardown removes its directory.
+        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
+        const continuationResultPath = await waitForAsyncResultFile(continuationRunId);
+        const continuationResult = JSON.parse(
+          fs.readFileSync(continuationResultPath, "utf-8"),
+        ) as AsyncResultPayload;
+        assert.equal(continuationResult.state, "complete");
       } finally {
-        // Release first so an assertion failure cannot strand the blocking mock
-        // child. The normal path has already consumed both result artifacts.
+        // Release both deterministic gates before cleanup so an assertion failure
+        // cannot strand either mock child. The normal path has observed both
+        // result artifacts before deleting any run-owned files.
         fs.writeFileSync(releaseMarker, "", "utf-8");
-        fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
-        if (continuationRunId) {
-          fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
-        }
-        fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
-        if (continuationRunId) {
-          fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
-          fs.rmSync(getAsyncConfigPath(continuationRunId), { force: true });
+        fs.writeFileSync(continuationReleaseMarker, "", "utf-8");
+
+        const cleanupRunIds = [sourceRunId, continuationRunId].filter(
+          (id): id is string => typeof id === "string",
+        );
+        const cleanupAsyncDirs = [
+          sourceAsyncDir,
+          ...(continuationRunId ? [path.join(ASYNC_DIR, continuationRunId)] : []),
+        ];
+        const cleanupTimeout = scaleTestTimeout(5_000);
+        await Promise.all(
+          cleanupRunIds.map((id) =>
+            waitForAsyncResultFile(id, cleanupTimeout).catch(() => undefined),
+          ),
+        );
+
+        const collectOwnedPids = (): number[] => {
+          const pids = new Set<number>([
+            ...sourceRunnerPids,
+            ...continuationRunnerPids,
+            ...startedMockPiPids(mockPi),
+          ]);
+          for (const asyncDir of cleanupAsyncDirs) {
+            const pid = readPersistedPid(asyncDir);
+            if (pid !== undefined) pids.add(pid);
+          }
+          return [...pids];
+        };
+
+        const requestOwnedStops = (): void => {
+          for (const asyncDir of cleanupAsyncDirs) {
+            if (!fs.existsSync(asyncDir)) continue;
+            try {
+              requestAsyncInterrupt(asyncDir, {
+                source: "async-telemetry-adoption-test-cleanup",
+              });
+            } catch {
+              // The run may have already exited or removed its control files.
+            }
+          }
+        };
+        const reapOwnedPids = async (): Promise<boolean> => {
+          let ownedPids = collectOwnedPids();
+          try {
+            await waitForPidsToExit(ownedPids, "async telemetry adoption cleanup", cleanupTimeout);
+            return true;
+          } catch {
+            // A failed fixture may still own a writer; stop it before considering removal.
+          }
+          requestOwnedStops();
+          ownedPids = collectOwnedPids();
+          killPids(ownedPids);
+          try {
+            await waitForPidsToExit(
+              ownedPids,
+              "async telemetry adoption forced cleanup",
+              cleanupTimeout,
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        };
+
+        const reaped = await reapOwnedPids();
+        if (!reaped) {
+          cleanupFailure = new Error(
+            "Async telemetry adoption cleanup could not reap every owned process; run files were left in place.",
+          );
+        } else {
+          fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
+          }
+          fs.rmSync(path.join(RESULTS_DIR, `${sourceRunId}.json`), { force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
+            fs.rmSync(getAsyncConfigPath(continuationRunId), { force: true });
+          }
         }
       }
+      if (cleanupFailure) throw cleanupFailure;
     },
   );
 
