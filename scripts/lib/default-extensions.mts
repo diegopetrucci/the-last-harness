@@ -117,6 +117,7 @@ function gitIdentity(source: string): string {
   return `git:${value.toLowerCase()}`;
 }
 
+// Retirement window and tier rules: see CONTRIBUTING.md#retiring-installer-migrations.
 // These sources were previously managed by TLH's external subagent default.
 // Keep this list separate from the active manifest: migration code must still
 // recognize old npm/git spellings after the manifest entry is retired.

@@ -85,6 +85,15 @@ Guardrails to remember:
 - Update `README.md`, docs, or `CHANGELOG.md` when a user-visible behavior change warrants it.
 - Avoid broad refactors or unrelated cleanup in focused changes.
 
+### Retiring installer migrations
+
+Migrations fall into two tiers with different removal rules:
+
+1. **Inert migrations** (opt-out prunes, settings-key scrubs, cleanup of unread profile files) may be removed once they are at least 3 minor releases old (e.g. a migration introduced in v0.40 becomes removable in v0.43).
+2. **Protective migrations** (force-removal of packages that conflict with first-party features, PATH-visible artifact cleanup, physical cleanup of retired subagent packages) require an aggregate `Tlh.App.version` telemetry check before removal to confirm adoption is negligible — see [docs/local-development.md#telemetrydeck-mcp-contributors-only](docs/local-development.md#telemetrydeck-mcp-contributors-only).
+
+The provenance-gated and force-removal mechanisms themselves stay in place while any active source still uses them.
+
 ## Pull requests and CI
 
 Before requesting review, check that:
