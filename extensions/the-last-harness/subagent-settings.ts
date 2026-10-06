@@ -1,9 +1,4 @@
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import {
@@ -18,13 +13,16 @@ import {
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
 import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
+import {
+  getTlhSubagentOverrides,
+  parseTlhSettingsContent,
+} from "./primary-agent-runtime-settings.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import type {
   ReasoningModel,
   SubagentMetadata,
   ThinkingLevel,
-  TlhSettings,
   TlhSubagentOverride,
 } from "./types.js";
 
@@ -46,26 +44,6 @@ type OverrideWriteResult = {
   changed: boolean;
 };
 type StatusContext = Pick<ExtensionCommandContext, "cwd" | "model" | "modelRegistry">;
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
-
-function parseTlhSettingsContent(content: string | undefined): Record<string, unknown> {
-  if (!content) {
-    return {};
-  }
-  const parsed = JSON.parse(content) as unknown;
-  if (!isRecord(parsed)) {
-    throw new Error("settings.json must contain a JSON object");
-  }
-  return parsed;
-}
 
 function bundledSubagentMap(subagents: readonly SubagentMetadata[]): Map<string, SubagentMetadata> {
   return new Map(subagents.map((agent) => [agent.name, agent]));
@@ -91,18 +69,6 @@ function availableModels(ctx: Pick<ExtensionCommandContext, "modelRegistry">): A
   } catch {
     return [];
   }
-}
-
-function getStoredOverrides(cwd: string): ReadonlyMap<string, TlhSubagentOverride> {
-  const overrides = getTlhGlobalSettings(cwd).subagents?.agentOverrides;
-  if (!isRecord(overrides)) {
-    return new Map();
-  }
-  return new Map(
-    Object.entries(overrides)
-      .filter(([, value]) => isRecord(value))
-      .map(([agent, value]) => [agent, value as TlhSubagentOverride]),
-  );
 }
 
 function availableThinkingLevels(model: AvailableModel | undefined): ThinkingLevel[] {
@@ -406,7 +372,7 @@ function formatStatusMessage(
   subagents: readonly SubagentMetadata[],
   selectedAgentName?: string,
 ): string {
-  const overrides = getStoredOverrides(ctx.cwd);
+  const overrides = getTlhSubagentOverrides(ctx.cwd);
   const selectedAgents = selectedAgentName
     ? subagents.filter((agent) => agent.name === selectedAgentName)
     : subagents;
@@ -573,7 +539,7 @@ async function runInteractivePicker(
   }
 
   while (true) {
-    const overrides = getStoredOverrides(ctx.cwd);
+    const overrides = getTlhSubagentOverrides(ctx.cwd);
     const optionToAgent = new Map(
       subagents.map(
         (agent) =>
@@ -612,7 +578,7 @@ async function runInteractivePicker(
       notifyWriteResult(
         ctx,
         resetSubagentOverride(ctx.cwd, agentName, "model"),
-        fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+        fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)),
       );
       continue;
     }
@@ -620,7 +586,7 @@ async function runInteractivePicker(
       notifyWriteResult(
         ctx,
         resetSubagentOverride(ctx.cwd, agentName, "thinking"),
-        fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+        fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)),
       );
       continue;
     }
@@ -719,7 +685,7 @@ async function runInteractivePicker(
     notifyWriteResult(
       ctx,
       effortWriteResult,
-      fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+      fixedModelWarning(agentName, getTlhSubagentOverrides(ctx.cwd).get(agentName)),
     );
     // Record baseline only on transition from no meaningful override to active override.
     if (effortWriteResult.changed && !hadEffortOverride) {
@@ -798,7 +764,7 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
           notifyWriteResult(
             ctx,
             result,
-            fixedModelWarning(rawAgentName, getStoredOverrides(ctx.cwd).get(rawAgentName)),
+            fixedModelWarning(rawAgentName, getTlhSubagentOverrides(ctx.cwd).get(rawAgentName)),
           );
           return;
         }
@@ -807,7 +773,7 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
           throw new Error(usageMessage());
         }
         const models = availableModels(ctx);
-        const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
+        const currentOverride = getTlhSubagentOverrides(ctx.cwd).get(rawAgentName);
         // Detect first-creation transition before write.
         const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
         const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);

@@ -89,8 +89,6 @@ export interface SessionMirrorObserverProbeOptions {
   readonly bridgeDirectory?: string;
   /** Test seam; production uses the lazy Unix-socket sink when configured. */
   readonly sink?: SessionMirrorObserverSink;
-  /** Explicit second feature gate; observer activation remains the outer gate. */
-  readonly sessionMirrorReplies?: boolean;
   /** Extension-owned user-message injection seam for the reply producer. */
   readonly sendUserMessage?: SessionMirrorReplyProducerOptions["sendUserMessage"];
   readonly isIdle?: SessionMirrorReplyProducerOptions["isIdle"];
@@ -115,7 +113,6 @@ export interface SessionMirrorObserverProbe {
   sessionBeforeCompact(): void;
   sessionCompact(): void;
   sessionShutdown(): void;
-  publicationReady(info: unknown): void;
   requestSnapshot(): void;
   getState(): SessionMirrorObserverProbeState;
 }
@@ -400,7 +397,7 @@ export function createSessionMirrorObserverProbe(
   };
   const runtime: SessionMirrorObserverRuntime = createSessionMirrorObserverRuntime(runtimeOptions);
 
-  if (options.sessionMirrorReplies === true && typeof options.sendUserMessage === "function") {
+  if (typeof options.sendUserMessage === "function") {
     replyProducer = createSessionMirrorReplyProducer({
       enabled: true,
       bridgeDirectory: options.bridgeDirectory,
@@ -516,8 +513,6 @@ export function createSessionMirrorObserverProbe(
     invokeReply(() => replyProducer?.sessionCompact());
     invokeLifecycle(() => runtime.sessionCompact(), metrics);
   };
-  const publicationReady = (info: unknown): void =>
-    invokeReply(() => replyProducer?.publicationReady(info));
   const sessionShutdown = (): void => {
     invokeReply(() => replyProducer?.sessionShutdown());
     shutdownSink(publicationSink);
@@ -543,7 +538,6 @@ export function createSessionMirrorObserverProbe(
     sessionBeforeCompact,
     sessionCompact,
     sessionShutdown,
-    publicationReady,
     requestSnapshot,
     getState,
   });

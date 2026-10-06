@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { formatHomePath } from "./common.js";
 import {
   analyzeCurrentSessionUsage,
+  createUsageTotals,
   type TlhAgentProviderUsage,
   type TlhCacheMissEvent,
   type TlhModelUsage,
@@ -707,26 +708,13 @@ type PrimaryUsageBreakdown = {
 };
 
 function getPrimaryUsageBreakdown(analysis: TlhSessionUsageAnalysis): PrimaryUsageBreakdown {
-  const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createEmptyUsageTotals();
+  const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createUsageTotals();
   const assistantTurnUsage =
     analysis.primaryAssistant.assistantTurnUsage ??
     subtractUsageTotals(analysis.totals.primary, cacheWarmUsage);
   const cacheWarmRequestCount =
     analysis.primaryAssistant.cacheWarmRequestCount ?? (hasUsage(cacheWarmUsage) ? 1 : 0);
   return { assistantTurnUsage, cacheWarmUsage, cacheWarmRequestCount };
-}
-
-function createEmptyUsageTotals(): TlhUsageTotals {
-  return {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    totalTokens: 0,
-    costUsd: 0,
-    turns: 0,
-    assistantMessages: 0,
-  };
 }
 
 function subtractUsageTotals(total: TlhUsageTotals, subtract: TlhUsageTotals): TlhUsageTotals {

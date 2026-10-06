@@ -942,15 +942,6 @@ class TlhSubscriptionUsageService {
     }
   }
 
-  clear(): void {
-    this.snapshots.clear();
-    this.lastAttempts.clear();
-    this.inFlight.clear();
-    this.activeCacheKeys.clear();
-    this.ineligibleCacheKeys.clear();
-    this.refreshGenerations.clear();
-  }
-
   async refresh(
     ctx: TlhSubscriptionUsageContext | undefined,
     options: { force?: boolean } = {},
