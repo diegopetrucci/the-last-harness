@@ -307,7 +307,7 @@ async function runReconcilePicker(
 
     let acknowledgmentFailed = false;
     if (clearedEntries.length > 0 && provider) {
-      // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+      // Skip acknowledgment when provider is unknown.
       const acknowledged = updateReconcileAcknowledgedSnapshot(
         buildAcknowledgedSnapshot(clearedEntries, provider),
         new Date().toISOString(),
@@ -389,7 +389,7 @@ async function runReconcilePicker(
       return;
     }
     notifyResetResult(ctx, outcome.result, entry.name);
-    // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+    // Skip acknowledgment when provider is unknown.
     if (provider) {
       const acknowledged = updateReconcileAcknowledgedSnapshot(
         buildSingleAcknowledgedSnapshot(entry, provider),
@@ -414,7 +414,7 @@ export function registerReconcileCommand(pi: ExtensionAPI, runtime?: TlhPrimaryA
     description: RECONCILE_COMMAND_DESCRIPTION,
     handler: async (_args, ctx) => {
       // Capture the provider once so comparison and acknowledgment always use
-      // the same value, even if ctx.model were mutated mid-command (ts-7w6o).
+      // the same value, even if ctx.model were mutated mid-command.
       const provider = ctx.model?.provider;
 
       if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {

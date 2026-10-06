@@ -359,8 +359,7 @@ function markerIndex(queue: readonly Marker[], kind: MarkerKind): number {
  * The returned lifecycle methods are intentionally synchronous. They only
  * mutate bounded aggregate flags/counters and enqueue content-free markers.
  * Attestation, source projection, and sink work happen later on the injected
- * scheduler. This module does not register extension handlers; the opt-in
- * integration is owned by a later task.
+ * scheduler. This module does not register extension handlers.
  */
 export function createSessionMirrorObserverRuntime(
   options: SessionMirrorObserverRuntimeOptions = {},
@@ -1031,8 +1030,3 @@ export function createSessionMirrorObserverRuntime(
     getState,
   });
 }
-
-/** Short public alias used by the future opt-in extension integration. */
-export const createSessionMirrorObserver = createSessionMirrorObserverRuntime;
-
-export default createSessionMirrorObserverRuntime;

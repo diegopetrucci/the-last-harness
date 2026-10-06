@@ -245,7 +245,6 @@ export interface SessionMirrorObserverFacade {
   readonly sessionTree: () => void;
   readonly sessionBeforeCompact: () => void;
   readonly sessionCompact: () => void;
-  readonly publicationReady: (info: unknown) => void;
   readonly requestSnapshot: () => boolean;
   readonly getStatus: (
     ctx: ExtensionContext | ExtensionCommandContext,
@@ -720,7 +719,6 @@ type SessionMirrorObserverActivationInput = {
   readonly isIdle: SessionMirrorReplyProducerOptions["isIdle"] | undefined;
   readonly bridgeDirectory: string | undefined;
   readonly sink: SessionMirrorObserverSink | undefined;
-  readonly repliesConfigured: boolean;
   readonly sendUserMessage: SessionMirrorReplyProducerOptions["sendUserMessage"] | undefined;
   readonly replyChannelFactory: SessionMirrorReplyProducerOptions["createChannel"] | undefined;
   readonly replyNotify: SessionMirrorReplyProducerOptions["notify"] | undefined;
@@ -750,7 +748,6 @@ function continueSessionMirrorObserverActivation(
     isIdle,
     bridgeDirectory,
     sink,
-    repliesConfigured,
     sendUserMessage,
     replyChannelFactory,
     replyNotify,
@@ -798,7 +795,6 @@ function continueSessionMirrorObserverActivation(
           sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION,
           ...(bridgeDirectory === undefined ? {} : { bridgeDirectory }),
           ...(sink === undefined ? {} : { sink }),
-          sessionMirrorReplies: repliesConfigured,
           ...(sendUserMessage === undefined ? {} : { sendUserMessage }),
           ...(isIdle === undefined ? {} : { isIdle }),
           ...(replyChannelFactory === undefined ? {} : { replyChannelFactory }),
@@ -951,8 +947,6 @@ export function createSessionMirrorObserverFacade(
       return Promise.resolve();
     }
     const configured = previousActivation ?? configuredForCwd(cwd);
-    // Replies are enabled whenever the observer is active; no separate feature flag required.
-    const repliesConfigured = configured;
     if (!isCurrent(nextState)) return Promise.resolve();
     if (reason !== "reload" || previousActivation === undefined) {
       const stored = writeActivationSnapshot(configured, () => isCurrent(nextState));
@@ -1026,7 +1020,6 @@ export function createSessionMirrorObserverFacade(
       isIdle,
       bridgeDirectory: usableBridgeDirectory,
       sink: injectedSink,
-      repliesConfigured,
       sendUserMessage:
         typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
       replyChannelFactory: options.replyChannelFactory,
@@ -1067,7 +1060,6 @@ export function createSessionMirrorObserverFacade(
       | "sessionTree"
       | "sessionBeforeCompact"
       | "sessionCompact"
-      | "publicationReady"
     >,
     ...args: unknown[]
   ): void => {
@@ -1179,7 +1171,6 @@ export function createSessionMirrorObserverFacade(
     sessionTree: () => forward("sessionTree"),
     sessionBeforeCompact: () => forward("sessionBeforeCompact"),
     sessionCompact: () => forward("sessionCompact"),
-    publicationReady: (info: unknown) => forward("publicationReady", info),
     requestSnapshot,
     getStatus,
     handleStatus,

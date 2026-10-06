@@ -516,7 +516,7 @@ function weakReplyNotifier(ctx) {
     };
 }
 function continueSessionMirrorObserverActivation(input) {
-    const { state, isCurrent, sessionManager, loadProbe, attest, now, isIdle, bridgeDirectory, sink, repliesConfigured, sendUserMessage, replyChannelFactory, replyNotify, replyNow, replyScheduleConfirmation, replySetTimeout, replyClearTimeout, } = input;
+    const { state, isCurrent, sessionManager, loadProbe, attest, now, isIdle, bridgeDirectory, sink, sendUserMessage, replyChannelFactory, replyNotify, replyNow, replyScheduleConfirmation, replySetTimeout, replyClearTimeout, } = input;
     const current = () => isCurrent(state);
     if (!current())
         return Promise.resolve();
@@ -562,7 +562,6 @@ function continueSessionMirrorObserverActivation(input) {
                 sessionSchemaVersion: SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION,
                 ...(bridgeDirectory === undefined ? {} : { bridgeDirectory }),
                 ...(sink === undefined ? {} : { sink }),
-                sessionMirrorReplies: repliesConfigured,
                 ...(sendUserMessage === undefined ? {} : { sendUserMessage }),
                 ...(isIdle === undefined ? {} : { isIdle }),
                 ...(replyChannelFactory === undefined ? {} : { replyChannelFactory }),
@@ -700,7 +699,6 @@ export function createSessionMirrorObserverFacade(options = {}) {
             return Promise.resolve();
         }
         const configured = previousActivation ?? configuredForCwd(cwd);
-        const repliesConfigured = configured;
         if (!isCurrent(nextState))
             return Promise.resolve();
         if (reason !== "reload" || previousActivation === undefined) {
@@ -782,7 +780,6 @@ export function createSessionMirrorObserverFacade(options = {}) {
             isIdle,
             bridgeDirectory: usableBridgeDirectory,
             sink: injectedSink,
-            repliesConfigured,
             sendUserMessage: typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
             replyChannelFactory: options.replyChannelFactory,
             replyNotify,
@@ -906,7 +903,6 @@ export function createSessionMirrorObserverFacade(options = {}) {
         sessionTree: () => forward("sessionTree"),
         sessionBeforeCompact: () => forward("sessionBeforeCompact"),
         sessionCompact: () => forward("sessionCompact"),
-        publicationReady: (info) => forward("publicationReady", info),
         requestSnapshot,
         getStatus,
         handleStatus,

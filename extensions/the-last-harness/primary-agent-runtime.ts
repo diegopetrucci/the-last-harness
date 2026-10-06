@@ -1083,10 +1083,6 @@ function createTlhPrimaryAgentRuntime(
       }
     }
 
-    // An out-of-band model change must not leave the session-only gate stuck on another model.
-    if (sessionOnlyModel && !preservesSessionOnlyModel) {
-      updateSessionOnlyModel(undefined);
-    }
     if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const activePrimaryModel =
       shouldApplyModel && !preservesSessionOnlyModel
@@ -1423,10 +1419,6 @@ function createTlhPrimaryAgentRuntime(
     updateSessionOnlyModel(undefined);
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     clearSessionThinkingOverride();
-    // Treat session_start as a fresh notification scope even if the host did
-    // not deliver the prior session_shutdown event.
-    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
-    noticed.clear();
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     activateTlhTicketSessionScope(ctx.cwd);
     await projectAgentLifecycle.loadSessionResources(ctx, sessionStartOperation);
