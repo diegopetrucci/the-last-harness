@@ -1,6 +1,6 @@
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
-import { backfillMissingBaselines, computeModelEffortDrift, isKnownProvider, readReconcileState, } from "./model-effort-reconcile.js";
+import { backfillMissingBaselines, computeModelEffortDrift, hasMeaningfulSubagentOverride, isKnownProvider, isMeaningfulPrimaryOverride, readReconcileState, } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 let notifiedThisProcess = false;
 function getTlhGlobalSettings(cwd) {
@@ -16,7 +16,7 @@ export function hasAnyModelEffortOverride(settings) {
     const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
     if (isRecord(primaryModelOverrides)) {
         for (const overrideValue of Object.values(primaryModelOverrides)) {
-            if (typeof overrideValue === "string" && overrideValue) {
+            if (isMeaningfulPrimaryOverride(overrideValue)) {
                 return true;
             }
         }
@@ -24,14 +24,7 @@ export function hasAnyModelEffortOverride(settings) {
     const subagentOverrides = settings.subagents?.agentOverrides;
     if (isRecord(subagentOverrides)) {
         for (const rawOverride of Object.values(subagentOverrides)) {
-            if (!isRecord(rawOverride)) {
-                continue;
-            }
-            const rawModel = rawOverride.model;
-            const rawThinking = rawOverride.thinking;
-            const hasModel = typeof rawModel === "string" || rawModel === false;
-            const hasThinking = typeof rawThinking === "string" || rawThinking === false;
-            if (hasModel || hasThinking) {
+            if (hasMeaningfulSubagentOverride(rawOverride)) {
                 return true;
             }
         }
