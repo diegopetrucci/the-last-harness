@@ -7,6 +7,8 @@ import { parseGitStatusPorcelainV2 } from "./footer-git.js";
  */
 export type GitStatusSnapshot = {
   branch?: string;
+  /** Upstream tracking ref, when configured locally; absence is not proof a branch is unpushed. */
+  upstream?: string;
   staged: number;
   unstaged: number;
   untracked: number;
@@ -71,8 +73,8 @@ type FooterGitCacheOptions = {
   skipInitialRefresh?: boolean;
   /**
    * Optional callback fired after a refresh changes the visible footer git
-   * snapshots. Not called for transient failures, identical snapshots, or
-   * once the cache has been disposed.
+   * snapshots. Unchanged transient failures do not notify, but a cwd change
+   * that clears stale state still does. Never called after disposal.
    */
   onChange?: () => void;
   /**
@@ -83,13 +85,20 @@ type FooterGitCacheOptions = {
    * callback; the unsubscribe handle is called from `dispose()`.
    */
   onBranchChangeSource?: (callback: () => void) => () => void;
+  /** Minimum interval between PR lookups for an unchanged cwd and branch. */
+  pullRequestRefreshIntervalMs?: number;
+  /** Injectable time source. Defaults to `Date.now`. Useful for deterministic tests. */
+  now?: () => number;
 };
 
 const DEFAULT_REFRESH_INTERVAL_MS = 8_000;
 const DEFAULT_GIT_TIMEOUT_MS = 1_500;
 const DEFAULT_GH_TIMEOUT_MS = 3_000;
+const DEFAULT_PULL_REQUEST_REFRESH_INTERVAL_MS = 300_000;
 
 const GIT_STATUS_ARGS = ["--no-optional-locks", "status", "--porcelain=v2", "--branch"] as const;
+/** Local-only default branch detection; cached per cwd and never performs network discovery. */
+const GIT_SYMBOLIC_REF_ARGS = ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"] as const;
 const GH_PR_VIEW_ARGS = ["pr", "view", "--json", "number,state,isDraft,url,title"] as const;
 
 function defaultRunner(
@@ -203,7 +212,7 @@ function parsePullRequestJson(stdout: string): PullRequestSnapshot | undefined {
   if (typeof record.title === "string") {
     snapshot.title = record.title;
   }
-  return snapshot;
+  return snapshot.number === undefined ? undefined : snapshot;
 }
 
 function gitStatusSnapshotsEqual(
@@ -212,6 +221,7 @@ function gitStatusSnapshotsEqual(
 ): boolean {
   return (
     left?.branch === right?.branch &&
+    left?.upstream === right?.upstream &&
     left?.staged === right?.staged &&
     left?.unstaged === right?.unstaged &&
     left?.untracked === right?.untracked &&
@@ -246,6 +256,8 @@ export class FooterGitCache {
   private readonly refreshIntervalMs: number;
   private readonly gitTimeoutMs: number;
   private readonly ghTimeoutMs: number;
+  private readonly pullRequestRefreshIntervalMs: number;
+  private readonly now: () => number;
   private readonly onChange: (() => void) | undefined;
 
   private intervalHandle: ReturnType<typeof setInterval> | undefined;
@@ -257,6 +269,11 @@ export class FooterGitCache {
   private statusSnapshot: GitStatusSnapshot | undefined;
   private pullRequestSnapshot: PullRequestSnapshot | undefined;
   private lastSeenBranch: string | undefined;
+  private lastSeenUpstream: string | undefined;
+  private lastPrFetchMs: number | undefined;
+  private lastSeenCwd: string | undefined;
+  /** Per-cwd default-branch cache; null means local origin/HEAD was unavailable. */
+  private readonly defaultBranchCache = new Map<string, string | null>();
 
   constructor(options: FooterGitCacheOptions) {
     this.cwd = options.cwd;
@@ -265,6 +282,9 @@ export class FooterGitCache {
     this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
     this.gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
     this.ghTimeoutMs = options.ghTimeoutMs ?? DEFAULT_GH_TIMEOUT_MS;
+    this.pullRequestRefreshIntervalMs =
+      options.pullRequestRefreshIntervalMs ?? DEFAULT_PULL_REQUEST_REFRESH_INTERVAL_MS;
+    this.now = options.now ?? (() => Date.now());
     this.onChange = options.onChange;
 
     this.intervalHandle = this.clock.setInterval(() => {
@@ -318,16 +338,35 @@ export class FooterGitCache {
   }
 
   private async runRefresh(): Promise<void> {
+    // Capture cwd once so git status, local default detection, and gh all use
+    // the same context even if the host changes cwd during this refresh.
+    const cwd = this.cwd();
     const previousStatusSnapshot = this.statusSnapshot;
     const previousPullRequestSnapshot = this.pullRequestSnapshot;
+    const cwdChanged = this.lastSeenCwd !== undefined && cwd !== this.lastSeenCwd;
 
-    const result = await this.fetchGitStatus();
+    // Clear cwd-invalid PR state after capturing the previous snapshots so the
+    // transition still reaches onChange, including when git fails early.
+    if (cwdChanged) {
+      this.pullRequestSnapshot = undefined;
+      this.lastSeenBranch = undefined;
+      this.lastSeenUpstream = undefined;
+      this.lastPrFetchMs = undefined;
+    }
+    this.lastSeenCwd = cwd;
+
+    const result = await this.fetchGitStatus(cwd);
     if (this.disposed) {
       return;
     }
     if (result.kind === "transient") {
       // Timeout, spawn error, or exit-0-but-unparseable. Likely transient;
-      // keep last-known snapshots and retry on the next tick.
+      // keep last-known status and retry on the next tick. A cwd transition
+      // already invalidated PR state, so still notify about that visible
+      // change instead of losing it on this early return.
+      if (cwdChanged) {
+        this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
+      }
       return;
     }
     if (result.kind === "not-a-repo") {
@@ -337,6 +376,8 @@ export class FooterGitCache {
       this.statusSnapshot = undefined;
       this.pullRequestSnapshot = undefined;
       this.lastSeenBranch = undefined;
+      this.lastSeenUpstream = undefined;
+      this.lastPrFetchMs = undefined;
       this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
       return;
     }
@@ -344,15 +385,23 @@ export class FooterGitCache {
     this.statusSnapshot = status;
 
     const branch = typeof status.branch === "string" ? status.branch : undefined;
+    const upstream = typeof status.upstream === "string" ? status.upstream : undefined;
     const isValidBranch = !!branch && branch !== "detached";
-    const branchChanged = branch !== this.lastSeenBranch;
+    const branchChanged = cwdChanged || branch !== this.lastSeenBranch;
 
     if (branchChanged) {
       // Stale PR data belongs to the previous branch; clear it before
       // attempting a fresh lookup for the new branch.
       this.pullRequestSnapshot = undefined;
+      this.lastPrFetchMs = undefined;
     }
+
+    // Compare the previous upstream state before recording this snapshot. A
+    // newly configured upstream is a useful transition, but its absence is
+    // not proof that a pushed branch has no pull request.
+    const hadUpstream = this.lastSeenUpstream !== undefined;
     this.lastSeenBranch = branch;
+    this.lastSeenUpstream = upstream;
 
     if (!isValidBranch) {
       this.pullRequestSnapshot = undefined;
@@ -360,17 +409,46 @@ export class FooterGitCache {
       return;
     }
 
-    const pr = await this.fetchPullRequest();
+    // Skip PR lookups on the repository's default branch while retaining the
+    // normal git status polling cadence.
+    const isDefault = await this.isDefaultBranch(branch, cwd);
     if (this.disposed) {
       return;
     }
-    if (pr !== undefined) {
-      this.pullRequestSnapshot = pr;
-    } else if (branchChanged) {
-      // Branch changed and PR lookup failed; leave snapshot cleared above.
+    if (isDefault) {
       this.pullRequestSnapshot = undefined;
+      this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
+      return;
     }
-    // Otherwise (same branch, gh failed): keep prior PR snapshot.
+
+    const now = this.now();
+    const firstUpstreamAppearance = !branchChanged && !hadUpstream && upstream !== undefined;
+    const elapsedSinceLastPrFetch =
+      this.lastPrFetchMs === undefined ? undefined : now - this.lastPrFetchMs;
+    const ttlExpired =
+      elapsedSinceLastPrFetch === undefined ||
+      elapsedSinceLastPrFetch < 0 ||
+      elapsedSinceLastPrFetch >= this.pullRequestRefreshIntervalMs;
+    const shouldFetch = branchChanged || firstUpstreamAppearance || ttlExpired;
+
+    if (shouldFetch) {
+      // Upstream tracking is optional: pushed branches may lack local tracking
+      // configuration, so absence is not proof that a branch is unpushed.
+      this.lastPrFetchMs = now;
+      const pr = await this.fetchPullRequest(cwd);
+      if (this.disposed) {
+        return;
+      }
+      if (pr !== undefined) {
+        this.pullRequestSnapshot = pr;
+      } else if (branchChanged) {
+        // Branch changed and PR lookup failed; leave snapshot cleared above.
+        this.pullRequestSnapshot = undefined;
+      }
+      // Otherwise (same context, gh failed): keep the prior PR snapshot.
+    }
+    // Within TTL and with no transition: skip gh and keep existing PR state.
+
     this.emitChangeIfSnapshotsChanged(previousStatusSnapshot, previousPullRequestSnapshot);
   }
 
@@ -394,15 +472,56 @@ export class FooterGitCache {
     }
   }
 
+  /**
+   * Detect the repository's default branch from local origin/HEAD. The result
+   * is cached per cwd; unavailable local metadata falls back to main/master.
+   */
+  private async getDefaultBranch(cwd: string): Promise<string | null> {
+    if (this.defaultBranchCache.has(cwd)) {
+      return this.defaultBranchCache.get(cwd) ?? null;
+    }
+
+    const result = await this.runCommandSafely(
+      "git",
+      GIT_SYMBOLIC_REF_ARGS,
+      this.gitTimeoutMs,
+      cwd,
+    );
+    if (!result) {
+      // Timeouts and spawn errors are transient; retry rather than caching them.
+      return null;
+    }
+
+    let defaultBranch: string | null = null;
+    if (result.exitCode === 0) {
+      const ref = result.stdout.trim();
+      const slashIndex = ref.indexOf("/");
+      const name = slashIndex >= 0 ? ref.slice(slashIndex + 1) : ref;
+      defaultBranch = name || null;
+    }
+    this.defaultBranchCache.set(cwd, defaultBranch);
+    return defaultBranch;
+  }
+
+  private async isDefaultBranch(branch: string, cwd: string): Promise<boolean> {
+    const defaultBranch = await this.getDefaultBranch(cwd);
+    if (defaultBranch === null) {
+      return branch === "main" || branch === "master";
+    }
+    return branch === defaultBranch;
+  }
+
   // Three-way split so runRefresh can distinguish persistent "not a repo"
   // failures (cwd left the worktree, exit 128) from transient ones (timeout,
   // spawn error, or exit-0-but-unparseable). Collapsing them caused the
   // footer to keep showing the previous repo's branch/PR forever after cd'ing
   // out of a git directory.
-  private async fetchGitStatus(): Promise<
+  private async fetchGitStatus(
+    cwd: string,
+  ): Promise<
     { kind: "ok"; status: GitStatusSnapshot } | { kind: "not-a-repo" } | { kind: "transient" }
   > {
-    const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs);
+    const result = await this.runCommandSafely("git", GIT_STATUS_ARGS, this.gitTimeoutMs, cwd);
     if (!result) {
       return { kind: "transient" };
     }
@@ -416,8 +535,8 @@ export class FooterGitCache {
     return { kind: "ok", status: parsed };
   }
 
-  private async fetchPullRequest(): Promise<PullRequestSnapshot | undefined> {
-    const result = await this.runCommandSafely("gh", GH_PR_VIEW_ARGS, this.ghTimeoutMs);
+  private async fetchPullRequest(cwd: string): Promise<PullRequestSnapshot | undefined> {
+    const result = await this.runCommandSafely("gh", GH_PR_VIEW_ARGS, this.ghTimeoutMs, cwd);
     if (!result || result.exitCode !== 0) {
       return undefined;
     }
@@ -428,6 +547,7 @@ export class FooterGitCache {
     command: string,
     args: readonly string[],
     timeoutMs: number,
+    cwd: string,
   ): Promise<CommandResult | undefined> {
     if (this.disposed) {
       return undefined;
@@ -438,7 +558,7 @@ export class FooterGitCache {
       controller.abort();
     }, timeoutMs);
     try {
-      return await this.runner(command, args, { cwd: this.cwd(), signal: controller.signal });
+      return await this.runner(command, args, { cwd, signal: controller.signal });
     } catch {
       // Silent: missing binary, abort, spawn error, non-zero stderr, etc.
       return undefined;
