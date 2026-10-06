@@ -199,6 +199,6 @@ For example, you can add an extra hidden pattern of your own and explicitly unhi
 - `tlh.modelVisibility.visible` lets specific models stay visible even if they match a bundled default or one of your hidden patterns.
 - `tlh.modelVisibility.unhide` is accepted as an alias for `visible`.
 
-Hidden models are removed from browsing/listing surfaces such as the `/model` picker and `tlh --list-models`, but the underlying auth/model definitions remain intact and exact direct selection by canonical `provider/model` still works. For example, a hidden model can still be selected directly with `/model anthropic/claude-opus-4-6`.
+Hidden models are removed from browsing/listing surfaces such as the `/model` picker and `tlh --list-models`, but the underlying auth/model definitions remain intact and exact direct selection by canonical `provider/model` still works. For example, a hidden model can still be selected directly with `/model anthropic/claude-opus-4-6`. Visibility is not a subagent execution restriction: an authenticated hidden model remains eligible for TLH subagent dispatch, async resume, and runtime fallback resolution; models without valid credentials remain unavailable.
 
 To undo the behavior, either set `tlh.modelVisibility.disabled` to `true`, remove your own `hidden` overrides from `~/.the-last-harness/agent/settings.json`, or add the models you want back under `tlh.modelVisibility.visible`/`unhide`.

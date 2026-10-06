@@ -307,7 +307,7 @@ function runAsyncPath(data, deps) {
             scope: data.modelScope,
             source: params.model ? "explicit" : "inherited",
         });
-        return releaseAsyncProjectRunOnError(executeAsyncSingle(id, {
+        return releaseAsyncProjectRunOnError((deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
             agent: params.agent,
             task: params.task ?? "",
             agentConfig: a,

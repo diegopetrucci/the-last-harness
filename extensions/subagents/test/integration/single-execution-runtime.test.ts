@@ -15,6 +15,7 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
@@ -630,11 +631,13 @@ describe(
           ],
         });
         const ctx = makeMinimalCtx(tempDir);
-        let snapshotReads = 0;
-        const originalGetAvailable = ctx.modelRegistry.getAvailable.bind(ctx.modelRegistry);
-        ctx.modelRegistry.getAvailable = () => {
-          snapshotReads += 1;
-          return originalGetAvailable();
+        let snapshotStatusReads = 0;
+        const originalGetError = ctx.modelRegistry.getError.bind(ctx.modelRegistry);
+        // getError is part of the supported registry evidence surface and is
+        // only reached after the resume preflight asks for a model snapshot.
+        ctx.modelRegistry.getError = () => {
+          snapshotStatusReads += 1;
+          return originalGetError();
         };
         let continuationCalls = 0;
         const executeAsyncSingle: ExecuteAsyncSingleOverride = () => {
@@ -661,7 +664,7 @@ describe(
             result.content[0]?.text,
             "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling after 700ms of active runtime.",
           );
-          assert.equal(snapshotReads, 0);
+          assert.equal(snapshotStatusReads, 0);
           assert.equal(continuationCalls, 0);
           assert.equal(mockPi.callCount(), 0);
           assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
@@ -1112,9 +1115,10 @@ describe(
           };
 
           try {
-            const ctx = makeMinimalCtx(tempDir);
+            const { context: ctx } = await makeModelRegistryContext(tempDir, [
+              { provider: "route-test", models: [model] },
+            ]);
             ctx.model = model;
-            ctx.modelRegistry.getAvailable = () => [model];
             const result = await makeExecutor(
               [agent],
               {},

@@ -21,6 +21,7 @@ import {
   makeExtensionAPI,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   makeSubagentState,
   removeTempDir,
   tryImport,
@@ -138,14 +139,15 @@ function providerErrorResponse(model: string) {
   };
 }
 
-function providerAwareContext(
+async function providerAwareContext(
   cwd: string,
   availableModels: ReturnType<typeof providerAwareAvailableModels>,
 ) {
-  const ctx = makeMinimalCtx(cwd);
+  const { context: ctx } = await makeModelRegistryContext(
+    cwd,
+    availableModels.map((model) => ({ provider: model.provider, models: [model] })),
+  );
   ctx.model = makeModel("session", { provider: "anthropic" });
-  ctx.modelRegistry.getAvailable = () => availableModels;
-  ctx.modelRegistry.getAll = () => availableModels;
   return ctx;
 }
 
@@ -479,7 +481,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -503,7 +505,7 @@ describe("subagent executor dispatch wiring", () => {
       { tasks: [task] },
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -525,7 +527,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, providerAwareAvailableModels()),
+      await providerAwareContext(tempDir, providerAwareAvailableModels()),
     );
 
     assert.equal(result.isError, undefined);
