@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { formatHomePath } from "./common.js";
-import { analyzeCurrentSessionUsage, } from "./tokens-analyzer.js";
+import { analyzeCurrentSessionUsage, createUsageTotals, } from "./tokens-analyzer.js";
 const TOKENS_COMMAND_HELP = "Usage: /tokens";
 const REPORT_FILE_NAME = "tokens-report.html";
 const execFileAsync = promisify(execFile);
@@ -497,23 +497,11 @@ function formatCurrency(value) {
     return USD_FORMATTER.format(value);
 }
 function getPrimaryUsageBreakdown(analysis) {
-    const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createEmptyUsageTotals();
+    const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createUsageTotals();
     const assistantTurnUsage = analysis.primaryAssistant.assistantTurnUsage ??
         subtractUsageTotals(analysis.totals.primary, cacheWarmUsage);
     const cacheWarmRequestCount = analysis.primaryAssistant.cacheWarmRequestCount ?? (hasUsage(cacheWarmUsage) ? 1 : 0);
     return { assistantTurnUsage, cacheWarmUsage, cacheWarmRequestCount };
-}
-function createEmptyUsageTotals() {
-    return {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        totalTokens: 0,
-        costUsd: 0,
-        turns: 0,
-        assistantMessages: 0,
-    };
 }
 function subtractUsageTotals(total, subtract) {
     return {

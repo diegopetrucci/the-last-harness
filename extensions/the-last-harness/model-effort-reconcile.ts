@@ -1,17 +1,5 @@
 // Model/effort drift detection and reconcile state for primary agents and subagents.
 // Logic + state only — no UI, no commands, no startup notices.
-//
-// Baseline backfill (ts-8kfb):
-// On the first startup with a known provider where an override has no usable baseline,
-// `backfillMissingBaselines` silently records the current packaged default as that
-// baseline.  This is a deliberate, accepted information loss: the function cannot know
-// about packaged-default changes that occurred between the time the override was created
-// and this startup — including changes across skipped releases.  Guessing a baseline
-// from the override value would manufacture false positives, so recording the current
-// default is the least-bad deterministic migration.
-// A failed best-effort write simply leaves detection unarmed until a later launch
-// succeeds; the in-memory snapshot returned by the function still prevents a spurious
-// notice in the current pass.
 import { isRecord, readText } from "./common.js";
 import {
   formatProviderModelReference,
@@ -31,7 +19,7 @@ import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhSettings } from "
 /**
  * True when `provider` is a known (non-empty string) provider.
  *
- * Both `undefined` and `""` are treated as unknown per ts-7w6o. The empty-string
+ * Both `undefined` and `""` are treated as unknown. The empty-string
  * case is reachable from user-editable settings.json or a misconfigured session.
  *
  * Using a single shared predicate ensures all layers (startup guard, drift
@@ -115,7 +103,7 @@ type ProviderAcknowledgment = {
  * update to the active provider's packaged default fires the notice.
  *
  * Sessions with an unknown provider defer baseline writes and comparison; no
- * empty-string key is ever written (ts-7w6o).
+ * empty-string key is ever written.
  */
 export type AcknowledgedRoleSnapshot = {
   /**
@@ -223,7 +211,7 @@ function sanitizeAcknowledgedSnapshot(
       continue;
     }
     // Sanitize each provider entry: drop non-records, drop empty-string provider
-    // keys (treated as unknown per ts-7w6o), and strip consumed fields whose
+    // keys (treated as unknown), and strip consumed fields whose
     // values are not the expected types.
     const sanitizedByProvider: Record<string, ProviderAcknowledgment> = {};
     for (const [provider, ack] of Object.entries(rawByProvider)) {
@@ -404,7 +392,7 @@ function packagedCandidateModels(agent: PackagedAgent): ProviderModelReference[]
  * When `provider` is `undefined` the filtered list is always empty, which causes
  * `resolvePackagedDefaults` to return no model for an unknown session provider.
  * Startup and /reconcile both defer all comparison and acknowledgment when no
- * provider is known (ts-7w6o), so this empty-list path is never reached in a
+ * provider is known, so this empty-list path is never reached in a
  * context where it could produce a spurious drift entry.
  */
 function packagedCandidateModelsForProvider(
@@ -481,7 +469,7 @@ function resolvePackagedDefaults(
  * exists to fix.
  *
  * Rules enforced here:
- * - Defers (no-op) when `provider` is unknown — per ts-7w6o defer semantics.
+ * - Defers (no-op) when `provider` is unknown.
  * - Merges into existing state; other roles and other providers are preserved.
  * - Best-effort: never throws, so a recording failure never blocks the command path.
  *
@@ -498,7 +486,7 @@ export function recordOverrideBaseline(
 ): void {
   try {
     if (!isKnownProvider(provider)) {
-      // Defer: no baseline is recorded for an unknown or empty-string provider (ts-7w6o).
+      // Defer: no baseline is recorded for an unknown or empty-string provider.
       return;
     }
     const packaged = resolvePackagedDefaults(agent, provider);
@@ -541,7 +529,7 @@ export function recordOverrideBaseline(
  * until a later launch succeeds. The returned in-memory snapshot still prevents a
  * spurious notice in the current pass even when the disk write does not complete.
  *
- * **Defer rule (ts-7w6o):** When `currentProvider` is unknown, no comparison, no
+ * **Defer rule:** When `currentProvider` is unknown, no comparison, no
  * seed, no notice, and nothing is written.
  *
  * @param primaryAgents    Loaded primary-agent map.
@@ -563,7 +551,7 @@ export function backfillMissingBaselines(
   const snapshot = existingSnapshot ?? {};
   try {
     if (!isKnownProvider(currentProvider)) {
-      // Defer: no backfill when provider is unknown or empty string (ts-7w6o).
+      // Defer: no backfill when provider is unknown or empty string.
       return snapshot;
     }
     const toBackfill: Record<string, AcknowledgedRoleSnapshot> = {};
@@ -678,7 +666,7 @@ export function computeModelEffortDrift(
         continue;
       }
       const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-      // When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
+      // When provider is unknown or empty, skip comparison.
       const providerEntry = isKnownProvider(currentProvider)
         ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
         : undefined;
@@ -721,7 +709,7 @@ export function computeModelEffortDrift(
         continue;
       }
       const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
-      // When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
+      // When provider is unknown or empty, skip comparison.
       const providerEntry = isKnownProvider(currentProvider)
         ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
         : undefined;

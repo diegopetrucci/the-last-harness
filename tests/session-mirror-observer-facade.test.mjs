@@ -173,9 +173,6 @@ function createProbeFactory({ states = [], calls = [] } = {}) {
         sessionShutdown() {
           calls.push({ type: "sessionShutdown" });
         },
-        publicationReady(info) {
-          calls.push({ type: "publicationReady", info });
-        },
         requestSnapshot() {
           calls.push({ type: "requestSnapshot" });
         },
@@ -813,7 +810,6 @@ test("reply activation requires session-mirror-observer and a callable runtime s
   await withFixtureEnv(fixture, async () => {
     await start(pi, context);
     const created = calls.find((call) => call.type === "create");
-    assert.equal(created?.options.sessionMirrorReplies, true);
     assert.equal(typeof created?.options.sendUserMessage, "function");
     assert.equal(typeof created?.options.isIdle, "function");
     assert.equal(typeof created?.options.replyNotify, "function");

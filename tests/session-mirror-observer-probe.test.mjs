@@ -112,17 +112,12 @@ test("probe converts production envelopes into bounded aggregate metrics without
   assert.equal("envelope" in state, false);
 });
 
-test("probe keeps the reply producer gated unless the explicit reply runtime gate is enabled", (t) => {
+test("probe keeps the reply producer gated unless sendUserMessage is a function", (t) => {
   const fixture = makeFixture(t);
   let channelCalls = 0;
-  let sendUserMessageCalls = 0;
   const probe = createSessionMirrorObserverProbe({
     getSessionManager: () => manager(fixture, []),
     attest: attested,
-    sessionMirrorReplies: false,
-    sendUserMessage: () => {
-      sendUserMessageCalls += 1;
-    },
     replyChannelFactory: () => {
       channelCalls += 1;
       return { open: async () => true, close: () => {}, getState: () => "open" };
@@ -132,7 +127,6 @@ test("probe keeps the reply producer gated unless the explicit reply runtime gat
   probe.sessionStart();
   assert.equal(probe.getState().reply, undefined);
   assert.equal(channelCalls, 0);
-  assert.equal(sendUserMessageCalls, 0);
 });
 
 test("probe defaults to a bounded recent window for an oversized active session", (t) => {
