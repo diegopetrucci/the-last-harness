@@ -8,8 +8,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tryImport } from "./helpers.ts";
+import { createEventBus, makeAgent, tryImport } from "./helpers.ts";
 import type { AgentConfig } from "./helpers.ts";
+import type { SubagentTelemetryProvenance } from "../../src/shared/telemetry.ts";
 import type {
   AsyncStatus,
   ChildProcessCleanupResult,
@@ -304,3 +305,36 @@ export const available = !!(execution && utils);
 export const runSync = execution?.runSync;
 export const getFinalOutput = utils?.getFinalOutput;
 export const createSubagentExecutor = executorMod?.createSubagentExecutor;
+
+type TestEventBus = ReturnType<typeof createEventBus>;
+
+export function makeExecutor(
+  tempDir: string,
+  agents: AgentConfig[] = [makeAgent("echo")],
+  config: Record<string, unknown> = {},
+  state = {
+    baseCwd: tempDir,
+    currentSessionId: null,
+    asyncJobs: new Map(),
+    foregroundRuns: new Map(),
+    foregroundControls: new Map(),
+    lastForegroundControlId: null,
+  },
+  runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
+  executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
+  telemetryProvenance?: SubagentTelemetryProvenance,
+  piOverride?: { events: TestEventBus; getSessionName: () => undefined },
+) {
+  return createSubagentExecutor!({
+    pi: piOverride ?? { events: createEventBus(), getSessionName: () => undefined },
+    state,
+    config,
+    tempArtifactsDir: tempDir,
+    getSubagentSessionRoot: () => tempDir,
+    expandTilde: (value: string) => value,
+    discoverAgents: () => ({ agents }),
+    runSync: runSyncOverride,
+    executeAsyncSingle: executeAsyncSingleOverride,
+    telemetryProvenance,
+  });
+}
