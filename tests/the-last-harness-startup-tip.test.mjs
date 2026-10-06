@@ -35,3 +35,10 @@ test("getTlhStartupTip returns one process-scoped selection from the curated lis
   );
   assert.equal(getTlhStartupTip(), startupTip);
 });
+
+test("curated startup tips do not advertise retired Voice or Transcribe defaults", () => {
+  assert.equal(
+    TLH_STARTUP_TIPS.some((tip) => /voice|transcribe|dictation/i.test(tip)),
+    false,
+  );
+});

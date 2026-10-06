@@ -41,16 +41,5 @@
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.11",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
-  },
-  {
-    "id": "pi-voice",
-    "aliases": ["pi-transcribe"],
-    "replaces": [
-      "git:github.com/earendil-works/pi-transcribe",
-      "npm:@earendil-works/pi-transcribe"
-    ],
-    "migrateReplacements": true,
-    "source": "npm:@earendil-works/pi-voice@0.1.0",
-    "description": "Pi Voice local speech-to-text with /voice-settings, the /transcribe compatibility alias, Ctrl+Alt+Z, and the transcribe_file tool."
   }
 ]
