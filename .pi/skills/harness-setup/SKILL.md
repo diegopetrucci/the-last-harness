@@ -57,11 +57,10 @@ test ! -e "$bin_dir/tlh"
 
 ## Rollback guidance
 
-Tell users they can remove the isolated wrapper and profile with:
+Tell users they can remove the isolated wrapper and profile with the documented uninstaller:
 
 ```bash
-rm -f ~/.local/bin/tlh
-rm -rf ~/.the-last-harness
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/uninstall.sh | bash -s --
 ```
 
-Normal `~/.pi/agent` settings are intentionally not modified by this installer.
+Append `--dry-run` (`bash -s -- --dry-run`) to preview the plan without performing removals. Normal `~/.pi/agent` settings are intentionally not modified by this installer.
