@@ -11,8 +11,6 @@ export const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = piSystem
 export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import(
   "../extensions/the-last-harness/attribution.ts",
 );
-export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } =
-  await jiti.import("../extensions/the-last-harness/experimental.ts");
 // Retained only as a stale-settings fixture value: the runtime no longer registers this feature.
 export const EMBEDDED_SUBAGENTS_FEATURE = "embedded-subagents";
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(

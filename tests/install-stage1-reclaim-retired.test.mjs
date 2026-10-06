@@ -221,6 +221,27 @@ test("reclaimRetiredExtensionResidues case 3: skips pi remove when retired sourc
   );
 });
 
+test("reclaimRetiredExtensionResidues leaves provenance-gated Voice and Transcribe residues untouched", (t) => {
+  const { config, agentDir, piLog } = makeConfig(t, {
+    settings: { packages: [] },
+    fakePiBody: `printf '%s|%s|%s\\n' "$PI_CODING_AGENT_DIR" "$PWD" "$*" >>"$PI_LOG"`,
+  });
+  const voiceDir = createNpmPackageDir(agentDir, "@earendil-works/pi-voice");
+  const transcribeNpmDir = createNpmPackageDir(agentDir, "@earendil-works/pi-transcribe");
+  const transcribeGitDir = createGitCheckoutDir(
+    agentDir,
+    "github.com",
+    "earendil-works/pi-transcribe",
+  );
+
+  reclaimRetiredExtensionResidues(config);
+
+  assert.equal(existsSync(piLog), false, "gated sources must not invoke pi remove");
+  assert.ok(existsSync(voiceDir), "Pi Voice package residue must remain on disk");
+  assert.ok(existsSync(transcribeNpmDir), "npm Transcribe package residue must remain on disk");
+  assert.ok(existsSync(transcribeGitDir), "Git Transcribe residue must remain on disk");
+});
+
 // ---------------------------------------------------------------------------
 // Case 4: Unreadable settings → all removals skipped with a warning.
 // ---------------------------------------------------------------------------
