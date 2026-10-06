@@ -170,15 +170,20 @@ try {
     expandPromptTemplates: false,
   });
   // Wait for the notification-driven turn (background child completes → result watcher fires).
-  await Promise.race([
-    notifyTurnDone,
-    new Promise((resolve) =>
-      setTimeout(() => {
-        rejectNotifyTurn(new Error("notification turn timed out after 90s"));
-        resolve(undefined);
-      }, 90_000),
-    ),
-  ]);
+  let notifyTimeoutHandle;
+  try {
+    await Promise.race([
+      notifyTurnDone,
+      new Promise((resolve) => {
+        notifyTimeoutHandle = setTimeout(() => {
+          rejectNotifyTurn(new Error("notification turn timed out after 90s"));
+          resolve(undefined);
+        }, 90_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(notifyTimeoutHandle);
+  }
   // Extract child result from the subagent-notify message content.
   function latestNotifyContent(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {

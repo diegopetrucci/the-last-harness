@@ -796,7 +796,7 @@ describe(
     it("ignores legacy per-session spawn quota config and env values", async () => {
       // After async-only: each call returns a background receipt (not the immediate output);
       // verify neither dispatch is rejected by quota logic (isError remains undefined).
-      // Use an executeAsyncSingle seam so no real runner is spawned \ 
+      // Use an executeAsyncSingle seam so no real runner is spawned \
       // a real detached runner would recreate tempDir after afterEach cleanup.
       const savedMaxSpawns = process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
       process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "0";
@@ -843,7 +843,7 @@ describe(
       // After async-only: the first call returns a background receipt immediately;
       // a concurrent status action must not be rejected.
       // mockPi.callCount() is not checked (async child call is non-blocking).
-      // Use an executeAsyncSingle seam so no real runner is spawned \ 
+      // Use an executeAsyncSingle seam so no real runner is spawned \
       // a real detached runner would recreate tempDir after afterEach cleanup.
       const asyncSeam: ExecuteAsyncSingleOverride = (id) => ({
         content: [{ type: "text", text: "seam-ok" }],
