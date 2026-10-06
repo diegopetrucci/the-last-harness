@@ -558,9 +558,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 projectEffort = projectEntry.effort;
             }
         }
-        if (sessionOnlyModel && !preservesSessionOnlyModel) {
-            updateSessionOnlyModel(undefined);
-        }
         if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
             return;
         const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel
@@ -799,9 +796,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         clearSessionThinkingOverride();
-        if (!isCurrentSessionStartOperation(sessionStartOperation))
-            return;
-        noticed.clear();
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         activateTlhTicketSessionScope(ctx.cwd);

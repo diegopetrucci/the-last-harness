@@ -766,5 +766,3 @@ export function createSessionMirrorObserverRuntime(options = {}) {
         getState,
     });
 }
-export const createSessionMirrorObserver = createSessionMirrorObserverRuntime;
-export default createSessionMirrorObserverRuntime;
