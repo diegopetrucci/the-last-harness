@@ -10,7 +10,6 @@ import { safeTerminalText } from "../shared/display-text.js";
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, isHealthActivityState, fitInlineActivity, fitInlineThinkingActivity, fitCompactToolStatus, formatCurrentToolLines, formatTokenStat, formatToolUseStat, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, runningGlyph, runningSeed, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
 import { PHRASE_HOLD_MS } from "./whimsical-phrases.js";
 const WIDGET_ACTIVITY_PREFIX = "       ";
-const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function widgetRenderKey(job) {
     return JSON.stringify({
         asyncDir: job.asyncDir,
@@ -481,15 +480,15 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     const lines = [
         `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, safeTerminalText(displayStep.agent))}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
+    const activityWidth = width - visibleWidth(WIDGET_ACTIVITY_PREFIX);
     const activityLines = resolvedDisplayStatus === displayStep.status
-        ? widgetStepActivityLines(displayStep, width - visibleWidth(WIDGET_ACTIVITY_PREFIX), width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt, false, phraseNow)
+        ? widgetStepActivityLines(displayStep, activityWidth, activityWidth, expanded, job.updatedAt, false, phraseNow)
         : [];
     const childLocLine = childLocationLine(step.childLocation, theme, "    ");
     if (childLocLine)
         lines.push(childLocLine);
-    for (const [activityIndex, activity] of activityLines.entries()) {
-        const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-        lines.push(theme.fg("dim", `${prefix}${activity}`));
+    for (const activity of activityLines) {
+        lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
     }
     if (resolvedDisplayStatus === "running") {
         if (!expanded)
@@ -599,7 +598,8 @@ function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
     const displayStep = projectContinuedWidgetStep(job, step);
     const displayStatus = singleWidgetStepDisplayStatus(job, step);
     if (displayStatus === displayStep.status) {
-        const stepActivityLines = widgetStepActivityLines(displayStep, contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX), contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt);
+        const activityWidth = contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX);
+        const stepActivityLines = widgetStepActivityLines(displayStep, activityWidth, activityWidth, expanded, job.updatedAt);
         if (stepActivityLines.includes(warning))
             return [];
     }
@@ -644,15 +644,13 @@ function compactSingleWidgetLines(job, theme, width, phraseNow) {
         const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
         const rowPrefix = `  ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, safeTerminalText(displayStep.agent))}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
         const activitySeparator = ` ${theme.fg("dim", "·")} `;
-        const activityContinuationPrefix = WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+        const activityPrefixWidth = contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX);
         const inlineFirstWidth = contentWidth - visibleWidth(rowPrefix + activitySeparator);
         const minimumCommandWidth = displayStep.currentTool
             ? visibleWidth(`${displayStep.currentTool}${displayStep.currentToolArgs ? ": " : ""}`)
             : 0;
         const inlineCommand = Boolean(displayStep.currentTool) && inlineFirstWidth >= minimumCommandWidth;
-        const activityLines = widgetStepActivityLines(displayStep, inlineCommand ? inlineFirstWidth : contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX), inlineCommand
-            ? contentWidth - visibleWidth(activityContinuationPrefix)
-            : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), false, job.updatedAt, true, phraseNow);
+        const activityLines = widgetStepActivityLines(displayStep, inlineCommand ? inlineFirstWidth : activityPrefixWidth, activityPrefixWidth, false, job.updatedAt, true, phraseNow);
         const activity = activityLines.join(" · ");
         const activitySuffix = activity ? `${activitySeparator}${theme.fg("dim", activity)}` : "";
         const healthWarning = displayStep.status === "running" &&
@@ -673,14 +671,13 @@ function compactSingleWidgetLines(job, theme, width, phraseNow) {
             if (inlineCommand) {
                 lines.push(`${rowPrefix}${activitySeparator}${theme.fg("dim", activityLines[0])}`);
                 for (const activityLine of activityLines.slice(1)) {
-                    lines.push(`${activityContinuationPrefix}${theme.fg("dim", activityLine)}`);
+                    lines.push(`${WIDGET_ACTIVITY_PREFIX}${theme.fg("dim", activityLine)}`);
                 }
             }
             else {
                 lines.push(...wrapDisplayLine(rowPrefix, contentWidth));
-                for (const [activityIndex, activityLine] of activityLines.entries()) {
-                    const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-                    lines.push(theme.fg("dim", `${prefix}${activityLine}`));
+                for (const activityLine of activityLines) {
+                    lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activityLine}`));
                 }
             }
         }

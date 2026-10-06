@@ -52,7 +52,6 @@ interface LegacyResultAnimationContext {
 
 const TK_TICKET_WIDGET_PREFIX = "ticket: ";
 const WIDGET_ACTIVITY_PREFIX = "       ";
-const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 
 export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationContext): void {
   const timer = context.state.subagentResultAnimationTimer;
@@ -85,7 +84,7 @@ function getToolCallLines(
         (item): item is { type: "tool"; name: string; args: Record<string, unknown> } =>
           item.type === "tool",
       )
-      .map((item) => safeTerminalDocumentLeaf(formatToolCall(item.name, item.args, true)));
+      .map((item) => safeTerminalDocumentLeaf(formatToolCall(item.name, item.args)));
   }
   return (
     result.toolCalls?.map((toolCall) =>
@@ -556,16 +555,14 @@ function renderMultiCompact(
     if (childLocLineMulti) lines.push(childLocLineMulti);
     if (rRunning && liveProgress) {
       hasRunningResult = true;
-      for (const [activityIndex, activity] of compactProgressActivityLines(
+      for (const activity of compactProgressActivityLines(
         liveProgress,
         width,
         WIDGET_ACTIVITY_PREFIX,
-        WIDGET_ACTIVITY_CONTINUATION_PREFIX,
+        WIDGET_ACTIVITY_PREFIX,
         now,
-      ).entries()) {
-        const prefix =
-          activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-        lines.push(theme.fg("dim", `${prefix}${activity}`));
+      )) {
+        lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
       }
     } else if (
       !rPending &&

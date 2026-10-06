@@ -45,13 +45,11 @@ describe("foreground tool-call compaction", () => {
     assert.deepEqual(result.toolCalls, [{ text: "write /tmp/report.md" }]);
   });
 
-  it("preserves complete generic tool-call payloads for both views", () => {
+  it("preserves complete generic tool-call payloads", () => {
     const payload = "x".repeat(500);
-    const collapsed = formatToolCall("custom", { payload });
-    const expanded = formatToolCall("custom", { payload }, true);
+    const formatted = formatToolCall("custom", { payload });
 
-    assert.equal(expanded, collapsed);
-    assert.match(expanded, new RegExp(payload));
+    assert.match(formatted, new RegExp(payload));
   });
 
   it("stores a duplicate tool-call string only once while retaining distinct expanded text", () => {
