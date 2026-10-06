@@ -1,8 +1,11 @@
 const BRANCH_HEAD_PREFIX = "# branch.head ";
+const BRANCH_UPSTREAM_PREFIX = "# branch.upstream ";
 const BRANCH_AB_PREFIX = "# branch.ab ";
 
 export type GitStatusSnapshot = {
   branch?: string;
+  /** Upstream tracking ref, when configured locally; absence is not proof a branch is unpushed. */
+  upstream?: string;
   staged: number;
   unstaged: number;
   untracked: number;
@@ -77,6 +80,14 @@ export function parseGitStatusPorcelainV2(output: unknown): GitStatusSnapshot {
 
     if (line.startsWith(BRANCH_HEAD_PREFIX)) {
       status.branch = normalizeBranchHead(line.slice(BRANCH_HEAD_PREFIX.length)) || undefined;
+      continue;
+    }
+
+    if (line.startsWith(BRANCH_UPSTREAM_PREFIX)) {
+      const upstream = line.slice(BRANCH_UPSTREAM_PREFIX.length).trim();
+      if (upstream) {
+        status.upstream = upstream;
+      }
       continue;
     }
 
