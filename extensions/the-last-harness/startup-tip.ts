@@ -1,7 +1,6 @@
 export const TLH_STARTUP_TIPS = [
   "Run /annotate-git-diff for a native review window across branch, commit, or all-files scopes.",
   "Use /annotate-last-message to mark up the latest assistant reply before your next prompt.",
-  "Use Pi Voice: run /voice-settings once to choose a local model, then press Ctrl+Alt+Z to start and stop dictation.",
   "Run /context to inspect where your context window is going before a long follow-up.",
   "Use /usage to check TLH usage status or toggle the weekly usage window.",
   "Press Shift+Tab to switch to Rush for a small bounded task TLH can implement directly.",
@@ -21,7 +20,6 @@ export const TLH_STARTUP_TIPS = [
   "Run `/tokens` to know what's eating up your subscription limit.",
   "Ask the contrarian to stress-test a plan or decision by steelmanning the strongest opposing case.",
   "TLH can search the web, just ask it to.",
-  "With `/experimental enable ci-failure-investigation` TLH auto-investigates failed CI checks, so you don't have to.",
   "After opening a PR, TLH automatically monitors CI and reports failures.",
   "Ask for a diagram or visual explanation and TLH will sketch logic, flows, or UI structure (show-me skill).",
 ] as const;

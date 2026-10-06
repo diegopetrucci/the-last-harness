@@ -8,7 +8,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
-import { LEGACY_MANAGED_PROFILE_ARTIFACTS, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl, cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
+import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
 import { preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
@@ -812,14 +812,8 @@ function profileCleanupIo(config, runtimeConfig) {
         runCommand: (commandArgs, options) => runtimeConfig ? runCommand(runtimeConfig, commandArgs, options) : undefined,
     };
 }
-export function cleanupRetiredProfileDirectories(config) {
-    cleanupRetiredProfileDirectoriesImpl(config, profileCleanupIo(config));
-}
 export function cleanupLegacyManagedProfileArtifacts(config) {
     cleanupLegacyManagedProfileArtifactsImpl(config, profileCleanupIo(config));
-}
-export function cleanupRetiredProfileFiles(config) {
-    cleanupRetiredProfileFilesImpl(config, profileCleanupIo(config));
 }
 export function cleanupOldSettingsBackups(config) {
     cleanupOldSettingsBackupsImpl(config, profileCleanupIo(config));
@@ -1435,9 +1429,6 @@ async function runInstallFlow(config) {
     }
     await mergeSettings(config);
     cleanupLegacyManagedProfileArtifacts(config);
-    cleanupRetiredProfileDirectories(config);
-    if (!config.noSettings)
-        cleanupRetiredProfileFiles(config);
     if (!config.noSettings)
         reclaimRetiredExtensionResidues(config);
     if (!config.noSettings)
@@ -1494,4 +1485,4 @@ if (isMainModule()) {
         process.exitCode = 1;
     });
 }
-export { LEGACY_MANAGED_PROFILE_ARTIFACTS, MIN_NODE_VERSION, RETIRED_PROFILE_DIRECTORIES, RETIRED_PROFILE_FILES, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };
+export { LEGACY_MANAGED_PROFILE_ARTIFACTS, MIN_NODE_VERSION, RUNTIME_MARKER_FILENAME, RUNTIME_OWNED_TOPLEVEL, assertSupportedNodeRuntime, buildInstallConfig, expandPath, installDefaultExtensions, nodeVersionMeetsMinimum, preInstallNpmDefaultExtensions, parseArgs, run, usage, validateInputs, };

@@ -17,9 +17,6 @@ const jiti = createJiti(import.meta.url);
 const { TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME } = await jiti.import(
   "../extensions/the-last-harness/constants.ts",
 );
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
-  "../extensions/the-last-harness/experimental.ts",
-);
 const { THINKING_LEVELS } = await jiti.import("../extensions/the-last-harness/constants.ts");
 const {
   privacySafeTlhTelemetryProviderId,
@@ -28,7 +25,7 @@ const {
   sendTlhLaunchTelemetry,
 } = await jiti.import("../extensions/the-last-harness/launch-telemetry.ts");
 
-test("launch telemetry sends allowlisted experimental feature states and reuses the existing install ID", async (t) => {
+test("launch telemetry ignores retired experimental flags and reuses the existing install ID", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-test-", { test: t });
   const originalState = writeTelemetryState(fixture);
   writeFileSync(
@@ -37,7 +34,13 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
       {
         tlh: {
           experimental: {
-            enabledFeatures: [" delta-follow-up-reviews ", "embedded-subagents", "legacy-flag"],
+            enabledFeatures: [
+              " delta-follow-up-reviews ",
+              "ci-failure-investigation",
+              "session-mirror-observer",
+              "embedded-subagents",
+              "legacy-flag",
+            ],
           },
         },
       },
@@ -93,8 +96,13 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
   // modelId "openai-codex/gpt-4o" → last segment "gpt-4o" (public); no thinkingLevel → "unknown"
   assert.equal(event.payload["Tlh.Runtime.modelEffort"], "gpt-4o:unknown");
   assert.equal(event.payload["Tlh.PrimaryAgent.name"], "architect");
-  assert.equal(event.payload[`Tlh.Experimental.${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`], "on");
-  assert.equal(event.payload[`Tlh.Experimental.${CI_FAILURE_INVESTIGATION_FEATURE}`], "off");
+  assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.delta-follow-up-reviews"), false);
+  assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.ci-failure-investigation"), false);
+  assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.session-mirror-observer"), false);
+  assert.equal(
+    Object.keys(event.payload).some((key) => key.startsWith("Tlh.Experimental.")),
+    false,
+  );
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.embedded-subagents"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);
   assert.equal(readFileSync(telemetryStatePath(fixture), "utf8"), originalState);
@@ -166,7 +174,7 @@ test("launch telemetry skips when the isolated profile has telemetry opt-out ena
   writeTelemetryState(fixture);
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { telemetry: { enabled: false }, experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { telemetry: { enabled: false }, experimental: { enabledFeatures: ["delta-follow-up-reviews"] } } }, null, 2)}\n`,
   );
 
   const previousFetch = globalThis.fetch;
@@ -201,7 +209,7 @@ test("launch telemetry skips when telemetry settings are malformed", async (t) =
   writeTelemetryState(fixture);
   writeFileSync(
     join(fixture.agent, "settings.json"),
-    `${JSON.stringify({ tlh: { telemetry: { enabled: "nope" }, experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+    `${JSON.stringify({ tlh: { telemetry: { enabled: "nope" }, experimental: { enabledFeatures: ["ci-failure-investigation"] } } }, null, 2)}\n`,
   );
 
   const previousFetch = globalThis.fetch;

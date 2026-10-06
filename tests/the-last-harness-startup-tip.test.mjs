@@ -10,6 +10,11 @@ const { TLH_STARTUP_TIPS, getTlhStartupTip, selectTlhStartupTip } = await jiti.i
 
 test("selectTlhStartupTip chooses from the curated TLH startup tip list", () => {
   assert.ok(TLH_STARTUP_TIPS.length > 0, "expected at least one curated TLH startup tip");
+  assert.deepEqual(
+    TLH_STARTUP_TIPS.filter((tip) => /delta-follow-up-reviews|ci-failure-investigation/.test(tip)),
+    [],
+    "retired experiments must not be advertised in startup tips",
+  );
   assert.equal(
     selectTlhStartupTip(() => 0),
     TLH_STARTUP_TIPS[0],
@@ -29,4 +34,11 @@ test("getTlhStartupTip returns one process-scoped selection from the curated lis
     "expected the startup tip to come from the curated TLH list",
   );
   assert.equal(getTlhStartupTip(), startupTip);
+});
+
+test("curated startup tips do not advertise retired Voice or Transcribe defaults", () => {
+  assert.equal(
+    TLH_STARTUP_TIPS.some((tip) => /voice|transcribe|dictation/i.test(tip)),
+    false,
+  );
 });
