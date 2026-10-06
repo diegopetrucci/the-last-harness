@@ -119,6 +119,7 @@ function createCtx({
   projectTrusted,
   model,
   systemPrompt = "",
+  getSessionName = () => undefined,
 }) {
   return {
     mode,
@@ -134,7 +135,7 @@ function createCtx({
     sessionManager: {
       getEntries: () => [],
       getCwd: () => cwd,
-      getSessionName: () => undefined,
+      getSessionName,
       getBranch: () => undefined,
     },
     getContextUsage: () => undefined,
@@ -316,6 +317,7 @@ async function createExtensionHarness({
       projectTrusted,
       model,
       systemPrompt,
+      getSessionName,
     } = {}) {
       const notifications = [];
       let title;
@@ -334,6 +336,7 @@ async function createExtensionHarness({
         projectTrusted,
         model,
         systemPrompt,
+        getSessionName,
         onSetHeader(factory) {
           headerFactory = factory;
         },
@@ -403,6 +406,7 @@ async function runSessionStart({
   terminalTitleScheduler,
   model,
   systemPrompt,
+  getSessionName,
 }) {
   const harness = await createExtensionHarness({
     installState,
@@ -420,6 +424,7 @@ async function runSessionStart({
       projectTrusted,
       model,
       systemPrompt,
+      getSessionName,
     });
     await new Promise((resolve) => setImmediate(resolve));
     const header = session.buildHeader();
@@ -613,6 +618,81 @@ test("queued title reassertions stop after session replacement and shutdown", as
       [250, 250],
       "an invalidated shutdown callback must not schedule another pass",
     );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("named session title includes session name between brand and cwd", async () => {
+  const interactive = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "my-session",
+  });
+  assert.equal(interactive.title, "tlh - my-session - workspace");
+});
+
+test("unnamed session title falls back to brand and cwd only", async () => {
+  const noName = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "",
+  });
+  assert.equal(noName.title, "tlh - workspace");
+
+  const whitespace = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "   ",
+  });
+  assert.equal(whitespace.title, "tlh - workspace");
+
+  const undef = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => undefined,
+  });
+  assert.equal(undef.title, "tlh - workspace");
+});
+
+test("rename via session_info_changed picks up new session name immediately", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    let currentName = "";
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => currentName,
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
+
+    currentName = "renamed-session";
+    await harness.emit("session_info_changed", { type: "session_info_changed" }, session.ctx);
+    assert.equal(session.getTitle(), "tlh - renamed-session - workspace");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("getSessionName that throws falls back to unnamed title format", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => {
+        throw new Error("sessionManager unavailable");
+      },
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
   } finally {
     harness.cleanup();
   }
