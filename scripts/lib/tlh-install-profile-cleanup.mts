@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import {
   FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES,
+  LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
   packageIdentity,
-  RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 } from "./default-extensions.mjs";
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 import type { InstallerPathConfig } from "./tlh-install-paths.mjs";
@@ -471,19 +471,20 @@ export function reclaimRetiredExtensionResidues(
     }
   }
 
-  // RETIRED_TLH_DEFAULT_PACKAGE_SOURCES may be kept by users; skip removal
-  // when the identity is still in the post-merge settings file.
+  // Legacy inferred sources may be kept by users; skip removal when the
+  // identity is still in the post-merge settings file. Provenance-gated
+  // Voice/Transcribe sources are intentionally excluded: unlike the legacy
+  // list, their disk residue is never safe to reclaim without settings proof.
   //
-  // Known dry-run limitation: these sources are provenance-gated, so we cannot
-  // tell whether the merge WOULD have removed the entry without replicating the
-  // merge's provenance decision here. In --dry-run the merge does not write, so
-  // this gate reads pre-merge settings and a TLH-managed copy still listed there
-  // is treated as preserved, omitting a `pi remove` line that a real run would
-  // print. This under-reports (never over-reports) and was accepted over
-  // duplicating provenance logic in the installer, which would risk diverging
-  // from merge-settings. FORCE_REMOVED sources above are unaffected because
-  // their removal is unconditional and needs no settings gate.
-  for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
+  // Known dry-run limitation: merge may infer ownership of a legacy source when
+  // provenance is absent, but cleanup does not duplicate that decision. In
+  // --dry-run the merge does not write, so this gate reads pre-merge settings
+  // and a TLH-managed copy still listed there is treated as preserved, omitting
+  // a `pi remove` line that a real run would print. This under-reports (never
+  // over-reports) and avoids duplicating merge-settings ownership logic.
+  // FORCE_REMOVED sources above are unaffected because their removal is
+  // unconditional and needs no settings gate.
+  for (const source of LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
     const identity = packageIdentity(source);
     if (!identity) continue;
     // Skip when user has this identity in the post-merge settings.

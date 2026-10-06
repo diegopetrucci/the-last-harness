@@ -532,6 +532,18 @@ function pruneQuietToolsDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
 }
+function pruneVoiceTranscribeDisabledDefaultExtension(settings, changes) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
+        return;
+    const values = settings.tlh.disabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return;
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["pi-voice", "pi-transcribe"].includes(value.trim())));
+    if (nextValues.length === values.length)
+        return;
+    settings.tlh.disabledDefaultExtensions = nextValues;
+    changes.push("remove stale voice/transcribe opt-out from tlh.disabledDefaultExtensions");
+}
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
@@ -833,6 +845,7 @@ function main() {
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneQuietToolsDisabledDefaultExtension(next, changes);
+    pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
     applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);

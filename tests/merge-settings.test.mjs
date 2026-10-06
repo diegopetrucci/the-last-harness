@@ -968,37 +968,34 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
   assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, "npm:pi-web-access"]);
 });
 
-test("merge respects the pi-transcribe alias opt-out while removing its legacy Git pin", () => {
-  const piVoiceDefault = {
-    id: "pi-voice",
-    aliases: ["pi-transcribe"],
-    replaces: ["git:github.com/earendil-works/pi-transcribe", "npm:@earendil-works/pi-transcribe"],
-    migrateReplacements: true,
-    source: "npm:@earendil-works/pi-voice@0.1.0",
-  };
+test("merge preserves ambiguous retired Voice/Transcribe entries without provenance", () => {
   const legacyPiTranscribeGit =
     "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816";
+  const legacyPiVoice = {
+    source: "npm:@earendil-works/pi-voice@0.1.0",
+    extensions: [],
+    userMetadata: { preserve: true },
+  };
   const unrelatedPackage = "npm:unrelated-package@1.2.3";
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage, legacyPiTranscribeGit, unrelatedPackage],
+      packages: [harnessPackage, legacyPiTranscribeGit, legacyPiVoice, unrelatedPackage],
       tlh: { disabledDefaultExtensions: ["pi-transcribe"] },
     },
-    [piVoiceDefault],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.deepEqual(settings.packages, [harnessPackage, unrelatedPackage]);
-  assert.equal(
-    settings.packages.includes(piVoiceDefault.source),
-    false,
-    "the pi-transcribe alias opt-out must prevent Pi Voice installation",
-  );
-  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["pi-transcribe"]);
-  assert.match(output, /remove disabled default extension package: pi-voice/);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    legacyPiTranscribeGit,
+    legacyPiVoice,
+    unrelatedPackage,
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+  assert.match(output, /remove stale voice\/transcribe opt-out/);
 });
 
 test("merge force-removes retired confirmation packages by identity while preserving unrelated packages", () => {
