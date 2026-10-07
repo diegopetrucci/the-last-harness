@@ -730,6 +730,64 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   assert.deepEqual(disabledSettings.packages, []);
 });
 
+test("mcporter migration upgrades the managed 2.36.0 pin to 5.0.0 idempotently", () => {
+  const mcporter = bundledExtension("mcporter");
+  assert.ok(mcporter, "bundled mcporter default should exist");
+  assert.equal(mcporter.source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.0");
+  assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
+  assert.deepEqual(mcporter.replaces, [
+    "npm:pi-mcp-adapter",
+    "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1",
+  ]);
+  assert.equal(mcporter.migrateReplacements, true);
+
+  const stalePin = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([mcporter], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [harnessPackage, stalePin],
+        tlh: {
+          defaultExtensionProvenance: {
+            managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  const firstSettings = readJson(fixture.settings);
+  assert.deepEqual(firstSettings.packages, [harnessPackage, mcporter.source]);
+  assert.equal(firstSettings.packages.includes(stalePin), false);
+  assert.deepEqual(firstSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@diegopetrucci/pi-mcp-adapter",
+  ]);
+
+  const firstRaw = readFileSync(fixture.settings, "utf8");
+  const secondOutput = runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+  ]);
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(readFileSync(fixture.settings, "utf8"), firstRaw);
+});
+
 test("merge migrates a filtered active replacement object in place", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
