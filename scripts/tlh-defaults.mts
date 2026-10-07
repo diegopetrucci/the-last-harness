@@ -13,7 +13,6 @@ import {
   packageSourceOf,
   readDefaultExtensionProvenance,
   readDefaultExtensions,
-  repairTargetedDefaultExtensionLoadOrder,
   setDefaultExtensionProvenance,
   withLegacyRetiredDefaultPackageIdentities,
   type DefaultExtensionEntry,
@@ -559,7 +558,6 @@ function commandEnable(
   disabledIds.delete(extension.id);
   setDisabledIds(settings, disabledIds, defaultExtensions);
   enablePackage(settings, extension);
-  repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
   if (extension.id === MCPORTER_EXTENSION_ID) {
     applyBuiltinMcpExclusionOnEnable(settings);
   }
