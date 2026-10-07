@@ -473,8 +473,7 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
           ? part.arguments
           : {};
       const text = formatToolCall(part.name, args);
-      const expandedText = formatToolCall(part.name, args, true);
-      summaries.push(toolCallSummary(text, expandedText));
+      summaries.push(toolCallSummary(text, text));
     }
   }
   return summaries;

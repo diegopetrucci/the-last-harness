@@ -48,7 +48,7 @@ export function formatDuration(ms) {
         return `${(ms / 1000).toFixed(1)}s`;
     return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
 }
-export function formatToolCall(name, args, _expanded = false) {
+export function formatToolCall(name, args) {
     switch (name) {
         case "bash": {
             const command = typeof args.command === "string" ? args.command : "";
