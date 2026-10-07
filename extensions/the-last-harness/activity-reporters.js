@@ -563,10 +563,84 @@ export function createCmuxActivityReporter(options = {}) {
         },
     };
 }
+function formatProgramStatusSequence(state) {
+    if (state === "clear") {
+        return "\x1b]7501;state=clear\x1b\\";
+    }
+    return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+}
+export function createProgramStatusActivityReporter(options = {}) {
+    const env = options.env ?? process.env;
+    if (env.TLH_PROGRAM_STATUS === "0") {
+        return createNoopReporter();
+    }
+    const output = options.output ?? process.stdout;
+    if (!output.isTTY) {
+        return createNoopReporter();
+    }
+    let rootSession = false;
+    let hasReportedWorking = false;
+    const resolveState = (snapshot) => {
+        if (snapshot.inProgress)
+            return "working";
+        if (snapshot.waitingForUser)
+            return "blocked";
+        return hasReportedWorking ? "done" : "idle";
+    };
+    const sendState = async (state) => {
+        try {
+            output.write(formatProgramStatusSequence(state));
+        }
+        catch {
+        }
+    };
+    const sendClear = async () => {
+        try {
+            output.write(formatProgramStatusSequence("clear"));
+        }
+        catch {
+        }
+    };
+    const queuedReporter = createQueuedStateReporter(sendState, resolveState, options, (state) => {
+        if (state === "working")
+            hasReportedWorking = true;
+    });
+    return {
+        handleSessionStart(ctx) {
+            if (ctx.mode !== "tui") {
+                rootSession = false;
+                return;
+            }
+            rootSession = true;
+            hasReportedWorking = false;
+        },
+        handleSnapshot(snapshot) {
+            if (!rootSession)
+                return;
+            queuedReporter.handleSnapshot(snapshot);
+        },
+        handleSessionShutdown() {
+            if (!rootSession)
+                return;
+            rootSession = false;
+            queuedReporter.handleSessionShutdown();
+            queuedReporter.enqueueAfterDrain(sendClear);
+        },
+        dispose() {
+            if (rootSession) {
+                rootSession = false;
+                queuedReporter.handleSessionShutdown();
+                queuedReporter.enqueueAfterDrain(sendClear);
+            }
+            queuedReporter.dispose();
+        },
+    };
+}
 export function registerTlhActivityReporters(pi, tracker, options = {}) {
     const reporters = [
         createHerdrActivityReporter(options.herdr),
         createCmuxActivityReporter(options.cmux),
+        createProgramStatusActivityReporter(options.programStatus),
     ];
     const unsubscribe = tracker.subscribe((snapshot) => {
         for (const reporter of reporters) {

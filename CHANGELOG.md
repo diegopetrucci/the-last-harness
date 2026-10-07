@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, and `idle` with `app=tlh`. `done` is reported after work finishes; `idle` is reported before any work begins in the session. The sequence is only sent to an interactive TTY; unsupported terminals ignore it. Opt out with `TLH_PROGRAM_STATUS=0`. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly (see [#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
+- The `tlh` wrapper now defaults `PI_PROGRAM_STATUS=0` to silence upstream Pi's forthcoming native OSC 7501 emitter while TLH's own reporter is active. Set `PI_PROGRAM_STATUS=1` to re-enable Pi's emitter. See [#748](https://github.com/diegopetrucci/the-last-harness/issues/748).
+
 ### Fixed
 
 - The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.

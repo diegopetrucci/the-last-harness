@@ -28,7 +28,8 @@ type TimerApi = {
 
 type HerdrProtocolState = "working" | "blocked" | "idle";
 type CmuxStatusState = "working" | "waiting" | "idle";
-type ActivityReportState = HerdrProtocolState | CmuxStatusState;
+type ProgramStatusState = "working" | "blocked" | "done" | "idle";
+type ActivityReportState = HerdrProtocolState | CmuxStatusState | ProgramStatusState;
 type StateSender<State extends ActivityReportState> = (state: State) => Promise<void>;
 type StateResolver<State extends ActivityReportState> = (
   snapshot: TlhEffectiveActivitySnapshot,
@@ -77,6 +78,16 @@ type CmuxActivityReporterOptions = TlhActivityReporterOptions & {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
   cmuxBin?: string;
+};
+
+type ProgramStatusOutputWriter = {
+  write(data: string): void | boolean;
+  readonly isTTY?: boolean;
+};
+
+type ProgramStatusActivityReporterOptions = TlhActivityReporterOptions & {
+  env?: NodeJS.ProcessEnv;
+  output?: ProgramStatusOutputWriter;
 };
 
 type ActivitySessionRef = {
@@ -723,17 +734,103 @@ export function createCmuxActivityReporter(
   };
 }
 
+// OSC 7501 Program Status Protocol reporter.
+// Spec: https://www.superlogical.com/rex/docs/build/program-status
+// TODO #747: retire Herdr/cmux reporters once consumers read OSC 7501.
+// See #748 for Pi native OSC 7501 root-record ownership; the tlh wrapper sets
+// PI_PROGRAM_STATUS=0 to suppress Pi's built-in emitter — do not consult that
+// variable here.
+function formatProgramStatusSequence(state: ProgramStatusState | "clear"): string {
+  if (state === "clear") {
+    return "\x1b]7501;state=clear\x1b\\";
+  }
+  return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+}
+
+export function createProgramStatusActivityReporter(
+  options: ProgramStatusActivityReporterOptions = {},
+): TlhActivityReporter {
+  const env = options.env ?? process.env;
+  if (env.TLH_PROGRAM_STATUS === "0") {
+    return createNoopReporter();
+  }
+  const output: ProgramStatusOutputWriter = options.output ?? process.stdout;
+  if (!output.isTTY) {
+    return createNoopReporter();
+  }
+
+  let rootSession = false;
+  let hasReportedWorking = false;
+
+  const resolveState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusState => {
+    if (snapshot.inProgress) return "working";
+    if (snapshot.waitingForUser) return "blocked";
+    return hasReportedWorking ? "done" : "idle";
+  };
+
+  const sendState: StateSender<ProgramStatusState> = async (state) => {
+    try {
+      output.write(formatProgramStatusSequence(state));
+    } catch {
+      // Write failures must never crash TLH.
+    }
+  };
+
+  const sendClear = async (): Promise<void> => {
+    try {
+      output.write(formatProgramStatusSequence("clear"));
+    } catch {
+      // Write failures must never crash TLH.
+    }
+  };
+
+  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options, (state) => {
+    if (state === "working") hasReportedWorking = true;
+  });
+
+  return {
+    handleSessionStart(ctx) {
+      if (ctx.mode !== "tui") {
+        rootSession = false;
+        return;
+      }
+      rootSession = true;
+      hasReportedWorking = false;
+    },
+    handleSnapshot(snapshot) {
+      if (!rootSession) return;
+      queuedReporter.handleSnapshot(snapshot);
+    },
+    handleSessionShutdown() {
+      if (!rootSession) return;
+      rootSession = false;
+      queuedReporter.handleSessionShutdown();
+      queuedReporter.enqueueAfterDrain(sendClear);
+    },
+    dispose() {
+      if (rootSession) {
+        rootSession = false;
+        queuedReporter.handleSessionShutdown();
+        queuedReporter.enqueueAfterDrain(sendClear);
+      }
+      queuedReporter.dispose();
+    },
+  };
+}
+
 export function registerTlhActivityReporters(
   pi: Pick<ExtensionAPI, "on">,
   tracker: TlhEffectiveActivityTracker,
   options: {
     herdr?: HerdrActivityReporterOptions;
     cmux?: CmuxActivityReporterOptions;
+    programStatus?: ProgramStatusActivityReporterOptions;
   } = {},
 ): void {
   const reporters = [
     createHerdrActivityReporter(options.herdr),
     createCmuxActivityReporter(options.cmux),
+    createProgramStatusActivityReporter(options.programStatus),
   ];
   const unsubscribe = tracker.subscribe((snapshot) => {
     for (const reporter of reporters) {

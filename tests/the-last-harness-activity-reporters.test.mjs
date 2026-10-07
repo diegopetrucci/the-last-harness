@@ -7,9 +7,11 @@ import { after, test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { createHerdrActivityReporter, createCmuxActivityReporter } = await jiti.import(
-  "../extensions/the-last-harness/activity-reporters.ts",
-);
+const {
+  createHerdrActivityReporter,
+  createCmuxActivityReporter,
+  createProgramStatusActivityReporter,
+} = await jiti.import("../extensions/the-last-harness/activity-reporters.ts");
 
 const _tmpDirs = [];
 after(() => {
@@ -1578,4 +1580,312 @@ test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc
     await flushAsyncWork();
     assert.deepEqual(cmuxCommands, [], `cmux reporter should not clear-status for mode=${mode}`);
   }
+});
+
+// ─── OSC 7501 program-status reporter ───────────────────────────────────────
+
+function createFakeOutput() {
+  return {
+    isTTY: true,
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+}
+
+const workingSeq = "\x1b]7501;state=working:app=tlh\x1b\\";
+const blockedSeq = "\x1b]7501;state=blocked:app=tlh\x1b\\";
+const doneSeq = "\x1b]7501;state=done:app=tlh\x1b\\";
+const idleSeq = "\x1b]7501;state=idle:app=tlh\x1b\\";
+const clearSeq = "\x1b]7501;state=clear\x1b\\";
+
+test("program-status reporter emits working, idle, done, blocked sequences", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 25,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+
+  // working
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  // idle (no prior working → idle)
+  // reset to check idle vs done
+  output.writes.length = 0;
+  const freshOutput = createFakeOutput();
+  const freshTimers = createFakeTimers();
+  const freshReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: freshOutput,
+    timers: freshTimers,
+    idleDebounceMs: 25,
+  });
+  freshReporter.handleSessionStart({ mode: "tui", sessionManager });
+  freshReporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  freshTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(freshOutput.writes, [idleSeq], "no prior working → idle");
+  freshReporter.dispose();
+
+  // done: first emit working, then idle-like
+  const doneOutput = createFakeOutput();
+  const doneTimers = createFakeTimers();
+  const doneReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: doneOutput,
+    timers: doneTimers,
+    idleDebounceMs: 25,
+  });
+  doneReporter.handleSessionStart({ mode: "tui", sessionManager });
+  doneReporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  doneReporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  doneTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(doneOutput.writes, [workingSeq, doneSeq], "after working → done, not idle");
+  doneReporter.dispose();
+
+  // blocked
+  const blockedOutput = createFakeOutput();
+  const blockedTimers = createFakeTimers();
+  const blockedReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: blockedOutput,
+    timers: blockedTimers,
+    idleDebounceMs: 25,
+  });
+  blockedReporter.handleSessionStart({ mode: "tui", sessionManager });
+  blockedReporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  blockedTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(blockedOutput.writes, [blockedSeq]);
+  blockedReporter.dispose();
+});
+
+test("program-status reporter emits clear on session shutdown after queued report drains", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  // clear is sent after the queued report drains
+  assert.ok(
+    output.writes.includes(clearSeq),
+    `expected clear in writes: ${JSON.stringify(output.writes)}`,
+  );
+  assert.equal(output.writes.at(-1), clearSeq, "clear must be the last write");
+});
+
+test("program-status reporter emits clear on dispose when session was active", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+
+  reporter.dispose();
+  await flushAsyncWork();
+  assert.equal(output.writes.at(-1), clearSeq, "clear must be sent on dispose");
+});
+
+test("program-status reporter is a no-op when TLH_PROGRAM_STATUS=0", async () => {
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: { TLH_PROGRAM_STATUS: "0" },
+    output,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when TLH_PROGRAM_STATUS=0");
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, []);
+});
+
+test("program-status reporter is a no-op when output is not a TTY", async () => {
+  const output = {
+    isTTY: false,
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({ env: {}, output });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when output is not TTY");
+});
+
+test("program-status reporter is a no-op when output.isTTY is undefined", async () => {
+  const output = {
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({ env: {}, output });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when isTTY is undefined");
+});
+
+test("program-status reporter is a no-op for non-tui modes", async () => {
+  for (const mode of ["json", "rpc", "print"]) {
+    const output = createFakeOutput();
+    const reporter = createProgramStatusActivityReporter({ env: {}, output });
+    const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+    reporter.handleSessionStart({ mode, sessionManager });
+    reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+    await flushAsyncWork();
+    assert.deepEqual(output.writes, [], `must not write for mode=${mode}`);
+    reporter.handleSessionShutdown();
+    await flushAsyncWork();
+    assert.deepEqual(output.writes, [], `must not send clear for mode=${mode}`);
+  }
+});
+
+test("program-status reporter ignores PI_PROGRAM_STATUS env variable", async () => {
+  const output = createFakeOutput();
+  const timers = createFakeTimers();
+  // PI_PROGRAM_STATUS=0 must NOT disable this reporter (only TLH_PROGRAM_STATUS does)
+  const reporter = createProgramStatusActivityReporter({
+    env: { PI_PROGRAM_STATUS: "0" },
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(
+    output.writes,
+    [workingSeq],
+    "PI_PROGRAM_STATUS=0 must not disable the reporter",
+  );
+  reporter.dispose();
+});
+
+test("program-status reporter swallows write failures without crashing", async () => {
+  const timers = createFakeTimers();
+  let throwOnWrite = false;
+  const output = {
+    isTTY: true,
+    writes: [],
+    write(data) {
+      if (throwOnWrite) throw new Error("simulated write failure");
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+
+  // First snapshot should succeed
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  // Enable write failure; reporter must not throw or crash
+  throwOnWrite = true;
+  reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  timers.advance(0);
+  await flushAsyncWork();
+  // No assertion on writes content; just verify no exception was thrown
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  // Reached here without error = write failure was swallowed
+});
+
+test("program-status reporter deduplicates consecutive identical states", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq], "duplicate working snapshots must be deduplicated");
+  reporter.dispose();
+});
+
+test("program-status reporter starts idle (not done) on a fresh reporter instance", async () => {
+  // Each Pi session creates fresh reporter instances (dispose is called on shutdown).
+  // Verify that a freshly created reporter emits idle (not done) before seeing any
+  // working snapshot, which confirms hasReportedWorking starts as false.
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  // No working snapshot before this idle one
+  reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(
+    output.writes,
+    [idleSeq],
+    "fresh reporter without prior working → idle, not done",
+  );
+  reporter.dispose();
 });
