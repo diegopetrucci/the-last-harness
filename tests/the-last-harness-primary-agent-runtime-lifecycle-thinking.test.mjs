@@ -284,52 +284,48 @@ test("primary runtime follows OpenRouter session models and resolves effective p
   });
   const primaryAgents = new Map([["architect", architectPrimary]]);
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const makeCtx = () => ({
-        cwd: fixture.cwd,
-        sessionManager: { getBranch: () => [] },
-        ui: { notify() {} },
-        modelRegistry: { getAvailable: () => availableModels },
-        model: openrouterModel,
-      });
-
-      const first = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-      await first.runtime.applySessionStart(makeCtx());
-      assert.equal(
-        first.pi.model,
-        undefined,
-        "primary leaves the OpenRouter session model untouched",
-      );
-      assert.equal(
-        first.pi.thinkingLevel,
-        "max",
-        "OpenRouter thinking applies to effective session model",
-      );
-
-      writePrimaryConfig(fixture.agent, {
-        modelOverrides: { architect: "anthropic/claude-sonnet-4-6" },
-      });
-      const anthropicPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-      await anthropicPin.runtime.applySessionStart(makeCtx());
-      assert.deepEqual(anthropicPin.pi.model, availableModels[1]);
-      assert.equal(
-        anthropicPin.pi.thinkingLevel,
-        "high",
-        "stored Anthropic pin selects Anthropic thinking",
-      );
-
-      writePrimaryConfig(fixture.agent, {
-        modelOverrides: { architect: "openai-codex/gpt-5.6-luna" },
-      });
-      const codexPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-      await codexPin.runtime.applySessionStart(makeCtx());
-      assert.deepEqual(codexPin.pi.model, availableModels[2]);
-      assert.equal(codexPin.pi.thinkingLevel, "medium", "stored Codex pin selects OpenAI thinking");
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const makeCtx = () => ({
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => availableModels },
+      model: openrouterModel,
     });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+
+    const first = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+    await first.runtime.applySessionStart(makeCtx());
+    assert.equal(
+      first.pi.model,
+      undefined,
+      "primary leaves the OpenRouter session model untouched",
+    );
+    assert.equal(
+      first.pi.thinkingLevel,
+      "max",
+      "OpenRouter thinking applies to effective session model",
+    );
+
+    writePrimaryConfig(fixture.agent, {
+      modelOverrides: { architect: "anthropic/claude-sonnet-4-6" },
+    });
+    const anthropicPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+    await anthropicPin.runtime.applySessionStart(makeCtx());
+    assert.deepEqual(anthropicPin.pi.model, availableModels[1]);
+    assert.equal(
+      anthropicPin.pi.thinkingLevel,
+      "high",
+      "stored Anthropic pin selects Anthropic thinking",
+    );
+
+    writePrimaryConfig(fixture.agent, {
+      modelOverrides: { architect: "openai-codex/gpt-5.6-luna" },
+    });
+    const codexPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+    await codexPin.runtime.applySessionStart(makeCtx());
+    assert.deepEqual(codexPin.pi.model, availableModels[2]);
+    assert.equal(codexPin.pi.thinkingLevel, "medium", "stored Codex pin selects OpenAI thinking");
+  });
 });
 
 test("overrideable primary on OpenRouter keeps the session model while applying its default thinking", async (t) => {
@@ -342,33 +338,30 @@ test("overrideable primary on OpenRouter keeps the session model while applying 
     applyModel: true,
     applyThinking: true,
   });
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const { pi, runtime } = registerRuntimeHarness({
-        primaryAgents: new Map([["rush", rushPrimary]]),
-        subagentMetadata: [],
-      });
-      await runtime.applySessionStart({
-        cwd: fixture.cwd,
-        sessionManager: {
-          getBranch: () => [
-            {
-              type: "custom",
-              customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-              data: { selected: "rush" },
-            },
-          ],
-        },
-        ui: { notify() {} },
-        modelRegistry: { getAvailable: () => [sessionModel] },
-        model: sessionModel,
-      });
-      assert.equal(pi.model, undefined, "OpenRouter primary follows the active session model");
-      assert.equal(pi.thinkingLevel, "high", "OpenRouter primary applies its default thinking");
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi, runtime } = registerRuntimeHarness({
+      primaryAgents: new Map([["rush", rushPrimary]]),
+      subagentMetadata: [],
     });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    await runtime.applySessionStart({
+      cwd: fixture.cwd,
+      sessionManager: {
+        getBranch: () => [
+          {
+            type: "custom",
+            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+            data: { selected: "rush" },
+          },
+        ],
+      },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [sessionModel] },
+      model: sessionModel,
+    });
+    assert.equal(pi.model, undefined, "OpenRouter primary follows the active session model");
+    assert.equal(pi.thinkingLevel, "high", "OpenRouter primary applies its default thinking");
+  });
 });
 
 test("primaries retain explicit thinking through turns, model switches, and mode boundaries", async (t) => {
@@ -428,142 +421,138 @@ test("primaries retain explicit thinking through turns, model switches, and mode
     { provider: "openrouter", id: "openai/gpt-5.4", ...reasoning },
   ];
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      for (const scenario of [
-        {
-          label: "direct provider",
-          models: directModels,
-          initial: (definition) =>
-            directModels.find(
-              (model) => model.id === definition.model.slice(definition.model.indexOf("/") + 1),
-            ),
-          switched: directModels.find((model) => model.id === "gpt-5.4"),
-          switchedProvider: "openai-codex",
-        },
-        {
-          label: "OpenRouter",
-          models: openrouterModels,
-          initial: () => openrouterModels[0],
-          switched: openrouterModels[1],
-          switchedProvider: "openrouter",
-        },
-      ]) {
-        for (const definition of primaryDefinitions) {
-          const primary = createPrimaryPrompt(definition.name, {
-            model: definition.model,
-            tlhOpenaiModels: [definition.openaiModel],
-            thinking: definition.thinking,
-            tlhOpenaiThinking: definition.openaiThinking,
-            tlhAnthropicThinking: definition.anthropicThinking,
-            tlhOpenrouterThinking: definition.openrouterThinking,
-            preferCurrentOpenaiModel: definition.name === "rush",
-            applyModel: true,
-            applyThinking: true,
-          });
-          const primaryAgents = new Map([
-            ["architect", architectPrimary],
-            [definition.name, primary],
-          ]);
-          writePrimaryConfig(fixture.agent, { selected: definition.name });
-          const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
-            primaryAgents,
-            subagentMetadata: [],
-          });
-          assert.ok(runtime, `${scenario.label}/${definition.name} runtime should register`);
-          registerEffortCommand(pi, runtime);
-          const sessionBranch = (selection) => [
-            {
-              type: "custom",
-              customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-              data: { selected: selection },
-            },
-          ];
-          const makeContext = (selection, model) => ({
-            cwd: fixture.cwd,
-            sessionManager: { getBranch: () => sessionBranch(selection) },
-            ui: { notify() {} },
-            modelRegistry: { getAvailable: () => scenario.models },
-            model,
-          });
-          const initialModel = scenario.initial(definition);
-          assert.ok(initialModel, `${scenario.label}/${definition.name} initial model exists`);
-          const initialContext = makeContext(definition.name, initialModel);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const scenario of [
+      {
+        label: "direct provider",
+        models: directModels,
+        initial: (definition) =>
+          directModels.find(
+            (model) => model.id === definition.model.slice(definition.model.indexOf("/") + 1),
+          ),
+        switched: directModels.find((model) => model.id === "gpt-5.4"),
+        switchedProvider: "openai-codex",
+      },
+      {
+        label: "OpenRouter",
+        models: openrouterModels,
+        initial: () => openrouterModels[0],
+        switched: openrouterModels[1],
+        switchedProvider: "openrouter",
+      },
+    ]) {
+      for (const definition of primaryDefinitions) {
+        const primary = createPrimaryPrompt(definition.name, {
+          model: definition.model,
+          tlhOpenaiModels: [definition.openaiModel],
+          thinking: definition.thinking,
+          tlhOpenaiThinking: definition.openaiThinking,
+          tlhAnthropicThinking: definition.anthropicThinking,
+          tlhOpenrouterThinking: definition.openrouterThinking,
+          preferCurrentOpenaiModel: definition.name === "rush",
+          applyModel: true,
+          applyThinking: true,
+        });
+        const primaryAgents = new Map([
+          ["architect", architectPrimary],
+          [definition.name, primary],
+        ]);
+        writePrimaryConfig(fixture.agent, { selected: definition.name });
+        const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
+          primaryAgents,
+          subagentMetadata: [],
+        });
+        assert.ok(runtime, `${scenario.label}/${definition.name} runtime should register`);
+        registerEffortCommand(pi, runtime);
+        const sessionBranch = (selection) => [
+          {
+            type: "custom",
+            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+            data: { selected: selection },
+          },
+        ];
+        const makeContext = (selection, model) => ({
+          cwd: fixture.cwd,
+          sessionManager: { getBranch: () => sessionBranch(selection) },
+          ui: { notify() {} },
+          modelRegistry: { getAvailable: () => scenario.models },
+          model,
+        });
+        const initialModel = scenario.initial(definition);
+        assert.ok(initialModel, `${scenario.label}/${definition.name} initial model exists`);
+        const initialContext = makeContext(definition.name, initialModel);
 
-          await runtime.applySessionStart(initialContext);
-          assert.equal(
-            pi.thinkingLevel,
-            definition.thinking,
-            `${scenario.label}/${definition.name} applies its packaged initial thinking`,
-          );
+        await runtime.applySessionStart(initialContext);
+        assert.equal(
+          pi.thinkingLevel,
+          definition.thinking,
+          `${scenario.label}/${definition.name} applies its packaged initial thinking`,
+        );
 
-          await pi.commands.get("effort").handler("off", {
-            model: initialModel,
-            hasUI: false,
-            ui: { notify() {} },
-          });
-          assert.equal(pi.thinkingLevel, "off");
+        await pi.commands.get("effort").handler("off", {
+          model: initialModel,
+          hasUI: false,
+          ui: { notify() {} },
+        });
+        assert.equal(pi.thinkingLevel, "off");
 
-          await beforeAgentStart({ systemPrompt: "base" }, initialContext);
-          assert.equal(
-            pi.thinkingLevel,
-            "off",
-            `${scenario.label}/${definition.name} keeps the selected level on the next turn`,
-          );
+        await beforeAgentStart({ systemPrompt: "base" }, initialContext);
+        assert.equal(
+          pi.thinkingLevel,
+          "off",
+          `${scenario.label}/${definition.name} keeps the selected level on the next turn`,
+        );
 
-          const sessionTree = pi.events.find((event) => event.name === "session_tree")?.handler;
-          assert.equal(typeof sessionTree, "function");
-          await sessionTree({}, initialContext);
-          assert.equal(
-            pi.thinkingLevel,
-            "off",
-            `${scenario.label}/${definition.name} keeps the selected level on session-tree replay`,
-          );
+        const sessionTree = pi.events.find((event) => event.name === "session_tree")?.handler;
+        assert.equal(typeof sessionTree, "function");
+        await sessionTree({}, initialContext);
+        assert.equal(
+          pi.thinkingLevel,
+          "off",
+          `${scenario.label}/${definition.name} keeps the selected level on session-tree replay`,
+        );
 
-          const switchedContext = makeContext(definition.name, scenario.switched);
-          await beforeAgentStart({ systemPrompt: "base" }, switchedContext);
-          assert.equal(
-            pi.thinkingLevel,
-            "off",
-            `${scenario.label}/${definition.name} keeps the selected level after ${scenario.switchedProvider} model reapplication`,
-          );
+        const switchedContext = makeContext(definition.name, scenario.switched);
+        await beforeAgentStart({ systemPrompt: "base" }, switchedContext);
+        assert.equal(
+          pi.thinkingLevel,
+          "off",
+          `${scenario.label}/${definition.name} keeps the selected level after ${scenario.switchedProvider} model reapplication`,
+        );
 
-          const architectContext = makeContext("architect", scenario.switched);
-          await sessionTree({}, architectContext);
-          assert.equal(
-            pi.thinkingLevel,
-            "high",
-            `${scenario.label}/${definition.name} clears the session selection at an explicit mode boundary`,
-          );
+        const architectContext = makeContext("architect", scenario.switched);
+        await sessionTree({}, architectContext);
+        assert.equal(
+          pi.thinkingLevel,
+          "high",
+          `${scenario.label}/${definition.name} clears the session selection at an explicit mode boundary`,
+        );
 
-          await sessionTree({}, switchedContext);
-          const switchedThinking =
-            scenario.switchedProvider === "openai-codex"
-              ? definition.openaiThinking
-              : definition.openrouterThinking;
-          assert.equal(
-            pi.thinkingLevel,
-            switchedThinking,
-            `${scenario.label}/${definition.name} restores the switched-provider packaged default`,
-          );
+        await sessionTree({}, switchedContext);
+        const switchedThinking =
+          scenario.switchedProvider === "openai-codex"
+            ? definition.openaiThinking
+            : definition.openrouterThinking;
+        assert.equal(
+          pi.thinkingLevel,
+          switchedThinking,
+          `${scenario.label}/${definition.name} restores the switched-provider packaged default`,
+        );
 
-          await pi.commands.get("effort").handler("off", {
-            model: scenario.switched,
-            hasUI: false,
-            ui: { notify() {} },
-          });
-          await runtime.applySessionStart(switchedContext);
-          assert.equal(
-            pi.thinkingLevel,
-            switchedThinking,
-            `${scenario.label}/${definition.name} clears the selection at a new session`,
-          );
-        }
+        await pi.commands.get("effort").handler("off", {
+          model: scenario.switched,
+          hasUI: false,
+          ui: { notify() {} },
+        });
+        await runtime.applySessionStart(switchedContext);
+        assert.equal(
+          pi.thinkingLevel,
+          switchedThinking,
+          `${scenario.label}/${definition.name} clears the selection at a new session`,
+        );
       }
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    }
+  });
 });
 
 test("primaries honor an explicit durable thinking level across sessions and mode changes", async (t) => {
@@ -589,80 +578,76 @@ test("primaries honor an explicit durable thinking level across sessions and mod
     applyThinking: true,
   });
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      for (const definition of definitions) {
-        writeFileSync(
-          join(fixture.agent, "settings.json"),
-          `${JSON.stringify(
-            {
-              defaultThinkingLevel: "medium",
-              tlh: { primaryAgent: { enabled: true, selected: definition.name } },
-            },
-            null,
-            2,
-          )}\n`,
-        );
-        const primary = createPrimaryPrompt(definition.name, {
-          model: definition.model,
-          thinking: definition.thinking,
-          tlhAnthropicThinking: definition.thinking,
-          tlhOpenrouterThinking: definition.thinking,
-          applyModel: false,
-          applyThinking: true,
-        });
-        const primaryAgents = new Map([
-          ["architect", architect],
-          [definition.name, primary],
-        ]);
-        const { pi, runtime } = registerRuntimeHarness({
-          primaryAgents,
-          subagentMetadata: [],
-        });
-        const branch = { selected: definition.name };
-        const context = (selection = branch.selected) => ({
-          cwd: fixture.cwd,
-          sessionManager: {
-            getBranch: () => [
-              {
-                type: "custom",
-                customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-                data: { selected: selection },
-              },
-            ],
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const definition of definitions) {
+      writeFileSync(
+        join(fixture.agent, "settings.json"),
+        `${JSON.stringify(
+          {
+            defaultThinkingLevel: "medium",
+            tlh: { primaryAgent: { enabled: true, selected: definition.name } },
           },
-          ui: { notify() {} },
-          modelRegistry: { getAvailable: () => [model] },
-          model,
-        });
+          null,
+          2,
+        )}\n`,
+      );
+      const primary = createPrimaryPrompt(definition.name, {
+        model: definition.model,
+        thinking: definition.thinking,
+        tlhAnthropicThinking: definition.thinking,
+        tlhOpenrouterThinking: definition.thinking,
+        applyModel: false,
+        applyThinking: true,
+      });
+      const primaryAgents = new Map([
+        ["architect", architect],
+        [definition.name, primary],
+      ]);
+      const { pi, runtime } = registerRuntimeHarness({
+        primaryAgents,
+        subagentMetadata: [],
+      });
+      const branch = { selected: definition.name };
+      const context = (selection = branch.selected) => ({
+        cwd: fixture.cwd,
+        sessionManager: {
+          getBranch: () => [
+            {
+              type: "custom",
+              customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+              data: { selected: selection },
+            },
+          ],
+        },
+        ui: { notify() {} },
+        modelRegistry: { getAvailable: () => [model] },
+        model,
+      });
 
-        await runtime.applySessionStart(context());
-        assert.equal(
-          pi.thinkingLevel,
-          "medium",
-          `${definition.name} honors the persisted upstream thinking choice on startup`,
-        );
+      await runtime.applySessionStart(context());
+      assert.equal(
+        pi.thinkingLevel,
+        "medium",
+        `${definition.name} honors the persisted upstream thinking choice on startup`,
+      );
 
-        const sessionTree = pi.events.find((event) => event.name === "session_tree")?.handler;
-        assert.equal(typeof sessionTree, "function");
-        await sessionTree({}, context("architect"));
-        assert.equal(
-          pi.thinkingLevel,
-          "medium",
-          `${definition.name} keeps the durable choice after an explicit primary-mode change`,
-        );
+      const sessionTree = pi.events.find((event) => event.name === "session_tree")?.handler;
+      assert.equal(typeof sessionTree, "function");
+      await sessionTree({}, context("architect"));
+      assert.equal(
+        pi.thinkingLevel,
+        "medium",
+        `${definition.name} keeps the durable choice after an explicit primary-mode change`,
+      );
 
-        await runtime.applySessionStart(context());
-        assert.equal(
-          pi.thinkingLevel,
-          "medium",
-          `${definition.name} restores the durable choice in a new session`,
-        );
-      }
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+      await runtime.applySessionStart(context());
+      assert.equal(
+        pi.thinkingLevel,
+        "medium",
+        `${definition.name} restores the durable choice in a new session`,
+      );
+    }
+  });
 });
 
 test("native thinking cycle changes are retained for every primary without a default write", async (t) => {
@@ -682,63 +667,59 @@ test("native thinking cycle changes are retained for every primary without a def
     { name: "bug-hunter", thinking: "high" },
   ];
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      for (const definition of definitions) {
-        writeFileSync(
-          join(fixture.agent, "settings.json"),
-          `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: definition.name } } }, null, 2)}\n`,
-        );
-        const primary = createPrimaryPrompt(definition.name, {
-          model: "anthropic/claude-opus-5",
-          thinking: definition.thinking,
-          tlhAnthropicThinking: definition.thinking,
-          applyModel: false,
-          applyThinking: true,
-        });
-        const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
-          primaryAgents: new Map([[definition.name, primary]]),
-          subagentMetadata: [],
-        });
-        const context = {
-          cwd: fixture.cwd,
-          sessionManager: { getBranch: () => [] },
-          ui: { notify() {} },
-          modelRegistry: { getAvailable: () => [model] },
-          model,
-        };
-        const thinkingSelect = pi.events.find(
-          (event) => event.name === "thinking_level_select",
-        )?.handler;
-        assert.equal(typeof thinkingSelect, "function");
-        await runtime.applySessionStart(context);
-        assert.equal(pi.thinkingLevel, definition.thinking);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const definition of definitions) {
+      writeFileSync(
+        join(fixture.agent, "settings.json"),
+        `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: definition.name } } }, null, 2)}\n`,
+      );
+      const primary = createPrimaryPrompt(definition.name, {
+        model: "anthropic/claude-opus-5",
+        thinking: definition.thinking,
+        tlhAnthropicThinking: definition.thinking,
+        applyModel: false,
+        applyThinking: true,
+      });
+      const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
+        primaryAgents: new Map([[definition.name, primary]]),
+        subagentMetadata: [],
+      });
+      const context = {
+        cwd: fixture.cwd,
+        sessionManager: { getBranch: () => [] },
+        ui: { notify() {} },
+        modelRegistry: { getAvailable: () => [model] },
+        model,
+      };
+      const thinkingSelect = pi.events.find(
+        (event) => event.name === "thinking_level_select",
+      )?.handler;
+      assert.equal(typeof thinkingSelect, "function");
+      await runtime.applySessionStart(context);
+      assert.equal(pi.thinkingLevel, definition.thinking);
 
-        // A native Shift+Tab/Ctrl+thinking cycle is session-only; the
-        // event still records retained session intent without a default write.
-        pi.thinkingLevel = "medium";
-        await thinkingSelect(
-          { type: "thinking_level_select", level: "medium", previousLevel: definition.thinking },
-          context,
-        );
-        await beforeAgentStart({ systemPrompt: "base" }, context);
-        assert.equal(
-          pi.thinkingLevel,
-          "medium",
-          `${definition.name} retains native thinking on the next turn`,
-        );
+      // A native Shift+Tab/Ctrl+thinking cycle is session-only; the
+      // event still records retained session intent without a default write.
+      pi.thinkingLevel = "medium";
+      await thinkingSelect(
+        { type: "thinking_level_select", level: "medium", previousLevel: definition.thinking },
+        context,
+      );
+      await beforeAgentStart({ systemPrompt: "base" }, context);
+      assert.equal(
+        pi.thinkingLevel,
+        "medium",
+        `${definition.name} retains native thinking on the next turn`,
+      );
 
-        await runtime.applySessionStart(context);
-        assert.equal(
-          pi.thinkingLevel,
-          definition.thinking,
-          `${definition.name} restores the packaged thinking level after a new session`,
-        );
-      }
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+      await runtime.applySessionStart(context);
+      assert.equal(
+        pi.thinkingLevel,
+        definition.thinking,
+        `${definition.name} restores the packaged thinking level after a new session`,
+      );
+    }
+  });
 });
 
 test("TLH default thinking application is not mistaken for native user intent", async (t) => {
@@ -759,53 +740,49 @@ test("TLH default thinking application is not mistaken for native user intent", 
     applyThinking: true,
   });
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      writePrimaryConfig(fixture.agent, { enabled: true, selected: "product" });
-      const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
-        primaryAgents: new Map([["product", primary]]),
-        subagentMetadata: [],
-      });
-      const context = {
-        cwd: fixture.cwd,
-        sessionManager: { getBranch: () => [] },
-        ui: { notify() {} },
-        modelRegistry: { getAvailable: () => [model] },
-        model,
-      };
-      const thinkingSelect = pi.events.find(
-        (event) => event.name === "thinking_level_select",
-      )?.handler;
-      assert.equal(typeof thinkingSelect, "function");
-      const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-      const pendingEvents = [];
-      pi.setThinkingLevel = (level) => {
-        const previousLevel = pi.thinkingLevel;
-        pi.thinkingLevel = level;
-        pendingEvents.push(
-          thinkingSelect({ type: "thinking_level_select", level, previousLevel }, context),
-        );
-      };
-
-      await runtime.applySessionStart(context);
-      await Promise.all(pendingEvents);
-      await manager.flush();
-      assert.equal(
-        JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8")).defaultThinkingLevel,
-        undefined,
-        "TLH's startup setter must not create a durable user thinking choice",
-      );
-      pi.thinkingLevel = "medium";
-      await beforeAgentStart({ systemPrompt: "base" }, context);
-      assert.equal(
-        pi.thinkingLevel,
-        "high",
-        "a later turn reapplies the packaged default because TLH's own setter was guarded",
-      );
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writePrimaryConfig(fixture.agent, { enabled: true, selected: "product" });
+    const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents: new Map([["product", primary]]),
+      subagentMetadata: [],
     });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    const context = {
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [model] },
+      model,
+    };
+    const thinkingSelect = pi.events.find(
+      (event) => event.name === "thinking_level_select",
+    )?.handler;
+    assert.equal(typeof thinkingSelect, "function");
+    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+    const pendingEvents = [];
+    pi.setThinkingLevel = (level) => {
+      const previousLevel = pi.thinkingLevel;
+      pi.thinkingLevel = level;
+      pendingEvents.push(
+        thinkingSelect({ type: "thinking_level_select", level, previousLevel }, context),
+      );
+    };
+
+    await runtime.applySessionStart(context);
+    await Promise.all(pendingEvents);
+    await manager.flush();
+    assert.equal(
+      JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8")).defaultThinkingLevel,
+      undefined,
+      "TLH's startup setter must not create a durable user thinking choice",
+    );
+    pi.thinkingLevel = "medium";
+    await beforeAgentStart({ systemPrompt: "base" }, context);
+    assert.equal(
+      pi.thinkingLevel,
+      "high",
+      "a later turn reapplies the packaged default because TLH's own setter was guarded",
+    );
+  });
 });
 
 test("retained thinking clamps across direct and OpenRouter model changes", async (t) => {
@@ -837,67 +814,63 @@ test("retained thinking clamps across direct and OpenRouter model changes", asyn
     },
   ];
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      for (const scenario of scenarios) {
-        for (const name of definitions) {
-          writeFileSync(
-            join(fixture.agent, "settings.json"),
-            `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: name } } }, null, 2)}\n`,
-          );
-          const primary = createPrimaryPrompt(name, {
-            model: "anthropic/claude-opus-5",
-            thinking: "high",
-            tlhOpenrouterThinking: "high",
-            applyModel: false,
-            applyThinking: true,
-          });
-          const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
-            primaryAgents: new Map([[name, primary]]),
-            subagentMetadata: [],
-          });
-          const makeContext = (model) => ({
-            cwd: fixture.cwd,
-            sessionManager: { getBranch: () => [] },
-            ui: { notify() {} },
-            modelRegistry: { getAvailable: () => [scenario.full, scenario.limited] },
-            model,
-          });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const scenario of scenarios) {
+      for (const name of definitions) {
+        writeFileSync(
+          join(fixture.agent, "settings.json"),
+          `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: name } } }, null, 2)}\n`,
+        );
+        const primary = createPrimaryPrompt(name, {
+          model: "anthropic/claude-opus-5",
+          thinking: "high",
+          tlhOpenrouterThinking: "high",
+          applyModel: false,
+          applyThinking: true,
+        });
+        const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
+          primaryAgents: new Map([[name, primary]]),
+          subagentMetadata: [],
+        });
+        const makeContext = (model) => ({
+          cwd: fixture.cwd,
+          sessionManager: { getBranch: () => [] },
+          ui: { notify() {} },
+          modelRegistry: { getAvailable: () => [scenario.full, scenario.limited] },
+          model,
+        });
 
-          await runtime.applySessionStart(makeContext(scenario.full));
-          runtime.recordUserThinkingLevel("high");
-          await beforeAgentStart({ systemPrompt: "base" }, makeContext(scenario.limited));
-          assert.equal(
-            pi.thinkingLevel,
-            "medium",
-            `${scenario.label}/${name} clamps high to the nearest supported level`,
-          );
-          await beforeAgentStart({ systemPrompt: "base" }, makeContext(scenario.limited));
-          assert.equal(
-            pi.thinkingLevel,
-            "medium",
-            `${scenario.label}/${name} retains the clamped level on the next turn`,
-          );
+        await runtime.applySessionStart(makeContext(scenario.full));
+        runtime.recordUserThinkingLevel("high");
+        await beforeAgentStart({ systemPrompt: "base" }, makeContext(scenario.limited));
+        assert.equal(
+          pi.thinkingLevel,
+          "medium",
+          `${scenario.label}/${name} clamps high to the nearest supported level`,
+        );
+        await beforeAgentStart({ systemPrompt: "base" }, makeContext(scenario.limited));
+        assert.equal(
+          pi.thinkingLevel,
+          "medium",
+          `${scenario.label}/${name} retains the clamped level on the next turn`,
+        );
 
-          const nonReasoning = {
-            ...scenario.limited,
-            id: `${scenario.limited.id}-plain`,
-            reasoning: false,
-          };
-          await beforeAgentStart({ systemPrompt: "base" }, makeContext(nonReasoning));
-          assert.equal(
-            pi.thinkingLevel,
-            "off",
-            `${scenario.label}/${name} safely clamps retained thinking for a non-reasoning model`,
-          );
-          await beforeAgentStart({ systemPrompt: "base" }, makeContext(nonReasoning));
-          assert.equal(pi.thinkingLevel, "off");
-        }
+        const nonReasoning = {
+          ...scenario.limited,
+          id: `${scenario.limited.id}-plain`,
+          reasoning: false,
+        };
+        await beforeAgentStart({ systemPrompt: "base" }, makeContext(nonReasoning));
+        assert.equal(
+          pi.thinkingLevel,
+          "off",
+          `${scenario.label}/${name} safely clamps retained thinking for a non-reasoning model`,
+        );
+        await beforeAgentStart({ systemPrompt: "base" }, makeContext(nonReasoning));
+        assert.equal(pi.thinkingLevel, "off");
       }
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    }
+  });
 });
 
 test("architect applies a durable thinking choice", async (t) => {
@@ -918,29 +891,25 @@ test("architect applies a durable thinking choice", async (t) => {
     applyThinking: true,
   });
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      writeFileSync(
-        join(fixture.agent, "settings.json"),
-        `${JSON.stringify({ defaultThinkingLevel: "low" }, null, 2)}\n`,
-      );
-      const { pi, runtime } = registerRuntimeHarness({
-        primaryAgents: new Map([["architect", architect]]),
-        subagentMetadata: [],
-      });
-      const context = {
-        cwd: fixture.cwd,
-        sessionManager: { getBranch: () => [] },
-        ui: { notify() {} },
-        modelRegistry: { getAvailable: () => [model] },
-        model,
-      };
-      await runtime.applySessionStart(context);
-      assert.equal(pi.thinkingLevel, "low");
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ defaultThinkingLevel: "low" }, null, 2)}\n`,
+    );
+    const { pi, runtime } = registerRuntimeHarness({
+      primaryAgents: new Map([["architect", architect]]),
+      subagentMetadata: [],
     });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    const context = {
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [model] },
+      model,
+    };
+    await runtime.applySessionStart(context);
+    assert.equal(pi.thinkingLevel, "low");
+  });
 });
 
 test("primary runtime scopes tickets during session start before later session work", async (t) => {

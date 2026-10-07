@@ -10,7 +10,6 @@ import { safeTerminalDocumentLeaf, safeTerminalText } from "../shared/display-te
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, fitCompactToolStatus, formatCurrentToolLines, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, progressRunningSeed, runningGlyph, runningSeed, snapshotNowForProgress, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
 const TK_TICKET_WIDGET_PREFIX = "ticket: ";
 const WIDGET_ACTIVITY_PREFIX = "       ";
-const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function clearLegacyResultAnimationTimer(context) {
     const timer = context.state.subagentResultAnimationTimer;
     if (!timer)
@@ -39,7 +38,7 @@ function getToolCallLines(result) {
     if (result.messages) {
         return getDisplayItems(result.messages)
             .filter((item) => item.type === "tool")
-            .map((item) => safeTerminalDocumentLeaf(formatToolCall(item.name, item.args, true)));
+            .map((item) => safeTerminalDocumentLeaf(formatToolCall(item.name, item.args)));
     }
     return (result.toolCalls?.map((toolCall) => safeTerminalDocumentLeaf(toolCall.expandedText ?? toolCall.text)) ?? []);
 }
@@ -378,9 +377,8 @@ function renderMultiCompact(d, entries, theme, frame, now) {
             lines.push(childLocLineMulti);
         if (rRunning && liveProgress) {
             hasRunningResult = true;
-            for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_CONTINUATION_PREFIX, now).entries()) {
-                const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-                lines.push(theme.fg("dim", `${prefix}${activity}`));
+            for (const activity of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_PREFIX, now)) {
+                lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
             }
         }
         else if (!rPending &&

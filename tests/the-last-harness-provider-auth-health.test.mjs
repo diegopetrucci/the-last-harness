@@ -33,12 +33,6 @@ function makeRegistry({ getProviderAuth, getProviderAuthStatus } = {}) {
 // classifyProviderAuthError
 // ---------------------------------------------------------------------------
 
-test("classifyProviderAuthError: resolving (no throw) means healthy — that path goes through probeProvider not classifier", () => {
-  // The classifier is only called on error. Verify the happy path does not reach it.
-  // (See probeProvider tests below for the healthy path.)
-  assert.ok(true); // Documented expectation; see probeProvider healthy test.
-});
-
 test("classifyProviderAuthError: invalid_grant → reauth-required", () => {
   assert.equal(classifyProviderAuthError(new Error("invalid_grant")), "reauth-required");
 });
