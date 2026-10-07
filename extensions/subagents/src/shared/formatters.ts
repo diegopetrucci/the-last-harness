@@ -63,11 +63,7 @@ export function formatDuration(ms: number): string {
  * Keep argument values complete here. Renderers own width fitting and must
  * wrap these strings instead of losing command, path, or payload text.
  */
-export function formatToolCall(
-  name: string,
-  args: Record<string, unknown>,
-  _expanded = false,
-): string {
+export function formatToolCall(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "bash": {
       const command = typeof args.command === "string" ? args.command : "";
