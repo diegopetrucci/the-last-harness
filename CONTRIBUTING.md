@@ -48,7 +48,7 @@ Docs-only changes may use narrower validation, but inspect the rendered/content 
 
 ## Formatting
 
-`npm run format` (Oxfmt over `scripts/`, `tests/`, and `extensions/`) is the formatter fixer; run it after editing those sources. Validation enforces the result via the `format:check` step inside `npm run validate`, so unformatted code fails CI.
+`npm run format` (Oxfmt over `scripts/`, `tests/`, `extensions/`, and `protocol/`) is the formatter fixer; run it after editing those sources. Validation enforces the result via the `format:check` step inside `npm run validate`, so unformatted code fails CI.
 
 ## Packaged vs contributor-only files
 
