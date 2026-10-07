@@ -83,6 +83,13 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
     assert.equal(result.errorType, "bash");
   });
 
+  it("detects bash fatal pattern (command not found)", () => {
+    const messages = [toolResult("bash", "bash: foo: command not found")];
+    const result = detectSubagentError(messages);
+    assert.equal(result.hasError, true);
+    assert.equal(result.errorType, "bash");
+  });
+
   it("detects bash exit code in output", () => {
     const messages = [toolResult("bash", "error: process exited with code 127")];
     const result = detectSubagentError(messages);

@@ -22,6 +22,7 @@ import {
   available,
   runSync,
   createSubagentExecutor,
+  makeExecutor,
   type ExecutionModule,
   type ExecuteAsyncSingleOverride,
   type ExecutorToolResult,
@@ -90,37 +91,6 @@ describe(
       });
     }
 
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-      telemetryProvenance: SubagentTelemetryProvenance | undefined = undefined,
-      piOverride:
-        | { events: ReturnType<typeof createEventBus>; getSessionName: () => undefined }
-        | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: piOverride ?? { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-        telemetryProvenance,
-      });
-    }
     it(
       "uses the human-owned run ceiling for foreground execution",
       {
@@ -140,6 +110,7 @@ describe(
         };
         mockPi.onCall({ output: "policy" });
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
           { execution: { maxRunTimeMs: 1_234 } },
           undefined,
@@ -178,6 +149,7 @@ describe(
         };
         mockPi.onCall({ output: "role policy" });
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 600 })],
           { execution: { maxRunTimeMs: false } },
           undefined,
@@ -203,7 +175,7 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const executor = makeExecutor(tempDir);
         const cases = [
           { agent: "echo", task: "Task", timeoutMs: 1 },
           { agent: "echo", task: "Task", async: true, timeoutMs: 1 },
@@ -274,6 +246,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo")],
             {},
             state,
@@ -389,6 +362,7 @@ describe(
         mockPi.onCall({ output: "resumed continuation complete" });
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo")],
             {},
             undefined,
@@ -473,6 +447,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
             { execution: { maxRunTimeMs: 1_234 } },
             state,
@@ -543,6 +518,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 100 })],
             { execution: { maxRunTimeMs: false } },
             state,
@@ -646,6 +622,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 500 })],
             { execution: { maxRunTimeMs: 10_000 } },
             state,
@@ -693,7 +670,12 @@ describe(
           foregroundControls: new Map(),
           lastForegroundControlId: null,
         };
-        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs })], {}, state);
+        const executor = makeExecutor(
+          tempDir,
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          state,
+        );
         const runPromise = executor.execute(
           "producer-pause-run",
           { agent: "echo", task: "Pause after starting" },
@@ -702,7 +684,7 @@ describe(
           makeMinimalCtx(tempDir),
         );
 
-        const readyDeadline = Date.now() + 5_000;
+        const readyDeadline = Date.now() + scaleTestTimeout(5_000);
         while (Date.now() < readyDeadline) {
           if (
             mockPi.callCount() === 1 &&
@@ -830,6 +812,7 @@ describe(
           lastForegroundControlId: null,
         };
         const initialExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs })],
           {},
           initialState,
@@ -906,6 +889,7 @@ describe(
           lastForegroundControlId: null,
         };
         const resumed = await makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs })],
           {},
           restartedState,
@@ -994,7 +978,7 @@ describe(
         const beforeStatus = fs.readFileSync(statusPath);
         const beforeSession = fs.readFileSync(sessionFile);
         try {
-          const result = await makeExecutor([makeAgent("echo")], {}, state).execute(
+          const result = await makeExecutor(tempDir, [makeAgent("echo")], {}, state).execute(
             "foreground-context-race-resume",
             { action: "resume", id: runId, message: "Continue." },
             new AbortController().signal,
@@ -1120,6 +1104,7 @@ describe(
             ]);
             ctx.model = model;
             const result = await makeExecutor(
+              tempDir,
               [agent],
               {},
               state,
@@ -1190,6 +1175,7 @@ describe(
           lastForegroundControlId: null,
         };
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: runCeilingMs })],
           {},
           state,
@@ -1210,6 +1196,7 @@ describe(
         // Same run state, but the agent is now declared with a ceiling the run has
         // already burned through.
         const resumeExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
           {},
           state,
@@ -1250,6 +1237,7 @@ describe(
           lastForegroundControlId: null,
         };
         const initialExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 10_000 })],
           {},
           state,
@@ -1276,6 +1264,7 @@ describe(
         );
 
         const resumeExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
           {},
           state,

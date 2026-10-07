@@ -962,7 +962,7 @@ describe(
         const revivedId = result.details?.asyncId;
         assert.ok(revivedId, "expected revived async id");
         const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-        const deadline = Date.now() + 10_000;
+        const deadline = Date.now() + scaleTestTimeout(10_000);
         while (!fs.existsSync(resultPath)) {
           if (Date.now() > deadline)
             assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
@@ -1338,7 +1338,7 @@ describe(
       const revivedId = revived.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
       const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-      const deadline = Date.now() + 10_000;
+      const deadline = Date.now() + scaleTestTimeout(10_000);
       while (!fs.existsSync(resultPath)) {
         if (Date.now() > deadline)
           assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
