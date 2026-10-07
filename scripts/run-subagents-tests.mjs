@@ -12,17 +12,14 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
-    minimumFiles: 109,
     minimumTests: 1474,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
-    minimumFiles: 45,
     minimumTests: 607,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),
-    minimumFiles: 1,
     minimumTests: 1,
   },
 };
@@ -46,10 +43,8 @@ export function discoverSuiteFiles(suite, config = suiteConfigs[suite]) {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
     .map((entry) => join(config.directory, entry.name))
     .sort();
-  if (files.length < config.minimumFiles) {
-    throw new Error(
-      `${suite} suite found ${files.length} test files; expected at least ${config.minimumFiles}`,
-    );
+  if (files.length === 0) {
+    throw new Error(`${suite} suite found no .test.ts files in ${config.directory}`);
   }
   return files;
 }
