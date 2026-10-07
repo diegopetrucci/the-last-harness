@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
@@ -121,9 +121,10 @@ test("dry-run latest-release: shows Track and releases/latest URL", (t) => {
   assert.match(output, /releases\/latest\/download\/install\.sh/);
 });
 
-test("plain update dry-run refuses migration under the normal Pi config root", () => {
-  const agentDir = join(homedir(), ".pi", "agent", "tlh-aohm-migration-test");
-  const result = spawnUpdate(agentDir, ["--dry-run", "--track", "latest-release"]);
+test("plain update dry-run refuses migration under the normal Pi config root", (t) => {
+  const { dir } = createFixture(t);
+  const agentDir = join(dir, ".pi", "agent", "tlh-aohm-migration-test");
+  const result = spawnUpdate(agentDir, ["--dry-run", "--track", "latest-release"], { HOME: dir });
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, output);
@@ -434,17 +435,16 @@ test("--extensions: unsupported --track flag causes non-zero exit with message",
   assert.match(result.stderr, /--track/);
 });
 
-test("--extensions: protected normal-Pi config path causes non-zero exit with message", () => {
-  // ~/ .pi/agent is the canonical normal-Pi config root; pathIsProtectedPiConfig triggers on it
-  // even if the directory does not exist on this machine.
-  const protectedAgentDir = join(homedir(), ".pi", "agent");
+test("--extensions: protected normal-Pi config path causes non-zero exit with message", (t) => {
+  const { dir } = createFixture(t);
+  const protectedAgentDir = join(dir, ".pi", "agent");
 
   const result = spawnSync(
     process.execPath,
     [updateScript, "--extensions", "--dry-run", "--agent-dir", protectedAgentDir],
     {
       cwd: repoRoot,
-      env: buildChildEnv(protectedAgentDir),
+      env: buildChildEnv(protectedAgentDir, { HOME: dir }),
       encoding: "utf8",
     },
   );

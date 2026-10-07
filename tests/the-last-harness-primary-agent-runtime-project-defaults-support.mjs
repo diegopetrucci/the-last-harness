@@ -149,79 +149,71 @@ export async function shutdownRuntime(registration, ctx) {
 export async function assertBothResourceTrustFailure(t, confirm, timeoutMs) {
   const fixture = createIsolatedProfileFixture("tlh-pd-trust-flow-", { cwd: true, test: t });
 
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
-      writeFileSync(
-        join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
-        "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
-        "utf8",
-      );
-      writeFileSync(
-        join(fixture.cwd, ".tlh", "defaults.json"),
-        JSON.stringify({ primaryAgents: { architect: { effort: "high" } } }),
-        "utf8",
-      );
-      execFileSync("git", ["-C", fixture.cwd, "init", "--quiet"]);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
+    writeFileSync(
+      join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
+      "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(fixture.cwd, ".tlh", "defaults.json"),
+      JSON.stringify({ primaryAgents: { architect: { effort: "high" } } }),
+      "utf8",
+    );
+    execFileSync("git", ["-C", fixture.cwd, "init", "--quiet"]);
 
-      let prompts = 0;
-      let agentResult;
-      let defaultsResult;
-      const { runtime, pi } = registerRuntimeHarness({
-        primaryAgents: new Map([["architect", architectWithDefaults()]]),
-        subagentMetadata: [],
-        projectAgentLoader: async (options) => {
-          agentResult = await loadProjectAgentSnapshot({
-            ...options,
-            trust: {
-              ...options.trustDependencies,
-              ...options.context,
-              trustUiTimeoutMs: timeoutMs,
-            },
-          });
-          return agentResult;
-        },
-        projectDefaultsLoader: async (options) => {
-          defaultsResult = await loadProjectDefaults({
-            ...options,
-            trust: { ...options.trust, trustUiTimeoutMs: timeoutMs },
-          });
-          return defaultsResult;
-        },
-      });
-      const ctx = makeSessionCtx(fixture, {
-        // Keep upstream trust unavailable so the configuration plane exercises
-        // its own bounded session decision. The execution plane must remain
-        // persisted-trust-only regardless of this result.
-        isProjectTrusted: () => {
-          throw new Error("upstream trust is unavailable");
-        },
-        hasUI: true,
-        ui: {
-          notify() {},
-          confirm: (...args) => {
-            prompts += 1;
-            return confirm(...args);
+    let prompts = 0;
+    let agentResult;
+    let defaultsResult;
+    const { runtime, pi } = registerRuntimeHarness({
+      primaryAgents: new Map([["architect", architectWithDefaults()]]),
+      subagentMetadata: [],
+      projectAgentLoader: async (options) => {
+        agentResult = await loadProjectAgentSnapshot({
+          ...options,
+          trust: {
+            ...options.trustDependencies,
+            ...options.context,
+            trustUiTimeoutMs: timeoutMs,
           },
-        },
-      });
-
-      await runtime.applySessionStart(ctx);
-
-      assert.equal(prompts, 1, "defaults trust should prompt independently of custom-agent trust");
-      assert.equal(agentResult?.status, "denied");
-      assert.equal(agentResult?.trust?.source, "no-persisted-trust");
-      assert.equal(defaultsResult?.status, "denied");
-      assert.equal(defaultsResult?.trust?.source, "session-unavailable");
-      assert.equal(
-        pi.model.provider,
-        "anthropic",
-        "bundled defaults remain the only applied layer",
-      );
+        });
+        return agentResult;
+      },
+      projectDefaultsLoader: async (options) => {
+        defaultsResult = await loadProjectDefaults({
+          ...options,
+          trust: { ...options.trust, trustUiTimeoutMs: timeoutMs },
+        });
+        return defaultsResult;
+      },
     });
-  } finally {
-    cleanupTempDir(fixture);
-  }
+    const ctx = makeSessionCtx(fixture, {
+      // Keep upstream trust unavailable so the configuration plane exercises
+      // its own bounded session decision. The execution plane must remain
+      // persisted-trust-only regardless of this result.
+      isProjectTrusted: () => {
+        throw new Error("upstream trust is unavailable");
+      },
+      hasUI: true,
+      ui: {
+        notify() {},
+        confirm: (...args) => {
+          prompts += 1;
+          return confirm(...args);
+        },
+      },
+    });
+
+    await runtime.applySessionStart(ctx);
+
+    assert.equal(prompts, 1, "defaults trust should prompt independently of custom-agent trust");
+    assert.equal(agentResult?.status, "denied");
+    assert.equal(agentResult?.trust?.source, "no-persisted-trust");
+    assert.equal(defaultsResult?.status, "denied");
+    assert.equal(defaultsResult?.trust?.source, "session-unavailable");
+    assert.equal(pi.model.provider, "anthropic", "bundled defaults remain the only applied layer");
+  });
 }
 
 /**
