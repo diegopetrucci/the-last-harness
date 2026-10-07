@@ -179,8 +179,6 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
   "npm:@diegopetrucci/pi-compact-bash",
 ]);
 
-const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;
-
 const WHOLE_EXTENSION_DISABLING_FILTERS = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
 
 export function packageEntryDisablesExtensions(entry: unknown): boolean {
@@ -443,55 +441,4 @@ export function managedDefaultExtensionPackageIdentities(
   }
 
   return managedIdentities;
-}
-
-export function repairTargetedDefaultExtensionLoadOrder(
-  settings: unknown,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  disabledIds = new Set<string>(),
-): { previous: string[]; next: string[] } | undefined {
-  if (!isPlainObject(settings) || !Array.isArray((settings as RawSettings).packages))
-    return undefined;
-
-  const packages = (settings as RawSettings).packages as unknown[];
-  const identityOrder = new Map<string, number>();
-  const identityLabels = new Map<string, string>();
-  for (const [order, targetedId] of TARGETED_DEFAULT_EXTENSION_LOAD_ORDER.entries()) {
-    const extension = defaultExtensions.find(({ id }) => id === targetedId);
-    if (!extension || disabledIds.has(extension.id)) continue;
-    for (const identity of defaultExtensionPackageIdentities(extension)) {
-      if (identityOrder.has(identity)) continue;
-      identityOrder.set(identity, order);
-      identityLabels.set(identity, extension.id);
-    }
-  }
-
-  const matchedEntries: Array<{ index: number; order: number; entry: unknown; label: string }> = [];
-  for (const [index, entry] of packages.entries()) {
-    const identity = packageIdentity(entry);
-    if (!identity) continue;
-    const order = identityOrder.get(identity);
-    if (order === undefined) continue;
-    matchedEntries.push({
-      index,
-      order,
-      entry,
-      label: identityLabels.get(identity) || identity,
-    });
-  }
-  if (matchedEntries.length < 2) return undefined;
-
-  const reorderedEntries = [...matchedEntries].sort(
-    (left, right) => left.order - right.order || left.index - right.index,
-  );
-  if (matchedEntries.every((entry, index) => entry === reorderedEntries[index])) return undefined;
-
-  for (let index = 0; index < matchedEntries.length; index += 1) {
-    packages[matchedEntries[index].index] = reorderedEntries[index].entry;
-  }
-
-  return {
-    previous: matchedEntries.map(({ label }) => label),
-    next: reorderedEntries.map(({ label }) => label),
-  };
 }
