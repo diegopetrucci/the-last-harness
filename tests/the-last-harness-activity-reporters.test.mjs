@@ -1648,7 +1648,12 @@ test("program-status reporter emits working, idle, done, blocked sequences", asy
   doneReporter.handleSessionStart({ mode: "tui", sessionManager });
   doneReporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
   await flushAsyncWork();
-  doneReporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  doneReporter.handleSnapshot({
+    inProgress: false,
+    lastRunOutcome: "completed",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
   doneTimers.advance(25);
   await flushAsyncWork();
   assert.deepEqual(doneOutput.writes, [workingSeq, doneSeq], "after working → done, not idle");
@@ -1864,9 +1869,7 @@ test("program-status reporter deduplicates consecutive identical states", async 
 });
 
 test("program-status reporter starts idle (not done) on a fresh reporter instance", async () => {
-  // Each Pi session creates fresh reporter instances (dispose is called on shutdown).
-  // Verify that a freshly created reporter emits idle (not done) before seeing any
-  // working snapshot, which confirms hasReportedWorking starts as false.
+  // Fresh session: lastRunOutcome is undefined, so quiescent state is idle (not done).
   const timers = createFakeTimers();
   const output = createFakeOutput();
   const reporter = createProgramStatusActivityReporter({
@@ -1876,9 +1879,7 @@ test("program-status reporter starts idle (not done) on a fresh reporter instanc
     idleDebounceMs: 0,
   });
   const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
-
   reporter.handleSessionStart({ mode: "tui", sessionManager });
-  // No working snapshot before this idle one
   reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
   timers.advance(0);
   await flushAsyncWork();
@@ -1887,5 +1888,111 @@ test("program-status reporter starts idle (not done) on a fresh reporter instanc
     [idleSeq],
     "fresh reporter without prior working → idle, not done",
   );
+  reporter.dispose();
+});
+
+// ─── OSC 7501 kind mapping and waitingForUser precedence ─────────────────────
+
+const blockedPermissionSeq = "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+const blockedQuestionSeq = "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+
+function makeKindReporter() {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  reporter.handleSessionStart({ mode: "tui", sessionManager: sm });
+  return { reporter, output, timers };
+}
+
+test("program-status reporter kind mapping: confirm=permission, select/input/editor/custom=question, absent=plain", async () => {
+  const cases = [
+    ["confirm", blockedPermissionSeq],
+    ["select", blockedQuestionSeq],
+    ["input", blockedQuestionSeq],
+    ["editor", blockedQuestionSeq],
+    ["custom", blockedQuestionSeq],
+    [undefined, blockedSeq],
+  ];
+  for (const [kind, expected] of cases) {
+    const { reporter, output, timers } = makeKindReporter();
+    reporter.handleSnapshot({
+      inProgress: false,
+      waitingForUser: true,
+      ...(kind !== undefined ? { waitingForUserKind: kind } : {}),
+      primaryReasons: [],
+      activeAsyncJobIds: [],
+    });
+    timers.advance(0);
+    await flushAsyncWork();
+    assert.deepEqual(
+      output.writes,
+      [expected],
+      `kind=${kind} should emit correct blocked sequence`,
+    );
+    reporter.dispose();
+  }
+});
+
+test("program-status reporter emits blocked when both inProgress and waitingForUser are true", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    waitingForUserKind: "confirm",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq, blockedPermissionSeq]);
+  reporter.dispose();
+});
+
+test("program-status reporter returns to working when prompt closes with inProgress still true", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    waitingForUserKind: "select",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq, blockedQuestionSeq, workingSeq]);
+  reporter.dispose();
+});
+
+test("program-status reporter re-emits blocked with updated kind when nested prompt kind changes", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  const snap = (kind) => ({
+    inProgress: false,
+    waitingForUser: true,
+    ...(kind ? { waitingForUserKind: kind } : {}),
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  reporter.handleSnapshot(snap("confirm"));
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot(snap("select"));
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot(snap("confirm"));
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [blockedPermissionSeq, blockedQuestionSeq, blockedPermissionSeq]);
   reporter.dispose();
 });

@@ -28,7 +28,14 @@ type TimerApi = {
 
 type HerdrProtocolState = "working" | "blocked" | "idle";
 type CmuxStatusState = "working" | "waiting" | "idle";
-type ProgramStatusState = "working" | "blocked" | "done" | "idle";
+type ProgramStatusState =
+  | "working"
+  | "blocked"
+  | "blocked:permission"
+  | "blocked:question"
+  | "done"
+  | "idle"
+  | "error";
 type ActivityReportState = HerdrProtocolState | CmuxStatusState | ProgramStatusState;
 type StateSender<State extends ActivityReportState> = (state: State) => Promise<void>;
 type StateResolver<State extends ActivityReportState> = (
@@ -740,9 +747,32 @@ export function createCmuxActivityReporter(
 // See #748 for Pi native OSC 7501 root-record ownership; the tlh wrapper sets
 // PI_PROGRAM_STATUS=0 to suppress Pi's built-in emitter — do not consult that
 // variable here.
+
+/**
+ * Maps a UIPromptKind to the appropriate blocked ProgramStatusState variant.
+ * confirm → "blocked:permission"; select/input/editor/custom → "blocked:question";
+ * missing/unknown → "blocked" (no kind segment).
+ * Encoding kind in the state string ensures the queued-reporter deduplication
+ * correctly detects kind changes within a blocked sequence.
+ */
+function resolveBlockedProgramStatusState(
+  kind: string | undefined,
+): "blocked" | "blocked:permission" | "blocked:question" {
+  if (kind === "confirm") return "blocked:permission";
+  if (kind === "select" || kind === "input" || kind === "editor" || kind === "custom")
+    return "blocked:question";
+  return "blocked";
+}
+
 function formatProgramStatusSequence(state: ProgramStatusState | "clear"): string {
   if (state === "clear") {
     return "\x1b]7501;state=clear\x1b\\";
+  }
+  if (state === "blocked:permission") {
+    return "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+  }
+  if (state === "blocked:question") {
+    return "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
   }
   return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
 }
@@ -760,12 +790,25 @@ export function createProgramStatusActivityReporter(
   }
 
   let rootSession = false;
-  let hasReportedWorking = false;
 
   const resolveState = (snapshot: TlhEffectiveActivitySnapshot): ProgramStatusState => {
-    if (snapshot.inProgress) return "working";
-    if (snapshot.waitingForUser) return "blocked";
-    return hasReportedWorking ? "done" : "idle";
+    // waitingForUser takes precedence over inProgress so that a blocking UI
+    // prompt raised during a tool run reports "blocked" rather than "working".
+    if (snapshot.waitingForUser) {
+      return resolveBlockedProgramStatusState(snapshot.waitingForUserKind);
+    }
+    // runActive keeps the reporter in "working" across the gap between agent_end
+    // and agent_settled (e.g. Pi retry delay), preventing a false "error" emission
+    // before a retry completes. Retry grace additionally keeps inProgress true
+    // for Herdr/cmux compatibility; either flag is sufficient here.
+    if (snapshot.inProgress || snapshot.runActive) return "working";
+    // Quiescent: derive state from the last run outcome.
+    // lastRunOutcome is committed only at agent_settled, so this branch is only
+    // reached once the run has fully settled (no pending retries or continuations).
+    if (snapshot.lastRunOutcome === "aborted") return "idle";
+    if (snapshot.lastRunOutcome === "error") return "error";
+    if (snapshot.lastRunOutcome === "completed") return "done";
+    return "idle"; // undefined = no run has settled yet this session
   };
 
   const sendState: StateSender<ProgramStatusState> = async (state) => {
@@ -784,9 +827,7 @@ export function createProgramStatusActivityReporter(
     }
   };
 
-  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options, (state) => {
-    if (state === "working") hasReportedWorking = true;
-  });
+  const queuedReporter = createQueuedStateReporter(sendState, resolveState, options);
 
   return {
     handleSessionStart(ctx) {
@@ -795,7 +836,6 @@ export function createProgramStatusActivityReporter(
         return;
       }
       rootSession = true;
-      hasReportedWorking = false;
     },
     handleSnapshot(snapshot) {
       if (!rootSession) return;
