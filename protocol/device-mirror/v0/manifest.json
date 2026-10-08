@@ -69,15 +69,7 @@
   ],
   "listingStatuses": ["idle", "active", "waiting", "error", "unknown"],
   "listingFreshness": ["fresh", "stale", "unknown"],
-  "dropReasons": [
-    "producer-disconnect",
-    "takeover",
-    "accepted-event",
-    "eviction",
-    "listener-stop",
-    "device-disconnect",
-    "backgrounding"
-  ],
+  "dropReasons": ["producer-disconnect", "takeover", "accepted-event", "eviction"],
   "closeReasons": ["listener-stop", "device-disconnect", "backgrounding", "transport-failure"],
   "directions": {
     "clientToListener": ["hello", "list", "subscribe", "reply"],

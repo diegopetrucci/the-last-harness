@@ -1384,23 +1384,33 @@ test("state transitions enforce connection, listing, subscription, and capacity 
   );
 });
 
-test("producer, takeover, event, eviction, disconnect, background, and stop drops are immediate", () => {
+test("producer, takeover, event, and eviction drops are immediate", () => {
   const fixture = readFixture("valid-drop-lifecycle");
   assert.equal(fixture.dropIsImmediate, true);
   assert.equal(fixture.dropIsIdempotent, true);
-  const [
-    producerDisconnectReason,
-    takeoverReason,
-    acceptedEventReason,
-    evictionReason,
-    listenerStopReason,
-    deviceDisconnectReason,
-    backgroundingReason,
-  ] = fixture.reasons;
+  const [producerDisconnectReason, takeoverReason, acceptedEventReason, evictionReason] =
+    fixture.reasons;
+  const [listenerStopReason, deviceDisconnectReason, backgroundingReason] = fixture.lifecycle;
+  assert.deepEqual(fixture.reasons, [...DEVICE_MIRROR_DROP_REASONS]);
   assert.deepEqual(
     [listenerStopReason, deviceDisconnectReason, backgroundingReason],
     ["listener-stop", "device-disconnect", "backgrounding"],
   );
+  for (const reason of fixture.lifecycle) {
+    assert.equal(DEVICE_MIRROR_DROP_REASONS.includes(reason), false);
+    assert.equal(DEVICE_MIRROR_CLOSE_REASONS.includes(reason), true);
+    assertFailure(
+      validateDeviceMirrorFrame(
+        { kind: "dropped", handle: fixture.handle, reason },
+        "listener-to-client",
+      ),
+      "malformed-frame",
+    );
+    assert.equal(
+      validateDeviceMirrorFrame({ kind: "close", reason }, "listener-to-client").ok,
+      true,
+    );
+  }
   const dropFunctions = [
     [producerDisconnectReason, disconnectDeviceMirrorProducer],
     [takeoverReason, takeoverDeviceMirrorProducer],
