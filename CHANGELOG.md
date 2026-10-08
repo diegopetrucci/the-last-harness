@@ -7,7 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, and `idle` with `app=tlh`. `done` is reported after work finishes; `idle` is reported before any work begins in the session. The sequence is only sent to an interactive TTY; unsupported terminals ignore it. Opt out with `TLH_PROGRAM_STATUS=0`. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly (see [#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
-- The `tlh` wrapper now defaults `PI_PROGRAM_STATUS=0` to silence upstream Pi's forthcoming native OSC 7501 emitter while TLH's own reporter is active. Set `PI_PROGRAM_STATUS=1` to re-enable Pi's emitter. See [#748](https://github.com/diegopetrucci/the-last-harness/issues/748).
+- The `tlh` wrapper defaults `PI_PROGRAM_STATUS=0` to keep Pi 1.1.0's native OSC 7501 emitter off while TLH's effective-activity reporter remains the root owner. Set `PI_PROGRAM_STATUS=1` to re-enable Pi's emitter; deliberately pair it with `TLH_PROGRAM_STATUS=0` when transferring root ownership to Pi. See [#748](https://github.com/diegopetrucci/the-last-harness/issues/748).
 
 ### Fixed
 
@@ -20,6 +20,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
 - Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
 - Install and update no longer clean up settings left by extensions retired in v0.34.0 or earlier (context-cap, oracle, rtk, intercom, fff, and subagents opt-outs in `tlh.disabledDefaultExtensions`; `tlh.gnosis`, `tlh.rtk`, and `subagents.disableBuiltins` keys). Leftover values from those versions are now silently ignored. Package-level force-removal for the same retired extensions is unaffected.
 - Bumped bundled defaults: `pi-fast` `0.1.4` → `0.1.6`, `pi-anthropic-auth` `3.3.2` → `3.4.2`, `pi-web-access` `0.10.10` → `0.29.2`, and `pi-context-inspector` `0.1.13` → `0.1.15`. The web-access fork now exposes only its Exa-backed three-tool surface, without curator/search commands, alternate providers, GitHub/PDF/video/browser workflows, or a bundled skill; migrate supported isolated settings manually as described in [docs/web-search.md](docs/web-search.md).
