@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, UIPromptKind } from "@earendil-works/pi-coding-agent";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import {
@@ -40,8 +40,34 @@ export type TlhEffectiveActivitySnapshot = {
   inProgress: boolean;
   /** True while at least one blocking extension UI prompt is open. */
   waitingForUser: boolean;
+  /**
+   * Kind of the most recently opened blocking UI prompt that is still open.
+   * Populated only when waitingForUser is true; undefined when no prompt is open.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  waitingForUserKind?: UIPromptKind;
   primaryReasons: string[];
   activeAsyncJobIds: string[];
+  /**
+   * True while a run is active — set at before_agent_start / agent_start and
+   * cleared only at agent_settled. Keeps the OSC 7501 reporter in "working"
+   * state across the gap between agent_end and agent_settled (e.g. Pi retry
+   * delay), preventing a false "error" emission before a retry completes.
+   * This is an internal detail of the snapshot and is NOT propagated on the
+   * shared bus payload in extensions/shared/tlh-effective-activity.ts.
+   */
+  runActive?: true;
+  /**
+   * Outcome of the most recent agent run in this session.
+   * Committed at agent_settled (not at agent_end) so it is never emitted
+   * while Pi is between a retryable error and its retry.
+   * - 'aborted': user cancelled the run (last assistant stopReason === 'aborted').
+   * - 'error': run failed (last assistant stopReason === 'error' or errorMessage present).
+   * - 'completed': run ended normally.
+   * - undefined: no run has settled yet this session.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  lastRunOutcome?: "completed" | "aborted" | "error";
 };
 
 type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
@@ -56,6 +82,7 @@ export type TlhEffectiveActivityTracker = {
   handleBeforeAgentStart(): void;
   handleAgentStart(): void;
   handleAgentEnd(event: { messages?: unknown[] }): void;
+  handleAgentSettled(): void;
   handleTurnStart(): void;
   handleToolExecutionStart(event: { toolCallId?: string }): void;
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
@@ -179,6 +206,30 @@ function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): b
   return false;
 }
 
+/**
+ * Derives the run outcome from the last assistant message in agent_end event.messages.
+ * Pinned Pi is 1.0.4, whose agent_settled event has NO aborted field; cancel detection
+ * is therefore derived from the last assistant stopReason here.
+ * TODO: after bumping Pi to >=1.1.0 switch cancel detection to agent_settled.aborted (#748).
+ */
+function deriveAgentEndOutcome(
+  messages: readonly unknown[] | undefined,
+): "completed" | "aborted" | "error" {
+  if (Array.isArray(messages)) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (!isRecord(message) || message.role !== "assistant") {
+        continue;
+      }
+      if (message.stopReason === "aborted") return "aborted";
+      if (message.stopReason === "error" || typeof message.errorMessage === "string")
+        return "error";
+      return "completed";
+    }
+  }
+  return "completed";
+}
+
 function readRestorableAsyncJob(
   asyncDir: string,
 ): { runId: string; sessionId: string; pid?: number } | undefined {
@@ -221,9 +272,23 @@ export function createTlhEffectiveActivityTracker(
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
   let activeSessionId: string | undefined;
+  /** True from before_agent_start/agent_start until agent_settled; prevents false error during retry gap. */
+  let runActive = false;
+  /** Pending outcome set at agent_end; committed to lastRunOutcome at agent_settled. */
+  let pendingOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Outcome committed at agent_settled; undefined until the first run settles. */
+  let lastRunOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
-  let lastSnapshotKey = "0::0::::";
+  /**
+   * Depth-matched stack for currently open blocking prompts.
+   * Each element is the UIPromptKind of the corresponding open prompt, or undefined when
+   * the event had no recognisable kind. Length always equals uiPromptDepth.
+   * The last element is the most recently opened prompt still open.
+   * Cleared to empty when uiPromptDepth returns to 0.
+   */
+  const uiPromptKindStack: (UIPromptKind | undefined)[] = [];
+  let lastSnapshotKey = "0::0::0::::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
 
@@ -520,19 +585,32 @@ export function createTlhEffectiveActivityTracker(
     return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
   };
 
-  const buildSnapshot = (): TlhEffectiveActivitySnapshot => ({
-    inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
-    waitingForUser: uiPromptDepth > 0,
-    primaryReasons: [...primaryReasons.keys()].sort(),
-    activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
-  });
+  const buildSnapshot = (): TlhEffectiveActivitySnapshot => {
+    const waitingForUser = uiPromptDepth > 0;
+    const topKind = waitingForUser ? uiPromptKindStack[uiPromptKindStack.length - 1] : undefined;
+    // Only propagate kind when it is a recognised UIPromptKind (not undefined).
+    const waitingForUserKind: UIPromptKind | undefined =
+      topKind !== undefined ? topKind : undefined;
+    return {
+      inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+      waitingForUser,
+      ...(runActive ? { runActive: true as const } : {}),
+      ...(waitingForUserKind !== undefined ? { waitingForUserKind } : {}),
+      primaryReasons: [...primaryReasons.keys()].sort(),
+      activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
+      ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+    };
+  };
 
   const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
     [
       snapshot.inProgress ? "1" : "0",
       snapshot.waitingForUser ? "1" : "0",
+      snapshot.runActive ? "1" : "0",
+      snapshot.waitingForUserKind ?? "",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
+      snapshot.lastRunOutcome ?? "",
     ].join("::");
 
   const notifyIfChanged = (): void => {
@@ -569,6 +647,9 @@ export function createTlhEffectiveActivityTracker(
     },
     beginSession(ctx) {
       activeSessionId = currentSessionId(ctx.sessionManager);
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
     },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
@@ -625,17 +706,23 @@ export function createTlhEffectiveActivityTracker(
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
       activeSessionId = undefined;
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
       uiPromptDepth = 0;
+      uiPromptKindStack.length = 0;
       notifyIfChanged();
       listeners.clear();
     },
     handleBeforeAgentStart() {
       clearRetryGrace();
+      runActive = true;
       addPrimaryReason("primary:pending-start");
       notifyIfChanged();
     },
     handleAgentStart() {
       clearRetryGrace();
+      runActive = true;
       removePrimaryReason("primary:pending-start");
       addPrimaryReason("primary:agent-loop");
       notifyIfChanged();
@@ -643,9 +730,36 @@ export function createTlhEffectiveActivityTracker(
     handleAgentEnd(event) {
       removePrimaryReason("primary:agent-loop");
       removePrimaryReason("primary:pending-start");
+      // Capture the pending outcome; it is committed to lastRunOutcome only at
+      // agent_settled so that a retryable error never surfaces as "error" in
+      // the OSC 7501 reporter while Pi is waiting to retry.
+      pendingOutcome = deriveAgentEndOutcome(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
       if (looksLikeRetryableAgentEnd(event.messages)) {
         scheduleRetryGrace("agent-end");
       }
+      notifyIfChanged();
+    },
+    handleAgentSettled() {
+      // agent_settled fires after all retries, compaction recovery, and
+      // continuations finish (including on abort). Commit the pending outcome
+      // and clear the run-active flag so the OSC 7501 reporter can transition
+      // out of "working" with the correct final state.
+      //
+      // Limitation (Pi 1.0.4): if the user cancels during an automatic retry
+      // backoff, agent_settled fires without a new agent_end, so pendingOutcome
+      // still holds the error from the failed attempt and is committed here as
+      // "error" instead of "idle". Pi >=1.1.0 adds agent_settled.aborted (#748),
+      // which will allow us to detect this case and override pendingOutcome to
+      // "aborted" before committing. Until the pin bumps, this is a known
+      // limitation: cancelling during a retry delay reports error, not idle.
+      if (pendingOutcome !== undefined) {
+        lastRunOutcome = pendingOutcome;
+      }
+      pendingOutcome = undefined;
+      runActive = false;
+      clearRetryGrace();
       notifyIfChanged();
     },
     handleTurnStart() {
@@ -681,14 +795,30 @@ export function createTlhEffectiveActivityTracker(
       removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
       notifyIfChanged();
     },
-    handleUIPromptStart() {
+    handleUIPromptStart(event) {
       if (disposed) return;
       uiPromptDepth += 1;
+      const kind = event?.kind;
+      // Only recognised UIPromptKind values are recorded; unknown/missing kind is stored as undefined.
+      const recordedKind: UIPromptKind | undefined =
+        kind === "select" ||
+        kind === "confirm" ||
+        kind === "input" ||
+        kind === "editor" ||
+        kind === "custom"
+          ? kind
+          : undefined;
+      uiPromptKindStack.push(recordedKind);
       notifyIfChanged();
     },
-    handleUIPromptEnd() {
+    handleUIPromptEnd(_event) {
       if (uiPromptDepth === 0) return;
       uiPromptDepth -= 1;
+      uiPromptKindStack.pop();
+      if (uiPromptDepth === 0) {
+        // Defensive: ensure stack is cleared when depth reaches 0.
+        uiPromptKindStack.length = 0;
+      }
       notifyIfChanged();
     },
     handleAsyncRestored(data) {
@@ -795,8 +925,16 @@ export function registerTlhEffectiveActivityTracker(
 
   // Publish snapshot changes on pi.events so other extensions (e.g. notify-gating)
   // can react without coupling directly to this tracker instance.
+  // runActive and lastRunOutcome are internal fields that are NOT part of the bus
+  // payload; deduplicate bus emits so that settle-only transitions (e.g. runActive
+  // clearing at agent_settled when inProgress/waitingForUser are already false) do
+  // not produce repeated identical payloads for downstream consumers.
   if (pi.events) {
+    let lastBusKey = "";
     tracker.subscribe((snapshot) => {
+      const busKey = `${snapshot.inProgress ? "1" : "0"}:${snapshot.waitingForUser ? "1" : "0"}:${snapshot.activeAsyncJobIds.join(",")}`;
+      if (busKey === lastBusKey) return;
+      lastBusKey = busKey;
       try {
         pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
           inProgress: snapshot.inProgress,
@@ -827,6 +965,9 @@ export function registerTlhEffectiveActivityTracker(
   });
   pi.on("agent_end", (event) => {
     tracker.handleAgentEnd(event);
+  });
+  pi.on("agent_settled", () => {
+    tracker.handleAgentSettled();
   });
   pi.on("turn_start", () => {
     tracker.handleTurnStart();

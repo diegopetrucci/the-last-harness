@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`. `done` is reported when a run settles normally; `idle` is reported before any run settles in the session, or when a run is cancelled (cancelling during an automatic retry delay currently reports `error` instead until Pi ≥1.1.0 [#748](https://github.com/diegopetrucci/the-last-harness/issues/748)); `error` is reported when a run settles after failing without a retry; `blocked` is reported while a blocking UI prompt is open and takes precedence over `working` (`blocked` carries `kind=permission` for confirmation prompts or `kind=question` for other prompts). The sequence is only sent to an interactive TTY; unsupported terminals ignore it. Opt out with `TLH_PROGRAM_STATUS=0`. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly (see [#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
+- The `tlh` wrapper now defaults `PI_PROGRAM_STATUS=0` to silence upstream Pi's native OSC 7501 emitter (shipped in Pi 1.1.0) while TLH's own reporter is active. Because TLH currently pins Pi 1.0.4, this default is a no-op until the pin bumps to ≥1.1.0 — at that point re-check [#748](https://github.com/diegopetrucci/the-last-harness/issues/748) (root-record ownership, `PI_PROGRAM_STATUS` default, and switching cancel detection to `agent_settled.aborted`). Set `PI_PROGRAM_STATUS=1` to re-enable Pi's emitter.
+
 ### Fixed
 
 - The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.
