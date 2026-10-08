@@ -1,9 +1,8 @@
 import { createConnection } from "node:net";
 import { frame, json, MAX_CONTROL_BYTES, option, parseReadyResult, parseReplyRequest, readRendezvous, replyCloseFrame, replyReceiptFrame, REPLY_TEXT_CAPABILITY, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
+import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";
 export const SESSION_MIRROR_REPLY_CHANNEL_DEADLINE_MS = 5_000;
-export const SESSION_MIRROR_REPLY_CHANNEL_MAX_CONTROL_BYTES = MAX_CONTROL_BYTES;
 const FAILURE = "local bridge reply channel failed";
-const FAILURE_EVENTS = ["error", "end", "close"];
 const DEFAULT_CLOSE_REASON = "producer-disconnect";
 const MAX_REPLY_GENERATION = 2_000_000_000;
 const FRAME_HEADER_BYTES = 4;
@@ -11,28 +10,6 @@ const MAX_RETAINED_RECEIVE_BYTES = (MAX_CONTROL_BYTES + FRAME_HEADER_BYTES) * 2;
 function controls(value) {
     const result = option(value, "controls");
     return result !== null && typeof result === "object" ? result : {};
-}
-function hasMethod(value, key) {
-    if (value === null || typeof value !== "object")
-        return false;
-    try {
-        let current = value;
-        for (let depth = 0; current !== null && depth < 8; depth += 1) {
-            const descriptor = Object.getOwnPropertyDescriptor(current, key);
-            if (descriptor)
-                return Object.hasOwn(descriptor, "value") && typeof descriptor.value === "function";
-            current = Object.getPrototypeOf(current);
-        }
-    }
-    catch {
-        return false;
-    }
-    return false;
-}
-function isSocket(value) {
-    if (value === null || typeof value !== "object")
-        return false;
-    return ["once", "on", "removeListener", "write", "destroy", "pause", "resume"].every((key) => hasMethod(value, key));
 }
 function connectionFactory(value) {
     const candidate = option(value, "createConnection");
@@ -51,91 +28,6 @@ function clearTimer(value) {
     if (typeof candidate === "function")
         return candidate;
     return (timer) => clearTimeout(timer);
-}
-function bestEffort(action) {
-    try {
-        action();
-    }
-    catch { }
-}
-function remove(socket, event, listener) {
-    bestEffort(() => socket.removeListener(event, listener));
-}
-function waitConnect(socket, register) {
-    return new Promise((resolve, reject) => {
-        let done = false;
-        const connected = () => finish(true);
-        const failed = () => finish(false);
-        const finish = (ok) => {
-            if (done)
-                return;
-            done = true;
-            remove(socket, "connect", connected);
-            for (const event of FAILURE_EVENTS)
-                remove(socket, event, failed);
-            if (ok)
-                resolve();
-            else
-                reject(new Error(FAILURE));
-        };
-        register(() => finish(false));
-        try {
-            socket.once("connect", connected);
-            for (const event of FAILURE_EVENTS)
-                if (!done)
-                    socket.once(event, failed);
-        }
-        catch {
-            finish(false);
-        }
-    });
-}
-function writeFrame(socket, bytes, register) {
-    return new Promise((resolve, reject) => {
-        let callbackDone = false;
-        let drainDone = true;
-        let returned = false;
-        let done = false;
-        const failed = () => finish(false);
-        const drained = () => {
-            drainDone = true;
-            finish(true);
-        };
-        const finish = (ok) => {
-            if (done || (ok && (!returned || !callbackDone || !drainDone)))
-                return;
-            done = true;
-            for (const event of FAILURE_EVENTS)
-                remove(socket, event, failed);
-            remove(socket, "drain", drained);
-            if (ok)
-                resolve();
-            else
-                reject(new Error(FAILURE));
-        };
-        register(() => finish(false));
-        try {
-            for (const event of FAILURE_EVENTS)
-                if (!done)
-                    socket.once(event, failed);
-            const written = (error) => {
-                if (error !== undefined && error !== null)
-                    return finish(false);
-                callbackDone = true;
-                finish(true);
-            };
-            if (done)
-                return;
-            drainDone = socket.write(Buffer.from(bytes), written);
-            returned = true;
-            if (!drainDone)
-                socket.once("drain", drained);
-            finish(true);
-        }
-        catch {
-            finish(false);
-        }
-    });
 }
 function clearReceiveState(receive) {
     receive.buffer = Buffer.alloc(0);
@@ -421,7 +313,7 @@ export function createSessionMirrorReplyChannel(options) {
                         return;
                     }
                     const candidate = connect({ path });
-                    if (!isSocket(candidate)) {
+                    if (!isBridgeSocket(candidate)) {
                         finish(false);
                         return;
                     }
@@ -437,12 +329,12 @@ export function createSessionMirrorReplyChannel(options) {
                         finish(false);
                         return;
                     }
-                    await waitConnect(candidate, register);
+                    await waitConnect(candidate, register, FAILURE);
                     if (closeRequested) {
                         finish(false);
                         return;
                     }
-                    await writeFrame(candidate, hello, register);
+                    await writeFrame(candidate, hello, register, FAILURE);
                     if (closeRequested) {
                         finish(false);
                         return;
@@ -502,7 +394,7 @@ export function createSessionMirrorReplyChannel(options) {
                         try {
                             await writeFrame(candidate, receipt, (cancel) => {
                                 cancelPending = cancel;
-                            });
+                            }, FAILURE);
                         }
                         catch {
                             fail();
@@ -529,7 +421,7 @@ export function createSessionMirrorReplyChannel(options) {
         const current = socket;
         const closeFrame = handshakeComplete ? replyCloseFrame(reason) : undefined;
         if (current !== undefined && closeFrame !== undefined) {
-            void writeFrame(current, closeFrame, () => undefined).finally(() => {
+            void writeFrame(current, closeFrame, () => undefined, FAILURE).finally(() => {
                 destroy();
                 notifyClosed();
             });
@@ -545,4 +437,3 @@ export function createSessionMirrorReplyChannel(options) {
         getState: () => state,
     });
 }
-export default createSessionMirrorReplyChannel;
