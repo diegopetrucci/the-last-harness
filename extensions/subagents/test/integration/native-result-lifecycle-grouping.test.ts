@@ -20,6 +20,7 @@ import {
   type NativeExecutor,
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 const nativeResultGroupingAvailable = available;
 
@@ -428,7 +429,7 @@ describe(
         makeMinimalCtx(tempDir),
       );
 
-      const readyDeadline = Date.now() + 5_000;
+      const readyDeadline = Date.now() + scaleTestTimeout(5_000);
       while (Date.now() < readyDeadline) {
         if (
           mockPi.callCount() === 1 &&

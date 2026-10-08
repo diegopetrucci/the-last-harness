@@ -13,7 +13,6 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
   createTempDir,
-  createEventBus,
   removeTempDir,
   makeAgentConfigs,
   makeAgent,
@@ -21,6 +20,8 @@ import {
   events,
   tryImport,
 } from "../support/helpers.ts";
+import { makeExecutor } from "../support/single-execution-fixtures.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface RunSyncResult {
   exitCode: number;
@@ -81,11 +82,6 @@ interface ExecutorModule {
   };
 }
 
-type ExecuteAsyncSingleOverride = (
-  id: string,
-  params: Record<string, unknown>,
-) => ExecutorToolResult;
-
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<unknown>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
@@ -103,7 +99,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function waitForMarker(markerPath: string, timeoutMs = 10_000): Promise<void> {
+function waitForMarker(markerPath: string, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
   if (fs.existsSync(markerPath)) return Promise.resolve();
   return new Promise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -130,7 +126,7 @@ function waitForMarker(markerPath: string, timeoutMs = 10_000): Promise<void> {
   });
 }
 
-async function waitForPidExit(pid: number, timeoutMs = 10_000): Promise<void> {
+async function waitForPidExit(pid: number, timeoutMs = scaleTestTimeout(10_000)): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
@@ -170,33 +166,6 @@ describe(
     afterEach(() => {
       removeTempDir(tempDir);
     });
-
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
 
     it("interrupts acceptance verification and returns a paused foreground result", async () => {
       const report = [
@@ -395,7 +364,7 @@ describe(
           foregroundControls: new Map(),
           lastForegroundControlId: null,
         };
-        const executor = makeExecutor([makeAgent("slow")], {}, state);
+        const executor = makeExecutor(tempDir, [makeAgent("slow")], {}, state);
         const runPromise = executor.execute(
           "single-pause-run",
           { agent: "slow", task: "Slow task" },
@@ -404,7 +373,7 @@ describe(
           makeMinimalCtx(tempDir),
         );
 
-        const readyDeadline = Date.now() + 5000;
+        const readyDeadline = Date.now() + scaleTestTimeout(5_000);
         while (Date.now() < readyDeadline) {
           if (
             mockPi.callCount() === 1 &&
@@ -670,7 +639,7 @@ describe(
         },
       });
 
-      const callDeadline = Date.now() + 5_000;
+      const callDeadline = Date.now() + scaleTestTimeout(5_000);
       let childPid: number | undefined;
       while (Date.now() < callDeadline && childPid === undefined) {
         const callFiles = fs

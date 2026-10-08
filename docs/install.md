@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.0.4 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 1.1.0 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error. Concurrent installs or updates targeting the same runtime are serialized with a per-runtime lock; if a lock is left behind by a crashed run, remove `~/.the-last-harness/runtime/.tlh-runtime-install.lock` (and `~/.the-last-harness/runtime/.tlh-runtime-install.lock.reclaim` if also present) and rerun.
 
 Run the one-liner:
 
@@ -26,11 +26,13 @@ This guarantee does not apply to raw source installers, mutable or custom refs, 
 
 Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. The v0.27 boundary otherwise means remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
 
-Through **2026-09-29**, compatibility is retained only for locally saved **pre-v0.27 raw source installers from published/tagged releases whose baked manifests requested the retained query/librarian assets**. It excludes arbitrary snapshots of `main` or unreleased intermediate states, including the never-released profile-writer manifest window; this compatibility window does not extend support for every older TLH runtime. After **2026-09-29**, the supported recovery is to download and run the current installer rather than continuing to use the saved file:
+The supported recovery for a saved pre-v0.27 raw source installer is to download and run the current installer:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
+
+Through 2026-09-29, compatibility was retained only for locally saved pre-v0.27 raw source installers from published or tagged releases whose baked manifests requested the retained query/librarian assets. That window excluded arbitrary snapshots of `main` and unreleased intermediate states, including the never-released profile-writer manifest window.
 
 ## More ways to install
 
@@ -92,7 +94,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 1.0.4 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 1.1.0 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -188,7 +190,7 @@ Running `tlh update --force` (or equivalently `bash install.sh --force`) passes 
 
 ## Pi-native prompt-cache warming
 
-The pinned Pi `1.0.4` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
+The pinned Pi `1.1.0` runtime has provider-native prompt-cache warming. The available values are `off`, `streaming` (while a run is active), and `idle` (also while idle); both modes apply Pi's expected-savings check before refreshing. Each refresh is a real provider request with a one-token output cap, so it can spend provider tokens. Native warm requests append usage records and pass through Pi's normal `before_provider_request` extension boundary.
 
 TLH ships `cacheWarming: "idle"` as a packaged default. Install and update apply this value using the same append-if-missing merge used for all packaged settings defaults: when `cacheWarming` is absent from the isolated `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active), set `cacheWarming` to `streaming` in `/settings` or in `~/.the-last-harness/agent/settings.json`. To disable warming entirely, set it to `off`.
 

@@ -24,74 +24,10 @@ import {
   removeTempDir,
   makeAgent,
   events,
-  tryImport,
 } from "../support/helpers.ts";
-import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { executeAsyncSingle, readAsyncPayload } from "../support/async-execution-helpers.ts";
 
-interface ArtifactPaths {
-  inputPath: string;
-  outputPath: string;
-  metadataPath: string;
-}
-
-interface AsyncSingleResultPayload {
-  success: boolean;
-  state?: string;
-  exitCode?: number;
-  results: Array<{
-    agent?: string;
-    output?: string;
-    success?: boolean;
-    exitCode?: number;
-    artifactPaths?: ArtifactPaths;
-  }>;
-}
-
-interface AsyncExecutionModule {
-  isAsyncAvailable(): boolean;
-  executeAsyncSingle(
-    id: string,
-    params: Record<string, unknown>,
-  ): {
-    content: Array<{ text?: string }>;
-    isError?: boolean;
-    details: { asyncId?: string };
-  };
-}
-
-interface TypesModule {
-  RESULTS_DIR: string;
-}
-
-const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
-const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
-
-const executeAsyncSingle = asyncMod.executeAsyncSingle;
-const RESULTS_DIR = typesMod.RESULTS_DIR;
-assert.equal(asyncMod.isAsyncAvailable(), true, "required async runner module is unavailable");
-
-// Mirrors the default report the mock pi harness appends whenever the child
-// prompt carries an acceptance contract.
 const MOCK_COMMAND_EVIDENCE = /\[passed\] mock validation/;
-
-async function waitForAsyncResultFile(
-  id: string,
-  timeoutMs = scaleTestTimeout(15_000),
-): Promise<string> {
-  const resultPath = path.join(RESULTS_DIR!, `${id}.json`);
-  const deadline = Date.now() + timeoutMs;
-  while (!fs.existsSync(resultPath)) {
-    if (Date.now() > deadline)
-      assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return resultPath;
-}
-
-async function readAsyncPayload(id: string): Promise<AsyncSingleResultPayload> {
-  const resultPath = await waitForAsyncResultFile(id);
-  return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncSingleResultPayload;
-}
 
 describe("async artifact digest surfacing (ps-il5m)", () => {
   let tempDir: string;
@@ -220,69 +156,6 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
       fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8"),
       "async deliverable body",
     );
-  });
-
-  it("preserves healthy artifact content through the async digest-surfacing path", async () => {
-    // Verifies that real content is written byte-exact through the background
-    // artifact write site. The raw and computed values are identical here, so
-    // this is a positive-control for the write path — not a floor discriminator.
-    // Discriminating coverage for the non-destruction floor lives in the
-    // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
-    mockPi.onCall({ jsonl: [events.assistantMessage("async concrete findings")] });
-    const id = `async-floor-real-content-${Date.now().toString(36)}`;
-
-    const launch = executeAsyncSingle!(id, {
-      agent: "reviewer",
-      task: "Summarize findings",
-      agentConfig: makeAgent("reviewer"),
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-async-floor",
-      },
-      maxSubagentDepth: 2,
-      acceptance: { level: "none", reason: "exercising floor positive-control async path" },
-      ...artifactOptions(id),
-    });
-    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
-
-    const payload = await readAsyncPayload(id);
-    assert.equal(payload.success, true);
-    assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
-    const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
-    assert.equal(artifact, "async concrete findings");
-  });
-
-  it("preserves horizontal-rule-only output intact through the async digest-surfacing path", async () => {
-    // Verifies that horizontal-rule-only content survives the background artifact
-    // write site unchanged. The raw and computed values are identical here, so
-    // this confirms the write path does not drop the content — it does not
-    // exercise the non-destruction floor. Floor discrimination lives in the
-    // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
-    mockPi.onCall({ jsonl: [events.assistantMessage("---")] });
-    const id = `async-floor-hr-output-${Date.now().toString(36)}`;
-
-    const launch = executeAsyncSingle!(id, {
-      agent: "reviewer",
-      task: "Summarize findings",
-      agentConfig: makeAgent("reviewer"),
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-async-floor",
-      },
-      maxSubagentDepth: 2,
-      acceptance: { level: "none", reason: "exercising floor hr-only async path" },
-      ...artifactOptions(id),
-    });
-    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
-
-    const payload = await readAsyncPayload(id);
-    assert.equal(payload.success, true);
-    assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
-    const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
-    assert.notEqual(artifact, "", "artifact must not be empty when raw output was non-empty");
-    assert.equal(artifact.trim(), "---");
   });
 
   it("does not add a digest when the async run produced no acceptance report", async () => {

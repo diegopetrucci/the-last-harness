@@ -484,13 +484,7 @@ describe("async execution model restoration and fallback", () => {
 
     assert.equal(run.details.asyncId, id);
 
-    const started = Date.now();
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() - started > scaleTestTimeout(15_000)) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.lifecycleArtifactVersion, 1);
@@ -1117,13 +1111,7 @@ describe("async execution model restoration and fallback", () => {
       maxSubagentDepth: 2,
     });
 
-    const started = Date.now();
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() - started > scaleTestTimeout(15_000)) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
