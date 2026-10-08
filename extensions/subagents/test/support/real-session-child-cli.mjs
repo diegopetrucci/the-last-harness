@@ -18,7 +18,6 @@ function readText(filePath) {
 
 function parseArgs(argv) {
   const parsed = {
-    mode: "text",
     extensions: [],
     appendSystemPrompts: [],
     noSession: false,
@@ -28,7 +27,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--mode") {
-      parsed.mode = argv[++i] ?? "text";
+      i += 1;
       continue;
     }
     if (arg === "-p" || arg === "--print") continue;
