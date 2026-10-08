@@ -30,23 +30,13 @@ export type SessionLimitWindow = {
  */
 export type RawSessionEntry = Record<string, unknown> & { type: string };
 
-/**
- * Result of parsing a session JSONL file.
- */
 type ParsedSessionFile = {
-  /** Entries that parsed successfully (all have a `type` string field). */
   entries: RawSessionEntry[];
-  /** Number of lines that could not be parsed (empty lines excluded from count). */
   malformedLineCount: number;
 };
 
-/**
- * Result of enumerating candidate session files.
- */
 type SessionFileScanResult = {
-  /** Absolute paths to .jsonl files whose mtime is at or after `windowStartMs`. */
   files: string[];
-  /** Non-fatal observations recorded during the scan. */
   caveats: string[];
 };
 
@@ -61,9 +51,6 @@ type SessionFileScanResult = {
  *   - no snapshot is provided,
  *   - the snapshot has no session window,
  *   - resetsAt is absent or unparseable.
- *
- * @param snapshot  Optional subscription usage snapshot (anthropic or openai-codex).
- * @param nowMs     Current time in ms since epoch (defaults to Date.now()).
  */
 export function resolveSessionLimitWindow(
   snapshot: TlhSubscriptionUsageSnapshot | undefined,
@@ -102,9 +89,6 @@ export function resolveSessionLimitWindow(
  * contain entries within the window).
  *
  * This function is strictly read-only — it never writes to or modifies the sessions root.
- *
- * @param sessionsRoot  Absolute path to the sessions root directory.
- * @param windowStartMs  Window start timestamp in ms since epoch; files older than this are pruned.
  */
 export function discoverSessionFiles(
   sessionsRoot: string,
@@ -234,8 +218,6 @@ function collectIfFresh(
  * This function reads the entire file into memory; it is suitable for session
  * files of typical size (up to a few MB). Very large files will incur higher
  * memory usage but will not throw.
- *
- * @param filePath  Absolute path to the `.jsonl` session file.
  */
 export async function parseSessionJsonl(filePath: string): Promise<ParsedSessionFile> {
   let raw: string;

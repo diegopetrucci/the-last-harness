@@ -33,8 +33,8 @@ import {
   waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForMockPiCall,
-  writePackageSkill,
 } from "../support/async-execution-helpers.ts";
+import { writePackageSkill } from "../support/single-execution-fixtures.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -262,12 +262,7 @@ describe("async execution output and event streaming", () => {
     });
 
     assert.equal(run.details.asyncId, id);
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
@@ -562,13 +557,7 @@ describe("async execution output and event streaming", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
@@ -600,13 +589,7 @@ describe("async execution output and event streaming", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
@@ -697,13 +680,7 @@ describe("async execution output and event streaming", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, true);
@@ -1146,13 +1123,7 @@ describe("async execution output and event streaming", () => {
         maxSubagentDepth: 2,
       });
 
-      const deadline = Date.now() + scaleTestTimeout(10_000);
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline) {
-          assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -1215,13 +1186,7 @@ describe("async execution output and event streaming", () => {
         maxSubagentDepth: 2,
       });
 
-      const deadline = Date.now() + scaleTestTimeout(10_000);
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline) {
-          assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -1502,12 +1467,7 @@ describe("async execution output and event streaming", () => {
     assert.equal(statusDuringEvent.activityState, "needs_attention");
     assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
 
-    const doneDeadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > doneDeadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
   });
 
   it("background event logs drop noisy message updates and cap child diagnostics", async () => {
@@ -1651,13 +1611,7 @@ describe("async execution output and event streaming", () => {
     );
     assert.equal(sawLiveOutput, true, "expected output-0.log to receive live child output");
 
-    const doneDeadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > doneDeadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, true);

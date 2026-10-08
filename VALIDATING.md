@@ -138,7 +138,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. Measured runs within each invocation share one stable temporary profile path, with run 1 as the cold sample and later runs as warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This release-tier section is the live owner for the current Pi 1.0.3 checks. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.1.0 release-candidate checks; the Pi 1.1.0 comparison status and additional release checks are recorded below. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`. `.github/workflows/startup-performance.yml` runs on every pull request and on `main` as an informational check with `--budget-ms 2500`. That budget is slack above this release objective. The local checker default remains `1000ms`.
 
@@ -146,7 +146,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following Pi 1.0.4 checks are also required release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following carried-forward checks are required Pi 1.1.0 release-preparation work, remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -157,9 +157,20 @@ The following Pi 1.0.4 checks are also required release-preparation work, remain
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `1.0.4`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises Pi `1.1.0`, verify update convergence from that published ref.
 
-The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05. The full release-tier checklist above remains pending the next release candidate. The current checklist is this section. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` record.
+### Pi 1.1.0 comparison status (reviewed 2026-10-08)
+
+The dated 1.0.4→1.1.0 source-map/package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md). This is not live release validation: the repository is now pinned to 1.1.0, the installed modules were 1.0.3 during the review, and no provider, credential, or installed-profile checks were run. The native OSC overlap blocker is resolved on inherited base `a72786a5`: the wrapper defaults `PI_PROGRAM_STATUS=0`, leaving TLH's effective-activity writer as the default root owner. `PI_PROGRAM_STATUS=1` remains an explicit user override and is not the default compatibility path.
+
+Record these Pi 1.1.0 checks against the packaged release candidate:
+
+- **OSC 7501 ownership:** verify Pi's native writer stays suppressed by the wrapper, TLH reports primary-or-active-child effective activity, and dialog/login blocked states, completion, session switching, and shutdown do not produce duplicate root records. Treat an explicit `PI_PROGRAM_STATUS=1` override as an opt-in caveat.
+- **Child policy and rendering:** verify plain and `+name`/`-name` tool policies, generic-MCP retention, `MCP_DIRECT_TOOLS=__none__`, recorded tool duration, `outputPad`, and `agent_settled.aborted` behavior across an interrupted/reloaded child session.
+- **Model/provider accounting:** with an authorized real provider, verify model/effort/auth behavior, retry handling, context-limit/token reporting, long-prompt cost tiers, and classifier/model availability. No paid-provider run belongs in this implementation ticket.
+- **MCP and published release:** verify adapter connectivity/cancellation, native-MCP exclusion behavior, package/bundle layout, and update convergence from the published Pi 1.1.0 ref.
+
+The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05; these are historical results, not Pi 1.1.0 validation. The Pi 1.1.0 release-tier checklist remains pending the next release candidate. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` record.
 
 ## Final validation guidance
 

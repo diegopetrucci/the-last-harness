@@ -71,7 +71,7 @@ type PatchedAgentSessionPrototype = AgentSessionPrototype & {
 
 const TLH_MODEL_SELECTION_PERSISTENCE_PATCH = Symbol.for("tlh.modelSelectionPersistencePatch");
 const BUNDLED_NODE_ENTRYPOINT_RE = /(?:^|[/\\])dist[/\\]bundle[/\\]cli\.js$/;
-const PINNED_PI_VERSION = "1.0.4";
+const PINNED_PI_VERSION = "1.1.0";
 const tlhRequire = createRequire(import.meta.url);
 
 type BundledPackageResolution =

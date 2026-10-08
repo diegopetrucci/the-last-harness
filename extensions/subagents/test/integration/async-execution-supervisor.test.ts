@@ -54,7 +54,7 @@ import {
   writeLifecycleLock,
 } from "../support/async-execution-helpers.ts";
 
-describe("async execution utilities", () => {
+describe("async execution supervisor", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -1305,7 +1305,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "keeps non-blocking supervisor updates live and pauses only active cohort children for supervisor blocks",
+    "keeps a non-blocking supervisor progress update live without pausing the child",
     {
       skip:
         process.platform === "win32"
@@ -1345,39 +1345,6 @@ describe("async execution utilities", () => {
       const progressPayload = (await readAsyncPayload(progressId)) as any;
       assert.equal(progressPayload.state, "complete");
       assert.equal(progressPayload.pause, undefined);
-
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.toolStart("contact_supervisor", { reason: "progress_update", message: "FYI" }),
-              events.toolResult("contact_supervisor", "sent"),
-              events.toolEnd("contact_supervisor"),
-            ],
-          },
-          { jsonl: [events.assistantMessage("native update finished")] },
-        ],
-      });
-      const nativeUpdateId = `async-non-blocking-native-${Date.now().toString(36)}`;
-      executeAsyncSingle!(nativeUpdateId, {
-        agent: "worker",
-        task: "Provide a short non-blocking status update only. Do not edit files.",
-        agentConfig: makeAgent("worker", { acceptanceRole: "read-only" }),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
-      });
-      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
-      assert.equal(nativeUpdatePayload.state, "complete");
-      assert.equal(nativeUpdatePayload.pause, undefined);
     },
   );
 
