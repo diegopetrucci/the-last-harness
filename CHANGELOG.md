@@ -11,6 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.
 - The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.
 - Session names now propagate to the terminal title (`tlh - <name> - <cwd basename>` when named, `tlh - <cwd basename>` when unnamed) and to Herdr as a pane metadata title, fixing a regression where TLH's title branding dropped session-name awareness.
 - Async status reads now reject non-regular artifacts without blocking or following path replacements.
