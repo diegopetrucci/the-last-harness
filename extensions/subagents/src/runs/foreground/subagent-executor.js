@@ -774,7 +774,6 @@ export function createSubagentExecutor(deps) {
             return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
                 ...ctx,
                 cwd: requestCwd,
-                config: deps.config,
             });
         }
         const { blocked, depth, maxDepth } = checkSubagentDepth(deps.config.maxSubagentDepth);

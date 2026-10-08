@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped. Invalid `toolBudget` overrides fail when settings load, and a project-scoped agent list includes load warnings for canonical packaged roles.
 - The `/annotate-git-diff` file-tree error mark, comment popover, and save button now pick up the review palette. Those controls were using class names Tailwind v4 does not generate.
 - Session names now propagate to the terminal title (`tlh - <name> - <cwd basename>` when named, `tlh - <cwd basename>` when unnamed) and to Herdr as a pane metadata title, fixing a regression where TLH's title branding dropped session-name awareness.
 - Async status reads now reject non-regular artifacts without blocking or following path replacements.

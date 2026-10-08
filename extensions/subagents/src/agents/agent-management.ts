@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as path from "node:path";
 import {
   type AgentConfig,
   type AgentDiscoveryDiagnostic,
@@ -6,18 +7,18 @@ import {
   discoverAgentsAll,
   frontmatterNameForConfig,
 } from "./agents.ts";
-import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
+import { resolveExecutionAgentScope } from "./agent-scope.ts";
+import type { Details, SubagentToolResult } from "../shared/types.ts";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 type ManagementAction = "list" | "get";
-type ManagementContext = Pick<ExtensionContext, "cwd"> & { config?: ExtensionConfig };
+type ManagementContext = Pick<ExtensionContext, "cwd">;
 
 interface ManagementParams {
   action?: string;
   agent?: string;
   chainName?: string;
   agentScope?: unknown;
-  config?: unknown;
 }
 
 function result(text: string, isError = false): SubagentToolResult<Details> {
@@ -33,12 +34,6 @@ const SAVED_CHAIN_UNSUPPORTED =
 
 function unsupportedSavedChainResult(detail: string): SubagentToolResult<Details> {
   return result(`${SAVED_CHAIN_UNSUPPORTED} ${detail}`, true);
-}
-
-function normalizeListScope(scope: unknown): AgentScope | undefined {
-  if (scope === undefined) return "both";
-  if (scope === "user" || scope === "project" || scope === "both") return scope;
-  return undefined;
 }
 
 function sanitizeName(name: string): string {
@@ -60,11 +55,24 @@ function allAgents(d: {
   return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
-function isSourceVisibleInScope(
-  source: AgentDiscoveryDiagnostic["source"],
+function isVisibleInScope(
+  entry: { source: AgentDiscoveryDiagnostic["source"]; name?: string; filePath?: string },
   scope: AgentScope,
 ): boolean {
-  return scope === "both" || source === "builtin" || source === "package" || source === scope;
+  if (
+    scope === "both" ||
+    entry.source === "builtin" ||
+    entry.source === "package" ||
+    entry.source === scope
+  ) {
+    return true;
+  }
+  if (scope !== "project") return false;
+  if (isCanonicalPackagedMinorAgent(entry)) return true;
+  if (typeof entry.filePath !== "string") return false;
+  const role = path.basename(entry.filePath, ".md");
+  if (!role || role === path.basename(entry.filePath)) return false;
+  return isCanonicalPackagedMinorAgent({ name: role, filePath: entry.filePath });
 }
 
 function availableNames(cwd: string): string[] {
@@ -130,17 +138,10 @@ export function handleList(
   params: ManagementParams,
   ctx: ManagementContext,
 ): SubagentToolResult<Details> {
-  const scope = normalizeListScope(params.agentScope) ?? "both";
+  const scope = resolveExecutionAgentScope(params.agentScope);
   const d = discoverAgentsAll(ctx.cwd);
   const scopedAgents = allAgents(d)
-    .filter(
-      (a) =>
-        scope === "both" ||
-        a.source === "builtin" ||
-        a.source === "package" ||
-        a.source === scope ||
-        (scope === "project" && isCanonicalPackagedMinorAgent(a)),
-    )
+    .filter((a) => isVisibleInScope(a, scope))
     .sort((a, b) => a.name.localeCompare(b.name));
   const agents = scopedAgents.filter((a) => !a.disabled);
   const lines = [
@@ -150,7 +151,7 @@ export function handleList(
       : ["- (none)"]),
   ];
   const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) =>
-    isSourceVisibleInScope(diagnostic.source, scope),
+    isVisibleInScope(diagnostic, scope),
   );
   if (visibleDiagnostics.length > 0) {
     lines.push(

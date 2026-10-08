@@ -253,13 +253,13 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
         if (input.toolBudget === false) {
             override.toolBudget = false;
         }
-        else if (input.toolBudget &&
-            typeof input.toolBudget === "object" &&
-            !Array.isArray(input.toolBudget)) {
-            override.toolBudget = input.toolBudget;
-        }
         else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`);
+            const normalizedToolBudget = validateToolBudgetConfig(input.toolBudget);
+            if (normalizedToolBudget.error || normalizedToolBudget.budget === undefined) {
+                const detail = normalizedToolBudget.error ? ` ${normalizedToolBudget.error}` : "";
+                throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.${detail}`);
+            }
+            override.toolBudget = normalizedToolBudget.budget;
         }
     }
     if (Object.hasOwn(input, "maxExecutionTimeMs")) {
@@ -272,12 +272,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
                 throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer or false.`);
             override.maxExecutionTimeMs = parsed;
         }
-    }
-    if (Object.hasOwn(input, "systemPrompt")) {
-        if (typeof input.systemPrompt === "string")
-            override.systemPrompt = input.systemPrompt;
-        else
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
     }
     const fallbackModels = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "fallbackModels") ? input.fallbackModels : undefined, {
         filePath,
