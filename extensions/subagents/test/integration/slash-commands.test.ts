@@ -46,7 +46,6 @@ const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
 
 const slashCommandsModule: unknown = await import("../../src/slash/slash-commands.ts");
 const { registerSlashCommands } = slashCommandsModule as RegisterSlashCommandsModule;
-const available = true;
 
 function createEventBus(): EventBus {
   const handlers = new Map<string, Array<(data: unknown) => void>>();
@@ -150,94 +149,77 @@ function registerCommands(cwd: string, sent: unknown[] = [], config: unknown = {
   return { commands, events, pi };
 }
 
-describe(
-  "slash command registration",
-  { skip: !available ? "slash-commands.ts not importable" : undefined },
-  () => {
-    it("registers only the doctor command", async () => {
-      await withIsolatedHome(async () => {
-        const { commands } = registerCommands(process.cwd());
-        assert.deepEqual([...commands.keys()], ["subagents-doctor"]);
-        assert.equal(commands.has("subagent-cost"), false);
-        assert.equal(commands.has("subagents-fleet"), false);
-      });
+describe("slash command registration", () => {
+  it("registers only the doctor command", async () => {
+    await withIsolatedHome(async () => {
+      const { commands } = registerCommands(process.cwd());
+      assert.deepEqual([...commands.keys()], ["subagents-doctor"]);
+      assert.equal(commands.has("subagent-cost"), false);
+      assert.equal(commands.has("subagents-fleet"), false);
     });
+  });
 
-    it("does not register removed workflow or mutating profile commands", async () => {
-      await withIsolatedHome(async () => {
-        const { commands } = registerCommands(process.cwd());
-        for (const removed of [
-          "run",
-          "chain",
-          "parallel",
-          "run-chain",
-          "subagents-load-profile",
-          "subagents-refresh-provider-models",
-          "subagents-generate-profiles",
-          "subagents-status",
-          "subagents-models",
-          "subagents-profiles",
-          "subagents-check-profile",
-        ]) {
-          assert.equal(commands.has(removed), false, `${removed} should not be registered`);
-        }
-      });
+  it("does not register removed workflow or mutating profile commands", async () => {
+    await withIsolatedHome(async () => {
+      const { commands } = registerCommands(process.cwd());
+      for (const removed of [
+        "run",
+        "chain",
+        "parallel",
+        "run-chain",
+        "subagents-load-profile",
+        "subagents-refresh-provider-models",
+        "subagents-generate-profiles",
+        "subagents-status",
+        "subagents-models",
+        "subagents-profiles",
+        "subagents-check-profile",
+      ]) {
+        assert.equal(commands.has(removed), false, `${removed} should not be registered`);
+      }
     });
-  },
-);
+  });
+});
 
-describe(
-  "subagents-doctor slash command",
-  {
-    skip: !available ? "slash-commands.ts not importable" : undefined,
-  },
-  () => {
-    it("runs diagnostics directly with the active context and renders plain text", async () => {
-      await withIsolatedHome(async () => {
-        const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-slash-doctor-"));
-        try {
-          const sent: unknown[] = [];
-          const config = {};
-          const { commands, events } = registerCommands(cwd, sent, config);
-          const sessionFile = path.join(cwd, "sessions", "parent.jsonl");
-          await commands.get("subagents-doctor")!.handler(
-            "",
-            createCommandContext({
-              cwd,
-              sessionManager: {
-                getSessionFile: () => sessionFile,
-                getSessionId: () => "session-active",
-              },
-            }),
-          );
+describe("subagents-doctor slash command", () => {
+  it("runs diagnostics directly with the active context and renders plain text", async () => {
+    await withIsolatedHome(async () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-slash-doctor-"));
+      try {
+        const sent: unknown[] = [];
+        const config = {};
+        const { commands, events } = registerCommands(cwd, sent, config);
+        const sessionFile = path.join(cwd, "sessions", "parent.jsonl");
+        await commands.get("subagents-doctor")!.handler(
+          "",
+          createCommandContext({
+            cwd,
+            sessionManager: {
+              getSessionFile: () => sessionFile,
+              getSessionId: () => "session-active",
+            },
+          }),
+        );
 
-          assert.deepEqual(events.emitted, []);
-          assert.equal(sent.length, 1);
-          const message = sent[0] as {
-            customType?: unknown;
-            content?: unknown;
-            display?: unknown;
-            details?: unknown;
-          };
-          assert.equal(message.customType, SLASH_TEXT_RESULT_TYPE);
-          assert.equal(message.display, true);
-          assert.equal("details" in message, false);
-          const content = String(message.content);
-          assert.match(content, /^Subagents doctor report/);
-          assert.ok(content.includes(`- cwd: ${cwd}`));
-          assert.match(content, /- current session file: .*parent\.jsonl/);
-          assert.match(content, /- current session id: session-active/);
-        } finally {
-          fs.rmSync(cwd, { recursive: true, force: true });
-        }
-      });
+        assert.deepEqual(events.emitted, []);
+        assert.equal(sent.length, 1);
+        const message = sent[0] as {
+          customType?: unknown;
+          content?: unknown;
+          display?: unknown;
+          details?: unknown;
+        };
+        assert.equal(message.customType, SLASH_TEXT_RESULT_TYPE);
+        assert.equal(message.display, true);
+        assert.equal("details" in message, false);
+        const content = String(message.content);
+        assert.match(content, /^Subagents doctor report/);
+        assert.ok(content.includes(`- cwd: ${cwd}`));
+        assert.match(content, /- current session file: .*parent\.jsonl/);
+        assert.match(content, /- current session id: session-active/);
+      } finally {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
     });
-
-    it("does not register the removed subagents-status overlay command", async () => {
-      await withIsolatedHome(async () => {
-        const { commands } = registerCommands(process.cwd());
-        assert.equal(commands.has("subagents-status"), false);
-      });
-    });
-  },
-);
+  });
+});

@@ -701,4 +701,3 @@ function bestEffortClose(channel, reason) {
     }
     catch { }
 }
-export default createSessionMirrorReplyProducer;

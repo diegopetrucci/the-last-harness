@@ -542,5 +542,3 @@ export function createSessionMirrorObserverProbe(
     getState,
   });
 }
-
-export default createSessionMirrorObserverProbe;

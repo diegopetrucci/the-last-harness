@@ -141,7 +141,7 @@ function isPublishedCallName(name: string): boolean {
   return (name.startsWith("call-") || name.startsWith("stale-call-")) && name.endsWith(".json");
 }
 
-describe("async execution utilities", () => {
+describe("async execution lifecycle interruptions", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -501,7 +501,7 @@ describe("async execution utilities", () => {
           source: "test",
         });
 
-        // Wait for the result artifact (state: "complete" is the persisted string).
+        // Wait for the result artifact (state: "paused" is the persisted string).
         // 30s base: spawns 2 parallel children; extra headroom for slow runners.
         const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
         const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -1382,13 +1382,7 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const elapsed = Date.now() - start;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
@@ -1435,12 +1429,7 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const elapsed = Date.now() - start;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
@@ -1492,12 +1481,7 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
