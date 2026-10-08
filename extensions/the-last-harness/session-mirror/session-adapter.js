@@ -1,9 +1,5 @@
-export const SESSION_MIRROR_PROJECTION_REASONS = Object.freeze([
-    "invalid-metadata",
-    "session-unavailable",
-    "unsafe-session-data",
-    "bounds-exceeded",
-]);
+import { SESSION_MIRROR_PROJECTION_REASONS } from "./status-allowlists.js";
+export { SESSION_MIRROR_PROJECTION_REASONS };
 const MAX_ENVELOPE_BYTES = 256 * 1024;
 const MAX_TREE_ENTRIES = 1024;
 const MAX_TREE_DEPTH = 128;

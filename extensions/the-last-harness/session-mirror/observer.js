@@ -1,17 +1,6 @@
 import { projectSessionMirrorSnapshot, } from "./session-adapter.js";
 export const SESSION_MIRROR_OBSERVER_DEFAULT_QUEUE_CAPACITY = 8;
 export const SESSION_MIRROR_OBSERVER_MAX_QUEUE_CAPACITY = 32;
-export const SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES = Object.freeze([
-    "queue-overflow",
-    "stale-generation",
-    "scheduler-failure",
-    "session-unavailable",
-    "attestation-failure",
-    "attestation-not-ready",
-    "projection-failure",
-    "sink-throw",
-    "sink-reject",
-]);
 const MAX_COUNTER = 2_000_000_000;
 const MAX_METADATA_CHARACTERS = 256;
 const DEFAULT_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";

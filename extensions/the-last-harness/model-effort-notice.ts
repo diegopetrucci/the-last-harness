@@ -1,13 +1,10 @@
 // Startup notice for model/effort override drift from TLH packaged defaults.
 // Fires at most once per launch when packaged defaults changed for an overridden role.
 // Display alone must NOT acknowledge the snapshot; that is /reconcile's job.
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import {
   backfillMissingBaselines,
   computeModelEffortDrift,
@@ -24,19 +21,6 @@ import type { TlhSettings } from "./types.js";
 // ---------------------------------------------------------------------------
 
 let notifiedThisProcess = false;
-
-// ---------------------------------------------------------------------------
-// Settings helper
-// ---------------------------------------------------------------------------
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Cheap override existence check

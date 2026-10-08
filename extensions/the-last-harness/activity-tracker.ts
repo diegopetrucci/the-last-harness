@@ -9,8 +9,6 @@ import {
   SUBAGENT_ASYNC_RESTORED_EVENT,
   type SubagentAsyncRestoredEvent,
 } from "../shared/subagent-restore-contract.js";
-// Re-export so existing importers of activity-tracker.ts continue to work.
-export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";

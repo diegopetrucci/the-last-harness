@@ -29,10 +29,11 @@ import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
-import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
+import { registerTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, getTlhMainTrackBehindCount, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
+import { createRetryableLazyImport } from "./the-last-harness/common.js";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
@@ -61,18 +62,6 @@ function setTlhTerminalTitle(ctx) {
     }
     catch {
     }
-}
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
 }
 const EMPTY_STARTUP_RESOURCES = {
     context: [],
@@ -233,7 +222,7 @@ export default function theLastHarness(pi) {
     registerExperimentalCommand(pi);
     registerReconcileCommand(pi, primaryAgentRuntime);
     registerSubagentSettingsCommand(pi);
-    registerLazyTlhTicketWorkflowUi(pi);
+    registerTlhTicketWorkflowUi(pi);
     pi.registerCommand("tlh-changelog", {
         description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
         handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),

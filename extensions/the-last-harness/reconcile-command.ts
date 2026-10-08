@@ -1,13 +1,8 @@
 // /reconcile command: review and resolve model/effort override drift from TLH packaged defaults.
 // TUI-only picker; non-TUI invocation prints read-only drift status.
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { formatHomePath, isRecord } from "./common.js";
+import { formatHomePath } from "./common.js";
 import {
   computeModelEffortDrift,
   readReconcileState,
@@ -19,27 +14,14 @@ import {
   clearPrimaryAgentModelOverrideByName,
   type TlhPrimaryAgentRuntime,
 } from "./primary-agent-runtime.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import { resetSubagentOverride } from "./subagent-settings.js";
-import type { TlhSettings } from "./types.js";
 
 const RECONCILE_COMMAND = "reconcile";
 const RECONCILE_COMMAND_DESCRIPTION =
   "Review and resolve model/effort override drift from TLH packaged defaults";
-
-// ---------------------------------------------------------------------------
-// Settings helpers
-// ---------------------------------------------------------------------------
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Drift computation
