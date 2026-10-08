@@ -165,34 +165,6 @@ export function mockAssistantMessage(text: string, stopReason: "stop" | "tool_us
   };
 }
 
-export function explicitAcceptanceRejectionOutput(output: string): string {
-  return [
-    output,
-    "```acceptance-report",
-    JSON.stringify({
-      criteriaSatisfied: [
-        {
-          id: "criterion-1",
-          status: "not-satisfied",
-          evidence: "The fixture intentionally rejects this criterion.",
-        },
-      ],
-      changedFiles: ["src/report.md"],
-      testsAddedOrUpdated: ["test/report.test.ts"],
-      commandsRun: [
-        { command: "false", result: "failed", summary: "Intentional rejection fixture." },
-      ],
-      validationOutput: ["Intentional rejection fixture."],
-      residualRisks: [],
-      noStagedFiles: true,
-      diffSummary: "Intentional rejection fixture.",
-      reviewFindings: [],
-      manualNotes: "Intentional rejection fixture.",
-    }),
-    "```",
-  ].join("\n");
-}
-
 export function inferredAcceptanceRejectionOutput(output: string): string {
   return [
     output,

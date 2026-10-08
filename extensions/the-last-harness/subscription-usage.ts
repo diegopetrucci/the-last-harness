@@ -62,7 +62,7 @@ type EligibleProviderContext = {
   model: TlhSubscriptionUsageContext["model"];
   provider: TlhSubscriptionUsageProvider;
   modelRegistry: TlhSubscriptionUsageModelRegistry;
-  credential?: JsonRecord; // undefined in Pi 0.81 path (no authStorage)
+  credential?: JsonRecord; // absent when the registry has no authStorage
 };
 type ResolvedProviderContext =
   | EligibleProviderContext
@@ -521,23 +521,15 @@ function hasRuntimeCredentialOverride(
   }
 }
 
-// Checks for a runtime credential override in either Pi 0.81
-// (getProviderAuthStatus.source === "runtime") or legacy Pi <= 0.80
-// (authStorage.runtimeOverrides Map).
-// The legacy map is consulted first because on Pi 0.80.x getAuthStatus()
-// returns source "stored" even when a runtime --api-key override is also active
-// (the stored-credential check runs before the runtimeOverrides check in that
-// version). Without the legacy-first order, an override on 0.80.x would be
-// missed and stale subscription usage would be shown.
 function isRuntimeCredentialOverride(
   modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
   provider: TlhSubscriptionUsageProvider,
 ): boolean {
-  // Pi <= 0.80 path: authoritative when the runtimeOverrides Map is present.
+  // authStorage.runtimeOverrides map, consulted before auth status.
   if (hasRuntimeCredentialOverride(modelRegistry, provider)) {
     return true;
   }
-  // Pi 0.81 path: no authStorage map — rely on source === "runtime".
+  // No map: getProviderAuthStatus source "runtime".
   try {
     return modelRegistry?.getProviderAuthStatus?.(provider)?.source === "runtime";
   } catch {
@@ -625,13 +617,12 @@ function resolveTlhSubscriptionUsageProviderContext(
     return { status: "transient-unavailable", provider };
   }
 
-  // Pi 0.81 path: no authStorage — skip synchronous credential check.
-  // Token resolution happens asynchronously in resolveTlhSubscriptionUsageTarget.
+  // No authStorage: skip the synchronous credential read.
   if (!modelRegistry.authStorage) {
     return { status: "eligible", model, provider, modelRegistry };
   }
 
-  // Legacy Pi <= 0.80 path: read credential from authStorage.
+  // authStorage present: read the stored OAuth credential.
   const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
   if (credentialResult.status !== "ok") {
     return { status: "transient-unavailable", provider };
@@ -679,10 +670,7 @@ function credentialCacheTarget(
   };
 }
 
-// Resolves the display-target cache key for the legacy Pi <= 0.80 path only
-// (modelRegistry.authStorage present). For Pi 0.81, display-target resolution
-// lives on the service instance (resolveDisplayCacheKey) because it needs
-// activeCacheKeys.
+// Display cache key from a stored authStorage credential.
 function resolveTlhSubscriptionUsageDisplayTarget(
   ctx: TlhSubscriptionUsageContext | undefined,
 ): CredentialCacheTarget | undefined {
@@ -694,7 +682,7 @@ function resolveTlhSubscriptionUsageDisplayTarget(
     return undefined;
   }
   if (!resolved.credential) {
-    // Pi 0.81 path — caller must use the instance method instead.
+    // No stored credential: the service resolves the display key.
     return undefined;
   }
   return credentialCacheTarget(resolved.provider, resolved.credential);
@@ -716,7 +704,7 @@ async function resolveTlhSubscriptionUsageTarget(
     return { status: "transient-unavailable" };
   }
 
-  // Pi 0.81 path: no authStorage — derive cache key from token directly.
+  // No authStorage: cache key comes from the access token.
   if (!modelRegistry.authStorage) {
     // For openai-codex, try to decode account ID from the JWT access-token
     // payload (best-effort, no signature verification, no network).
@@ -742,8 +730,7 @@ async function resolveTlhSubscriptionUsageTarget(
     };
   }
 
-  // Legacy Pi <= 0.80 path: verify the runtime key matches the stored OAuth
-  // credential to guard against runtime override scenarios.
+  // authStorage present: require the runtime token to match the stored credential.
   const credentialResult = readOauthCredentialFromRegistry(modelRegistry, provider);
   if (credentialResult.status !== "ok") {
     return { status: "transient-unavailable" };
@@ -826,10 +813,7 @@ class TlhSubscriptionUsageService {
       .sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
   }
 
-  // Resolves the provider and cache key for sync display reads.
-  // For Pi 0.81 (no authStorage) the cache key comes from activeCacheKeys
-  // (recorded by the last refresh()); for legacy Pi <= 0.80 it is derived
-  // synchronously from the stored OAuth credential.
+  // Sync display cache key from the stored credential, or from the last refresh.
   resolveDisplayCacheKey(
     ctx: TlhSubscriptionUsageContext | undefined,
   ): { provider: TlhSubscriptionUsageProvider; cacheKey: string } | undefined {
@@ -852,7 +836,7 @@ class TlhSubscriptionUsageService {
     if (isRuntimeCredentialOverride(modelRegistry, provider)) {
       return undefined;
     }
-    // Legacy path: derive cache key synchronously from stored credential.
+    // authStorage present: derive the key from the stored credential.
     if (modelRegistry.authStorage) {
       const legacyTarget = resolveTlhSubscriptionUsageDisplayTarget(ctx);
       if (!legacyTarget) {
@@ -860,7 +844,7 @@ class TlhSubscriptionUsageService {
       }
       return { provider, cacheKey: legacyTarget.cacheKey };
     }
-    // Pi 0.81 path: cache key recorded asynchronously by refresh().
+    // No authStorage: use the key recorded by the last refresh.
     const cacheKey = this.activeCacheKeys.get(provider);
     if (!cacheKey) {
       return undefined;
@@ -882,9 +866,7 @@ class TlhSubscriptionUsageService {
     if (typeof target === "string") {
       return isSupportedTlhSubscriptionUsageProvider(target) && this.activeCacheKeys.has(target);
     }
-    // Pi 0.81 path: eligibility is determined entirely by the sync registry
-    // checks (isUsingOAuth + not-runtime-override). No credential or
-    // ineligibleCacheKeys check needed — mismatch cannot arise without authStorage.
+    // No authStorage: eligible when OAuth is in use and there is no runtime override.
     const modelRegistry = target?.modelRegistry;
     if (modelRegistry && !modelRegistry.authStorage) {
       const model = target?.model;
@@ -904,7 +886,7 @@ class TlhSubscriptionUsageService {
       }
       return !isRuntimeCredentialOverride(modelRegistry, provider);
     }
-    // Legacy path: use displayTarget + ineligibleCacheKeys.
+    // authStorage present: eligible unless this display target is marked ineligible.
     const displayTarget = resolveTlhSubscriptionUsageDisplayTarget(target);
     return Boolean(
       displayTarget &&
@@ -967,8 +949,7 @@ class TlhSubscriptionUsageService {
       return undefined;
     }
 
-    // Legacy Pi <= 0.80: compute a sync credential target for transient-
-    // unavailable fallback and mismatch detection.
+    // Stored credential, when present, supplies the sync cache target.
     const legacyCredentialTarget = resolved.credential
       ? credentialCacheTarget(provider, resolved.credential)
       : undefined;
@@ -989,15 +970,14 @@ class TlhSubscriptionUsageService {
     }
     if (targetResult.status === "transient-unavailable") {
       if (legacyCredentialTarget) {
-        // Legacy path: check whether the stored credential has changed
-        // identity while the async call was in flight.
+        // Stored credential changed while the request was in flight.
         const resolvedActiveCacheKey = this.activeCacheKeys.get(provider);
         if (resolvedActiveCacheKey && resolvedActiveCacheKey !== legacyCredentialTarget.cacheKey) {
           this.clearProvider(provider);
         }
         return this.snapshotForCacheKey(provider, legacyCredentialTarget.cacheKey);
       }
-      // Pi 0.81 path: fall back to whatever is currently cached.
+      // No stored credential: return the active cached snapshot.
       const activeCacheKey = this.activeCacheKeys.get(provider);
       return activeCacheKey ? this.snapshotForCacheKey(provider, activeCacheKey) : undefined;
     }

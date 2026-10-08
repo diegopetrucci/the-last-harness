@@ -1,8 +1,4 @@
-/**
- * Integration tests for async execution – runner launch and configuration validation.
- *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
- */
+/** Integration tests for async execution – runner launch and configuration validation. */
 
 import { spawn, spawnSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -45,6 +41,7 @@ import {
   waitForAsyncResultFile,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { inferredAcceptanceRejectionOutput } from "../support/single-execution-fixtures.ts";
 import { getAsyncConfigPath, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 import type {
   RunnerSubagentStep,
@@ -83,24 +80,6 @@ function readEventTypes(asyncDir: string): string[] {
     if (typeof parsed.type !== "string") throw new Error(`event ${index} should have a type`);
     return parsed.type;
   });
-}
-
-function inferredAcceptanceRejectionOutput(output: string): string {
-  return [
-    output,
-    "```acceptance-report",
-    JSON.stringify({
-      criteriaSatisfied: [],
-      changedFiles: [],
-      testsAddedOrUpdated: ["test/report.test.ts"],
-      commandsRun: [
-        { command: "true", result: "passed", summary: "Intentional rejection fixture." },
-      ],
-      residualRisks: [],
-      noStagedFiles: true,
-    }),
-    "```",
-  ].join("\n");
 }
 
 describe("async execution runner launch and configuration validation", () => {
@@ -874,12 +853,7 @@ describe("async execution runner launch and configuration validation", () => {
     assert.equal(persistedConfig.plan.tasks.length, 1);
     const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
     const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(asyncId, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -1020,13 +994,7 @@ describe("async execution runner launch and configuration validation", () => {
 
     const asyncId = result.details?.asyncId;
     assert.ok(asyncId, "expected asyncId");
-    const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(asyncId, scaleTestTimeout(10_000));
     const callFile = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-"));
     assert.ok(callFile, "expected a recorded mock pi call");
     const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8"))

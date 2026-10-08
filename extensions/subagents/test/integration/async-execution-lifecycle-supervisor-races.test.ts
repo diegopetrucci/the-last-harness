@@ -88,7 +88,7 @@ function killPids(pids: readonly (number | undefined)[]): void {
   }
 }
 
-describe("async execution utilities", () => {
+describe("async execution lifecycle supervisor races", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -419,11 +419,6 @@ describe("async execution utilities", () => {
 
       const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 
-      // FIX 10: adoption must happen in-memory at the writeStatusPayload call,
-      // not deferred to a CAS block that only runs when supervisorPauseRequest
-      // is set. Without the fix resultState falls through to `interrupted ? "paused"`
-      // and the artifact says `state: "paused"`.
-      // flag in resultState precedence (concurrentTerminalStatusAdopted wins).
       assert.equal(
         resultPayload.state,
         "cancelled",

@@ -374,6 +374,9 @@ function renderWrapper(args) {
         '  tlh_package_script_is_usable "${default_tlh_package_root}/scripts/tlh-sessions.mjs"',
         "}",
         'export PI_CODING_AGENT_DIR="${default_agent_dir}"',
+        // Pre-disable upstream Pi's native OSC 7501 emitter (see GitHub issue #748;
+        // available in pinned Pi 1.1.0) so it cannot fight TLH's root-record reporter.
+        'export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"',
         "",
         'if [[ "${1:-}" == "update" ]]; then',
         "  shift",

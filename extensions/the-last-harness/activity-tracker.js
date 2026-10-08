@@ -67,6 +67,22 @@ function looksLikeRetryableAgentEnd(messages) {
     }
     return false;
 }
+function deriveAgentEndOutcome(messages) {
+    if (Array.isArray(messages)) {
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+            const message = messages[index];
+            if (!isRecord(message) || message.role !== "assistant") {
+                continue;
+            }
+            if (message.stopReason === "aborted")
+                return "aborted";
+            if (message.stopReason === "error" || typeof message.errorMessage === "string")
+                return "error";
+            return "completed";
+        }
+    }
+    return "completed";
+}
 function readRestorableAsyncJob(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
     const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
@@ -101,8 +117,12 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const listeners = new Set();
     let disposed = false;
     let activeSessionId;
+    let runActive = false;
+    let pendingOutcome = undefined;
+    let lastRunOutcome = undefined;
     let uiPromptDepth = 0;
-    let lastSnapshotKey = "0::0::::";
+    const uiPromptKindStack = [];
+    let lastSnapshotKey = "0::0::0::::::";
     let livenessTimer;
     const stopLivenessTimer = () => {
         if (livenessTimer !== undefined) {
@@ -301,17 +321,28 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         const sessionId = sessionManager?.getSessionFile?.() ?? sessionManager?.getSessionId?.();
         return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
     };
-    const buildSnapshot = () => ({
-        inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
-        waitingForUser: uiPromptDepth > 0,
-        primaryReasons: [...primaryReasons.keys()].sort(),
-        activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
-    });
+    const buildSnapshot = () => {
+        const waitingForUser = uiPromptDepth > 0;
+        const topKind = waitingForUser ? uiPromptKindStack[uiPromptKindStack.length - 1] : undefined;
+        const waitingForUserKind = topKind !== undefined ? topKind : undefined;
+        return {
+            inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+            waitingForUser,
+            ...(runActive ? { runActive: true } : {}),
+            ...(waitingForUserKind !== undefined ? { waitingForUserKind } : {}),
+            primaryReasons: [...primaryReasons.keys()].sort(),
+            activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
+            ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+        };
+    };
     const snapshotKey = (snapshot) => [
         snapshot.inProgress ? "1" : "0",
         snapshot.waitingForUser ? "1" : "0",
+        snapshot.runActive ? "1" : "0",
+        snapshot.waitingForUserKind ?? "",
         snapshot.primaryReasons.join(","),
         snapshot.activeAsyncJobIds.join(","),
+        snapshot.lastRunOutcome ?? "",
     ].join("::");
     const notifyIfChanged = () => {
         drainDeadAsyncJobs();
@@ -346,6 +377,9 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         },
         beginSession(ctx) {
             activeSessionId = currentSessionId(ctx.sessionManager);
+            runActive = false;
+            pendingOutcome = undefined;
+            lastRunOutcome = undefined;
         },
         rehydrateFromArtifacts(ctx) {
             if (disposed)
@@ -395,17 +429,23 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             activeAsyncJobs.clear();
             recentlyCompletedAsyncJobs.clear();
             activeSessionId = undefined;
+            runActive = false;
+            pendingOutcome = undefined;
+            lastRunOutcome = undefined;
             uiPromptDepth = 0;
+            uiPromptKindStack.length = 0;
             notifyIfChanged();
             listeners.clear();
         },
         handleBeforeAgentStart() {
             clearRetryGrace();
+            runActive = true;
             addPrimaryReason("primary:pending-start");
             notifyIfChanged();
         },
         handleAgentStart() {
             clearRetryGrace();
+            runActive = true;
             removePrimaryReason("primary:pending-start");
             addPrimaryReason("primary:agent-loop");
             notifyIfChanged();
@@ -413,9 +453,22 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         handleAgentEnd(event) {
             removePrimaryReason("primary:agent-loop");
             removePrimaryReason("primary:pending-start");
+            pendingOutcome = deriveAgentEndOutcome(Array.isArray(event.messages) ? event.messages : undefined);
             if (looksLikeRetryableAgentEnd(event.messages)) {
                 scheduleRetryGrace("agent-end");
             }
+            notifyIfChanged();
+        },
+        handleAgentSettled(event = { aborted: false }) {
+            if (event.aborted) {
+                lastRunOutcome = "aborted";
+            }
+            else if (pendingOutcome !== undefined) {
+                lastRunOutcome = pendingOutcome;
+            }
+            pendingOutcome = undefined;
+            runActive = false;
+            clearRetryGrace();
             notifyIfChanged();
         },
         handleTurnStart() {
@@ -450,16 +503,29 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
             notifyIfChanged();
         },
-        handleUIPromptStart() {
+        handleUIPromptStart(event) {
             if (disposed)
                 return;
             uiPromptDepth += 1;
+            const kind = event?.kind;
+            const recordedKind = kind === "select" ||
+                kind === "confirm" ||
+                kind === "input" ||
+                kind === "editor" ||
+                kind === "custom"
+                ? kind
+                : undefined;
+            uiPromptKindStack.push(recordedKind);
             notifyIfChanged();
         },
-        handleUIPromptEnd() {
+        handleUIPromptEnd(_event) {
             if (uiPromptDepth === 0)
                 return;
             uiPromptDepth -= 1;
+            uiPromptKindStack.pop();
+            if (uiPromptDepth === 0) {
+                uiPromptKindStack.length = 0;
+            }
             notifyIfChanged();
         },
         handleAsyncRestored(data) {
@@ -556,7 +622,12 @@ export function registerTlhEffectiveActivityTracker(pi, options = {}) {
         ]
         : [];
     if (pi.events) {
+        let lastBusKey = "";
         tracker.subscribe((snapshot) => {
+            const busKey = `${snapshot.inProgress ? "1" : "0"}:${snapshot.waitingForUser ? "1" : "0"}:${snapshot.activeAsyncJobIds.join(",")}`;
+            if (busKey === lastBusKey)
+                return;
+            lastBusKey = busKey;
             try {
                 pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
                     inProgress: snapshot.inProgress,
@@ -584,6 +655,9 @@ export function registerTlhEffectiveActivityTracker(pi, options = {}) {
     });
     pi.on("agent_end", (event) => {
         tracker.handleAgentEnd(event);
+    });
+    pi.on("agent_settled", (event) => {
+        tracker.handleAgentSettled(event);
     });
     pi.on("turn_start", () => {
         tracker.handleTurnStart();

@@ -36,6 +36,7 @@ import {
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
 import { scaleTestTimeout, type ScaledMs } from "../support/scale-timeout.ts";
+import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
 describe(
   "completed-run revival",
@@ -961,13 +962,7 @@ describe(
         assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
         const revivedId = result.details?.asyncId;
         assert.ok(revivedId, "expected revived async id");
-        const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-        const deadline = Date.now() + scaleTestTimeout(10_000);
-        while (!fs.existsSync(resultPath)) {
-          if (Date.now() > deadline)
-            assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+        await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
       } finally {
         fs.rmSync(asyncDir, { recursive: true, force: true });
       }
@@ -1337,13 +1332,7 @@ describe(
       assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
       const revivedId = revived.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
-      const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-      const deadline = Date.now() + scaleTestTimeout(10_000);
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline)
-          assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
     });
   },
 );
