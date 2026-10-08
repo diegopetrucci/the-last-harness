@@ -21,6 +21,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
 - Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
 - Install and update no longer clean up settings left by extensions retired in v0.34.0 or earlier (context-cap, oracle, rtk, intercom, fff, and subagents opt-outs in `tlh.disabledDefaultExtensions`; `tlh.gnosis`, `tlh.rtk`, and `subagents.disableBuiltins` keys). Leftover values from those versions are now silently ignored. Package-level force-removal for the same retired extensions is unaffected.
