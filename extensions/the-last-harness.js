@@ -285,7 +285,7 @@ export default function theLastHarness(pi) {
     });
     pi.on("session_start", async (event, ctx) => {
         const sessionToken = invalidateActiveTlhHeaderSession();
-        await primaryAgentRuntime.applySessionStart(ctx);
+        await primaryAgentRuntime.applySessionStart(ctx, event.reason);
         refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
         if (!ctx.hasUI) {
             return;
