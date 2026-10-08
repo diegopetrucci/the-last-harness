@@ -27,7 +27,7 @@ export function createPi(
   };
 
   // Formatting-focused tests run with batching disabled so single completions
-  // emit synchronously. Batching behavior is covered by the dedicated suite below.
+  // emit synchronously.
   registerSubagentNotify(
     pi as never,
     { currentSessionId },
