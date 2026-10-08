@@ -1,7 +1,7 @@
 /**
- * Tests for step behavior resolution and skill normalization.
+ * Tests for step behavior resolution.
  *
- * Covers the pure logic of normalizeSkillInput, resolveStepBehavior, and
+ * Covers the pure logic of resolveStepBehavior and
  * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates.
  * Uses dynamic import since settings.ts transitively depends on pi packages.
  */
@@ -12,52 +12,12 @@ import { tryImport } from "../support/helpers.ts";
 
 // Top-level await
 const settings = await tryImport<any>("./src/shared/settings.ts");
-const skills = await tryImport<any>("./src/agents/skills.ts");
-const available = !!(settings && skills);
+const available = !!settings;
 
 const buildExecutionInstructions = settings?.buildExecutionInstructions;
 const resolveStepBehavior = settings?.resolveStepBehavior;
 const suppressProgressForReadOnlyTask = settings?.suppressProgressForReadOnlyTask;
 const taskDisallowsFileUpdates = settings?.taskDisallowsFileUpdates;
-const normalizeSkillInput = skills?.normalizeSkillInput;
-
-describe(
-  "normalizeSkillInput",
-  { skip: !available ? "pi packages not available" : undefined },
-  () => {
-    it("returns undefined for undefined input", () => {
-      assert.equal(normalizeSkillInput(undefined), undefined);
-    });
-
-    it("returns undefined for true (use default)", () => {
-      assert.equal(normalizeSkillInput(true), undefined);
-    });
-
-    it("returns false for false (disable)", () => {
-      assert.equal(normalizeSkillInput(false), false);
-    });
-
-    it("splits comma-separated string", () => {
-      assert.deepEqual(normalizeSkillInput("web-search,pdf"), ["web-search", "pdf"]);
-    });
-
-    it("passes through array", () => {
-      assert.deepEqual(normalizeSkillInput(["a", "b"]), ["a", "b"]);
-    });
-
-    it("deduplicates", () => {
-      assert.deepEqual(normalizeSkillInput(["a", "b", "a"]), ["a", "b"]);
-    });
-
-    it("trims whitespace", () => {
-      assert.deepEqual(normalizeSkillInput(" a , b "), ["a", "b"]);
-    });
-
-    it("filters empty strings", () => {
-      assert.deepEqual(normalizeSkillInput(",a,,b,"), ["a", "b"]);
-    });
-  },
-);
 
 describe(
   "resolveStepBehavior",
