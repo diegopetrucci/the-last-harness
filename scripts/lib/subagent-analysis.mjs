@@ -769,5 +769,3 @@ export function analyzeSubagentSessions(scanResults, baseCoverage = aggregateCov
         wakeups: publicWakeups,
     };
 }
-/** Short alias for callers that use the CLI mode name as the function name. */
-export const analyzeSubagents = analyzeSubagentSessions;
