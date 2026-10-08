@@ -523,10 +523,6 @@ make_fake_remote_stage1_support_root() {
   local root="$1"
   local manifest_file="${root}/.fake-remote-stage1-support-manifest"
   local _ relative_path
-  local -a compatibility_paths=(
-    "config/librarian.defaults.json"
-    "scripts/tlh-install-query.mjs"
-  )
 
   mkdir -p "${root}"
   cp "${ROOT_DIR}/install.sh" "${root}/install.sh"
@@ -538,12 +534,6 @@ make_fake_remote_stage1_support_root() {
     mkdir -p "${root}/$(dirname "${relative_path}")"
     cp "${ROOT_DIR}/${relative_path}" "${root}/${relative_path}"
   done <"${manifest_file}"
-
-  local compatibility_path
-  for compatibility_path in "${compatibility_paths[@]}"; do
-    mkdir -p "${root}/$(dirname "${compatibility_path}")"
-    cp "${ROOT_DIR}/${compatibility_path}" "${root}/${compatibility_path}"
-  done
 
   local prompt
   for prompt in developer.md test-runner.md code-reviewer.md repo-scout.md diff-summarizer.md librarian.md oracle.md contrarian.md web-scout.md; do

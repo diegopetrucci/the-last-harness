@@ -156,7 +156,6 @@ const PACKAGED_SCRIPT_FILES = [
   "scripts/tlh-doctor.mts",
   "scripts/tlh-gnosis.mjs",
   "scripts/tlh-gnosis.mts",
-  "scripts/tlh-install-query.mjs",
   "scripts/tlh-install-state.mjs",
   "scripts/tlh-install.mjs",
   "scripts/tlh-install.mts",
