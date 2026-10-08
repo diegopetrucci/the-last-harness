@@ -8,15 +8,12 @@ const piSystemPrompt = await import(
   new URL("./core/system-prompt.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
 );
 export const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = piSystemPrompt;
-export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import(
-  "../extensions/the-last-harness/attribution.ts",
-);
 // Retained only as a stale-settings fixture value: the runtime no longer registers this feature.
 export const EMBEDDED_SUBAGENTS_FEATURE = "embedded-subagents";
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
 );
-export const { normalizeAgentModelDefaults } = await jiti.import(
+const { normalizeAgentModelDefaults } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
 );
 

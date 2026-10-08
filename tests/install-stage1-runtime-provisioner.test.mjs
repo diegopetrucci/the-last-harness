@@ -3,26 +3,6 @@
  * isTlhOnlyLib (via provisionPiRuntime), cleanupStaleRuntimeDirs, and
  * RUNTIME_FAILED_DIR_PREFIX.  These tests import the generated .mjs directly
  * and use a fake IO so they do not invoke the real installer.
- *
- * Covers correction-pass requirements for tlha-e7lp:
- *   Fix #1 – shippedPackageJsonPath/shippedLockPath API + remote tempPath names
- *   Fix #2 – no lib/bin after a successful staged install
- *   Fix #3 – tightened isTlhOnlyLib guard
- *   Fix #4 – RUNTIME_FAILED_DIR_PREFIX constant + cleanupStaleRuntimeDirs
- *   Fix #5 – dry-run prints actual npm ci command, no void/npmCiArgs dead code
- *
- * Review-fix requirements for tlha-5ljv:
- *   Item 1 – symlinked bin/ or lib/ refused (both origins, incl. dry-run)
- *   Item 2 – bin/pi rename-aside transaction; rollback restores byte-identical entry
- *   Item 3 – interrupted-swap recovery before reuse check
- */
-/**
- * Lock tests added for tlha-uhbj:
- *   Lock-1 – live lock held by live pid → refused, dirs untouched
- *   Lock-2 – stale lock with dead pid → reclaimed, provisioning proceeds
- *   Lock-3 – lock released after success and after failed npm ci (rollback path)
- *   Lock-4 – dry-run never creates the lock
- *   Lock-5 – malformed owner.json recent → refused; old mtime → reclaimed
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
