@@ -460,8 +460,11 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             }
             notifyIfChanged();
         },
-        handleAgentSettled() {
-            if (pendingOutcome !== undefined) {
+        handleAgentSettled(event = { aborted: false }) {
+            if (event.aborted) {
+                lastRunOutcome = "aborted";
+            }
+            else if (pendingOutcome !== undefined) {
                 lastRunOutcome = pendingOutcome;
             }
             pendingOutcome = undefined;
@@ -654,8 +657,8 @@ export function registerTlhEffectiveActivityTracker(pi, options = {}) {
     pi.on("agent_end", (event) => {
         tracker.handleAgentEnd(event);
     });
-    pi.on("agent_settled", () => {
-        tracker.handleAgentSettled();
+    pi.on("agent_settled", (event) => {
+        tracker.handleAgentSettled(event);
     });
     pi.on("turn_start", () => {
         tracker.handleTurnStart();

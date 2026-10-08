@@ -296,21 +296,6 @@ export { msg };
   assert.match(stdout, /OK/, "expected OK in stdout");
 });
 
-// ---------------------------------------------------------------------------
-// Regression: fixture placed INSIDE the repo is analysed as itself.
-//
-// Before the fix, tryReadPiExtensions would walk up from the fixture dir,
-// find the repo's package.json with pi.extensions, and analyse the repo's
-// own extensions tree instead of the fixture. Two symptoms:
-//   1. Output paths contained "../extensions/the-last-harness.js" (wrong tree).
-//   2. The allowlist path became "../extensions/the-last-harness/common.js"
-//      which doesn't match "the-last-harness/common.js", so common.js was
-//      spuriously reported as a shared-module violation.
-//
-// The fix: manifest entries are only accepted if they are children of
-// extensionsDir. If they aren't, heuristic discovery is used instead.
-// ---------------------------------------------------------------------------
-
 test("in-repo fixture is analysed as itself, not replaced by the repo tree", () => {
   // Place the fixture INSIDE the repo so the repo's package.json is above it.
   const dir = makeTempDir(

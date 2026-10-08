@@ -7,6 +7,8 @@
  *   completed→done, undefined→idle.
  * - Settle-based outcome: no false "error" during Pi retry gap (runActive
  *   keeps the reporter in "working" across agent_end→agent_settled).
+ * - Native registered agent_settled.aborted override for cancellation during
+ *   retry backoff without another agent_end.
  *
  * Kept in a separate file to stay within the max-lines limit of the main
  * activity-reporters test file.
@@ -19,9 +21,8 @@ const jiti = createJiti(import.meta.url);
 const { createProgramStatusActivityReporter } = await jiti.import(
   "../extensions/the-last-harness/activity-reporters.ts",
 );
-const { createTlhEffectiveActivityTracker } = await jiti.import(
-  "../extensions/the-last-harness/activity-tracker.ts",
-);
+const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } =
+  await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
 
 function createFakeTimers() {
   let now = 0;
@@ -173,7 +174,7 @@ test("no false error emitted during Pi retry gap longer than retry grace", async
   // Retry completes successfully.
   tracker.handleAgentStart();
   tracker.handleAgentEnd({ messages: successEndMsg });
-  tracker.handleAgentSettled();
+  tracker.handleAgentSettled({ aborted: false });
   timers.advance(0);
   await flushAsyncWork();
 
@@ -189,7 +190,7 @@ test("error emitted when run settles as error (no retry)", async () => {
   tracker.handleAgentStart();
   tracker.handleAgentEnd({ messages: retryableEndMsg });
   // agent_settled fires immediately with no retry following.
-  tracker.handleAgentSettled();
+  tracker.handleAgentSettled({ aborted: false });
   timers.advance(0);
   await flushAsyncWork();
 
@@ -203,7 +204,7 @@ test("idle emitted when run settles as aborted", async () => {
   tracker.handleBeforeAgentStart();
   tracker.handleAgentStart();
   tracker.handleAgentEnd({ messages: abortedEndMsg });
-  tracker.handleAgentSettled();
+  tracker.handleAgentSettled({ aborted: true });
   timers.advance(0);
   await flushAsyncWork();
 
@@ -212,33 +213,87 @@ test("idle emitted when run settles as aborted", async () => {
   reporter.dispose();
 });
 
-// Pinned-behaviour test: cancel during retry delay reports error (Pi 1.0.4 limitation).
-// On Pi 1.0.4, aborting during an automatic retry backoff emits agent_settled with
-// no new agent_end, so pendingOutcome still holds the error from the failed attempt
-// and is committed as "error" rather than "idle". Pi >=1.1.0 adds
-// agent_settled.aborted (#748), which will fix this. Until then this test pins the
-// known behaviour so a future Pi bump reveals the deviation.
-test("cancel during retry delay reports error on Pi 1.0.4 (known limitation)", async () => {
-  const { tracker, reporter, output, timers } = makeTrackerReporter();
+function makeRegisteredTrackerReporter() {
+  const timers = createFakeTimers();
+  const eventHandlers = new Map();
+  const pi = {
+    on(event, handler) {
+      eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+    },
+  };
+  const tracker = registerTlhEffectiveActivityTracker(pi);
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  reporter.handleSessionStart({ mode: "tui", sessionManager: sm });
+  tracker.subscribe((snapshot) => reporter.handleSnapshot(snapshot));
+  const fire = (event, payload = {}) => {
+    for (const handler of eventHandlers.get(event) ?? []) handler(payload);
+  };
+  return { tracker, reporter, output, timers, fire };
+}
 
-  tracker.handleBeforeAgentStart();
-  tracker.handleAgentStart();
-  // First attempt fails with a retryable error.
-  tracker.handleAgentEnd({ messages: retryableEndMsg });
-  // User cancels during the retry backoff: agent_settled fires without a new
-  // agent_end, so pendingOutcome remains "error".
-  tracker.handleAgentSettled();
+test("registered aborted settlement cancels retry backoff to idle without another agent_end", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { tracker, reporter, output, timers, fire } = makeRegisteredTrackerReporter();
+  t.after(() => {
+    tracker.dispose();
+    reporter.dispose();
+  });
+
+  fire("before_agent_start");
+  fire("agent_start");
+  fire("agent_end", { messages: retryableEndMsg });
+  const retrySnapshot = tracker.getSnapshot();
+  assert.ok(
+    retrySnapshot.primaryReasons.includes("primary:retry-grace"),
+    "retry grace must be present before expiry",
+  );
+  assert.equal(retrySnapshot.runActive, true, "run must remain active during retry grace");
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.equal(output.writes.at(-1), workingSeq, "retry grace must report working");
+
+  // Advance the registered tracker's global timer before the reporter's fake clock so
+  // a quiescent error cannot be hidden behind its debounce.
+  t.mock.timers.tick(3000);
+  const expiredSnapshot = tracker.getSnapshot();
+  assert.ok(
+    !expiredSnapshot.primaryReasons.includes("primary:retry-grace"),
+    "retry grace must expire after 3000ms",
+  );
+  assert.equal(expiredSnapshot.runActive, true, "run must remain active after retry grace expires");
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.equal(output.writes.at(-1), workingSeq, "expired retry grace must still report working");
+  assert.ok(!output.writes.includes(errorSeq), "retry gap must remain free of error");
+
+  // Cancellation settles without another agent_end; native aborted metadata must win
+  // over the pending error captured from the failed attempt.
+  fire("agent_settled", { type: "agent_settled", aborted: true });
   timers.advance(0);
   await flushAsyncWork();
 
-  // Known limitation: reports error, not idle.
-  assert.ok(
-    output.writes.includes(errorSeq),
-    "cancel during retry delay commits pending error (Pi 1.0.4 limitation)",
-  );
-  assert.ok(
-    !output.writes.includes(idleSeq),
-    "idle must not be emitted for abort-during-retry on Pi 1.0.4",
-  );
+  const settledSnapshot = tracker.getSnapshot();
+  assert.equal(settledSnapshot.runActive, undefined, "aborted settlement must clear run activity");
+  assert.equal(settledSnapshot.lastRunOutcome, "aborted");
+  assert.equal(output.writes.at(-1), idleSeq, "aborted settlement must finish idle");
+  assert.ok(!output.writes.includes(errorSeq), "aborted settlement must suppress error");
+});
+
+test("program-status reporter keeps working while an active child remains after abort", async () => {
+  const { reporter, output } = makeReporter();
+  reporter.handleSnapshot({
+    inProgress: true,
+    lastRunOutcome: "aborted",
+    activeAsyncJobIds: ["child-1"],
+    primaryReasons: [],
+  });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq], "active child activity must remain working");
   reporter.dispose();
 });

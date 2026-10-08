@@ -1,6 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext, UIPromptKind } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSettledEvent,
+  ExtensionAPI,
+  ExtensionContext,
+  UIPromptKind,
+} from "@earendil-works/pi-coding-agent";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import {
@@ -61,7 +66,8 @@ export type TlhEffectiveActivitySnapshot = {
    * Outcome of the most recent agent run in this session.
    * Committed at agent_settled (not at agent_end) so it is never emitted
    * while Pi is between a retryable error and its retry.
-   * - 'aborted': user cancelled the run (last assistant stopReason === 'aborted').
+   * - 'aborted': user cancellation, from native agent_settled.aborted (or a
+   *   legacy agent_end stopReason fixture when no settlement metadata is supplied).
    * - 'error': run failed (last assistant stopReason === 'error' or errorMessage present).
    * - 'completed': run ended normally.
    * - undefined: no run has settled yet this session.
@@ -82,7 +88,7 @@ export type TlhEffectiveActivityTracker = {
   handleBeforeAgentStart(): void;
   handleAgentStart(): void;
   handleAgentEnd(event: { messages?: unknown[] }): void;
-  handleAgentSettled(): void;
+  handleAgentSettled(event?: Pick<AgentSettledEvent, "aborted">): void;
   handleTurnStart(): void;
   handleToolExecutionStart(event: { toolCallId?: string }): void;
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
@@ -207,10 +213,9 @@ function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): b
 }
 
 /**
- * Derives the run outcome from the last assistant message in agent_end event.messages.
- * Pinned Pi is 1.0.4, whose agent_settled event has NO aborted field; cancel detection
- * is therefore derived from the last assistant stopReason here.
- * TODO: after bumping Pi to >=1.1.0 switch cancel detection to agent_settled.aborted (#748).
+ * Derives the run outcome from the last assistant message in agent_end event.messages
+ * for a non-aborted settlement. The native agent_settled.aborted flag is authoritative
+ * for cancellation; this preserves error/completion classification for other settlements.
  */
 function deriveAgentEndOutcome(
   messages: readonly unknown[] | undefined,
@@ -741,20 +746,15 @@ export function createTlhEffectiveActivityTracker(
       }
       notifyIfChanged();
     },
-    handleAgentSettled() {
-      // agent_settled fires after all retries, compaction recovery, and
-      // continuations finish (including on abort). Commit the pending outcome
-      // and clear the run-active flag so the OSC 7501 reporter can transition
-      // out of "working" with the correct final state.
-      //
-      // Limitation (Pi 1.0.4): if the user cancels during an automatic retry
-      // backoff, agent_settled fires without a new agent_end, so pendingOutcome
-      // still holds the error from the failed attempt and is committed here as
-      // "error" instead of "idle". Pi >=1.1.0 adds agent_settled.aborted (#748),
-      // which will allow us to detect this case and override pendingOutcome to
-      // "aborted" before committing. Until the pin bumps, this is a known
-      // limitation: cancelling during a retry delay reports error, not idle.
-      if (pendingOutcome !== undefined) {
+    handleAgentSettled(event: Pick<AgentSettledEvent, "aborted"> = { aborted: false }) {
+      // Pi emits agent_settled after retries, compaction recovery, and queued
+      // continuations finish. Its native abort flag is authoritative, including
+      // cancellation during retry backoff when no new agent_end was emitted.
+      // The default keeps older direct tracker fixtures compatible; registered Pi
+      // events always provide the required native boolean.
+      if (event.aborted) {
+        lastRunOutcome = "aborted";
+      } else if (pendingOutcome !== undefined) {
         lastRunOutcome = pendingOutcome;
       }
       pendingOutcome = undefined;
@@ -966,8 +966,8 @@ export function registerTlhEffectiveActivityTracker(
   pi.on("agent_end", (event) => {
     tracker.handleAgentEnd(event);
   });
-  pi.on("agent_settled", () => {
-    tracker.handleAgentSettled();
+  pi.on("agent_settled", (event) => {
+    tracker.handleAgentSettled(event);
   });
   pi.on("turn_start", () => {
     tracker.handleTurnStart();

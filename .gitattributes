@@ -106,6 +106,7 @@ extensions/the-last-harness/session-mirror/json-boundary.js linguist-generated=t
 extensions/the-last-harness/session-mirror/local-bridge-boundary.js linguist-generated=true
 extensions/the-last-harness/session-mirror/local-bridge-reply-channel.js linguist-generated=true
 extensions/the-last-harness/session-mirror/local-bridge-sink.js linguist-generated=true
+extensions/the-last-harness/session-mirror/local-bridge-socket.js linguist-generated=true
 extensions/the-last-harness/session-mirror/profile-attestation.js linguist-generated=true
 extensions/the-last-harness/session-mirror/session-adapter.js linguist-generated=true
 extensions/the-last-harness/session-mirror/observer.js linguist-generated=true
