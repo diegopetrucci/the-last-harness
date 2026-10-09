@@ -1775,3 +1775,35 @@ test("/toggle-context-cap fails gracefully when outside isolated profile", async
     }
   }
 });
+
+test("/toggle-context-cap refuses a non-object tlh without rewriting settings", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-cap-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = `${JSON.stringify({ tlh: "x" })}\n`;
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, ...NON_CHILD_ENV },
+    async () => {
+      const pi = createPiHarness();
+      registerContextCap(pi);
+      const command = pi.commands.get("toggle-context-cap");
+      assert.ok(command, "command must be registered");
+
+      const ctx = createCtx({ cwd: fixture.dir });
+      await command.handler("", ctx);
+
+      assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+      assert.equal(
+        readdirSync(fixture.agent).filter((name) => name.startsWith("settings.json.bak-")).length,
+        0,
+      );
+      assert.equal(ctx.notifications.length, 1);
+      assert.equal(ctx.notifications[0].type, "error");
+      assert.match(
+        ctx.notifications[0].message,
+        /Could not update context cap setting: settings field 'tlh' must be an object if present/,
+      );
+    },
+  );
+});
