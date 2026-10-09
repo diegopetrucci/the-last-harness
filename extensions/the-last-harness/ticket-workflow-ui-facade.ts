@@ -9,7 +9,7 @@ import { activateTlhTicketSessionScope } from "./tickets.js";
 type TlhTicketWorkflowUiFacadeOptions = {
   createRuntime?: (pi: ExtensionAPI) => TlhTicketWorkflowUiRuntime;
 };
-export function registerLazyTlhTicketWorkflowUi(
+export function registerTlhTicketWorkflowUi(
   pi: ExtensionAPI,
   options: TlhTicketWorkflowUiFacadeOptions = {},
 ): void {

@@ -2,8 +2,10 @@ import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { dirname, join } from "node:path";
 import { getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { createRetryableLazyImport } from "./common.js";
 import { getTlhExperimentalConfig, isTlhExperimentalFeatureEnabled, SESSION_MIRROR_OBSERVER_FEATURE, } from "./experimental.js";
-import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
+import { attestSessionMirrorSession, SESSION_MIRROR_ATTESTATION_REASONS, } from "./session-mirror/profile-attestation.js";
+import { SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES, SESSION_MIRROR_PROJECTION_REASONS, } from "./session-mirror/status-allowlists.js";
 export const SESSION_MIRROR_OBSERVER_RUNTIME_VERSION = "tlh-session-mirror-runtime-v1";
 export const SESSION_MIRROR_OBSERVER_SESSION_SCHEMA_VERSION = "pi-session-schema-v3";
 export const SESSION_MIRROR_OBSERVER_COMMAND = "session-mirror-observer";
@@ -176,18 +178,8 @@ function safeAttest(attest, sessionFile) {
             }
         }
         if (result && result.ok === false) {
-            const reason = result.reason;
-            if (typeof reason === "string" &&
-                [
-                    "missing-profile-selection",
-                    "missing-home",
-                    "default-or-normal-profile",
-                    "profile-mismatch",
-                    "unsafe-profile-metadata",
-                    "ephemeral-session",
-                    "session-escape",
-                    "unsafe-session-metadata",
-                ].includes(reason)) {
+            const reason = optionalEnumValue(result.reason, SESSION_MIRROR_ATTESTATION_REASONS);
+            if (reason) {
                 return { ok: false, reason };
             }
         }
@@ -204,33 +196,6 @@ const OBSERVER_ATTESTATION_STATES = [
     "shutdown",
 ];
 const OBSERVER_STATUS_VALUES = ["idle", "active", "waiting", "error", "unknown"];
-const OBSERVER_DIAGNOSTIC_CODES = [
-    "queue-overflow",
-    "stale-generation",
-    "scheduler-failure",
-    "session-unavailable",
-    "attestation-failure",
-    "attestation-not-ready",
-    "projection-failure",
-    "sink-throw",
-    "sink-reject",
-];
-const ATTESTATION_REASONS = [
-    "missing-profile-selection",
-    "missing-home",
-    "default-or-normal-profile",
-    "profile-mismatch",
-    "unsafe-profile-metadata",
-    "ephemeral-session",
-    "session-escape",
-    "unsafe-session-metadata",
-];
-const PROJECTION_REASONS = [
-    "invalid-metadata",
-    "session-unavailable",
-    "unsafe-session-data",
-    "bounds-exceeded",
-];
 const PROBE_ENVELOPE_CATEGORIES = [
     "none",
     "empty",
@@ -306,9 +271,9 @@ function normalizeProbeState(value) {
             coalescedMarkers: boundedCounter(source.coalescedMarkers),
             droppedMarkers: boundedCounter(source.droppedMarkers),
             diagnostics: boundedDiagnosticCounts(source.diagnostics),
-            lastDiagnostic: optionalEnumValue(source.lastDiagnostic, OBSERVER_DIAGNOSTIC_CODES),
-            lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, ATTESTATION_REASONS),
-            lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, PROJECTION_REASONS),
+            lastDiagnostic: optionalEnumValue(source.lastDiagnostic, SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES),
+            lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, SESSION_MIRROR_ATTESTATION_REASONS),
+            lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, SESSION_MIRROR_PROJECTION_REASONS),
             envelopeCategory: enumValue(source.envelopeCategory, PROBE_ENVELOPE_CATEGORIES, "none"),
             entryCount: boundedCounter(source.entryCount, 1024),
             rootCount: boundedCounter(source.rootCount, 1024),
@@ -950,16 +915,4 @@ export function registerSessionMirrorObserverFacade(pi, options = {}) {
     pi.on("session_tree", () => facade.sessionTree());
     pi.on("session_compact", () => facade.sessionCompact());
     return facade;
-}
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
 }

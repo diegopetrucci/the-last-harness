@@ -2,15 +2,13 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 import {
-  SettingsManager,
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
-import type { TlhSettings } from "./types.js";
 
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
@@ -44,15 +42,6 @@ type TlhTicketWorkflowUiRuntimeOptions = {
   runner?: TkCommandRunner;
   now?: () => number;
 };
-
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-    return isRecord(settings) ? (settings as TlhSettings) : {};
-  } catch {
-    return {};
-  }
-}
 
 function firstOutputLine(result: TkCommandResult): string | undefined {
   return `${result.stdout || ""}\n${result.stderr || ""}`

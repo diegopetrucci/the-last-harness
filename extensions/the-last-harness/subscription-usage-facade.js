@@ -1,15 +1,4 @@
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
+import { createRetryableLazyImport } from "./common.js";
 class LazyTlhSubscriptionUsageService {
     loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
     service;

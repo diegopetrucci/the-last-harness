@@ -1,5 +1,9 @@
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
+import { SESSION_MIRROR_PROJECTION_REASONS } from "./status-allowlists.js";
+
+export { SESSION_MIRROR_PROJECTION_REASONS };
+
 /**
  * The read-only session-manager methods used by this projection. This is the
  * supported upstream surface; the adapter never opens or tails the session
@@ -9,13 +13,6 @@ export type SessionMirrorReadonlySessionManager = Pick<
   SessionManager,
   "getSessionFile" | "getSessionId" | "getLeafId" | "getEntries"
 >;
-
-export const SESSION_MIRROR_PROJECTION_REASONS = Object.freeze([
-  "invalid-metadata",
-  "session-unavailable",
-  "unsafe-session-data",
-  "bounds-exceeded",
-] as const);
 
 export type SessionMirrorSnapshotProjectionReason =
   (typeof SESSION_MIRROR_PROJECTION_REASONS)[number];

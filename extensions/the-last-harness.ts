@@ -41,7 +41,7 @@ import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
-import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
+import { registerTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import {
   getCachedTlhUsageWeeklyVisibility,
   refreshCachedTlhUsageWeeklyVisibility,
@@ -54,6 +54,7 @@ import {
   persistTlhLastSeenVersion,
 } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
+import { createRetryableLazyImport } from "./the-last-harness/common.js";
 import type {
   StartupResources,
   TlhLaunchContextAllocation,
@@ -89,21 +90,6 @@ function setTlhTerminalTitle(ctx: ExtensionContext): void {
   } catch {
     // Title branding must not make startup fragile in headless/test contexts.
   }
-}
-
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
 }
 
 const EMPTY_STARTUP_RESOURCES: StartupResources = {
@@ -321,7 +307,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
   registerExperimentalCommand(pi);
   registerReconcileCommand(pi, primaryAgentRuntime);
   registerSubagentSettingsCommand(pi);
-  registerLazyTlhTicketWorkflowUi(pi);
+  registerTlhTicketWorkflowUi(pi);
   pi.registerCommand("tlh-changelog", {
     description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
     handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
