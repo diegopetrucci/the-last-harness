@@ -107,7 +107,7 @@ function createCtx(options = {}) {
       id:
         options.modelId ??
         (provider === "openai-codex" ? "gpt-5-codex" : "claude-sonnet-4-20250514"),
-      contextWindow: 200000,
+      contextWindow: 300000,
     },
     modelRegistry: {
       isUsingOAuth() {
@@ -127,7 +127,7 @@ function createCtx(options = {}) {
       getSessionName: () => options.sessionName,
     },
     getContextUsage: () =>
-      options.contextUsage ?? { tokens: 1000, contextWindow: 200000, percent: 12.3 },
+      options.contextUsage ?? { tokens: 1000, contextWindow: 300000, percent: 12.3 },
     ui: {
       getEditorText: () => options.editorText ?? "",
     },
@@ -195,7 +195,7 @@ test("footer renders OpenAI/Codex session usage and hides weekly by default", ()
   assert.match(sessionLine, /session 42% used/);
   assert.doesNotMatch(sessionLine, /weekly/);
   assert.doesNotMatch(sessionLine, /\$/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/300k/);
 });
 
 test("footer formats an exact seven-day OpenAI primary window as weekly without showing secondary usage", () => {
@@ -355,7 +355,7 @@ test("footer falls back to dollar cost when subscription usage is not strictly e
 
   assert.match(sessionLine, /\$1\.250/);
   assert.doesNotMatch(sessionLine, /5h session 42% used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/300k/);
 });
 
 test("footer suppresses dollar cost for eligible OAuth sessions before usage is cached", () => {
@@ -391,7 +391,7 @@ test("footer suppresses dollar cost for eligible OAuth sessions before usage is 
 
   assert.doesNotMatch(agentLine, /\$/);
   assert.doesNotMatch(agentLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/300k/);
   // Line 3 is omitted: cost suppressed (OAuth), no subscription segment yet
   assert.equal(sessionLine, "");
   assert.equal(fetchCalls, 0);
@@ -423,7 +423,7 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
   assert.doesNotMatch(unsupportedSessionLine, /used/);
   assert.doesNotMatch(unsupportedSessionLine, /weekly/);
   assert.match(unsupportedSessionLine, /\$1\.250/);
-  assert.match(unsupportedAgentLine, /12\.3%\/200k/);
+  assert.match(unsupportedAgentLine, /12\.3%\/300k/);
 
   const errorCtx = createCtx({ provider: "anthropic" });
   const errorUsage = {
@@ -446,7 +446,7 @@ test("footer leaves usage unchanged for unsupported providers and snapshot error
   assert.doesNotMatch(errorSessionLine, /used/);
   assert.doesNotMatch(errorSessionLine, /weekly/);
   assert.doesNotMatch(errorSessionLine, /\$/);
-  assert.match(errorAgentLine, /12\.3%\/200k/);
+  assert.match(errorAgentLine, /12\.3%\/300k/);
 });
 
 test("footer suppresses dollar cost for OAuth users on unsupported providers", () => {
@@ -460,7 +460,7 @@ test("footer suppresses dollar cost for OAuth users on unsupported providers", (
 
   assert.doesNotMatch(sessionLine, /\$/);
   assert.doesNotMatch(sessionLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/300k/);
 });
 
 test("footer shows dollar cost when neither OAuth nor subscription-eligible", () => {
@@ -474,7 +474,7 @@ test("footer shows dollar cost when neither OAuth nor subscription-eligible", ()
 
   assert.match(sessionLine, /\$1\.250/);
   assert.doesNotMatch(sessionLine, /used/);
-  assert.match(agentLine, /12\.3%\/200k/);
+  assert.match(agentLine, /12\.3%\/300k/);
 });
 
 test("usage footer stays within narrow terminal widths", () => {
@@ -603,7 +603,7 @@ test("line 2 shows thinking level for reasoning models", () => {
     model: {
       provider: "anthropic",
       id: "claude-opus-4-reasoning",
-      contextWindow: 200000,
+      contextWindow: 300000,
       reasoning: true,
     },
   });
@@ -617,7 +617,7 @@ test("line 2 shows thinking off label when thinking is disabled on a reasoning m
     model: {
       provider: "anthropic",
       id: "claude-opus-4-reasoning",
-      contextWindow: 200000,
+      contextWindow: 300000,
       reasoning: true,
     },
   });
@@ -636,8 +636,17 @@ test("line 2 shows no-model placeholder when context has no model", () => {
 test("line 2 includes context percent and omits provider prefix for no-model", () => {
   const ctx = { ...createCtx(), model: undefined };
   const line = renderAgentLine(ctx, {});
-  assert.match(line, /12\.3%\/200k/);
+  assert.match(line, /12\.3%\/300k/);
   assert.doesNotMatch(line, /\(/);
+});
+
+test("line 2 omits the removed DUMB ZONE warning at high context usage", () => {
+  const ctx = createCtx({
+    contextUsage: { tokens: 250000, contextWindow: 300000, percent: 83.3 },
+  });
+  const line = renderAgentLine(ctx, {});
+  assert.match(line, /83\.3%\/300k/);
+  assert.doesNotMatch(line, /DUMB ZONE/);
 });
 
 // ---------------------------------------------------------------------------

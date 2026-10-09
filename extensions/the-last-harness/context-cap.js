@@ -1,8 +1,7 @@
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isPlainObject } from "./common.js";
-import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
+const DEFAULT_CONTEXT_CAP_TOKENS = 300_000;
 const CANONICAL_DEVELOPER_CONTEXT_CAP_TOKENS = 272_000;
 const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
@@ -678,7 +677,7 @@ export function registerContextCap(pi) {
         deactivateContextWindowPolicy(ctx);
     });
     pi.registerCommand("toggle-context-cap", {
-        description: "Toggle the 200k effective context-window cap for auto-compaction",
+        description: "Toggle the 300k effective context-window cap for auto-compaction",
         handler: async (args, ctx) => {
             if (args.trim()) {
                 ctx.ui.notify(TOGGLE_CONTEXT_CAP_COMMAND_HELP, "error");
