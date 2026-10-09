@@ -6,11 +6,11 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  createTlhEffectiveActivityTracker,
-  registerTlhEffectiveActivityTracker,
-  TLH_EFFECTIVE_ACTIVITY_EVENT,
-} = await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } =
+  await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { TLH_EFFECTIVE_ACTIVITY_EVENT } = await jiti.import(
+  "../extensions/shared/tlh-effective-activity.ts",
+);
 const { announceBundledSubagentRestoreProvider } = await jiti.import(
   "../extensions/shared/subagent-restore-contract.ts",
 );

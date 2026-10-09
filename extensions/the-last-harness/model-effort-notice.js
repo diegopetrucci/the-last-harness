@@ -1,17 +1,8 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { backfillMissingBaselines, computeModelEffortDrift, hasMeaningfulSubagentOverride, isKnownProvider, isMeaningfulPrimaryOverride, readReconcileState, } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 let notifiedThisProcess = false;
-function getTlhGlobalSettings(cwd) {
-    try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
-        return isRecord(settings) ? settings : {};
-    }
-    catch {
-        return {};
-    }
-}
 export function hasAnyModelEffortOverride(settings) {
     const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
     if (isRecord(primaryModelOverrides)) {

@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 import { isBundledSubagentRestoreProviderActive, resetBundledSubagentRestoreProvider, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../shared/subagent-restore-contract.js";
-export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";

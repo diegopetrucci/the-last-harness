@@ -10,16 +10,22 @@ import {
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import { createRetryableLazyImport } from "./common.js";
 import {
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
   SESSION_MIRROR_OBSERVER_FEATURE,
 } from "./experimental.js";
-import { attestSessionMirrorSession } from "./session-mirror/profile-attestation.js";
-import type {
-  SessionMirrorAttestationReason,
-  SessionMirrorAttestationResult,
+import {
+  attestSessionMirrorSession,
+  SESSION_MIRROR_ATTESTATION_REASONS,
+  type SessionMirrorAttestationReason,
+  type SessionMirrorAttestationResult,
 } from "./session-mirror/profile-attestation.js";
+import {
+  SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES,
+  SESSION_MIRROR_PROJECTION_REASONS,
+} from "./session-mirror/status-allowlists.js";
 import type {
   SessionMirrorObserverAttestor,
   SessionMirrorObserverSink,
@@ -350,20 +356,8 @@ function safeAttest(
       }
     }
     if (result && result.ok === false) {
-      const reason = result.reason;
-      if (
-        typeof reason === "string" &&
-        [
-          "missing-profile-selection",
-          "missing-home",
-          "default-or-normal-profile",
-          "profile-mismatch",
-          "unsafe-profile-metadata",
-          "ephemeral-session",
-          "session-escape",
-          "unsafe-session-metadata",
-        ].includes(reason)
-      ) {
+      const reason = optionalEnumValue(result.reason, SESSION_MIRROR_ATTESTATION_REASONS);
+      if (reason) {
         return { ok: false, reason };
       }
     }
@@ -381,33 +375,6 @@ const OBSERVER_ATTESTATION_STATES = [
   "shutdown",
 ] as const;
 const OBSERVER_STATUS_VALUES = ["idle", "active", "waiting", "error", "unknown"] as const;
-const OBSERVER_DIAGNOSTIC_CODES = [
-  "queue-overflow",
-  "stale-generation",
-  "scheduler-failure",
-  "session-unavailable",
-  "attestation-failure",
-  "attestation-not-ready",
-  "projection-failure",
-  "sink-throw",
-  "sink-reject",
-] as const;
-const ATTESTATION_REASONS = [
-  "missing-profile-selection",
-  "missing-home",
-  "default-or-normal-profile",
-  "profile-mismatch",
-  "unsafe-profile-metadata",
-  "ephemeral-session",
-  "session-escape",
-  "unsafe-session-metadata",
-] as const;
-const PROJECTION_REASONS = [
-  "invalid-metadata",
-  "session-unavailable",
-  "unsafe-session-data",
-  "bounds-exceeded",
-] as const;
 const PROBE_ENVELOPE_CATEGORIES = [
   "none",
   "empty",
@@ -491,9 +458,18 @@ function normalizeProbeState(value: unknown): SessionMirrorObserverProbeState | 
       coalescedMarkers: boundedCounter(source.coalescedMarkers),
       droppedMarkers: boundedCounter(source.droppedMarkers),
       diagnostics: boundedDiagnosticCounts(source.diagnostics),
-      lastDiagnostic: optionalEnumValue(source.lastDiagnostic, OBSERVER_DIAGNOSTIC_CODES),
-      lastAttestationFailure: optionalEnumValue(source.lastAttestationFailure, ATTESTATION_REASONS),
-      lastProjectionFailure: optionalEnumValue(source.lastProjectionFailure, PROJECTION_REASONS),
+      lastDiagnostic: optionalEnumValue(
+        source.lastDiagnostic,
+        SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES,
+      ),
+      lastAttestationFailure: optionalEnumValue(
+        source.lastAttestationFailure,
+        SESSION_MIRROR_ATTESTATION_REASONS,
+      ),
+      lastProjectionFailure: optionalEnumValue(
+        source.lastProjectionFailure,
+        SESSION_MIRROR_PROJECTION_REASONS,
+      ),
       envelopeCategory: enumValue(source.envelopeCategory, PROBE_ENVELOPE_CATEGORIES, "none"),
       entryCount: boundedCounter(source.entryCount, 1024),
       rootCount: boundedCounter(source.rootCount, 1024),
@@ -1221,19 +1197,4 @@ export function registerSessionMirrorObserverFacade(
   pi.on("session_tree", () => facade.sessionTree());
   pi.on("session_compact", () => facade.sessionCompact());
   return facade;
-}
-
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
 }

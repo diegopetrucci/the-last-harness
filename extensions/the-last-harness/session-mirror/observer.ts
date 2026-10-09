@@ -4,6 +4,7 @@ import type {
   SessionMirrorAttestationReason,
   SessionMirrorAttestationResult,
 } from "./profile-attestation.js";
+import type { SessionMirrorObserverDiagnosticCode } from "./status-allowlists.js";
 import {
   projectSessionMirrorSnapshot,
   type SessionMirrorReadonlySessionManager,
@@ -46,28 +47,7 @@ export type SessionMirrorObserverProjector = (
 ) => SessionMirrorSnapshotProjectionResult;
 
 /** Stable aggregate-only diagnostics exposed by the observer. */
-export type SessionMirrorObserverDiagnosticCode =
-  | "queue-overflow"
-  | "stale-generation"
-  | "scheduler-failure"
-  | "session-unavailable"
-  | "attestation-failure"
-  | "attestation-not-ready"
-  | "projection-failure"
-  | "sink-throw"
-  | "sink-reject";
-
-export const SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES = Object.freeze([
-  "queue-overflow",
-  "stale-generation",
-  "scheduler-failure",
-  "session-unavailable",
-  "attestation-failure",
-  "attestation-not-ready",
-  "projection-failure",
-  "sink-throw",
-  "sink-reject",
-] as const);
+export type { SessionMirrorObserverDiagnosticCode };
 
 export type SessionMirrorObserverAttestationState =
   | "pending"
