@@ -8,9 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { tryImport } from "./helpers.ts";
 import type { MockPi } from "./helpers.ts";
@@ -122,71 +120,8 @@ assert.equal(isAsyncAvailable(), true, "required async runner module is unavaila
 // Utility helpers
 // ---------------------------------------------------------------------------
 
-export function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
-  return {
-    type: "message_end",
-    message: {
-      role: "assistant",
-      content:
-        stopReason === "tool_use"
-          ? [
-              { type: "text", text },
-              { type: "toolCall", name: "bash", arguments: { command: "echo test" } },
-            ]
-          : [{ type: "text", text }],
-      model: "mock/test-model",
-      stopReason,
-      usage: {
-        input: 10,
-        output: 5,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cost: { total: 0.001 },
-      },
-    },
-  };
-}
-
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function git(cwd: string, args: string[]): string {
-  const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`);
-  }
-  return result.stdout.trim();
-}
-
-export function createRepo(prefix: string): string {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(repoDir, ["init"]);
-  git(repoDir, ["config", "user.email", "tests@example.com"]);
-  git(repoDir, ["config", "user.name", "Async Tests"]);
-  fs.writeFileSync(path.join(repoDir, "input.md"), "input\n", "utf-8");
-  git(repoDir, ["add", "-A"]);
-  git(repoDir, ["commit", "-m", "initial commit"]);
-  return repoDir;
-}
-
-export function writePackageSkill(packageRoot: string, skillName: string): void {
-  const skillDir = path.join(packageRoot, "skills", skillName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify(
-      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  fs.writeFileSync(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
-    "utf-8",
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -332,21 +267,6 @@ export function readMockPiArgs(mockPi: MockPi, index: number): string[] {
   ) as MockPiCallRecord;
   assert.ok(Array.isArray(payload.args), "expected recorded args");
   return payload.args;
-}
-
-export function readMockPiArgsMatching(mockPi: MockPi, text: string): string[] {
-  const callFiles = fs
-    .readdirSync(mockPi.dir)
-    .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-    .sort();
-  for (const callFile of callFiles) {
-    const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as {
-      args?: string[];
-    };
-    assert.ok(Array.isArray(payload.args), "expected recorded args");
-    if (payload.args.join("\n").includes(text)) return payload.args;
-  }
-  assert.fail(`expected recorded call containing ${text}`);
 }
 
 export function startedMockPiPids(mockPi: MockPi): number[] {

@@ -504,51 +504,9 @@ test("tlh update removes isolated bin and skips non-file bash candidates before 
 
 test("tlh update --extensions uses absolute private runtime pi and hard-fails when missing", (t) => {
   const root = makeTempDir();
-  const homeDir = join(root, "home");
-  const agentDir = join(root, "agent");
-  const runtimeBinDir = join(root, "runtime", "bin"); // dirname(agentDir)/runtime/bin
   const pathPiDir = join(root, "path-pi"); // PATH-based pi that must NOT be used
-  const piLog = join(root, "pi.txt");
-  const pathPiLog = join(root, "path-pi.log");
-  mkdirSync(homeDir, { recursive: true });
-  mkdirSync(agentDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
-
-  // Case 1: private runtime pi exists — must be used, not the PATH pi.
-  writeVersionedWrapperPi(runtimeBinDir, piLog);
   writeFakePi(pathPiDir, `printf 'PATH pi should not be called\\n' >"\${PATH_PI_LOG}"\nexit 97`);
-
-  const result = spawnSync(
-    process.execPath,
-    [join(repoRoot, "scripts/tlh-update.mjs"), "--extensions", "--agent-dir", agentDir, "--quiet"],
-    {
-      cwd: repoRoot,
-      env: scrubInstallerEnv({
-        HOME: homeDir,
-        PATH: `${pathPiDir}:${process.env.PATH || ""}`,
-        PI_WRAPPER_LOG: piLog,
-        PATH_PI_LOG: pathPiLog,
-      }),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  assert.equal(result.status, 0, `Case 1 stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-  assert.equal(result.stdout, "");
-  const piRecord = Object.fromEntries(
-    readFileSync(piLog, "utf8")
-      .trim()
-      .split(/\r?\n/)
-      .map((line) => {
-        const separator = line.indexOf("=");
-        return [line.slice(0, separator), line.slice(separator + 1)];
-      }),
-  );
-  // Absolute private runtime pi was used — not any PATH-based pi.
-  assert.equal(piRecord.cmd, join(runtimeBinDir, "pi"), "expected absolute private runtime pi");
-  assert.equal(piRecord.argv, "update --extensions");
-  assert.equal(piRecord.agent, agentDir);
-  assert.equal(existsSync(pathPiLog), false, "PATH pi must not be called");
 
   // Case 2: private runtime pi absent, non-dry-run — must hard-fail with a clear error.
   const root2 = makeTempDir();

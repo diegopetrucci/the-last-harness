@@ -1265,20 +1265,3 @@ export function teardownLocalBridge(stateInput: unknown): shared.LocalBridgeTran
     return shared.failure("invalid-input");
   }
 }
-
-export function localBridgeFailureCodes(): readonly shared.LocalBridgeErrorCode[] {
-  return shared.LOCAL_BRIDGE_ERROR_CODES;
-}
-
-export function localBridgeResultCodes(): readonly shared.LocalBridgeResultCode[] {
-  return shared.LOCAL_BRIDGE_RESULT_CODES;
-}
-
-export function localBridgeSerializedByteLength(input: unknown): number | undefined {
-  try {
-    const normalized = shared.normalizeJson(input, shared.RETAINED_NORMALIZATION_LIMITS);
-    return normalized.ok ? shared.serializedByteLength(normalized.value) : undefined;
-  } catch {
-    return undefined;
-  }
-}

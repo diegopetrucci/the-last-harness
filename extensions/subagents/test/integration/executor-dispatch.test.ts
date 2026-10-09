@@ -32,6 +32,7 @@ import {
 } from "../../../the-last-harness-subagent-safety.mjs";
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
+import { writePackageSkill } from "../support/single-execution-fixtures.ts";
 
 type DiscoverAgents = typeof discoverAgents;
 
@@ -157,25 +158,6 @@ function writeProjectOverride(projectRoot: string, agentName: string, model: str
   fs.writeFileSync(
     settingsPath,
     JSON.stringify({ subagents: { agentOverrides: { [agentName]: { model } } } }, null, 2),
-    "utf-8",
-  );
-}
-
-function writePackageSkill(packageRoot: string, skillName: string): void {
-  const skillDir = path.join(packageRoot, "skills", skillName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify(
-      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  fs.writeFileSync(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
     "utf-8",
   );
 }

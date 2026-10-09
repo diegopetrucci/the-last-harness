@@ -33,39 +33,10 @@ import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 
-// --- Injection / context bounds on child-controlled text ---
-// These constants limit text that originates from child subagents and enters
-// the parent transcript, message envelope, or TUI. They are a trust boundary,
-// not token-tuning knobs. Do not raise them without considering the injection
-// surface. Sanitization helpers (normalizeAsyncIdentifier, boundedReference,
-// boundedLabel, MAX_LABEL_CHARS, MAX_REFERENCE_CHARS, MAX_ASYNC_ID_CHARS,
-// MAX_SESSION_PATH_CHARS) are the primary control-character and path-traversal
-// fence; the char-count caps below are a secondary depth limit on the same
-// surface.
-//
-// MAX_SUMMARY_CHARS is a PER-CHILD budget, not a shared pool. Each child's
-// result is an independent unit of information, so a child's report must not
-// shrink merely because it has siblings. The same constant applies to the
-// single-result sites and to each displayed child in the grouped shape.
-//
-// Sizing is empirical. Across 158 subagent output artifacts on disk, the share
-// arriving complete and inline under each candidate cap was:
-//   750 -> 23%   1 200 -> 35%   3 000 -> 73%
-//   6 000 -> 88%  8 000 -> 96%  12 000 -> 98%  16 000 -> 99%
-// Distribution: p50 1 772, p75 3 064, p90 6 267, p95 7 556, max 16 672.
-// 8 000 is the knee of that curve; beyond it buys 2-3 points for 1.5-2x the size.
-//
-// MAX_COMPLETION_MESSAGE_CHARS is a pure ceiling on the assembled message, not a
-// routinely-binding cap. Under per-child sizing the ceiling MUST exceed the
-// per-child budget, otherwise one full-size result overflows an equal-sized
-// envelope on its own. 32 000 covers up to 4 children at full size. Calibration:
-// the foreground path already allows 200 KB per result (DEFAULT_MAX_OUTPUT in
-// shared/types.ts), so 32 000 is still ~6x tighter than foreground for the same
-// work; the previous 8 000 was ~25x tighter, and that asymmetry was the defect.
-//
-// MAX_DISPLAY_SUMMARY_CHARS is the TUI-only cap; it is applied both at send
-// time (structuredDetails.resultPreview) and at render time so a larger content
-// string does not produce a wall of text in the terminal.
+// Child-controlled text that enters the parent transcript, message envelope,
+// or TUI is a trust boundary, not a token-tuning knob.
+// MAX_SUMMARY_CHARS (8_000) is a per-child budget, not a shared pool.
+// MAX_COMPLETION_MESSAGE_CHARS is 32_000. MAX_DISPLAY_SUMMARY_CHARS is 1_200.
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 // Cap on simultaneous-completion entries shown in a grouped notice. Bounds both the
@@ -158,8 +129,6 @@ export interface SubagentCompletionBatchDetails {
   triggersTurn: boolean;
   completions: SubagentCompletionBatchEntry[];
 }
-
-export type SubagentNotifyMessageDetails = SubagentNotifyDetails | SubagentCompletionBatchDetails;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -337,21 +306,9 @@ function boundedSummaryOrSuppress(value: string, maxChars: number): string {
 /**
  * Per-child summary budget for the grouped shape.
  *
- * Reserves all non-summary scaffolding — per-child labels, both reference lines from
- * formatChildReferences, blank separators, and outer preview content
- * such as the failure summary and counts header — before dividing the remaining ceiling
- * among displayed children. This is the species fix: a budget divided up to a limit
- * without first reserving the fixed recovery scaffolding that must travel with the
- * allocated content causes truncation to cut from the end, which is exactly where
- * per-child artifact/session recovery pointers live.
- *
- * Every displayed child gets the full MAX_SUMMARY_CHARS budget when the collective
- * summary text fits within the ceiling after reservation. Only when a wide fan-out
- * forces a smaller per-child share do we fall back to an equal split. The former
- * MIN_PER_CHILD_SUMMARY_CHARS floor is intentionally absent: at the top-level ceiling
- * (32 000) with worst-case scaffolding the per-child share never drops below ~2 750,
- * so the floor delivered no benefit there and only caused overshoot in grouped contexts
- * where it forced per-child budgets past the available ceiling.
+ * Reserves non-summary scaffolding before dividing the remaining ceiling among
+ * displayed children. Each child gets MAX_SUMMARY_CHARS (8_000) when the
+ * summaries fit; otherwise the remainder is split equally.
  */
 function resolvePerChildSummaryBudget(
   displayedChildCount: number,
@@ -664,24 +621,10 @@ function formatProtectedLifecyclePreview(
 }
 
 /**
- * Formats a result preview, sizing each child summary so the assembled preview fits
- * within ceilingForPreview characters with all recovery pointers intact.
- *
- * ceilingForPreview is the TOTAL chars available for the preview string. The caller is
- * responsible for subtracting any outer scaffolding (formatSingleCompletion head/tail,
- * grouped entry head/tail) before passing this value. Inside this function, the remaining
- * space is further divided by subtracting inner preview scaffolding (labels, reference
- * lines, blank separators, outer-failure summary, counts header) before distributing the
- * remainder among per-child summaries via resolvePerChildSummaryBudget.
- *
- * Ceiling contract: this function NEVER returns a string longer than ceilingForPreview.
- * The four mechanisms that enforce this are:
- *   1. resolvePerChildSummaryBudget uses no floor so per-child budgets are always ≤ the
- *      available space.
- *   2. Outer failure summaries are bounded by ceilingForPreview minus fixed scaffolding.
- *   3. The single-child summary budget is floored at 0 (not MIN_PER_CHILD_SUMMARY_CHARS).
- *   4. Summary lines are suppressed entirely when the budget is too tight to produce a
- *      well-formed truncation marker, preventing mangled fragments.
+ * Formats a result preview so each child summary fits within ceilingForPreview,
+ * with recovery pointers intact. The result is never longer than
+ * ceilingForPreview. Per-child summaries use MAX_SUMMARY_CHARS (8_000) when the
+ * ceiling allows.
  */
 function formatResultPreview(
   result: SubagentResult,
