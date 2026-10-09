@@ -1454,8 +1454,7 @@ function projectionGapCountForMessage(
  * - Throws immediately if the resolved path is `run-history.jsonl`.
  */
 export async function scanSessionFile(filePath: string): Promise<SessionScanResult> {
-  // Fix 1: reject run-history.jsonl at the public API boundary as well, so
-  // any direct caller gets a clear error even if readJsonlLines is bypassed.
+  // Reject run-history.jsonl here so a direct caller still fails if readJsonlLines is bypassed.
   assertNotRunHistory(filePath);
 
   const sizeBefore = safeFileSize(filePath);
@@ -1567,7 +1566,7 @@ export async function scanSessionFile(filePath: string): Promise<SessionScanResu
  * Throws immediately if the resolved path is `run-history.jsonl`.
  */
 export async function readSessionHeader(filePath: string): Promise<SessionHeader | null> {
-  // Fix 1: also guard the header-only reader.
+  // Reject run-history.jsonl on the header-only reader as well.
   assertNotRunHistory(filePath);
 
   for await (const parsed of readJsonlLines(filePath)) {
@@ -1980,7 +1979,7 @@ export type {
   ExtraCoverageData,
   ScanCoverage,
 } from "./session-analysis-coverage.mjs";
-export { analyzeSubagentSessions, analyzeSubagents } from "./subagent-analysis.mjs";
+export { analyzeSubagentSessions } from "./subagent-analysis.mjs";
 export type {
   SubagentAggregate,
   SubagentAggregateMap,

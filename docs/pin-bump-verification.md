@@ -8,9 +8,9 @@ Older TLH releases installed and pinned a separate `@diegopetrucci/pi-subagents`
 
 The imported unit/integration/E2E suites, focused TLH regressions, package assertions, and provenance checks now run through the root repository. They cover the compact parent-facing description, the closed action surface, bundled-agent safety, async status, steering, and resume mechanics.
 
-`npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. The checklist in this file is the completed `v0.43.0` record. Current Pi 1.0.3 release-tier checks are owned by the release-tier section in [VALIDATING.md](../VALIDATING.md). Issue #346 and the historical identifier `tlh-2ej0` remain historical context for the old delivery mechanism.
+`npm run validate` does **not** replace the former live-session checks. Rendering and real parent/child coordination still require release-tier validation in an installed TLH session. The checklist in this file is the completed `v0.43.0` record. The historical Pi 1.0.3 release-tier evidence is retained in [VALIDATING.md](../VALIDATING.md); current Pi 1.1.0 release-tier checks are owned by that document's release-preparation section. Issue #346 and the historical identifier `tlh-2ej0` remain historical context for the old delivery mechanism.
 
-## Current release-tier live checklist
+## Historical release-tier live checklist
 
 Run these checks against the packaged TLH release candidate, without creating or changing any standalone subagent pin:
 

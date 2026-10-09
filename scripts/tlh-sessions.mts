@@ -51,7 +51,6 @@ const RUN_HISTORY_FILENAME = "run-history.jsonl";
 
 type OutputMode = "per-session" | "per-tool" | "subagents";
 
-// Fix 8: accurate provenance source values.
 type ProfileSource = "flag" | "PI_CODING_AGENT_DIR" | "TLH_AGENT_DIR" | "default";
 
 interface CliArgs {
@@ -89,7 +88,6 @@ type SubagentOutput = SubagentAnalysisOutput & {
 
 interface ProvenanceRecord {
   toolName: string;
-  // Fix 8: reflects which source actually provided the agent dir.
   profileSource: ProfileSource;
   profileId: string;
   agentDir?: string;
@@ -108,7 +106,7 @@ interface SessionRecord {
   startedAt: string | null;
   projectLabel?: string;
   filePath?: string;
-  // Fix 4: honest count of all observed tool calls (including unmatched).
+  // Counts every observed tool call, including unmatched ones.
   toolCallCount: number;
   projectionGapCount: number;
   errorCount: number;
@@ -144,7 +142,6 @@ interface ToolRecord {
 // CLI parsing
 // ---------------------------------------------------------------------------
 
-// Fix 3: correct the usage string — this is contributor tooling, not a tlh subcommand.
 function usage(): string {
   return `Usage: tlh sessions [options]
 
@@ -230,7 +227,7 @@ interface DiscoveryResult {
 /**
  * Recursively enumerate all .jsonl files under `dir`, excluding
  * run-history.jsonl at every level.  Returns absolute paths and a count of
- * directories that could not be read (Fix 5).
+ * directories that could not be read.
  */
 function findSessionFiles(dir: string): DiscoveryResult {
   const files: string[] = [];
@@ -274,7 +271,7 @@ function computeLatencyStats(latencies: number[]): LatencyStats {
   if (latencies.length === 0) {
     return { median: null, min: null, max: null, p95: null };
   }
-  // Fix 6: use iteration instead of spread to avoid argument-limit on large corpora.
+  // Iterate instead of spreading so large corpora stay under the argument limit.
   let min = latencies[0]!;
   let max = latencies[0]!;
   for (let i = 1; i < latencies.length; i++) {
@@ -316,7 +313,7 @@ async function buildSessionRecord(
   includePaths: boolean,
   publicCorrelationId: PublicCorrelationId,
 ): Promise<SessionRecord> {
-  // Fix 4: use observedToolCallCount so truncated sessions are not under-reported.
+  // Use observedToolCallCount so truncated sessions are not under-reported.
   const latencies = scanResult.toolPairs.map((p) => p.observedLatencyMs);
 
   const record: SessionRecord = {
@@ -347,7 +344,6 @@ async function buildSessionRecord(
     } else if (scanResult.sessionHeader?.cwd) {
       record.projectLabel = basename(scanResult.sessionHeader.cwd);
     }
-    // Fix 2: pass sessionsDir so child paths are validated against the boundary.
     record.subagentCorrelationCount = correlations.length;
     record.subagentCorrelations = correlations.map((c) => ({
       // Aliases apply only to correlation fields; the established raw top-level
@@ -510,7 +506,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Fix 8: track the real source of the agent dir for accurate provenance.
   let profileSource: ProfileSource;
   if (args.agentDir) {
     profileSource = "flag";
@@ -525,7 +520,6 @@ async function main(): Promise<void> {
   const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
   const sessionsDir = join(agentDir, "sessions");
 
-  // Fix 5: track discovery counts alongside scan failures.
   const discovery = findSessionFiles(sessionsDir);
   const sessionFiles = discovery.files;
   const extraCoverage: ExtraCoverageData = {
@@ -540,7 +534,6 @@ async function main(): Promise<void> {
       const result = await scanSessionFile(filePath);
       scanResults.push(result);
     } catch {
-      // Fix 5: count files that could not be read or parsed.
       extraCoverage.failedScans = (extraCoverage.failedScans ?? 0) + 1;
     }
   }

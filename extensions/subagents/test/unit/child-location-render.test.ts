@@ -21,6 +21,7 @@ import {
   parsePersistedChildLocationSnapshot,
   type ChildLocationSnapshot,
 } from "../../src/shared/child-location.ts";
+import { withStdoutSize } from "../support/render-widget-fixtures.ts";
 
 // ---------------------------------------------------------------------------
 // Minimal theme (no ANSI escape sequences so assertions are on plain text)
@@ -672,40 +673,6 @@ function makeManyStepJob(
     })),
     stepsTotal: stepCount,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Terminal-dimension pinning helpers
-//
-// Mirrors the pattern in tests/integration/render-widget.test.ts (lines 120-144).
-// process.stdout.rows may be a getter on a TTY, so we must restore the original
-// property descriptor rather than writing back a plain value.
-// ---------------------------------------------------------------------------
-
-function restoreDescriptor(
-  target: NodeJS.WriteStream,
-  key: string,
-  descriptor: PropertyDescriptor | undefined,
-): void {
-  if (descriptor) {
-    Object.defineProperty(target, key, descriptor);
-    return;
-  }
-  Reflect.deleteProperty(target, key);
-}
-
-function withStdoutSize<T>(rows: number, columns: number, fn: () => T): T {
-  const stdout = process.stdout as NodeJS.WriteStream & { rows?: number; columns?: number };
-  const rowsDescriptor = Object.getOwnPropertyDescriptor(stdout, "rows");
-  const columnsDescriptor = Object.getOwnPropertyDescriptor(stdout, "columns");
-  Object.defineProperty(stdout, "rows", { configurable: true, value: rows });
-  Object.defineProperty(stdout, "columns", { configurable: true, value: columns });
-  try {
-    return fn();
-  } finally {
-    restoreDescriptor(stdout, "rows", rowsDescriptor);
-    restoreDescriptor(stdout, "columns", columnsDescriptor);
-  }
 }
 
 /**

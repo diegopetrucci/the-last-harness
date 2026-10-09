@@ -403,4 +403,3 @@ export function createSessionMirrorObserverProbe(options = {}) {
         getState,
     });
 }
-export default createSessionMirrorObserverProbe;

@@ -8,7 +8,7 @@
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
  * Toggle: async parameter (default: false)
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
+ * Config file: <getAgentDir()>/extensions/subagent/config.json (isolated TLH profile)
  */
 
 import { spawn, type SpawnOptions } from "node:child_process";
