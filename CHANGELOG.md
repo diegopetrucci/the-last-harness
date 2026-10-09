@@ -22,6 +22,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Raised TLH's reversible primary and other non-child context cap from 200,000 to 300,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
 - Bumped the bundled Pi runtime from `1.0.3` to `1.0.4`. Pi 1.0.4 adds `*` patterns to `--tools`/`--exclude-tools`, `--no-mcp` for single-run MCP disablement, a codemode fix for `tools.read()` on images, and several MCP and provider fixes. Runtime behavior for TLH users is unchanged: mcporter remains the MCP adapter and `-builtin:mcp` remains active in isolated settings.
@@ -43,6 +44,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
+- Removed the `DUMB ZONE` footer warning that appeared after context usage exceeded 200,000 tokens.
 - Removed TLH's custom `/review` command and interactive picker; automatic architect review remains.
 - Retired the bundled Pi Voice/Transcribe defaults. Updates remove only entries whose TLH ownership is recorded in default-extension provenance; ambiguous legacy entries without provenance stay installed. To reinstall manually, run `tlh install npm:@earendil-works/pi-voice` (or install a specific version) in the isolated profile; downloaded models and unrelated package files are left untouched.
 

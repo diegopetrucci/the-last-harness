@@ -16,8 +16,6 @@ export const TLH_TELEMETRY_INGEST_BASE_URL = "https://nom.telemetrydeck.com/v2/n
 export const TLH_LAUNCH_TELEMETRY_EVENT_TYPE = "Tlh.launched";
 export const TLH_TELEMETRY_TIMEOUT_MS = 1500;
 export const TLH_TELEMETRY_STATE_SCHEMA_VERSION = 1;
-export const DUMB_ZONE_THRESHOLD_TOKENS = 200_000;
-export const DUMB_ZONE_LABEL = "DUMB ZONE";
 // Pi prefixes package-backed commands with provenance tags like [u:git:github.com/org/repo@ref].
 // tlh keeps autocomplete focused on the command description instead.
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
