@@ -43,8 +43,20 @@ install_cli_tools() {
 
   # ~/.local/bin is on PATH for Amp and login shells in orbs.
   mkdir -p "$HOME/.local/bin"
-  ln -sfn "$tools_agent_dir/bin/gn" "$HOME/.local/bin/gn"
-  ln -sfn "$tools_agent_dir/bin/tk" "$HOME/.local/bin/tk"
+  link_managed_tool "$tools_agent_dir/bin/gn" "$HOME/.local/bin/gn"
+  link_managed_tool "$tools_agent_dir/bin/tk" "$HOME/.local/bin/tk"
+}
+
+# Replace only missing entries or links this script created; never clobber others.
+link_managed_tool() {
+  local source="$1" link="$2"
+  if [[ -e "$link" || -L "$link" ]]; then
+    if [[ ! -L "$link" || "$(readlink "$link")" != "$HOME/.cache/tlh-orb/"* ]]; then
+      echo "Refusing to replace unmanaged $link; remove it and rerun setup." >&2
+      return 1
+    fi
+  fi
+  ln -sfn "$source" "$link"
 }
 
 step "npm ci" npm ci --no-audit --no-fund
