@@ -751,6 +751,10 @@ function buildFailedRepair(
       ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
       results: repairedSteps.map((step) => ({
         agent: step.agent,
+        // Carry validated per-child cwd so that result-only revival after
+        // stale repair uses the child working directory rather than falling
+        // back to the run-level cwd. Only include if it's a non-empty string.
+        ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
         ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
         ...(step.tkTicketId ? { tkTicketId: step.tkTicketId } : {}),
         output: step.status === "complete" || step.status === "completed" ? "" : message,

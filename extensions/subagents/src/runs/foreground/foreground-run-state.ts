@@ -184,6 +184,12 @@ export function rememberForegroundRun(
     cwd: string;
     results: SingleResult[];
     telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwds, indexed to match `results`.
+     * When present and a given entry differs from the run cwd, that entry is
+     * stored on the child and preferred over the run cwd on revival.
+     */
+    childCwds?: string[];
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -198,8 +204,12 @@ export function rememberForegroundRun(
       const activeRuntimeMs =
         normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
         normalizeActiveRuntimeMs(result.progress?.durationMs);
+      const resolvedChildCwd =
+        typeof input.childCwds?.[index] === "string" ? input.childCwds[index] : undefined;
       const child = {
         agent: result.agent,
+        ...(resolvedChildCwd !== undefined ? { cwd: resolvedChildCwd } : {}),
+        ...(result.childLocation ? { childLocation: result.childLocation } : {}),
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
         ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
           ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
@@ -261,6 +271,11 @@ export function updateRememberedForegroundChild(
     index: number;
     result: SingleResult;
     telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwd. When provided, stored on the
+     * child entry and preferred over the run cwd on revival.
+     */
+    childCwd?: string;
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -282,6 +297,8 @@ export function updateRememberedForegroundChild(
   run.children[input.index] = {
     ...child,
     agent: input.result.agent,
+    ...(typeof input.childCwd === "string" ? { cwd: input.childCwd } : {}),
+    ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
     ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
       ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
@@ -480,7 +497,7 @@ export function resolveForegroundResumeTarget(
       ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
       : {}),
     index,
-    cwd: run.cwd,
+    cwd: child.cwd ?? child.childLocation?.childCwd ?? run.cwd,
     sessionFile,
     ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
       ? { asyncDir: pausedForegroundStatusPath(run.runId) }

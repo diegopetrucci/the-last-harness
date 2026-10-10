@@ -180,6 +180,9 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
         step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
         step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+        if (step.cwd !== undefined && (typeof step.cwd !== "string" || step.cwd.length === 0)) {
+            step.cwd = undefined;
+        }
     }
 }
 function statusToSummary(asyncDir, status) {

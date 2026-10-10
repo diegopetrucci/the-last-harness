@@ -10,7 +10,7 @@ import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
-import { readStatus } from "../../shared/utils.js";
+import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
 function validatedChildTkTicketId(task) {
     return task.agent === "developer" && task.projectAgentGuidance === true
@@ -122,6 +122,7 @@ export function createBackgroundRunStatusOwner(input) {
                     ? [task.model]
                     : undefined,
             ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+            cwd: resolveChildCwd(cwd, task.cwd),
             recentTools: [],
             recentOutput: [],
         };
