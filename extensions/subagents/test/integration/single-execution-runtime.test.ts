@@ -92,7 +92,7 @@ describe(
     }
 
     it(
-      "uses the human-owned run ceiling for foreground execution",
+      "uses the role ceiling despite a retired human-owned run setting",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -126,7 +126,7 @@ describe(
         );
 
         assert.equal(result.isError, undefined);
-        assert.deepEqual(observedTimeouts, [1_234]);
+        assert.deepEqual(observedTimeouts, [2_000]);
       },
     );
 
@@ -193,7 +193,7 @@ describe(
           );
           assert.equal(result.isError, true);
           assert.match(result.content[0]?.text ?? "", /timeoutMs is no longer supported/);
-          assert.match(result.content[0]?.text ?? "", /execution\.maxRunTimeMs/);
+          assert.match(result.content[0]?.text ?? "", /per-role execution budgets/);
           assert.match(result.content[0]?.text ?? "", /Restart with a new direct run/);
         }
         assert.equal(mockPi.callCount(), 0);
@@ -201,7 +201,7 @@ describe(
     );
 
     it(
-      "formats a foreground resume after launch effects and falls back to the continuation id",
+      "does not forward retired run ceilings when resuming after launch effects",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -464,7 +464,7 @@ describe(
           assert.equal(result.isError, undefined);
           assert.equal(observed.length, 1);
           assert.match(observed[0]?.id ?? "", /^[0-9a-f]{8}$/);
-          assert.equal(observed[0]?.params.timeoutMs, 1_234);
+          assert.equal(observed[0]?.params.timeoutMs, undefined);
           assert.equal(observed[0]?.params.activeRuntimeMs, 322);
           assert.equal(observed[0]?.params.activeRuntimeCheckpointAt, 654);
           assert.equal(state.foregroundRuns.size, 0);
@@ -475,7 +475,7 @@ describe(
     );
 
     it(
-      "omits a disabled human timeout and resets successful resume runtime before spawning",
+      "omits a disabled human timeout and preserves successful resume runtime before spawning",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -519,14 +519,14 @@ describe(
         try {
           const result = await makeExecutor(
             tempDir,
-            [makeAgent("echo", { maxExecutionTimeMs: 100 })],
+            [makeAgent("echo", { maxExecutionTimeMs: 20_000 })],
             { execution: { maxRunTimeMs: false } },
             state,
             runSync,
             executeAsyncSingle,
           ).execute(
             "resume-runtime-reset-call",
-            { action: "resume", id: runId, message: "Continue with a fresh budget." },
+            { action: "resume", id: runId, message: "Continue with the preserved budget." },
             new AbortController().signal,
             undefined,
             makeMinimalCtx(tempDir),
@@ -535,8 +535,8 @@ describe(
           assert.equal(result.isError, undefined);
           assert.equal(observed.length, 1);
           assert.equal(observed[0]?.timeoutMs, undefined);
-          assert.equal(observed[0]?.activeRuntimeMs, 0);
-          assert.equal(Object.hasOwn(observed[0]!, "activeRuntimeCheckpointAt"), false);
+          assert.equal(observed[0]?.activeRuntimeMs, 9_001);
+          assert.equal(observed[0]?.activeRuntimeCheckpointAt, 777);
           assert.equal(state.foregroundRuns.size, 0);
         } finally {
           fs.rmSync(sessionFile, { force: true });
@@ -646,6 +646,177 @@ describe(
           assert.equal(mockPi.callCount(), 0);
           assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
           assert.equal(state.foregroundRuns.size, 1);
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "rejects a role-timeout poison on a remembered foreground lineage despite a raised limit",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `foreground-role-timeout-poison-${Date.now().toString(36)}`;
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        fs.writeFileSync(sessionFile, "remembered foreground session", "utf-8");
+        const beforeSession = fs.readFileSync(sessionFile);
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "failed",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              index: 0,
+              status: "failed",
+              sessionFile,
+              timedOut: true,
+              timeoutOwner: "role",
+              activeRuntimeMs: 100,
+            },
+          ],
+        });
+        try {
+          const executor = makeExecutor(
+            tempDir,
+            [makeAgent("echo", { maxExecutionTimeMs: 1_000 })],
+            {},
+            state,
+          );
+          const result = await executor.execute(
+            "foreground-role-timeout-poison-resume",
+            { action: "resume", id: runId, message: "Continue after raising the limit." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, true);
+          assert.equal(
+            result.content[0]?.text,
+            "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+          );
+          assert.equal(mockPi.callCount(), 0);
+          assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+          assert.equal(state.foregroundRuns.has(runId), true);
+        } finally {
+          fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "rejects a role-timeout poison on a paused foreground lineage before claim or spawn",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const runId = `paused-foreground-role-timeout-poison-${Date.now().toString(36)}`;
+        const asyncDir = path.join(ASYNC_DIR, runId);
+        const statusPath = path.join(asyncDir, "status.json");
+        const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+        const acceptance = pausedAcceptanceLedger();
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, "paused foreground session", "utf-8");
+        fs.writeFileSync(
+          statusPath,
+          JSON.stringify(
+            {
+              runId,
+              mode: "single",
+              state: "paused",
+              startedAt: 1,
+              lastUpdate: 2,
+              cwd: tempDir,
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              steps: [
+                {
+                  agent: "echo",
+                  status: "paused",
+                  sessionFile,
+                  pause: { kind: "awaiting_supervisor" },
+                  acceptance,
+                  timedOut: true,
+                  timeoutOwner: "role",
+                  activeRuntimeMs: 100,
+                },
+              ],
+            },
+            null,
+            2,
+          ),
+          "utf-8",
+        );
+        const beforeStatus = fs.readFileSync(statusPath);
+        const beforeSession = fs.readFileSync(sessionFile);
+        const state = {
+          baseCwd: tempDir,
+          currentSessionId: null,
+          asyncJobs: new Map(),
+          foregroundRuns: new Map(),
+          foregroundControls: new Map(),
+          lastForegroundControlId: null,
+        };
+        state.foregroundRuns.set(runId, {
+          runId,
+          mode: "single",
+          state: "paused",
+          cwd: tempDir,
+          startedAt: 1,
+          updatedAt: 2,
+          children: [
+            {
+              agent: "echo",
+              index: 0,
+              status: "paused",
+              sessionFile,
+              pause: { kind: "awaiting_supervisor" },
+              acceptance,
+              timedOut: true,
+              timeoutOwner: "role",
+              activeRuntimeMs: 100,
+            },
+          ],
+        });
+        try {
+          const executor = makeExecutor(
+            tempDir,
+            [makeAgent("echo", { maxExecutionTimeMs: 1_000 })],
+            {},
+            state,
+          );
+          const result = await executor.execute(
+            "paused-foreground-role-timeout-poison-resume",
+            { action: "resume", id: runId, message: "Continue after raising the limit." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, true);
+          assert.equal(
+            result.content[0]?.text,
+            "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+          );
+          assert.equal(mockPi.callCount(), 0);
+          assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+          assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+          assert.equal(state.foregroundRuns.has(runId), true);
         } finally {
           fs.rmSync(asyncDir, { recursive: true, force: true });
           fs.rmSync(sessionFile, { force: true });
@@ -1151,8 +1322,8 @@ describe(
         // The run phase and the resume phase deliberately use different ceilings.
         // A generous run ceiling means the child reaches a terminal failure on its
         // own instead of racing a kill, so activeRuntimeMs is a real duration
-        // (>= runDelayMs). Non-success terminal runs retain that budget; a
-        // successful completion would intentionally reset it before revival.
+        // (>= runDelayMs). Every terminal outcome retains that budget across
+        // revival; successful completion does not reset the lineage ledger.
         // The resume ceiling is far below that duration, so
         // remainingExecutionTimeMs(resumeCeilingMs, activeRuntimeMs) is 0 and the
         // pre-spawn guard rejects the resume. CPU contention only makes
@@ -1219,7 +1390,7 @@ describe(
     );
 
     it(
-      "resets the logical runtime budget after successful completion before resume",
+      "retains the logical runtime budget after successful completion before resume",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -1271,29 +1442,17 @@ describe(
         );
         const resumed = await resumeExecutor.execute(
           "resume-after-success",
-          { action: "resume", id: remembered!.runId, message: "Continue with a fresh budget." },
+          { action: "resume", id: remembered!.runId, message: "Continue without a reset." },
           new AbortController().signal,
           undefined,
           makeMinimalCtx(tempDir),
         );
-        assert.equal(resumed.isError, undefined);
-        assert.ok(resumed.details?.asyncId, "expected resumed async id");
-        const resumedPayload = JSON.parse(
-          fs.readFileSync(await waitForAsyncResultFile(resumed.details.asyncId!), "utf-8"),
-        ) as {
-          state?: string;
-          success?: boolean;
-          error?: string;
-          results?: Array<{ output?: string; error?: string }>;
-        };
+        assert.equal(resumed.isError, true);
         assert.equal(
-          resumedPayload.state,
-          "complete",
-          `successful completion reset should allow resume: state=${resumedPayload.state}, error=${resumedPayload.error ?? resumedPayload.results?.[0]?.error ?? "none"}`,
+          resumed.content[0]?.text,
+          `Agent 'echo' has exhausted its maxExecutionTimeMs ceiling after ${consumedSourceRuntimeMs}ms of active runtime.`,
         );
-        assert.equal(resumedPayload.success, true);
-        assert.match(resumedPayload.results?.[0]?.output ?? "", /fresh follow-up/);
-        assert.equal(mockPi.callCount(), 2);
+        assert.equal(mockPi.callCount(), 1);
       },
     );
 

@@ -254,7 +254,6 @@ function createExecutor(
     state,
     config: { maxSubagentDepth: 2, control: {} },
     artifactConfig: createArtifactConfig(),
-    executionPolicy: { maxRunTimeMs: false },
     tempArtifactsDir: root,
     getSubagentSessionRoot: () => root,
     expandTilde: (value) => value,
@@ -651,7 +650,6 @@ test("resume forwards the real hidden snapshot and plans distinct persisted prim
       requestCwd: fixture.cwd,
       ctx: createContext(fixture.cwd, registry, visibleRuntimeModel),
       artifactConfig: createArtifactConfig(),
-      executionPolicy: { maxRunTimeMs: false },
       deps: {
         pi: {
           events: {

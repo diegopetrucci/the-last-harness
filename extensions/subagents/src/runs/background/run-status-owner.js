@@ -95,6 +95,7 @@ export function createBackgroundRunStatusOwner(input) {
             status: "pending",
             ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
+            ...(task.timeoutOwner ? { timeoutOwner: task.timeoutOwner } : {}),
             ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
                 ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
                 : {}),
