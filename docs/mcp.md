@@ -108,6 +108,8 @@ Without `--project`, only the global pair is considered. Each `--project DIR` se
 
 `.agents` is not an MCP ownership signal in this rollout. It is detection-only context for forks or integrations that choose to inspect it; TLH does not recursively import, trust, rename, or migrate `.agents` files. A fork adding `.agents` behavior must opt in explicitly and retain its own review/acknowledgement boundary; that fork behavior is not enabled by the TLH command.
 
+`migrate-mcp` refuses (`unsafe-path`) any selected profile directory (derived from `--settings`) or project directory (`--project DIR`) whose path passes through a symbolic link, including macOS system links such as `/tmp` → `/private/tmp` and `/var` → `/private/var`; pass a resolved path to work around this, e.g. `--project "$(realpath DIR)"` or `--settings "$(realpath SETTINGS_PATH)"`.
+
 ### Package refresh and cold-start limits
 
 The migration commits configuration before refreshing the package cache. Run a normal full `tlh update` after successful apply. Pi 1.1.0's npm resource resolver can install missing packages and reconcile versions outside the configured range, but TLH's launch guard refuses conflicting cached metadata for a native exact pin before that resolver runs. `tlh update --extensions` skips exact npm pins and is not a cache-repair substitute.

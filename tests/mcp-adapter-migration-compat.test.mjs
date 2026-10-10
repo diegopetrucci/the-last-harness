@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, test } from "node:test";
@@ -17,7 +25,7 @@ const defaultExtensionsPath = join(repoRoot, "config", "default-extensions.json"
 const temporaryDirectories = [];
 
 function makeFixture(label) {
-  const root = resolve(mkdtempSync(join(tmpdir(), `tlh-mcp-compat-${label}-`)));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `tlh-mcp-compat-${label}-`)));
   const home = join(root, "home");
   const workspace = join(home, "workspace");
   const project = join(workspace, "projects", "current");

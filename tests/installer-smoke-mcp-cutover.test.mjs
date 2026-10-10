@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -230,7 +230,7 @@ test("acknowledged migration selects v5, while rollback re-holds the old source 
   const settingsBeforeMigration = readFileSync(config.settingsPath);
 
   const migration = runMcpAdapterMigration({
-    settingsPath: config.settingsPath,
+    settingsPath: realpathSync(config.settingsPath),
     defaultExtensionsPath,
     apply: true,
     acknowledgeUnverifiedMcpConfigs: true,
