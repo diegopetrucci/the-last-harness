@@ -1263,4 +1263,74 @@ describe("async stale-run reconciliation", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("buildFailedRepair carries validated step cwd into repaired result items (Codex P2)", () => {
+    // Codex P2: buildFailedRepair was building result.json items without step.cwd,
+    // so result-only revival after stale repair would not find the child cwd.
+    const root = tempRoot("pi-stale-step-cwd-");
+    try {
+      const asyncDir = path.join(root, "run-stepcwd");
+      const resultsDir = path.join(root, "results");
+      const childCwd = path.join(root, "child-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.mkdirSync(resultsDir, { recursive: true });
+      writeStatus(asyncDir, {
+        runId: "run-stepcwd",
+        mode: "single",
+        state: "running",
+        pid: 12345,
+        startedAt: 1000,
+        lastUpdate: 1000,
+        cwd: path.join(root, "run-workdir"),
+        steps: [
+          {
+            agent: "worker",
+            status: "running",
+            startedAt: 1000,
+            sessionFile,
+            cwd: childCwd,
+          },
+        ],
+      });
+
+      const resultPath = path.join(resultsDir, "run-stepcwd.json");
+      const result = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("ESRCH");
+        },
+        now: () => 2000,
+      });
+
+      assert.equal(result.repaired, true);
+      assert.equal(result.status?.state, "failed");
+
+      const writtenResult = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+      const results = writtenResult.results as Array<Record<string, unknown>>;
+      assert.ok(Array.isArray(results), "result.json must have a results array");
+      assert.equal(
+        results[0]?.cwd,
+        childCwd,
+        "repaired result item must carry the validated step cwd so result-only revival uses the child cwd",
+      );
+
+      // Verify result-only revival after stale repair picks up the step cwd.
+      const reviveTarget = resolveAsyncResumeTarget(
+        { id: "run-stepcwd" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      assert.equal(reviveTarget.kind, "revive");
+      assert.equal(
+        reviveTarget.cwd,
+        childCwd,
+        "result-only revival after stale repair must use the child cwd from the repaired result item",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

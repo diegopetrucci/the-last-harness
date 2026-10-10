@@ -692,7 +692,10 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         cwd: (typeof selectedStatusStep?.cwd === "string" && selectedStatusStep.cwd.length > 0
             ? selectedStatusStep.cwd
             : undefined) ??
-            selectedStatusStep?.childLocation?.childCwd ??
+            (typeof selectedStatusStep?.childLocation?.childCwd === "string" &&
+                selectedStatusStep.childLocation.childCwd.length > 0
+                ? selectedStatusStep.childLocation.childCwd
+                : undefined) ??
             context.resultSteps[index]?.cwd ??
             context.status?.cwd ??
             context.result?.cwd,

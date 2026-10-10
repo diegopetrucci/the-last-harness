@@ -1157,11 +1157,17 @@ function buildTerminalAsyncResumeTarget(
     // Status step cwd is guarded here because readStatus/normalizeAsyncLifecycleStatus
     // does not sanitise arbitrary JSON field values; result step cwd is already
     // validated as a non-empty string by validateResultFile at its I/O boundary.
+    // childLocation.childCwd is also guarded as a non-empty string so that
+    // malformed persisted values fall through to the next tier rather than
+    // propagating an invalid cwd into the revival target.
     cwd:
       (typeof selectedStatusStep?.cwd === "string" && selectedStatusStep.cwd.length > 0
         ? selectedStatusStep.cwd
         : undefined) ??
-      selectedStatusStep?.childLocation?.childCwd ??
+      (typeof selectedStatusStep?.childLocation?.childCwd === "string" &&
+      selectedStatusStep.childLocation.childCwd.length > 0
+        ? selectedStatusStep.childLocation.childCwd
+        : undefined) ??
       context.resultSteps[index]?.cwd ??
       context.status?.cwd ??
       context.result?.cwd,

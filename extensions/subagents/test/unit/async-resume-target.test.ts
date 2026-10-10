@@ -1548,6 +1548,55 @@ describe("revival cwd precedence (BUG-02)", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("malformed childLocation.childCwd (non-string) falls through to next-tier cwd", () => {
+    // Codex P2: childLocation.childCwd is used without validation in
+    // buildTerminalAsyncResumeTarget; a non-string value must fall through to
+    // the result-step or run-level cwd rather than being used as-is.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-clocbad-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-clocbadcwd", "status.json"), {
+        runId: "run-clocbadcwd",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: runCwd,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            // step.cwd is absent; childLocation.childCwd is a number, not a string
+            childLocation: {
+              // @ts-expect-error -- intentionally testing runtime rejection of a non-string childCwd
+              childCwd: 99,
+              displayPath: "bad-child",
+            },
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-clocbadcwd" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        runCwd,
+        "a non-string childLocation.childCwd must be dropped and fall back to run cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
