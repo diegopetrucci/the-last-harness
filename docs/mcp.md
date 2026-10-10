@@ -110,9 +110,9 @@ Without `--project`, only the global pair is considered. Each `--project DIR` se
 
 ### Package refresh and cold-start limits
 
-The migration commits configuration before the package cache is refreshed. Run a normal full `tlh update` or use a fresh install after a successful apply; ordinary next-launch resource resolution can reconcile a missing or mismatched exact package. `tlh update --extensions` alone is **not guaranteed** to refresh a cached `2.36.0` after the profile pin changes to `5.0.0`, so do not treat the settings diff as proof that the package was refreshed.
+The migration commits configuration before refreshing the package cache. Run a normal full `tlh update` after successful apply. Pi 1.1.0's npm resource resolver can install missing packages and reconcile versions outside the configured range, but TLH's launch guard refuses conflicting cached metadata for a native exact pin before that resolver runs. `tlh update --extensions` skips exact npm pins and is not a cache-repair substitute.
 
-Pi 1.0.3's resource resolver has warm-cache and cold-cache paths. TLH's launch guard refuses an unsafe or unverified cold start with a sanitized instruction to update or pin the adapter; a compatible warm legacy launch may continue until the profile is explicitly migrated. The guard covers the selected profile/current project boundary, not live MCP connectivity, every project, or direct manual invocations of the upstream runtime/package manager. It is therefore not a provider, keyring, production, or universal loader-equivalence proof.
+Pi 1.1.0 retains distinct warm-cache and cold-cache paths. TLH's launch guard refuses unsafe or unverified selections; a compatible warm legacy launch may continue until explicitly migrated. The guard covers the selected profile/current project boundary, not live MCP connectivity, every project, or direct manual invocations of the upstream runtime/package manager. It is therefore not a provider, keyring, production, or universal loader-equivalence proof.
 
 ### Rollback
 
