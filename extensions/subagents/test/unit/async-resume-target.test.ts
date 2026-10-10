@@ -1376,3 +1376,306 @@ describe("async resume lookup", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUG-02: per-child cwd revival — explicit step cwd, childLocation fallback,
+// run-cwd fallback, and legacy artifact compatibility.
+// ---------------------------------------------------------------------------
+
+describe("revival cwd precedence (BUG-02)", () => {
+  it("prefers explicit per-step cwd over run cwd when reviving a completed child", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-step-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const childCwd = path.join(root, "child-workdir");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-stepcwd", "status.json"), {
+        runId: "run-stepcwd",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: runCwd,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            cwd: childCwd,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-stepcwd" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival cwd must be the per-step child cwd, not the run cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to childLocation.childCwd when step cwd field is absent (legacy artifact)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-cloc-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const childCwd = path.join(root, "child-workdir");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-clocwd", "status.json"), {
+        runId: "run-clocwd",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: runCwd,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            childLocation: { childCwd, displayPath: "child-workdir" },
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-clocwd" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival cwd must fall back to childLocation.childCwd when step cwd is absent",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to run cwd when step has neither cwd nor childLocation (oldest artifacts)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-runcwd-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-runcwd", "status.json"), {
+        runId: "run-runcwd",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: runCwd,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-runcwd" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        runCwd,
+        "revival cwd must fall back to run cwd for oldest artifacts",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("step cwd field is validated as a string at the I/O boundary; non-string is ignored", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-cwd-invalid-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-cwdinvalid", "status.json"), {
+        runId: "run-cwdinvalid",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: runCwd,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            sessionFile,
+            // @ts-expect-error -- intentionally testing runtime rejection of a non-string cwd
+            cwd: 42,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-cwdinvalid" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        runCwd,
+        "a non-string step cwd must be dropped and fall back to run cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG-02: result-only async revival must use per-child cwd from result item.
+// These tests confirm that when status.json is absent (result-only revival),
+// the revival target cwd is taken from the result step, not the run cwd.
+// ---------------------------------------------------------------------------
+
+describe("result-only revival cwd (BUG-02)", () => {
+  it("result-only revival uses step cwd from result.json, not run cwd", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-stepcwd-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const childCwd = path.join(root, "child-workdir");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "result-only-stepcwd.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-stepcwd.json"), {
+        id: "run-result-stepcwd",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        cwd: runCwd,
+        results: [
+          {
+            agent: "worker",
+            success: true,
+            exitCode: 0,
+            sessionFile,
+            cwd: childCwd,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-result-stepcwd" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "result-only revival must use the per-step cwd from result.json, not the run cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("result-only revival: non-string result step cwd is ignored and falls back to run cwd", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-cwdinval-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const runCwd = path.join(root, "run-workdir");
+      const sessionFile = path.join(root, "result-only-cwdinval.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-cwdinval.json"), {
+        id: "run-result-cwdinval",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        cwd: runCwd,
+        results: [
+          {
+            agent: "worker",
+            success: true,
+            exitCode: 0,
+            sessionFile,
+            // @ts-expect-error -- intentionally testing runtime rejection of a non-string cwd
+            cwd: 99,
+          },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-result-cwdinval" },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+
+      assert.equal(target.kind, "revive");
+      assert.equal(
+        target.cwd,
+        runCwd,
+        "a non-string result step cwd must be dropped and fall back to run cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("result-only revival: step cwd takes precedence over run-level cwd when status is absent", () => {
+    // Parallel run with two children: each step carries its own cwd.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-parallel-"));
+    try {
+      const resultsDir = path.join(root, "results");
+      const runCwd = path.join(root, "run");
+      const childCwd0 = path.join(root, "child0");
+      const childCwd1 = path.join(root, "child1");
+      const sess0 = path.join(root, "s0.jsonl");
+      const sess1 = path.join(root, "s1.jsonl");
+      fs.writeFileSync(sess0, "", "utf-8");
+      fs.writeFileSync(sess1, "", "utf-8");
+      writeJson(path.join(resultsDir, "run-result-parallel-cwd.json"), {
+        id: "run-result-parallel-cwd",
+        agent: "worker",
+        success: true,
+        state: "complete",
+        cwd: runCwd,
+        results: [
+          { agent: "worker", success: true, exitCode: 0, sessionFile: sess0, cwd: childCwd0 },
+          { agent: "worker", success: true, exitCode: 0, sessionFile: sess1, cwd: childCwd1 },
+        ],
+      });
+
+      const target0 = resolveAsyncResumeTarget(
+        { id: "run-result-parallel-cwd", index: 0 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+      const target1 = resolveAsyncResumeTarget(
+        { id: "run-result-parallel-cwd", index: 1 },
+        { asyncDirRoot: path.join(root, "runs"), resultsDir },
+      );
+
+      assert.equal(target0.cwd, childCwd0, "child 0 revival cwd must be its own child cwd");
+      assert.equal(target1.cwd, childCwd1, "child 1 revival cwd must be its own child cwd");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -125,6 +125,12 @@ export function persistPausedForegroundCohortRun(input: {
   startedAt?: number;
   currentStep?: number;
   telemetry?: SubagentRunTelemetry;
+  /**
+   * Fully resolved per-child dispatch cwds, indexed to match `results`.
+   * Written into each persisted step so revival prefers the child cwd over the
+   * run-level cwd after a restart.  Only used when `results` is provided.
+   */
+  childCwds?: string[];
 }): void {
   const asyncDir = pausedForegroundStatusPath(input.runId);
   const now = Date.now();
@@ -149,7 +155,7 @@ export function persistPausedForegroundCohortRun(input: {
     : undefined;
   const steps = (
     input.steps ??
-    input.results?.map((result) => ({
+    input.results?.map((result, index) => ({
       agent: result.agent,
       ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
       ...(validatedForegroundTkTicketId(result)
@@ -206,6 +212,7 @@ export function persistPausedForegroundCohortRun(input: {
       ...(result.cancel ? { cancel: result.cancel } : {}),
       ...cloneForegroundPauseHealth(result.progress),
       ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+      ...(input.childCwds?.[index] !== undefined ? { cwd: input.childCwds[index] } : {}),
     })) ??
     []
   ).map((step) =>
@@ -314,6 +321,8 @@ export function buildPausedStepFromResult(
     stage: "pausing" | "paused";
     ownerPid?: number;
     status?: NonNullable<AsyncStatus["steps"]>[number]["status"];
+    /** Resolved per-child dispatch cwd; preferred over childLocation.childCwd on revival. */
+    cwd?: string;
   } = { stage: "paused" },
 ): NonNullable<AsyncStatus["steps"]>[number] {
   const status =
@@ -379,6 +388,7 @@ export function buildPausedStepFromResult(
     ...(result.cancel ? { cancel: result.cancel } : {}),
     ...cloneForegroundPauseHealth(result.progress),
     ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
     ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
     ...(result.contextPressureCrossedThresholds
@@ -416,6 +426,8 @@ export function buildCohortPauseStep(input: {
   tkTicketId?: string;
   /** Dispatch-time child-location snapshot; kept for display during cohort pause. */
   childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
+  /** Resolved per-child dispatch cwd; preferred over childLocation.childCwd on revival. */
+  cwd?: string;
 }): NonNullable<AsyncStatus["steps"]>[number] {
   const modelIdentity =
     input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
@@ -438,6 +450,7 @@ export function buildCohortPauseStep(input: {
       ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
       : {}),
     ...(input.childLocation ? { childLocation: input.childLocation } : {}),
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
     ...(input.status === "pausing" || input.status === "paused"
       ? {
           pause: {

@@ -767,6 +767,7 @@ async function runSubagentWithInput(
         idleEpisodeId: statusPayload.steps[fi]?.idleEpisodeId,
         durableAttentionReasons: statusPayload.steps[fi]?.durableAttentionReasons,
         compaction: statusPayload.steps[fi]?.compaction,
+        cwd: statusPayload.steps[fi]?.cwd,
       });
     }
   };
@@ -845,6 +846,7 @@ async function runSubagentWithInput(
       idleEpisodeId: statusPayload.steps[flatIndex]?.idleEpisodeId,
       durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
       compaction: statusPayload.steps[flatIndex]?.compaction,
+      cwd: statusPayload.steps[flatIndex]?.cwd,
     });
     results.push(projectSingleStepResult());
     const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;

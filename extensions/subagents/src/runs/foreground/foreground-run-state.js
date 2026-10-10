@@ -129,8 +129,11 @@ export function rememberForegroundRun(state, input) {
         children: input.results.map((result, index) => {
             const activeRuntimeMs = normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
                 normalizeActiveRuntimeMs(result.progress?.durationMs);
+            const resolvedChildCwd = typeof input.childCwds?.[index] === "string" ? input.childCwds[index] : undefined;
             const child = {
                 agent: result.agent,
+                ...(resolvedChildCwd !== undefined ? { cwd: resolvedChildCwd } : {}),
+                ...(result.childLocation ? { childLocation: result.childLocation } : {}),
                 ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
                 ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
                     ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
@@ -200,6 +203,8 @@ export function updateRememberedForegroundChild(state, input) {
     run.children[input.index] = {
         ...child,
         agent: input.result.agent,
+        ...(typeof input.childCwd === "string" ? { cwd: input.childCwd } : {}),
+        ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
         ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
         ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
             ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
@@ -334,7 +339,7 @@ export function resolveForegroundResumeTarget(params, state) {
             ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
             : {}),
         index,
-        cwd: run.cwd,
+        cwd: child.cwd ?? child.childLocation?.childCwd ?? run.cwd,
         sessionFile,
         ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
             ? { asyncDir: pausedForegroundStatusPath(run.runId) }

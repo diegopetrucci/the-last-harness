@@ -213,6 +213,7 @@ function resultItems(results) {
         idleEpisodeId: result.idleEpisodeId,
         durableAttentionReasons: result.durableAttentionReasons,
         compaction: result.compaction,
+        ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
     }));
 }
 function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt) {
