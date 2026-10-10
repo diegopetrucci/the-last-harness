@@ -1229,13 +1229,24 @@ function buildTerminalAsyncResumeTarget(
     context.result,
   );
   const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
-  const timeoutOwner = normalizeExecutionTimeoutOwner(
-    selectedStatusStep?.timeoutOwner ?? context.resultSteps[index]?.timeoutOwner,
+  // Normalize each source independently so a malformed status owner (e.g.
+  // "ROLE") cannot mask a valid result-side "role" owner via nullish coalescing.
+  // Either source carrying "role" evidence must fail closed.
+  const statusTimeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner);
+  const resultTimeoutOwner = normalizeExecutionTimeoutOwner(
+    context.resultSteps[index]?.timeoutOwner,
   );
-  const timedOut = selectedStatusStep?.timedOut ?? context.resultSteps[index]?.timedOut;
+  const timeoutOwner =
+    statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
+      ? ("role" as const)
+      : (statusTimeoutOwner ?? resultTimeoutOwner);
+  // Similarly normalize timedOut from each source so a truthy non-boolean in
+  // the status cannot suppress a legitimate true in the result.
+  const timedOut =
+    selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
   return {
     ...targetWithModelMetadata,
-    ...(timedOut === true ? { timedOut: true } : {}),
+    ...(timedOut ? { timedOut: true } : {}),
     ...(timeoutOwner ? { timeoutOwner } : {}),
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
     ...(diagnosticMetadata.contextPressure

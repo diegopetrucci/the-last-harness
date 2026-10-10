@@ -554,8 +554,10 @@ describe(
         let revivedId: string | undefined;
         try {
           mockPi.onCall({ output: `${currentCase.label} legacy timeout resumed` });
+          // Use a generous scaled budget so the remaining role time (budget minus
+          // activeRuntimeMs) does not expire before the mock child spawns in CI.
           const { executor } = makeExecutor({
-            agents: [makeAgent("worker", { maxExecutionTimeMs: 1_000 })],
+            agents: [makeAgent("worker", { maxExecutionTimeMs: scaleTestTimeout(30_000) })],
           });
           const result = await executor.execute(
             `resume-${currentCase.label}`,
@@ -568,6 +570,16 @@ describe(
           assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
           revivedId = await waitForRevivedAsyncResult(result);
           assert.equal(mockPi.callCount(), index + 1);
+          // Assert the revived run actually succeeded rather than just that the
+          // result file appeared.
+          const revivedPayload = JSON.parse(
+            fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
+          ) as { success?: boolean };
+          assert.equal(
+            revivedPayload.success,
+            true,
+            `${currentCase.label}: revived result should report success`,
+          );
         } finally {
           fs.rmSync(asyncDir, { recursive: true, force: true });
           if (revivedId) {
@@ -785,7 +797,9 @@ describe(
         const { executor } = makeExecutor({
           agents: [
             makeAgent("poisoned", { maxExecutionTimeMs: 1_000 }),
-            makeAgent("healthy", { maxExecutionTimeMs: 1_000 }),
+            // Use a generous scaled budget for the healthy agent so the remaining
+            // role time does not expire before mock-child spawn in CI.
+            makeAgent("healthy", { maxExecutionTimeMs: scaleTestTimeout(30_000) }),
           ],
         });
         const blocked = await executor.execute(
@@ -1552,6 +1566,105 @@ describe(
           "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
         );
         assert.equal(mockPi.callCount(), 0);
+        assert.deepEqual(fs.readFileSync(resultPath), beforeResult);
+      } finally {
+        fs.rmSync(asyncDir, { recursive: true, force: true });
+        fs.rmSync(resultPath, { force: true });
+        fs.rmSync(sessionFile, { force: true });
+      }
+    });
+
+    it("rejects resume when status has malformed timeoutOwner but result carries valid role evidence", async () => {
+      // Regression for the fail-closed merge fix: a malformed status-side owner
+      // (e.g. "ROLE") must not mask a valid result-side "role" via nullish
+      // coalescing. Resume must be rejected before spawn.
+      const runId = `resume-malformed-status-owner-${Date.now()}`;
+      const asyncDir = path.join(ASYNC_DIR, runId);
+      const statusPath = path.join(asyncDir, "status.json");
+      const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+      const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      // Status persists a malformed (uppercase) timeoutOwner that normalizes to
+      // undefined, which previously could mask the valid result evidence.
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify(
+          {
+            runId,
+            mode: "single",
+            state: "failed",
+            startedAt: 100,
+            endedAt: 200,
+            lastUpdate: 200,
+            cwd: tempDir,
+            steps: [
+              {
+                agent: "worker",
+                status: "failed",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "ROLE",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      // Result file carries the authoritative valid role-timeout evidence.
+      fs.writeFileSync(
+        resultPath,
+        JSON.stringify(
+          {
+            id: runId,
+            agent: "worker",
+            mode: "single",
+            state: "failed",
+            success: false,
+            cwd: tempDir,
+            asyncDir,
+            results: [
+              {
+                agent: "worker",
+                success: false,
+                output: "role timeout evidence",
+                sessionFile,
+                timedOut: true,
+                timeoutOwner: "role",
+                activeRuntimeMs: 100,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const beforeStatus = fs.readFileSync(statusPath);
+      const beforeResult = fs.readFileSync(resultPath);
+      try {
+        const { executor } = makeExecutor({
+          agents: [makeAgent("worker", { maxExecutionTimeMs: 1_000 })],
+        });
+        const result = await executor.execute(
+          "resume-malformed-status-owner",
+          { action: "resume", id: runId, message: "Continue after raising the limit." },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true);
+        assert.equal(
+          result.content[0]?.text,
+          "Agent 'worker' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.",
+        );
+        assert.equal(mockPi.callCount(), 0, "malformed status owner must not allow spawn");
+        assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
         assert.deepEqual(fs.readFileSync(resultPath), beforeResult);
       } finally {
         fs.rmSync(asyncDir, { recursive: true, force: true });

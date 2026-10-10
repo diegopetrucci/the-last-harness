@@ -740,11 +740,15 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
-    const timeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner ?? context.resultSteps[index]?.timeoutOwner);
-    const timedOut = selectedStatusStep?.timedOut ?? context.resultSteps[index]?.timedOut;
+    const statusTimeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner);
+    const resultTimeoutOwner = normalizeExecutionTimeoutOwner(context.resultSteps[index]?.timeoutOwner);
+    const timeoutOwner = statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
+        ? "role"
+        : (statusTimeoutOwner ?? resultTimeoutOwner);
+    const timedOut = selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
     return {
         ...targetWithModelMetadata,
-        ...(timedOut === true ? { timedOut: true } : {}),
+        ...(timedOut ? { timedOut: true } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
         ...(diagnosticMetadata.contextPressure
