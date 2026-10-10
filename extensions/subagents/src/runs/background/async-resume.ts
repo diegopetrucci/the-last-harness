@@ -421,6 +421,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         resultPath,
         `results[${index}].sessionFile`,
       );
+      // Non-string cwd values are silently dropped so malformed artifacts fall
+      // back to the next precedence tier rather than throwing on read.
+      const rawStepCwd = child["cwd"];
+      const stepCwd =
+        typeof rawStepCwd === "string" && rawStepCwd.length > 0 ? rawStepCwd : undefined;
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
       const tkTicketId = normalizeTkTicketId(child.tkTicketId);
       const thinking = parseThinkingLevel(child.thinking);
@@ -492,6 +497,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       return {
         agent,
         sessionFile,
+        ...(stepCwd ? { cwd: stepCwd } : {}),
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(typeof timedOut === "boolean" ? { timedOut } : {}),
@@ -1155,7 +1161,27 @@ function buildTerminalAsyncResumeTarget(
     state: context.state,
     agent,
     index,
-    cwd: context.status?.cwd ?? context.result?.cwd,
+    // Revival cwd precedence: status step cwd (written by the status owner
+    // from the plan task cwd) → status step childLocation.childCwd (legacy
+    // artifact) → result step cwd (result-only revival when status.json is
+    // absent) → run-level cwd (oldest artifacts with none of the above).
+    // Status step cwd is guarded here because readStatus/normalizeAsyncLifecycleStatus
+    // does not sanitise arbitrary JSON field values; result step cwd is already
+    // validated as a non-empty string by validateResultFile at its I/O boundary.
+    // childLocation.childCwd is also guarded as a non-empty string so that
+    // malformed persisted values fall through to the next tier rather than
+    // propagating an invalid cwd into the revival target.
+    cwd:
+      (typeof selectedStatusStep?.cwd === "string" && selectedStatusStep.cwd.length > 0
+        ? selectedStatusStep.cwd
+        : undefined) ??
+      (typeof selectedStatusStep?.childLocation?.childCwd === "string" &&
+      selectedStatusStep.childLocation.childCwd.length > 0
+        ? selectedStatusStep.childLocation.childCwd
+        : undefined) ??
+      context.resultSteps[index]?.cwd ??
+      context.status?.cwd ??
+      context.result?.cwd,
     ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
   };
   const modelMetadata = resolveResumeModelMetadata(

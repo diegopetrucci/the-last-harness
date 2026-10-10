@@ -453,10 +453,12 @@ async function runForegroundParallelTasks(
   // a child cwd is confirmed to differ; when all tasks share the parent cwd
   // (the common case) the accessor is never called and zero git work is done.
   const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
-  const taskLocationSnapshots = input.tasks.map((task) => {
-    const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
-    return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
-  });
+  // Pre-resolve each task's fully resolved cwd so the pause checkpoint path
+  // can write an explicit per-step cwd without recomputing it per step.
+  const taskResolvedCwds = input.tasks.map((task) => resolveParallelTaskCwd(task, input.paramsCwd));
+  const taskLocationSnapshots = taskResolvedCwds.map((taskCwd) =>
+    captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor),
+  );
   const writeParallelPauseCheckpoint = (
     requesterIndex: number,
     requester: SingleResult,
@@ -468,11 +470,13 @@ async function runForegroundParallelTasks(
       const liveResult = input.liveResults[index];
       const liveProgress = input.liveProgress[index];
       const result = liveResult ?? (index === requesterIndex ? requester : undefined);
+      const taskCwd = taskResolvedCwds[index];
       if (index === requesterIndex && result) {
         return buildPausedStepFromResult(result, now, {
           stage: options.rootStage,
           ownerPid,
           ...(options.requesterStatus ? { status: options.requesterStatus } : {}),
+          cwd: taskCwd,
         });
       }
       if (
@@ -480,10 +484,10 @@ async function runForegroundParallelTasks(
         options.rootStage === "paused" &&
         isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)
       ) {
-        return buildPausedStepFromResult(result, now, { stage: "paused" });
+        return buildPausedStepFromResult(result, now, { stage: "paused", cwd: taskCwd });
       }
       if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
-        return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
+        return buildPausedStepFromResult(liveResult, now, { stage: "paused", cwd: taskCwd });
       }
       // Prefer childLocation from the live result (set by execution.ts at dispatch).
       // Fall back to the precomputed dispatch snapshot for pending tasks that
@@ -513,6 +517,7 @@ async function runForegroundParallelTasks(
             input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
           tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
           childLocation: cohortChildLocation,
+          cwd: taskCwd,
         });
       }
       return buildCohortPauseStep({
@@ -534,6 +539,7 @@ async function runForegroundParallelTasks(
           input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
         tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
         childLocation: cohortChildLocation,
+        cwd: taskCwd,
       });
     });
     const pauseTelemetry = input.telemetryProvenance
@@ -1031,6 +1037,7 @@ export async function runParallelPath(
     cwd: effectiveCwd,
     results: details.results,
     ...(telemetry ? { telemetry } : {}),
+    childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
   });
   if (results.some((result) => result.pause)) {
     persistPausedForegroundCohortRun({
@@ -1040,6 +1047,7 @@ export async function runParallelPath(
       mode: "parallel",
       stage: "paused",
       results,
+      childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
       startedAt: foregroundControl?.startedAt,
       telemetry,
     });

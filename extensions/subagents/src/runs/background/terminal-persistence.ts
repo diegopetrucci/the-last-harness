@@ -84,6 +84,12 @@ export interface RunnerStepResult {
   idleEpisodeId?: RunnerStatusStep["idleEpisodeId"];
   durableAttentionReasons?: RunnerStatusStep["durableAttentionReasons"];
   compaction?: { reason: CompactionReason };
+  /**
+   * Resolved per-child dispatch cwd taken from the status step. Carried
+   * through to the result.json so result-only revival can prefer it over the
+   * run-level cwd.
+   */
+  cwd?: string;
 }
 
 type RunnerLogInput = {
@@ -412,6 +418,7 @@ function resultItems(results: RunnerStepResult[]): AsyncResultArtifact["results"
     idleEpisodeId: result.idleEpisodeId,
     durableAttentionReasons: result.durableAttentionReasons,
     compaction: result.compaction,
+    ...(result.cwd !== undefined ? { cwd: result.cwd } : {}),
   }));
 }
 

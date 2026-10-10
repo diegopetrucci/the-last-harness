@@ -157,6 +157,8 @@ function validateResultFile(value, resultPath) {
             const child = ensureObject(entry, `${resultPath} results[${index}]`);
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
+            const rawStepCwd = child["cwd"];
+            const stepCwd = typeof rawStepCwd === "string" && rawStepCwd.length > 0 ? rawStepCwd : undefined;
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
             const tkTicketId = normalizeTkTicketId(child.tkTicketId);
             const thinking = parseThinkingLevel(child.thinking);
@@ -194,6 +196,7 @@ function validateResultFile(value, resultPath) {
             return {
                 agent,
                 sessionFile,
+                ...(stepCwd ? { cwd: stepCwd } : {}),
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(typeof timedOut === "boolean" ? { timedOut } : {}),
@@ -693,7 +696,16 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         state: context.state,
         agent,
         index,
-        cwd: context.status?.cwd ?? context.result?.cwd,
+        cwd: (typeof selectedStatusStep?.cwd === "string" && selectedStatusStep.cwd.length > 0
+            ? selectedStatusStep.cwd
+            : undefined) ??
+            (typeof selectedStatusStep?.childLocation?.childCwd === "string" &&
+                selectedStatusStep.childLocation.childCwd.length > 0
+                ? selectedStatusStep.childLocation.childCwd
+                : undefined) ??
+            context.resultSteps[index]?.cwd ??
+            context.status?.cwd ??
+            context.result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
     };
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);

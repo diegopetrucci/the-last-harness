@@ -84,7 +84,7 @@ export function persistPausedForegroundCohortRun(input) {
         }
         : undefined;
     const steps = (input.steps ??
-        input.results?.map((result) => ({
+        input.results?.map((result, index) => ({
             agent: result.agent,
             ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
             ...(validatedForegroundTkTicketId(result)
@@ -138,6 +138,7 @@ export function persistPausedForegroundCohortRun(input) {
             ...(result.cancel ? { cancel: result.cancel } : {}),
             ...cloneForegroundPauseHealth(result.progress),
             ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+            ...(input.childCwds?.[index] !== undefined ? { cwd: input.childCwds[index] } : {}),
         })) ??
         []).map((step) => (step.status === "pausing" || step.status === "paused") && step.pause
         ? { ...step, terminationReason: "paused" }
@@ -279,6 +280,7 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
         ...(result.cancel ? { cancel: result.cancel } : {}),
         ...cloneForegroundPauseHealth(result.progress),
         ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
         ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
         ...(result.contextPressureCrossedThresholds
@@ -313,6 +315,7 @@ export function buildCohortPauseStep(input) {
             ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
             : {}),
         ...(input.childLocation ? { childLocation: input.childLocation } : {}),
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
         ...(input.status === "pausing" || input.status === "paused"
             ? {
                 pause: {

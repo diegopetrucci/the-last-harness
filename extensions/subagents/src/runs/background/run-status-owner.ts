@@ -48,7 +48,7 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.ts";
 import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
   createHealthTransitionState,
   resetHealthTransitionState,
@@ -374,6 +374,12 @@ export function createBackgroundRunStatusOwner<T extends BackgroundStatusOwnerIn
             ? [task.model]
             : undefined,
       ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+      // Record the fully resolved per-step dispatch cwd so revival can prefer
+      // it over the run-level cwd.  resolveChildCwd returns the base run cwd
+      // when the task has no explicit cwd (undefined), making this a no-op
+      // write for same-cwd tasks; the revival logic only acts on it when it
+      // differs from the run-level cwd.
+      cwd: resolveChildCwd(cwd, task.cwd),
       recentTools: [],
       recentOutput: [],
     };

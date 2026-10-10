@@ -191,30 +191,30 @@ async function runForegroundParallelTasks(input) {
     const interruptControllers = new Map();
     const startedIndexes = new Set();
     const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
-    const taskLocationSnapshots = input.tasks.map((task) => {
-        const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
-        return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
-    });
+    const taskResolvedCwds = input.tasks.map((task) => resolveParallelTaskCwd(task, input.paramsCwd));
+    const taskLocationSnapshots = taskResolvedCwds.map((taskCwd) => captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor));
     const writeParallelPauseCheckpoint = (requesterIndex, requester, ownerPid, options) => {
         const now = Date.now();
         const steps = input.tasks.map((task, index) => {
             const liveResult = input.liveResults[index];
             const liveProgress = input.liveProgress[index];
             const result = liveResult ?? (index === requesterIndex ? requester : undefined);
+            const taskCwd = taskResolvedCwds[index];
             if (index === requesterIndex && result) {
                 return buildPausedStepFromResult(result, now, {
                     stage: options.rootStage,
                     ownerPid,
                     ...(options.requesterStatus ? { status: options.requesterStatus } : {}),
+                    cwd: taskCwd,
                 });
             }
             if (result &&
                 options.rootStage === "paused" &&
                 isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)) {
-                return buildPausedStepFromResult(result, now, { stage: "paused" });
+                return buildPausedStepFromResult(result, now, { stage: "paused", cwd: taskCwd });
             }
             if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
-                return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
+                return buildPausedStepFromResult(liveResult, now, { stage: "paused", cwd: taskCwd });
             }
             const cohortChildLocation = result?.childLocation ?? taskLocationSnapshots[index];
             if (startedIndexes.has(index) ||
@@ -237,6 +237,7 @@ async function runForegroundParallelTasks(input) {
                         input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
                     tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                     childLocation: cohortChildLocation,
+                    cwd: taskCwd,
                 });
             }
             return buildCohortPauseStep({
@@ -256,6 +257,7 @@ async function runForegroundParallelTasks(input) {
                     input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
                 tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                 childLocation: cohortChildLocation,
+                cwd: taskCwd,
             });
         });
         const pauseTelemetry = input.telemetryProvenance
@@ -658,6 +660,7 @@ export async function runParallelPath(data, deps) {
         cwd: effectiveCwd,
         results: details.results,
         ...(telemetry ? { telemetry } : {}),
+        childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
     });
     if (results.some((result) => result.pause)) {
         persistPausedForegroundCohortRun({
@@ -667,6 +670,7 @@ export async function runParallelPath(data, deps) {
             mode: "parallel",
             stage: "paused",
             results,
+            childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
             startedAt: foregroundControl?.startedAt,
             telemetry,
         });

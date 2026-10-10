@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Amp orb setup: install npm dependencies plus the gn (Gnosis) and tk CLIs that
+# AGENTS.md workflows rely on. Must stay non-interactive and idempotent.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+step() {
+  local label="$1"
+  shift
+  local start=$SECONDS
+  echo "==> $label"
+  "$@"
+  echo "    done in $((SECONDS - start))s"
+}
+
+# Reuse the installer's own pinned, checksum-verified download helpers. They only
+# write inside the given agent dir, so keep it out of the real TLH profile and
+# key it by the pinned versions so a version bump installs fresh binaries.
+pinned_value() {
+  local value
+  value="$(sed -n "s/^const $2 = \"\\(.*\\)\";\$/\\1/p" "$1")"
+  if [[ -z "$value" ]]; then
+    echo "Could not read $2 from $1" >&2
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+install_cli_tools() {
+  local gnosis_repo gnosis_version tk_version tools_agent_dir
+  gnosis_repo="$(pinned_value scripts/tlh-gnosis.mjs DEFAULT_GNOSIS_REPO)"
+  gnosis_version="$(pinned_value scripts/tlh-gnosis.mjs DEFAULT_GNOSIS_VERSION)"
+  tk_version="$(pinned_value scripts/tlh-tickets.mjs DEFAULT_TICKET_VERSION)"
+  tools_agent_dir="$HOME/.cache/tlh-orb/gnosis-$gnosis_version-tk-$tk_version"
+
+  # Pass the pins explicitly so TLH_GNOSIS_VERSION/TLH_GNOSIS_REPO overrides in
+  # the orb environment cannot install a build that differs from the cache key.
+  if [[ ! -x "$tools_agent_dir/bin/gn" ]]; then
+    node scripts/tlh-gnosis.mjs install-managed --agent-dir "$tools_agent_dir" \
+      --gnosis-repo "$gnosis_repo" --gnosis-version "$gnosis_version"
+  fi
+  if [[ ! -x "$tools_agent_dir/bin/tk" ]]; then
+    node scripts/tlh-tickets.mjs install-managed --agent-dir "$tools_agent_dir"
+  fi
+
+  # ~/.local/bin is on PATH for Amp and login shells in orbs.
+  mkdir -p "$HOME/.local/bin"
+  link_managed_tool "$tools_agent_dir/bin/gn" "$HOME/.local/bin/gn"
+  link_managed_tool "$tools_agent_dir/bin/tk" "$HOME/.local/bin/tk"
+}
+
+# Replace only missing entries or links this script created; never clobber others.
+link_managed_tool() {
+  local source="$1" link="$2"
+  if [[ -e "$link" || -L "$link" ]]; then
+    if [[ ! -L "$link" || "$(readlink "$link")" != "$HOME/.cache/tlh-orb/"* ]]; then
+      echo "Refusing to replace unmanaged $link; remove it and rerun setup." >&2
+      return 1
+    fi
+  fi
+  ln -sfn "$source" "$link"
+}
+
+step "npm ci" npm ci --no-audit --no-fund
+# The shellcheck package downloads its binary on first use; fetch it now so
+# `npm run lint:sh` works offline in the snapshot.
+step "shellcheck binary" node_modules/.bin/shellcheck --version
+step "gn and tk CLIs" install_cli_tools
