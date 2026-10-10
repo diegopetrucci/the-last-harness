@@ -103,6 +103,24 @@ describe("agent management config parsing", () => {
     assert.deepEqual(discovered.builtin, [], "builtin agents must be empty after removal");
   });
 
+  it("shows canonical packaged load warnings on a project-scoped list", () => {
+    const filePath = path.join(tempDir, "agent-home", "tlh", "agents", "subagents", "developer.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "---\nname: developer\n---\n\nMissing description.\n", "utf-8");
+
+    const text = readText(
+      handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir }),
+    );
+    assert.match(text, /Agent load warnings:/);
+    assert.match(
+      text,
+      new RegExp(
+        `${path.basename(filePath)}: Agent frontmatter is missing required fields: description`,
+      ),
+    );
+    assert.doesNotMatch(text, /- developer \(user\)/);
+  });
+
   it("shows canonical roles for project scope without exposing project custom agents", () => {
     writeCanonicalRole("developer");
     trustProject();
