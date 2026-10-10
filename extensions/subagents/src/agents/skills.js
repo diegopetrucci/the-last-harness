@@ -634,32 +634,6 @@ export function buildSkillInjection(skills) {
 function escapeXmlText(value) {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-export function normalizeSkillInput(input) {
-    if (input === false)
-        return false;
-    if (input === true || input === undefined)
-        return undefined;
-    if (Array.isArray(input)) {
-        return [...new Set(input.map((s) => s.trim()).filter((s) => s.length > 0))];
-    }
-    const trimmed = input.trim();
-    if (trimmed.startsWith("[")) {
-        try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-                return normalizeSkillInput(parsed);
-            }
-        }
-        catch {
-        }
-    }
-    return [
-        ...new Set(input
-            .split(",")
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0)),
-    ];
-}
 export function discoverAvailableSkills(cwd) {
     const skills = getCachedSkills(cwd);
     return (skills

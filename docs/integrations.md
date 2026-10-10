@@ -42,8 +42,23 @@ Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) an
 
 If you already use a supported terminal integration such as Herdr or cmux, TLH reports an effective in-progress state that includes both the primary session and active async/background subagents. That means the integration may keep showing TLH as working even after the main prompt is ready for input, until those background jobs finish or clear.
 
-Interactive TLH sessions also set the terminal title to `tlh - <cwd basename>`. In Herdr, TLH keeps `agent: "pi"` on its activity/lifecycle reports for protocol ownership and publishes separate display metadata with `display_agent: "tlh"`. That metadata is retried by the existing activity heartbeat after a transient Herdr startup or server-restart failure; it does not require a Pi session reference.
+Interactive TLH sessions set the terminal title to `tlh - <session name> - <cwd basename>` when the session has a name (set with `/name`), or `tlh - <cwd basename>` when unnamed. The title is reasserted on `session_info_changed`, so `/name` updates it immediately.
+
+In Herdr, TLH keeps `agent: "pi"` on its activity/lifecycle reports for protocol ownership and publishes separate display metadata with `display_agent: "tlh"`. That metadata is retried by the existing activity heartbeat after a transient Herdr startup or server-restart failure; it does not require a Pi session reference. The metadata also carries the session name as a pane title (or clears it when unnamed). Herdr shows that metadata title on pane borders, taking priority over a manual pane label; tab labels are unaffected. The session name is exposed as the `pane` sidebar token.
+
+Herdr's default sidebar does not show the pane title without explicit config. To add it:
+
+```toml
+[ui.sidebar.agents.rows_by_agent]
+pi = [["state_icon", "machine", "workspace", "tab"], ["agent", "pane"]]
+```
+
+Alternatively, `terminal_title_stripped` is available as a sidebar token that reflects the full terminal title.
 
 Blocking extension UI prompts are reported separately as `waitingForUser`; waiting alone is not active model/tool work or background work. cmux shows a `waiting` status, while Herdr receives its supported `blocked` state. Notification suppression likewise remains limited to active background subagents.
+
+In addition to the Herdr and cmux bridges, TLH emits an **OSC 7501 Program Status** sequence on the active terminal during interactive sessions. The sequence carries five states — `working`, `blocked`, `done`, `idle`, and `error` — with `app=tlh`, and a `clear` record is sent when the session ends. `done` is emitted when a run settles normally; `idle` is emitted when no run has settled yet in this session, or when a run is cancelled, including cancellation during an automatic retry delay when Pi's native `agent_settled.aborted` metadata overrides the failed attempt [#748](https://github.com/diegopetrucci/the-last-harness/issues/748); `error` is emitted when a run settles after failing without a retry; `blocked` means a blocking extension UI prompt is open awaiting your input (`blocked` takes precedence over `working` while a prompt is open, and carries `kind=permission` for confirmation prompts or `kind=question` for other prompts). The emitter runs only when stdout is an interactive TTY; there is no feature-detection handshake, so unsupported terminals silently ignore the sequences. To opt out, set `TLH_PROGRAM_STATUS=0` in your environment.
+
+The `tlh` wrapper also sets `PI_PROGRAM_STATUS=0` by default because the pinned Pi 1.1.0 runtime includes its own native OSC 7501 emitter. TLH keeps the root record so effective activity, including active background children, remains represented by one writer. You can explicitly set `PI_PROGRAM_STATUS=1` to enable Pi's native writer; that can create competing root records unless you deliberately pair it with `TLH_PROGRAM_STATUS=0` to transfer root ownership to Pi. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly ([#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
 
 This bridge is session-scoped only. TLH does not install, enable, or reconfigure Herdr, cmux, or any other external integration for you, and it does not write persistent external config as part of this bridge. If your terminal setup does not already support this status handoff, nothing new is installed.

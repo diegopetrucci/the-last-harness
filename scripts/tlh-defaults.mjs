@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { parseMcpMigrationArgs, runMcpAdapterMigration } from "./lib/mcp-adapter-migration.mjs";
@@ -450,7 +450,6 @@ function commandEnable(settings, defaultExtensions, id, mcpDecision) {
     if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
         enablePackage(settings, extension);
     }
-    repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
     if (extension.id === MCPORTER_EXTENSION_ID) {
         applyBuiltinMcpExclusionOnEnable(settings);
     }

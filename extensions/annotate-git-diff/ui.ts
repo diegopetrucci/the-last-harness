@@ -41,11 +41,6 @@ function safeReadResolvedAsset(specifier: string): string {
 }
 
 function resolveMonacoEditorWorkerJs(monacoBasePath: string): string {
-  const legacyWorkerPath = join(monacoBasePath, "base", "worker", "workerMain.js");
-  if (existsSync(legacyWorkerPath)) {
-    return readFileSync(legacyWorkerPath, "utf8");
-  }
-
   const assetsDir = join(monacoBasePath, "assets");
   if (existsSync(assetsDir)) {
     const editorWorkerAsset = readdirSync(assetsDir)

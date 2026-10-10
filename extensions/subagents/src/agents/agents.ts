@@ -98,14 +98,13 @@ interface BuiltinAgentOverrideConfig {
   inheritSkills?: boolean;
   acceptanceRole?: AcceptanceRole | false;
   disabled?: boolean;
-  systemPrompt?: string;
   skills?: string[] | false;
   tools?: string[] | false;
   subagentOnlyExtensions?: string[] | false;
   completionGuard?: boolean;
   supervisorBridge?: boolean;
   toolBudget?: ToolBudgetConfig | false;
-  maxExecutionTimeMs?: number | false;
+  maxExecutionTimeMs?: number;
 }
 
 interface BuiltinAgentOverrideInfo {
@@ -164,6 +163,7 @@ interface SubagentSettings {
   overrides: Record<string, BuiltinAgentOverrideConfig>;
   defaultModel?: string;
   modelScope?: ModelScopeConfig;
+  diagnostics?: string[];
 }
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = {
@@ -337,6 +337,7 @@ function parseBuiltinOverrideEntry(
   name: string,
   value: unknown,
   filePath: string,
+  diagnostics: string[],
 ): BuiltinAgentOverrideConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Builtin override '${name}' in '${filePath}' must be an object.`);
@@ -439,38 +440,35 @@ function parseBuiltinOverrideEntry(
   if (Object.hasOwn(input, "toolBudget")) {
     if (input.toolBudget === false) {
       override.toolBudget = false;
-    } else if (
-      input.toolBudget &&
-      typeof input.toolBudget === "object" &&
-      !Array.isArray(input.toolBudget)
-    ) {
-      override.toolBudget = input.toolBudget as ToolBudgetConfig;
     } else {
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`,
-      );
+      const normalizedToolBudget = validateToolBudgetConfig(input.toolBudget);
+      if (normalizedToolBudget.error || normalizedToolBudget.budget === undefined) {
+        const detail = normalizedToolBudget.error ? ` ${normalizedToolBudget.error}` : "";
+        throw new Error(
+          `Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.${detail}`,
+        );
+      }
+      override.toolBudget = normalizedToolBudget.budget;
     }
   }
 
   if (Object.hasOwn(input, "maxExecutionTimeMs")) {
     if (input.maxExecutionTimeMs === false) {
-      override.maxExecutionTimeMs = false;
+      const boundedFallback =
+        canonicalAgentMaxExecutionTimeMs(name) === undefined
+          ? "bounded custom-agent fallback"
+          : "bounded canonical role ceiling";
+      diagnostics.push(
+        `Builtin override '${name}' in '${filePath}' uses legacy 'maxExecutionTimeMs: false'; the setting is ignored and the ${boundedFallback} remains active.`,
+      );
     } else {
       const parsed = input.maxExecutionTimeMs;
       if (!isPositiveSafeInteger(parsed))
         throw new Error(
-          `Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer or false.`,
+          `Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer.`,
         );
       override.maxExecutionTimeMs = parsed;
     }
-  }
-
-  if (Object.hasOwn(input, "systemPrompt")) {
-    if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
-    else
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`,
-      );
   }
 
   const fallbackModels = parseOverrideStringArrayOrFalse(
@@ -533,6 +531,7 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
   );
 
   const parsed = Object.create(null) as Record<string, BuiltinAgentOverrideConfig>;
+  const diagnostics: string[] = [];
   const agentOverrides = Object.hasOwn(subagentsObject, "agentOverrides")
     ? subagentsObject.agentOverrides
     : undefined;
@@ -540,9 +539,23 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
     return { overrides: parsed, defaultModel, modelScope };
   }
   for (const [name, value] of Object.entries(agentOverrides)) {
-    parsed[name] = parseBuiltinOverrideEntry(name, value, filePath);
+    parsed[name] = parseBuiltinOverrideEntry(name, value, filePath, diagnostics);
   }
-  return { overrides: parsed, defaultModel, modelScope };
+  return {
+    overrides: parsed,
+    defaultModel,
+    modelScope,
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+  };
+}
+
+function settingsDiagnostics(
+  settings: SubagentSettings,
+  source: "user" | "project",
+  filePath: string | null,
+): AgentDiscoveryDiagnostic[] {
+  if (!filePath || !settings.diagnostics?.length) return [];
+  return settings.diagnostics.map((error) => ({ source, filePath, error }));
 }
 
 function resolveSubagentDefaultModel(
@@ -683,11 +696,7 @@ function applyCustomAgentOverride(
     );
   }
   if (override.maxExecutionTimeMs !== undefined) {
-    fill(
-      "maxExecutionTimeMs",
-      ["maxExecutionTimeMs"],
-      override.maxExecutionTimeMs === false ? undefined : override.maxExecutionTimeMs,
-    );
+    fill("maxExecutionTimeMs", ["maxExecutionTimeMs"], override.maxExecutionTimeMs);
   }
 
   if (!anyFilled || !next) return agent;
@@ -990,8 +999,8 @@ function loadCanonicalPackagedAgents(agentDiagnostics: AgentDiscoveryDiagnostic[
   }
 
   // Keep role ceilings code-owned and apply them before any human settings
-  // overrides. An explicit false override therefore clears this value rather
-  // than being replaced by a fallback later in discovery.
+  // overrides. Legacy false overrides are diagnosed and ignored by the
+  // settings parser, so they cannot clear a bounded default.
   return Array.from(byName.values()).map((agent) => {
     const defaultMaxExecutionTimeMs = canonicalAgentMaxExecutionTimeMs(agent.name);
     if (defaultMaxExecutionTimeMs === undefined || agent.maxExecutionTimeMs !== undefined) {
@@ -1019,7 +1028,10 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     projectSettingsPath,
   );
   const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
+    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
+    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
+  ];
 
   const canonicalAgents = applyCustomAgentOverrides(
     applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
@@ -1113,7 +1125,10 @@ export function discoverAgentsAll(cwd: string): {
     projectSettingsPath,
   );
   const builtin: AgentConfig[] = [];
-  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [
+    ...settingsDiagnostics(userSettings, "user", userSettingsPath),
+    ...settingsDiagnostics(projectSettings, "project", projectSettingsPath),
+  ];
   const user = applyCustomAgentOverrides(
     applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
     userSettings,

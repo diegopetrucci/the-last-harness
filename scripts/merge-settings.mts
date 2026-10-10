@@ -17,7 +17,6 @@ import {
   readDefaultExtensionProvenance,
   readDefaultExtensions,
   RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
-  repairTargetedDefaultExtensionLoadOrder,
   setDefaultExtensionProvenance,
   withLegacyRetiredDefaultPackageIdentities,
 } from "./lib/default-extensions.mjs";
@@ -747,23 +746,6 @@ function applyRetiredTlhDefaultPackageCleanup(
   }
 }
 
-function applyDefaultExtensionLoadOrder(
-  settings: JsonObject,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  disabledIds: Set<string>,
-  changes: string[],
-): void {
-  const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(
-    settings,
-    defaultExtensions,
-    disabledIds,
-  );
-  if (!loadOrderRepair) return;
-  changes.push(
-    `reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`,
-  );
-}
-
 function purgeForceRemovedRetiredDefaultExtensionPackages(
   settings: JsonObject,
   changes: string[],
@@ -1256,7 +1238,6 @@ function main(): void {
       readDefaultExtensionProvenance(next).managedPackageIdentities,
     ),
   );
-  applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
   removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
   purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
   pruneQuietToolsDisabledDefaultExtension(next, changes);

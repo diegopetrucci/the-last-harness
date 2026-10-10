@@ -34,7 +34,6 @@ export function buildManagementActionParams(params) {
         agent: params.agent,
         chainName: params.chainName,
         agentScope: params.agentScope,
-        config: params.config,
     };
 }
 const UNSUPPORTED_SAVED_CHAIN_INPUT_MESSAGE = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
@@ -60,11 +59,7 @@ export function unsupportedSavedChainInput(params) {
     return undefined;
 }
 export function getRequestedModeLabel(params) {
-    if ((params.tasks?.length ?? 0) > 0)
-        return "parallel";
-    if (params.agent)
-        return "single";
-    return "single";
+    return (params.tasks?.length ?? 0) > 0 ? "parallel" : "single";
 }
 export function getAsyncInterruptTarget(state, runId, location) {
     if (location) {

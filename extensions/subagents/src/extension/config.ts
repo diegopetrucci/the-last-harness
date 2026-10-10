@@ -44,8 +44,8 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
         defineOwnProperty(artifacts, "mode", rawArtifacts.mode);
       }
     } else {
-      // Preserve an invalid block as an invalid mode value for the shared
-      // resolver to reject safely, rather than silently changing the config.
+      // Preserve the raw value so an invalid user-owned block is not silently
+      // changed while the extension loads other settings.
       defineOwnProperty(artifacts, "mode", rawArtifacts);
     }
     defineOwnProperty(config, "artifacts", artifacts);
@@ -60,8 +60,8 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
       }
       defineOwnProperty(config, "execution", execution);
     } else {
-      // Preserve an invalid block for the shared resolver to reject safely,
-      // rather than coercing it into a valid maxRunTimeMs value.
+      // Preserve an invalid user-owned block rather than coercing it into a
+      // value that TLH could accidentally enforce.
       defineOwnProperty(config, "execution", rawExecution);
     }
   }

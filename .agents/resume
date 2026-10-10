@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Amp orb resume: fast, idempotent kernel tuning that does not survive snapshots.
+set -euo pipefail
+
+# Oxlint's JS-plugin allocator reserves more virtual memory than the orb's RAM, so
+# under the kernel's default heuristic overcommit (0) `npm run lint` and the
+# anti-slop rule tests abort with a panic in oxc_allocator.
+if [[ "$(cat /proc/sys/vm/overcommit_memory)" != "1" ]]; then
+  sudo -n sysctl -q -w vm.overcommit_memory=1
+fi

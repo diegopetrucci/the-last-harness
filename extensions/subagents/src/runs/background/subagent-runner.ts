@@ -311,7 +311,7 @@ const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a vali
 const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR =
   "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
 const ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR =
-  "Async runner config contains retired timeoutMs execution control. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct single or parallel run after removing timeoutMs.";
+  "Async runner config contains retired timeoutMs execution control. Remove timeoutMs and restart with a new direct single or parallel run; per-role execution budgets are applied automatically.";
 const ASYNC_RUNNER_INVALID_CONFIG_ERROR = "Async runner config is malformed.";
 
 type RunnerConfigEnvelope = Omit<
@@ -738,6 +738,7 @@ async function runSubagentWithInput(
         skipped: pr.skipped,
         interrupted: prTimedOut ? undefined : pr.interrupted,
         timedOut: prTimedOut ? true : undefined,
+        timeoutOwner: statusPayload.steps[fi]?.timeoutOwner ?? group.tasks[t]?.timeoutOwner,
         toolBudget: pr.toolBudget,
         toolBudgetBlocked: pr.toolBudgetBlocked,
         contextUsage: pr.contextUsage,
@@ -767,6 +768,7 @@ async function runSubagentWithInput(
         idleEpisodeId: statusPayload.steps[fi]?.idleEpisodeId,
         durableAttentionReasons: statusPayload.steps[fi]?.durableAttentionReasons,
         compaction: statusPayload.steps[fi]?.compaction,
+        cwd: statusPayload.steps[fi]?.cwd,
       });
     }
   };
@@ -834,6 +836,7 @@ async function runSubagentWithInput(
           : undefined,
       interrupted: stepTimedOut ? undefined : singleResult.interrupted,
       timedOut: stepTimedOut ? true : undefined,
+      timeoutOwner: statusPayload.steps[flatIndex]?.timeoutOwner ?? seqStep.timeoutOwner,
       toolBudget: singleResult.toolBudget,
       toolBudgetBlocked: singleResult.toolBudgetBlocked,
       contextUsage: singleResult.contextUsage,
@@ -845,6 +848,7 @@ async function runSubagentWithInput(
       idleEpisodeId: statusPayload.steps[flatIndex]?.idleEpisodeId,
       durableAttentionReasons: statusPayload.steps[flatIndex]?.durableAttentionReasons,
       compaction: statusPayload.steps[flatIndex]?.compaction,
+      cwd: statusPayload.steps[flatIndex]?.cwd,
     });
     results.push(projectSingleStepResult());
     const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
@@ -905,6 +909,8 @@ async function runSubagentWithInput(
         : singleResult.exitCode;
     statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
     statusPayload.steps[flatIndex].timedOut = stepTimedOut ? true : undefined;
+    statusPayload.steps[flatIndex].timeoutOwner =
+      statusPayload.steps[flatIndex].timeoutOwner ?? seqStep.timeoutOwner;
     statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
     statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
     statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
@@ -1184,6 +1190,8 @@ async function runSubagentWithInput(
               : singleResult.exitCode;
           statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
           statusPayload.steps[fi].timedOut = stepTimedOut ? true : undefined;
+          statusPayload.steps[fi].timeoutOwner =
+            statusPayload.steps[fi].timeoutOwner ?? task.timeoutOwner;
           statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
           statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
           statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;

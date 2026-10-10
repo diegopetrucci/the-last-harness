@@ -90,7 +90,6 @@ export function buildManagementActionParams(params: SubagentParamsLike) {
     agent: params.agent,
     chainName: params.chainName,
     agentScope: params.agentScope,
-    config: params.config,
   };
 }
 
@@ -121,9 +120,7 @@ export function unsupportedSavedChainInput(params: SubagentParamsLike): string |
 }
 
 export function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
-  if ((params.tasks?.length ?? 0) > 0) return "parallel";
-  if (params.agent) return "single";
-  return "single";
+  return (params.tasks?.length ?? 0) > 0 ? "parallel" : "single";
 }
 export function getAsyncInterruptTarget(
   state: SubagentState,

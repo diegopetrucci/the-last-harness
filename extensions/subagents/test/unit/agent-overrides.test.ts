@@ -125,7 +125,7 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(findAgent("repo-scout").model, "deepseek-v4-flash");
   });
 
-  it("applies code-owned max execution defaults before human overrides", () => {
+  it("diagnoses legacy false and keeps code-owned max execution defaults before human overrides", () => {
     const expected = {
       developer: 3_600_000,
       "code-reviewer": 1_800_000,
@@ -157,9 +157,70 @@ describe("canonical packaged agent overrides", () => {
       Object.fromEntries(agents.map((agent) => [agent.name, agent.maxExecutionTimeMs])),
       {
         ...expected,
-        developer: undefined,
+        developer: 3_600_000,
         librarian: 1_234,
       },
+    );
+    const diagnostics = discoverAgents(tempProject, "both").agentDiagnostics ?? [];
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0]?.error ?? "", /legacy 'maxExecutionTimeMs: false'/);
+    assert.match(diagnostics[0]?.error ?? "", /bounded canonical role ceiling remains active/);
+    assert.equal(
+      fs.readFileSync(path.join(tempHome, ".pi", "agent", "settings.json"), "utf-8"),
+      JSON.stringify(
+        {
+          subagents: {
+            agentOverrides: {
+              developer: { maxExecutionTimeMs: false },
+              librarian: { maxExecutionTimeMs: 1_234 },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  });
+
+  it("uses custom-agent fallback wording for a noncanonical legacy false override", () => {
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: { agentOverrides: { "embedded.helper": { maxExecutionTimeMs: false } } },
+    });
+
+    const discovered = discoverAgents(tempProject, "both");
+    assert.equal(discovered.agents.length, 0);
+    assert.equal(discovered.agentDiagnostics?.length, 1);
+    assert.match(
+      discovered.agentDiagnostics?.[0]?.error ?? "",
+      /bounded custom-agent fallback remains active/,
+    );
+  });
+
+  it("keeps a project legacy false override from masking its canonical default", () => {
+    fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+    const settingsPath = path.join(tempProject, ".pi", "settings.json");
+    writeJson(settingsPath, {
+      subagents: { agentOverrides: { oracle: { maxExecutionTimeMs: false } } },
+    });
+    writeCanonicalAgent("oracle", "---\nname: oracle\ndescription: Oracle\n---\n\nOracle.\n");
+
+    const discovered = discoverAgents(tempProject, "both");
+    const oracle = discovered.agents.find((agent) => agent.name === "oracle");
+    assert.equal(oracle?.maxExecutionTimeMs, 2_700_000);
+    assert.equal(oracle?.override, undefined);
+    assert.equal(discovered.agentDiagnostics?.length, 1);
+    assert.match(discovered.agentDiagnostics?.[0]?.filePath ?? "", /settings\.json$/);
+    assert.match(
+      discovered.agentDiagnostics?.[0]?.error ?? "",
+      /bounded canonical role ceiling remains active/,
+    );
+    assert.equal(
+      fs.readFileSync(settingsPath, "utf-8"),
+      JSON.stringify(
+        { subagents: { agentOverrides: { oracle: { maxExecutionTimeMs: false } } } },
+        null,
+        2,
+      ),
     );
   });
 
@@ -258,7 +319,7 @@ describe("canonical packaged agent overrides", () => {
 
     const reviewer = findAgent("code-reviewer");
     assert.equal(reviewer.model, "profile/reviewer");
-    assert.equal(reviewer.maxExecutionTimeMs, undefined);
+    assert.equal(reviewer.maxExecutionTimeMs, 1_800_000);
     assert.equal(reviewer.override?.scope, "user");
   });
 
@@ -580,6 +641,39 @@ describe("canonical packaged agent overrides", () => {
         error.message.includes("reviewer") &&
         error.message.includes("maxExecutionTimeMs"),
     );
+  });
+
+  it("rejects a semantically invalid toolBudget override when settings load", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    writeJson(settingsPath, {
+      subagents: { agentOverrides: { developer: { toolBudget: { hard: 0 } } } },
+    });
+
+    assert.throws(
+      () => discoverAgents(tempProject, "both"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(settingsPath) &&
+        error.message.includes("developer") &&
+        error.message.includes("invalid 'toolBudget'"),
+    );
+  });
+
+  it("ignores a retired systemPrompt override and still applies sibling fields", () => {
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: { developer: { model: "mock/kept", systemPrompt: 12 } },
+      },
+    });
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nOriginal prompt.\n",
+    );
+
+    const developer = findAgent("developer");
+    assert.equal(developer.model, "mock/kept");
+    assert.equal(developer.systemPrompt.trim(), "Original prompt.");
+    assert.equal(developer.override?.base.systemPrompt.trim(), "Original prompt.");
   });
 
   it("surfaces malformed completion guard override values", () => {

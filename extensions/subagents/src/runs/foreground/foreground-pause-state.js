@@ -84,7 +84,7 @@ export function persistPausedForegroundCohortRun(input) {
         }
         : undefined;
     const steps = (input.steps ??
-        input.results?.map((result) => ({
+        input.results?.map((result, index) => ({
             agent: result.agent,
             ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
             ...(validatedForegroundTkTicketId(result)
@@ -118,6 +118,8 @@ export function persistPausedForegroundCohortRun(input) {
             ...(pausedForegroundTerminationReason(result)
                 ? { terminationReason: pausedForegroundTerminationReason(result) }
                 : {}),
+            ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+            ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
             exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
             ...(result.acceptance ? { acceptance: result.acceptance } : {}),
             ...(result.pause
@@ -136,6 +138,7 @@ export function persistPausedForegroundCohortRun(input) {
             ...(result.cancel ? { cancel: result.cancel } : {}),
             ...cloneForegroundPauseHealth(result.progress),
             ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+            ...(input.childCwds?.[index] !== undefined ? { cwd: input.childCwds[index] } : {}),
         })) ??
         []).map((step) => (step.status === "pausing" || step.status === "paused") && step.pause
         ? { ...step, terminationReason: "paused" }
@@ -277,6 +280,7 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
         ...(result.cancel ? { cancel: result.cancel } : {}),
         ...cloneForegroundPauseHealth(result.progress),
         ...(result.childLocation ? { childLocation: result.childLocation } : {}),
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
         ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
         ...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
         ...(result.contextPressureCrossedThresholds
@@ -287,6 +291,8 @@ export function buildPausedStepFromResult(result, now, options = { stage: "pause
                 terminationReason: pausedForegroundTerminationReason(result, status === "paused" || status === "pausing"),
             }
             : {}),
+        ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+        ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
     };
 }
 export function buildCohortPauseStep(input) {
@@ -309,6 +315,7 @@ export function buildCohortPauseStep(input) {
             ? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
             : {}),
         ...(input.childLocation ? { childLocation: input.childLocation } : {}),
+        ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
         ...(input.status === "pausing" || input.status === "paused"
             ? {
                 pause: {
@@ -393,6 +400,8 @@ export function persistPausedForegroundSingleRun(input) {
                     ...(pausedForegroundTerminationReason(input.result)
                         ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                         : {}),
+                    ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+                    ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
                     ...cloneForegroundPauseHealth(input.result.progress),
                     ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
@@ -462,6 +471,8 @@ export function persistPausedForegroundSingleRun(input) {
                     ...(pausedForegroundTerminationReason(input.result)
                         ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                         : {}),
+                    ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+                    ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
                     ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
                     ...cloneForegroundPauseHealth(input.result.progress, true),
                     ...(activeRuntimeMs !== undefined

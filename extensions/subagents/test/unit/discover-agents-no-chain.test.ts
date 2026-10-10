@@ -14,7 +14,7 @@ function writeFile(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
-describe("discoverAgentsAll saved-chain exclusion", () => {
+describe("discoverAgentsAll agent exclusion", () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-no-chain-discovery-"));
     oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -27,7 +27,7 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("keeps saved chain paths stable while ignoring generic agent sources", () => {
+  it("excludes generic user, project, and embedded agent sources", () => {
     execFileSync("git", ["init", "--quiet"], { cwd: tempDir });
     new ProjectTrustStore(path.join(tempDir, "agent-home")).set(tempDir, true);
     writeFile(
@@ -35,24 +35,8 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
       `---\nname: user-agent\ndescription: User agent\n---\n\nUse user agent.\n`,
     );
     writeFile(
-      path.join(tempDir, "agent-home", "chains", "user-flow.chain.md"),
-      `---\nname: user-flow\ndescription: User flow\n---\n\n## user-agent\n\nInspect.\n`,
-    );
-    writeFile(
       path.join(tempDir, ".pi", "agents", "project-agent.md"),
       `---\nname: project-agent\ndescription: Project agent\n---\n\nUse project agent.\n`,
-    );
-    writeFile(
-      path.join(tempDir, ".pi", "chains", "project-flow.chain.json"),
-      JSON.stringify(
-        {
-          name: "project-flow",
-          description: "Project flow",
-          chain: [{ agent: "project-agent", task: "Inspect" }],
-        },
-        null,
-        2,
-      ),
     );
     writeFile(
       path.join(tempDir, ".tlh", "agents", "custom", "PROJECT-AGENT.md"),

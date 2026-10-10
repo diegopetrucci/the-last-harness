@@ -184,6 +184,12 @@ export function rememberForegroundRun(
     cwd: string;
     results: SingleResult[];
     telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwds, indexed to match `results`.
+     * When present and a given entry differs from the run cwd, that entry is
+     * stored on the child and preferred over the run cwd on revival.
+     */
+    childCwds?: string[];
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -198,8 +204,12 @@ export function rememberForegroundRun(
       const activeRuntimeMs =
         normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
         normalizeActiveRuntimeMs(result.progress?.durationMs);
+      const resolvedChildCwd =
+        typeof input.childCwds?.[index] === "string" ? input.childCwds[index] : undefined;
       const child = {
         agent: result.agent,
+        ...(resolvedChildCwd !== undefined ? { cwd: resolvedChildCwd } : {}),
+        ...(result.childLocation ? { childLocation: result.childLocation } : {}),
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
         ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
           ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
@@ -237,6 +247,8 @@ export function rememberForegroundRun(
         ...(pausedForegroundTerminationReason(result)
           ? { terminationReason: pausedForegroundTerminationReason(result) }
           : {}),
+        ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+        ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
           ? {
@@ -261,6 +273,11 @@ export function updateRememberedForegroundChild(
     index: number;
     result: SingleResult;
     telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwd. When provided, stored on the
+     * child entry and preferred over the run cwd on revival.
+     */
+    childCwd?: string;
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -282,6 +299,8 @@ export function updateRememberedForegroundChild(
   run.children[input.index] = {
     ...child,
     agent: input.result.agent,
+    ...(typeof input.childCwd === "string" ? { cwd: input.childCwd } : {}),
+    ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
     ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
       ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
@@ -323,6 +342,8 @@ export function updateRememberedForegroundChild(
     ...(pausedForegroundTerminationReason(input.result)
       ? { terminationReason: pausedForegroundTerminationReason(input.result) }
       : {}),
+    ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+    ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
     ...(normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt) !== undefined
       ? {
@@ -391,6 +412,9 @@ export function resolveForegroundResumeTarget(
       contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
       contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
       contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
+      terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
+      timedOut?: boolean;
+      timeoutOwner?: "role" | "run";
       activityState?: import("../../shared/types.ts").ActivityState;
       idleEpisodeId?: string;
       durableAttentionReasons?: import("../../shared/types.ts").DurableAttentionReason[];
@@ -480,7 +504,7 @@ export function resolveForegroundResumeTarget(
       ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
       : {}),
     index,
-    cwd: run.cwd,
+    cwd: child.cwd ?? child.childLocation?.childCwd ?? run.cwd,
     sessionFile,
     ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
       ? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -509,6 +533,9 @@ export function resolveForegroundResumeTarget(
       ? { durableAttentionReasons: [...child.durableAttentionReasons] }
       : {}),
     ...(child.compaction ? { compaction: { ...child.compaction } } : {}),
+    ...(child.terminationReason ? { terminationReason: child.terminationReason } : {}),
+    ...(child.timedOut !== undefined ? { timedOut: child.timedOut } : {}),
+    ...(child.timeoutOwner ? { timeoutOwner: child.timeoutOwner } : {}),
     ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
       ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
       : {}),

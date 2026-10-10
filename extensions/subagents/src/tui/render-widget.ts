@@ -43,7 +43,6 @@ import {
 import { PHRASE_HOLD_MS } from "./whimsical-phrases.ts";
 
 const WIDGET_ACTIVITY_PREFIX = "       ";
-const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 
 export function widgetRenderKey(job: AsyncJobState): string {
   return JSON.stringify({
@@ -666,12 +665,13 @@ function foregroundStyleWidgetStepLines(
   const lines = [
     `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, safeTerminalText(displayStep.agent))}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
   ];
+  const activityWidth = width - visibleWidth(WIDGET_ACTIVITY_PREFIX);
   const activityLines =
     resolvedDisplayStatus === displayStep.status
       ? widgetStepActivityLines(
           displayStep,
-          width - visibleWidth(WIDGET_ACTIVITY_PREFIX),
-          width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+          activityWidth,
+          activityWidth,
           expanded,
           job.updatedAt,
           false,
@@ -684,10 +684,8 @@ function foregroundStyleWidgetStepLines(
   // tick — absorbs the cut rather than the rare, static location line.
   const childLocLine = childLocationLine(step.childLocation, theme, "    ");
   if (childLocLine) lines.push(childLocLine);
-  for (const [activityIndex, activity] of activityLines.entries()) {
-    const prefix =
-      activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-    lines.push(theme.fg("dim", `${prefix}${activity}`));
+  for (const activity of activityLines) {
+    lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
   }
   if (resolvedDisplayStatus === "running") {
     if (!expanded) lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
@@ -886,10 +884,11 @@ function singleModeHealthWarningLines(
   const displayStep = projectContinuedWidgetStep(job, step);
   const displayStatus = singleWidgetStepDisplayStatus(job, step);
   if (displayStatus === displayStep.status) {
+    const activityWidth = contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX);
     const stepActivityLines = widgetStepActivityLines(
       displayStep,
-      contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX),
-      contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+      activityWidth,
+      activityWidth,
       expanded,
       job.updatedAt,
     );
@@ -965,7 +964,7 @@ function compactSingleWidgetLines(
     const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
     const rowPrefix = `  ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, safeTerminalText(displayStep.agent))}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
     const activitySeparator = ` ${theme.fg("dim", "·")} `;
-    const activityContinuationPrefix = WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+    const activityPrefixWidth = contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX);
     const inlineFirstWidth = contentWidth - visibleWidth(rowPrefix + activitySeparator);
     const minimumCommandWidth = displayStep.currentTool
       ? visibleWidth(`${displayStep.currentTool}${displayStep.currentToolArgs ? ": " : ""}`)
@@ -974,10 +973,8 @@ function compactSingleWidgetLines(
       Boolean(displayStep.currentTool) && inlineFirstWidth >= minimumCommandWidth;
     const activityLines = widgetStepActivityLines(
       displayStep,
-      inlineCommand ? inlineFirstWidth : contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX),
-      inlineCommand
-        ? contentWidth - visibleWidth(activityContinuationPrefix)
-        : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+      inlineCommand ? inlineFirstWidth : activityPrefixWidth,
+      activityPrefixWidth,
       false,
       job.updatedAt,
       true,
@@ -1014,14 +1011,12 @@ function compactSingleWidgetLines(
       if (inlineCommand) {
         lines.push(`${rowPrefix}${activitySeparator}${theme.fg("dim", activityLines[0]!)}`);
         for (const activityLine of activityLines.slice(1)) {
-          lines.push(`${activityContinuationPrefix}${theme.fg("dim", activityLine)}`);
+          lines.push(`${WIDGET_ACTIVITY_PREFIX}${theme.fg("dim", activityLine)}`);
         }
       } else {
         lines.push(...wrapDisplayLine(rowPrefix, contentWidth));
-        for (const [activityIndex, activityLine] of activityLines.entries()) {
-          const prefix =
-            activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
-          lines.push(theme.fg("dim", `${prefix}${activityLine}`));
+        for (const activityLine of activityLines) {
+          lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activityLine}`));
         }
       }
     } else {

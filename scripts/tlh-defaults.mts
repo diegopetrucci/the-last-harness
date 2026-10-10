@@ -14,7 +14,6 @@ import {
   packageSourceOf,
   readDefaultExtensionProvenance,
   readDefaultExtensions,
-  repairTargetedDefaultExtensionLoadOrder,
   setDefaultExtensionProvenance,
   withLegacyRetiredDefaultPackageIdentities,
   type DefaultExtensionEntry,
@@ -608,7 +607,6 @@ function commandEnable(
   if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
     enablePackage(settings, extension);
   }
-  repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
   if (extension.id === MCPORTER_EXTENSION_ID) {
     applyBuiltinMcpExclusionOnEnable(settings);
   }

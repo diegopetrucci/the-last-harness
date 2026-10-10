@@ -21,6 +21,7 @@ import {
   makeExtensionAPI,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   makeSubagentState,
   removeTempDir,
   tryImport,
@@ -31,6 +32,7 @@ import {
 } from "../../../the-last-harness-subagent-safety.mjs";
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
+import { writePackageSkill } from "../support/single-execution-fixtures.ts";
 
 type DiscoverAgents = typeof discoverAgents;
 
@@ -138,14 +140,15 @@ function providerErrorResponse(model: string) {
   };
 }
 
-function providerAwareContext(
+async function providerAwareContext(
   cwd: string,
   availableModels: ReturnType<typeof providerAwareAvailableModels>,
 ) {
-  const ctx = makeMinimalCtx(cwd);
+  const { context: ctx } = await makeModelRegistryContext(
+    cwd,
+    availableModels.map((model) => ({ provider: model.provider, models: [model] })),
+  );
   ctx.model = makeModel("session", { provider: "anthropic" });
-  ctx.modelRegistry.getAvailable = () => availableModels;
-  ctx.modelRegistry.getAll = () => availableModels;
   return ctx;
 }
 
@@ -155,25 +158,6 @@ function writeProjectOverride(projectRoot: string, agentName: string, model: str
   fs.writeFileSync(
     settingsPath,
     JSON.stringify({ subagents: { agentOverrides: { [agentName]: { model } } } }, null, 2),
-    "utf-8",
-  );
-}
-
-function writePackageSkill(packageRoot: string, skillName: string): void {
-  const skillDir = path.join(packageRoot, "skills", skillName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify(
-      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  fs.writeFileSync(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
     "utf-8",
   );
 }
@@ -479,7 +463,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -503,7 +487,7 @@ describe("subagent executor dispatch wiring", () => {
       { tasks: [task] },
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -525,7 +509,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, providerAwareAvailableModels()),
+      await providerAwareContext(tempDir, providerAwareAvailableModels()),
     );
 
     assert.equal(result.isError, undefined);

@@ -154,6 +154,42 @@ test("renderWrapper: sessions subcommand block appears before the pinned pi runt
   );
 });
 
+test("renderWrapper: PI_PROGRAM_STATUS is exported with default 0 when unset", () => {
+  const rendered = renderWrapper(BASE_ARGS);
+  assert.ok(
+    rendered.includes('export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"'),
+    "rendered wrapper must export PI_PROGRAM_STATUS defaulting to 0",
+  );
+});
+
+test("renderWrapper: PI_PROGRAM_STATUS export appears immediately after PI_CODING_AGENT_DIR export", () => {
+  const rendered = renderWrapper(BASE_ARGS);
+  const lines = rendered.split("\n");
+  const agentDirIndex = lines.indexOf('export PI_CODING_AGENT_DIR="${default_agent_dir}"');
+  const programStatusIndex = lines.indexOf('export PI_PROGRAM_STATUS="${PI_PROGRAM_STATUS:-0}"');
+  assert.ok(agentDirIndex >= 0, "PI_CODING_AGENT_DIR export line must be present");
+  assert.ok(programStatusIndex >= 0, "PI_PROGRAM_STATUS export line must be present");
+  assert.equal(
+    agentDirIndex + 1,
+    programStatusIndex,
+    "PI_PROGRAM_STATUS export must be the line immediately after PI_CODING_AGENT_DIR export",
+  );
+});
+
+test("renderWrapper: PI_PROGRAM_STATUS preserves user-provided value (uses :- default syntax)", () => {
+  const rendered = renderWrapper(BASE_ARGS);
+  // The :- syntax means user-set PI_PROGRAM_STATUS is preserved; only unset gets 0.
+  assert.ok(
+    rendered.includes('"${PI_PROGRAM_STATUS:-0}"'),
+    "PI_PROGRAM_STATUS must use :-0 default so a user-set value is preserved",
+  );
+  // Must not use plain assignment that would clobber a user-set value.
+  assert.ok(
+    !rendered.includes("PI_PROGRAM_STATUS=0"),
+    "PI_PROGRAM_STATUS must not use plain =0 assignment that would clobber a user-set value",
+  );
+});
+
 test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin dir → runtime prefix)", () => {
   // With piCmd="/a/runtime/bin/pi":
   //   tlh_pinned_dir="${default_pi_cmd%/*}"  → "/a/runtime/bin"

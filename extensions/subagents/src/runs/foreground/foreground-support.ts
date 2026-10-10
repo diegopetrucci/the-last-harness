@@ -2,6 +2,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentDiscoveryDiagnostic } from "../../agents/agents.ts";
 import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
+import { getUnfilteredAvailableModels } from "../../../../the-last-harness/model-visibility.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import type { ModelRegistryEvidence } from "../shared/model-fallback.ts";
 
@@ -25,7 +26,10 @@ export function readModelRegistrySnapshot(ctx: ExtensionContext): ModelRegistryS
     getAll?: () => ModelRegistryEntry[];
     getError?: () => string | undefined;
   };
-  const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+  // Model visibility filters browsing/list surfaces only. Keep auth-filtered
+  // availability while bypassing TLH's visibility layer so hidden models can
+  // still be resolved for subagent execution.
+  const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry).map(toModelInfo);
   let allModels: ModelInfo[] | undefined;
   let error: string | undefined;
   if (typeof optionalRegistry.getAll === "function") {

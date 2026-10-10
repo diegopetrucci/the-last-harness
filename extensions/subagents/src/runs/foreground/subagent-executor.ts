@@ -80,10 +80,6 @@ import { pausedForegroundStatusPath } from "./foreground-pause-state.ts";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import {
-  resolveExecutionPolicy,
-  type ResolvedExecutionPolicy,
-} from "../../agents/execution-ceiling.ts";
-import {
   executeAsyncParallel,
   executeAsyncSingle,
   isAsyncAvailable,
@@ -192,8 +188,6 @@ export interface ExecutorDeps {
   config: ExtensionConfig;
   /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
   artifactConfig?: ResolvedArtifactConfig;
-  /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
-  executionPolicy?: ResolvedExecutionPolicy;
   tempArtifactsDir: string;
   getSubagentSessionRoot: (parentSessionFile: string | null) => string;
   expandTilde: (p: string) => string;
@@ -236,8 +230,6 @@ interface ExecutionContextData {
   telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
   telemetryLineage?: import("../../shared/telemetry.ts").SubagentTelemetryLineage;
   startedAt?: number;
-  timeoutMs?: number;
-  deadlineAt?: number;
   modelScope?: ModelScopeConfig;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
@@ -289,7 +281,7 @@ function retiredExecutionControlError(params: SubagentParamsLike): string | unde
   const input = params as Record<string, unknown>;
   const topLevelGuidance: Record<string, string> = {
     timeoutMs:
-      "Configure `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json`; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing `timeoutMs`.",
+      "Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing `timeoutMs`.",
     concurrency:
       "Configure `parallel.concurrency` in `<agent-dir>/extensions/subagent/config.json`; per-call concurrency is no longer supported.",
     fallbackModels:
@@ -347,7 +339,7 @@ function retiredExecutionControlError(params: SubagentParamsLike): string | unde
           return `${taskPrefix}.${key} is no longer supported. ${guidance}`;
       }
       if (Object.hasOwn(rawTask, "timeoutMs")) {
-        return `${taskPrefix}.timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
+        return `${taskPrefix}.timeoutMs is no longer supported. Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing timeoutMs.`;
       }
       if (Object.hasOwn(rawTask, "reads")) {
         return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
@@ -582,7 +574,6 @@ function runAsyncPath(
         controlConfig,
         telemetryProvenance: data.telemetryProvenance,
         telemetryLineage: data.telemetryLineage,
-        timeoutMs: data.timeoutMs,
         projectAgentCaptures: data.projectAgentCaptures,
       }),
     );
@@ -616,7 +607,7 @@ function runAsyncPath(
       },
     );
     return releaseAsyncProjectRunOnError(
-      executeAsyncSingle(id, {
+      (deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
         agent: params.agent!,
         task: params.task ?? "",
         agentConfig: a,
@@ -639,7 +630,6 @@ function runAsyncPath(
         controlConfig,
         telemetryProvenance: data.telemetryProvenance,
         telemetryLineage: data.telemetryLineage,
-        timeoutMs: data.timeoutMs,
         projectAgent: data.projectAgentCaptures?.find(
           (capture) => capture.provenance.agent === params.agent,
         ),
@@ -1106,7 +1096,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 } {
   const configuredArtifactConfig =
     deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
-  const executionPolicy = deps.executionPolicy ?? resolveExecutionPolicy(deps.config.execution);
 
   const execute = async (
     _id: string,
@@ -1147,7 +1136,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
             ...configuredArtifactConfig,
             enabled: paramsWithResolvedCwd.artifacts !== false,
           },
-          executionPolicy,
         });
       }
       if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
@@ -1167,7 +1155,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
         ...ctx,
         cwd: requestCwd,
-        config: deps.config,
       });
     }
 
@@ -1193,8 +1180,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const normalizedParams = normalized.params!;
 
     let effectiveParams = normalizedParams;
-    const runTimeoutMs =
-      executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
     const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -1322,7 +1307,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       controlConfig,
       telemetryProvenance: deps.telemetryProvenance,
       startedAt: runStartedAt,
-      timeoutMs: runTimeoutMs,
       modelScope,
       runSync: deps.runSync,
     };

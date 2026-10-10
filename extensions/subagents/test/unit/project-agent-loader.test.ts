@@ -549,7 +549,7 @@ describe("trusted project-agent loader", () => {
     }
   });
 
-  it("tombstones direct symlink, non-regular, oversize, and unavailable-O_NOFOLLOW candidates", async () => {
+  it("tombstones direct symlink, non-regular, oversize, and unavailable-O_NOFOLLOW candidates", async (t) => {
     const project = tempProject();
     const outside = path.join(project, "outside.md");
     fs.writeFileSync(outside, "secret outside", "utf8");
@@ -557,7 +557,9 @@ describe("trusted project-agent loader", () => {
     fs.mkdirSync(customDirectory(project), { recursive: true });
     try {
       fs.symlinkSync(outside, symlink);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      t.skip(`symlink unsupported: ${message}`);
       return;
     }
     const nonRegular = path.join(customDirectory(project), "DIRECTORY.md");

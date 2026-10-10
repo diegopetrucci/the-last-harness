@@ -471,3 +471,85 @@ describe("terminal persistence", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// BUG-02: per-child cwd in runner result items
+// RunnerStepResult.cwd must be written into the result.json step so that
+// result-only revival (status.json absent) can use the correct child cwd.
+// ---------------------------------------------------------------------------
+
+describe("runner result item carries per-child cwd (BUG-02)", () => {
+  it("resultItems writes cwd from RunnerStepResult into the result artifact step", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tp-stepcwd-"));
+    tempDirs.push(root);
+    const asyncDir = path.join(root, "async");
+    const resultPath = path.join(root, "result.json");
+    const sessionFile = path.join(root, "session.jsonl");
+    fs.writeFileSync(sessionFile, "");
+
+    const runCwd = path.join(root, "run-dir");
+    const childCwd = path.join(root, "child-dir");
+
+    const plan = terminalPlan;
+    const owner = createBackgroundRunStatusOwner({
+      id: "tp-stepcwd-1",
+      asyncDir,
+      cwd: runCwd,
+      plan,
+      overallStartTime: Date.now(),
+      artifactConfig: terminalArtifactConfig,
+      appendEvent() {},
+    });
+
+    const results: RunnerStepResult[] = [
+      {
+        agent: "worker",
+        output: "done",
+        success: true,
+        exitCode: 0,
+        sessionFile,
+        cwd: childCwd,
+      },
+    ];
+
+    persistRunnerTerminalRun({
+      config: {
+        id: "tp-stepcwd-1",
+        plan,
+        resultPath,
+        cwd: runCwd,
+        artifactConfig: terminalArtifactConfig,
+        asyncDir,
+      },
+      plan,
+      statusOwner: owner,
+      statusPayload: owner.statusPayload,
+      results,
+      controlConfig: controls,
+      overallStartTime: 100,
+      runEndedAt: 200,
+      summary: "done",
+      truncated: false,
+      agentName: "worker",
+      resultPath,
+      cwd: runCwd,
+      asyncDir,
+      skipFinalStatusWrite: false,
+      pausedOutputForIndex: () => "paused",
+      appendEvent() {},
+      writeRunLog() {},
+    });
+
+    const artifact = JSON.parse(fs.readFileSync(resultPath, "utf8")) as {
+      cwd: string;
+      results: Array<{ cwd?: string }>;
+    };
+
+    assert.equal(
+      artifact.results[0]?.cwd,
+      childCwd,
+      "result artifact step must carry the per-child cwd, not the run cwd",
+    );
+    assert.equal(artifact.cwd, runCwd, "result artifact top-level cwd must still be the run cwd");
+  });
+});

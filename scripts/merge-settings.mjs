@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { cloneMcpAdapterEntries, evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, sameMcpAdapterEntries, } from "./lib/mcp-adapter-cutover.mjs";
 import { isLocalPackageSource, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
@@ -510,12 +510,6 @@ function applyRetiredTlhDefaultPackageCleanup(settings, changes, managedPackageI
         managedPackageIdentities.delete(identity);
     }
 }
-function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
-    const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
-    if (!loadOrderRepair)
-        return;
-    changes.push(`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`);
-}
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
         return;
@@ -877,7 +871,6 @@ function main() {
     });
     applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
     applyRetiredTlhDefaultPackageCleanup(next, changes, withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities));
-    applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneQuietToolsDisabledDefaultExtension(next, changes);

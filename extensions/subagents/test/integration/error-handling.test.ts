@@ -1,10 +1,7 @@
 /**
- * Integration tests for error handling across execution modes.
+ * Integration tests for runSync error handling.
  *
- * Tests: agent crashes, stderr capture, detectSubagentError override,
- * and error propagation across parallel tasks.
- *
- * Requires pi packages for execution tests. Skips gracefully if unavailable.
+ * Covers agent crashes, stderr capture, and hidden-failure overrides.
  */
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
@@ -26,103 +23,6 @@ const execution = await tryImport<any>("./src/runs/foreground/execution.ts");
 const piAvailable = !!(execution && utils);
 
 const runSync = execution?.runSync;
-const detectSubagentError = utils?.detectSubagentError;
-
-// ---------------------------------------------------------------------------
-// detectSubagentError
-// ---------------------------------------------------------------------------
-
-describe(
-  "detectSubagentError",
-  { skip: !detectSubagentError ? "utils not importable" : undefined },
-  () => {
-    it("returns no error for successful messages", () => {
-      const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Let me check..." }] },
-        {
-          role: "toolResult",
-          toolName: "bash",
-          isError: false,
-          content: [{ type: "text", text: "OK" }],
-        },
-        { role: "assistant", content: [{ type: "text", text: "All good!" }] },
-      ];
-      const result = detectSubagentError(messages);
-      assert.equal(result.hasError, false);
-    });
-
-    it("detects fatal bash error in last tool result", () => {
-      const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Running..." }] },
-        {
-          role: "toolResult",
-          toolName: "bash",
-          isError: false,
-          content: [{ type: "text", text: "command not found" }],
-        },
-      ];
-      const result = detectSubagentError(messages);
-      assert.equal(result.hasError, true);
-      assert.equal(result.errorType, "bash");
-    });
-
-    it("detects non-zero exit code in bash output", () => {
-      const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Running..." }] },
-        {
-          role: "toolResult",
-          toolName: "bash",
-          isError: false,
-          content: [{ type: "text", text: "Error: process exited with code 127" }],
-        },
-      ];
-      const result = detectSubagentError(messages);
-      assert.equal(result.hasError, true);
-      assert.equal(result.exitCode, 127);
-    });
-
-    it("ignores errors before last successful tool result", () => {
-      const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Trying..." }] },
-        {
-          role: "toolResult",
-          toolName: "bash",
-          isError: true,
-          content: [{ type: "text", text: "EISDIR" }],
-        },
-        { role: "assistant", content: [{ type: "text", text: "Let me fix that..." }] },
-        {
-          role: "toolResult",
-          toolName: "bash",
-          isError: false,
-          content: [{ type: "text", text: "OK" }],
-        },
-        { role: "assistant", content: [{ type: "text", text: "Fixed!" }] },
-      ];
-      const result = detectSubagentError(messages);
-      assert.equal(result.hasError, false);
-    });
-
-    it("detects isError on tool result", () => {
-      const messages = [
-        { role: "assistant", content: [{ type: "text", text: "Running..." }] },
-        {
-          role: "toolResult",
-          toolName: "write",
-          isError: true,
-          content: [{ type: "text", text: "Permission denied" }],
-        },
-      ];
-      const result = detectSubagentError(messages);
-      assert.equal(result.hasError, true);
-      assert.equal(result.errorType, "write");
-    });
-  },
-);
-
-// ---------------------------------------------------------------------------
-// runSync error handling
-// ---------------------------------------------------------------------------
 
 describe(
   "runSync error handling",

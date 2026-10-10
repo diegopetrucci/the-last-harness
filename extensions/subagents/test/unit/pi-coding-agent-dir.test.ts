@@ -12,12 +12,10 @@ import {
   resolveSkillPath,
 } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
-import { resolveExecutionPolicy } from "../../src/agents/execution-ceiling.ts";
 import { cleanupAllArtifactDirs, resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
   getConfigDirName,
   getProjectConfigDir,
-  resolveConfigDirName,
   resolveRuntimeConfigDirName,
 } from "../../src/shared/config-dir.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
@@ -117,15 +115,18 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.deepEqual(config.artifacts, { mode: "debug" });
   });
 
-  it("rejects non-object execution blocks through the real config boundary", () => {
+  it("preserves retired execution settings through the real config boundary", () => {
     const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-    for (const invalidExecution of [false, 900_000]) {
-      writeFile(configPath, JSON.stringify({ execution: invalidExecution }));
+    for (const execution of [
+      { maxRunTimeMs: false },
+      { maxRunTimeMs: 900_000 },
+      { maxRunTimeMs: "invalid" },
+    ]) {
+      const original = JSON.stringify({ execution });
+      writeFile(configPath, original);
       const config = loadConfig();
-      const policy = resolveExecutionPolicy(config.execution);
-      assert.equal(policy.maxRunTimeMs, 14_400_000);
-      assert.match(policy.diagnostic ?? "", /Invalid execution\.maxRunTimeMs/);
-      assert.match(policy.diagnostic ?? "", /positive safe integer or false/);
+      assert.deepEqual(config.execution, execution);
+      assert.equal(fs.readFileSync(configPath, "utf-8"), original);
     }
   });
 
@@ -182,15 +183,10 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
       resolveInstalledPackageRoot: () => importResolvedRoot,
     };
     assert.equal(resolveRuntimeConfigDirName(deps), ".runtime-root");
-    assert.equal(resolveConfigDirName(undefined, deps), ".runtime-root");
   });
 
   it("resolves project config dirs from the runtime config-dir name", () => {
     const runtimeConfigDirName = readInstalledRuntimeConfigDirName();
-    assert.equal(resolveConfigDirName({ CONFIG_DIR_NAME: ".tlh" }), ".tlh");
-    assert.equal(resolveConfigDirName({ piConfig: { configDir: ".tlh" } }), ".tlh");
-    assert.equal(resolveConfigDirName({ CONFIG_DIR_NAME: "" }), ".pi");
-    assert.equal(resolveConfigDirName({}), ".pi");
     assert.equal(getConfigDirName(), runtimeConfigDirName);
     assert.equal(getProjectConfigDir(cwd), path.join(cwd, runtimeConfigDirName));
   });

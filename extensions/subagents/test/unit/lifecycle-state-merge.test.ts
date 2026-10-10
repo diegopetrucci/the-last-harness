@@ -236,26 +236,6 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  // ── Regression tests for the post-pause source-runner status write race ─────
-  //
-  // Root cause (tlhm-8typ): after the source runner writes a "pausing"
-  // checkpoint via transitionLifecycleStatus (generation N+1), a resuming actor
-  // can race in and reserve a continuation (generation N+2). Any subsequent bare
-  // writeNormalizedLifecycleStatus call from the still-running source runner
-  // (settling interrupted children, writing the final paused status) would
-  // overwrite disk with the stale in-memory payload (generation N+1, no
-  // continuation) — erasing the reservation and making the resumed run fail its
-  // launch gate without writing a result artifact.
-  //
-  // Fix: mergeAndWriteSourceRunnerStatus acquires the lifecycle lock, reads the
-  // persisted status, and merges before writing, preserving any continuation.
-  //
-  // Handshake: all operations in these tests are synchronous. The "race" is
-  // reproduced deterministically by interleaving transitionLifecycleStatus
-  // (reservation) between two mergeAndWriteSourceRunnerStatus calls. Against the
-  // old code (bare writeNormalizedLifecycleStatus), the continuation assertion
-  // after step 4 would fail because the reservation would be gone.
-
   it("post-pause source-runner writes preserve a concurrent continuation reservation", () => {
     const root = tempRoot("pi-lifecycle-post-pause-race-");
     try {
@@ -451,8 +431,6 @@ describe("lifecycle state helpers", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
-  // ── tlhm-8typ FIX 8: terminal-vs-terminal merge and CAS downgrade prevention ─
 
   it("persisted terminal run state wins over a conflicting in-memory terminal state (terminal-vs-terminal)", () => {
     const root = tempRoot("pi-lifecycle-terminal-vs-terminal-");
@@ -806,17 +784,6 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  // ── Finding 2: stale run-level pid/pause survive terminal merge ─────────────
-  //
-  // When the persisted run state is terminal and the in-memory state is non-terminal,
-  // the merged record must NOT keep the source runner's stale `pid` or `pause` fields.
-  // A consumer reading `pid` or `pause` on a terminal record would incorrectly
-  // believe the run is still alive and supervised.
-  //
-  // Proof of non-vacuousness: remove `pid: undefined, pause: undefined` from
-  // terminalRunOverrides in lifecycle-state.ts and this test FAILS with:
-  //   "terminal merged record must not carry stale pid"
-  //   "terminal merged record must not carry stale pause"
   it("mergeAndWriteSourceRunnerStatus clears stale pid and pause on terminal run override (finding-2)", () => {
     const root = tempRoot("pi-lifecycle-finding2-");
     try {
@@ -868,16 +835,6 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  // ── Finding 3: adopted "failed" terminal loses its error reason ─────────────
-  //
-  // When persisted is "failed" and in-memory is non-terminal, terminalRunOverrides
-  // must carry `error` from the persisted record. Without this fix the merged record
-  // has `state: "failed"` but the in-memory `error` (usually undefined), losing
-  // the failure reason committed by the CAS writer.
-  //
-  // Proof of non-vacuousness: remove the `persisted.error` spread from
-  // terminalRunOverrides in lifecycle-state.ts and this test FAILS with:
-  //   "terminal merged record must carry the persisted failure reason"
   it("mergeAndWriteSourceRunnerStatus carries persisted error on failed terminal override (finding-3)", () => {
     const root = tempRoot("pi-lifecycle-finding3-");
     try {
@@ -919,17 +876,6 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  // ── Finding 4: same-terminal step early return drops metadata ─────────────
-  //
-  // When persisted and in-memory steps agree on a terminal status, the persisted
-  // writer may have committed lifecycle metadata (cancel, endedAt) that the
-  // in-memory step does not have. The early return `return step` must be replaced
-  // with a merge that carries persisted metadata while keeping source-owned fields.
-  //
-  // Proof of non-vacuousness: revert the `if (persistedStep.status === step.status)`
-  // block to `return step` in lifecycle-state.ts and this test FAILS with:
-  //   "same-terminal step merge must carry persisted endedAt"
-  //   "same-terminal step merge must carry persisted cancel metadata"
   it("mergeAndWriteSourceRunnerStatus preserves persisted step metadata when both sides agree on terminal status (finding-4)", () => {
     const root = tempRoot("pi-lifecycle-finding4-");
     try {

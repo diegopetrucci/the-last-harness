@@ -16,8 +16,16 @@ import {
   type ExtensionContext,
   type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
+import {
+  createProvider,
+  fauxProvider,
+  type Api,
+  type Credential,
+  type CredentialStore,
+  type Model,
+  type Provider,
+} from "@earendil-works/pi-ai";
 import { createPlainTheme } from "./themes.ts";
-import type { Model, Api } from "@earendil-works/pi-ai";
 
 export type { MockPi };
 
@@ -300,6 +308,130 @@ export function makeModel(
     maxTokens: 16_384,
     ...overrides,
   };
+}
+
+type TestModelProvider = {
+  provider: string;
+  models: readonly Model<Api>[];
+  authenticated?: boolean;
+};
+
+interface TestModelRuntimeFixture {
+  runtime: ModelRuntime;
+  registry: ModelRegistry;
+}
+
+function createTestCredentialStore(providerIds: readonly string[]): CredentialStore {
+  const credentials = new Map<string, Credential>(
+    providerIds.map((providerId) => [providerId, { type: "api_key", key: "tlh-test-only" }]),
+  );
+  const tails = new Map<string, Promise<void>>();
+
+  function enqueue<T>(providerId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = tails.get(providerId) ?? Promise.resolve();
+    const result = previous.then(operation);
+    tails.set(
+      providerId,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
+  }
+
+  return {
+    async read(providerId: string): Promise<Credential | undefined> {
+      return credentials.get(providerId);
+    },
+    async list() {
+      return [...credentials].map(([providerId, credential]) => ({
+        providerId,
+        type: credential.type,
+      }));
+    },
+    modify(providerId, operation) {
+      return enqueue(providerId, async () => {
+        const next = await operation(credentials.get(providerId));
+        if (next !== undefined) credentials.set(providerId, next);
+        return credentials.get(providerId);
+      });
+    },
+    delete(providerId) {
+      return enqueue(providerId, async () => {
+        credentials.delete(providerId);
+      });
+    },
+  };
+}
+
+function createTestModelProvider(providerId: string, models: readonly Model<Api>[]): Provider {
+  if (models.length === 0) throw new Error(`Test model provider ${providerId} needs a model`);
+  if (models.some((model) => model.provider !== providerId)) {
+    throw new Error(`Test model provider ${providerId} received a model from another provider`);
+  }
+
+  // The provider implementation is never called by these integration tests;
+  // fauxProvider supplies a complete, typed hermetic stream owner so the
+  // ModelRuntime/ModelRegistry remain real SDK instances without network I/O.
+  const streamOwner = fauxProvider({ provider: `tlh-fixture-stream-${providerId}` });
+  return createProvider({
+    id: providerId,
+    name: providerId,
+    baseUrl: models[0].baseUrl,
+    auth: {
+      apiKey: {
+        name: "TLH test credential",
+        resolve: async ({ credential }) =>
+          credential?.type === "api_key" && credential.key
+            ? { auth: { apiKey: credential.key }, source: "stored" }
+            : undefined,
+      },
+    },
+    models,
+    api: {
+      stream: streamOwner.provider.stream,
+      streamSimple: streamOwner.provider.streamSimple,
+    },
+  });
+}
+
+async function createTestModelRuntimeFixture(
+  providers: readonly TestModelProvider[],
+): Promise<TestModelRuntimeFixture> {
+  const authenticatedProviderIds = providers
+    .filter((provider) => provider.authenticated !== false)
+    .map((provider) => provider.provider);
+  const runtime = await ModelRuntime.create({
+    credentials: createTestCredentialStore(authenticatedProviderIds),
+    allowModelNetwork: false,
+    modelsPath: null,
+    refreshOnCreate: false,
+  });
+  const registered = new Set<string>();
+  for (const provider of providers) {
+    if (registered.has(provider.provider)) {
+      throw new Error(`Duplicate test model provider ${provider.provider}`);
+    }
+    registered.add(provider.provider);
+    runtime.registerNativeProvider(createTestModelProvider(provider.provider, provider.models));
+  }
+  await runtime.refresh({ allowNetwork: false });
+  return { runtime, registry: new ModelRegistry(runtime) };
+}
+
+/**
+ * Builds a per-test real ModelRuntime/ModelRegistry pair with static models,
+ * isolated in-memory credentials, and no network-capable refresh.
+ */
+export async function makeModelRegistryContext(
+  cwd: string,
+  providers: readonly TestModelProvider[],
+): Promise<{ context: ExtensionContext; runtime: ModelRuntime; registry: ModelRegistry }> {
+  const fixture = await createTestModelRuntimeFixture(providers);
+  const context = makeMinimalCtx(cwd);
+  context.modelRegistry = fixture.registry;
+  return { context, ...fixture };
 }
 
 /**

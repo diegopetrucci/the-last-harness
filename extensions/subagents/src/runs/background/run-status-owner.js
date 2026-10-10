@@ -10,7 +10,7 @@ import { initialToolBudgetState } from "../shared/tool-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
-import { readStatus } from "../../shared/utils.js";
+import { readStatus, resolveChildCwd } from "../../shared/utils.js";
 import { createHealthTransitionState, resetHealthTransitionState, transitionHealth, } from "../shared/health-transition.js";
 function validatedChildTkTicketId(task) {
     return task.agent === "developer" && task.projectAgentGuidance === true
@@ -95,6 +95,7 @@ export function createBackgroundRunStatusOwner(input) {
             status: "pending",
             ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
             ...(task.timeoutMs !== undefined ? { timeoutMs: task.timeoutMs } : {}),
+            ...(task.timeoutOwner ? { timeoutOwner: task.timeoutOwner } : {}),
             ...(normalizeActiveRuntimeMs(task.activeRuntimeMs) !== undefined
                 ? { activeRuntimeMs: normalizeActiveRuntimeMs(task.activeRuntimeMs) }
                 : {}),
@@ -122,6 +123,7 @@ export function createBackgroundRunStatusOwner(input) {
                     ? [task.model]
                     : undefined,
             ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+            cwd: resolveChildCwd(cwd, task.cwd),
             recentTools: [],
             recentOutput: [],
         };

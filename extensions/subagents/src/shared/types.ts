@@ -521,6 +521,8 @@ export interface SingleResult {
   exitSignal?: NodeJS.Signals;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -727,6 +729,8 @@ export interface AsyncStatus {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   pid?: number;
@@ -778,6 +782,8 @@ export interface AsyncStatus {
     exitCode?: number | null;
     exitSignal?: NodeJS.Signals;
     timedOut?: boolean;
+    /** Internal timeout boundary that owns a timed-out child, when known. */
+    timeoutOwner?: "role" | "run";
     toolBudget?: ToolBudgetState;
     toolBudgetBlocked?: boolean;
     contextUsage?: ContextUsageDiagnostics;
@@ -811,6 +817,13 @@ export interface AsyncStatus {
      * child cwd differs from the parent session cwd; absent for same-cwd steps.
      */
     childLocation?: ChildLocationSnapshot;
+    /**
+     * Fully resolved per-child dispatch cwd. Written by the status owner from
+     * the plan task cwd at run start. Preferred over childLocation.childCwd and
+     * run-level cwd on revival; absent in artifacts written before this field
+     * was introduced.
+     */
+    cwd?: string;
   }>;
   sessionDir?: string;
   outputFile?: string;
@@ -849,6 +862,8 @@ export interface AsyncResultArtifactResultItem {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -880,6 +895,12 @@ export interface AsyncResultArtifactResultItem {
   activeRuntimeCheckpointAt?: number;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
+  /**
+   * Fully resolved per-child dispatch cwd. Written by the runner from the plan
+   * task cwd so result-only revival (status.json absent) uses the correct child
+   * working directory instead of falling back to the run-level cwd.
+   */
+  cwd?: string;
 }
 
 /**
@@ -1010,11 +1031,26 @@ export interface ForegroundResumeChild {
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
+  timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
+  /**
+   * Resolved dispatch cwd for this specific child. Present when the per-child
+   * cwd differs from the run-level cwd; absent for same-cwd children (legacy).
+   * Used by resolveForegroundResumeTarget to prefer the child cwd on revival.
+   */
+  cwd?: string;
+  /**
+   * Dispatch-time child-location snapshot retained from SingleResult.childLocation.
+   * Used as a fallback when `cwd` is absent: resolveForegroundResumeTarget
+   * resolves revival cwd as child.cwd ?? child.childLocation?.childCwd ?? run.cwd.
+   */
+  childLocation?: ChildLocationSnapshot;
   updatedAt?: number;
 }
 
@@ -1152,6 +1188,8 @@ export interface RunSyncOptions {
   timeoutMs?: number;
   /** Internal diagnostic selected by the execution boundary that owns the deadline. */
   timeoutMessage?: string;
+  /** Internal timeout boundary that owns the deadline. */
+  timeoutOwner?: "role" | "run";
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
   pauseBlockingSupervisor?: boolean;

@@ -13,7 +13,6 @@ type DetectSubagentError = (messages: unknown[]) => DetectErrorResult;
 const { detectSubagentError } = (await import("../../src/shared/utils.ts")) as {
   detectSubagentError: DetectSubagentError;
 };
-const available = true;
 
 /**
  * Helper to create a tool result message (success or error).
@@ -49,7 +48,7 @@ function assistantToolCall(toolName: string): Record<string, unknown> {
   };
 }
 
-describe("detectSubagentError", { skip: !available ? "utils not importable" : undefined }, () => {
+describe("detectSubagentError", () => {
   // ---- Basic detection (must still work) ----
 
   it("returns no error for empty messages", () => {
@@ -78,6 +77,13 @@ describe("detectSubagentError", { skip: !available ? "utils not importable" : un
 
   it("detects bash fatal pattern (permission denied, no assistant response)", () => {
     const messages = [toolResult("bash", "ls: permission denied: /root/secret")];
+    const result = detectSubagentError(messages);
+    assert.equal(result.hasError, true);
+    assert.equal(result.errorType, "bash");
+  });
+
+  it("detects bash fatal pattern (command not found)", () => {
+    const messages = [toolResult("bash", "bash: foo: command not found")];
     const result = detectSubagentError(messages);
     assert.equal(result.hasError, true);
     assert.equal(result.errorType, "bash");

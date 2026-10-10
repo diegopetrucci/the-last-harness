@@ -22,6 +22,7 @@ import {
 import {
   rememberForegroundRun,
   resolveForegroundResumeTarget,
+  updateRememberedForegroundChild,
 } from "../../src/runs/foreground/foreground-run-state.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
@@ -718,6 +719,567 @@ describe("foreground pause health persistence", () => {
       assertResumeHealth(runId, 0, ["context_pressure", "tool_failures"]);
     } finally {
       fs.rmSync(asyncDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG-02: foreground revival cwd
+// resolveForegroundResumeTarget must use the per-child cwd, not run cwd.
+// ---------------------------------------------------------------------------
+
+describe("foreground revival cwd precedence (BUG-02)", () => {
+  function makeSessionFile(dir: string): string {
+    fs.mkdirSync(dir, { recursive: true });
+    const sessionFile = path.join(dir, "session.jsonl");
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    return sessionFile;
+  }
+
+  function makeMinimalResult(agent: string, sessionFile: string): SingleResult {
+    return {
+      agent,
+      task: `task-${agent}`,
+      exitCode: 0,
+      usage,
+      sessionFile,
+    };
+  }
+
+  it("resolveForegroundResumeTarget uses per-child cwd when it differs from run cwd", () => {
+    const runId = `fg-revival-cwd-perchild-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-cwd-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "child-dir");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      rememberForegroundRun(state, {
+        runId,
+        mode: "parallel",
+        cwd: runCwd,
+        results: [makeMinimalResult("worker", sessionFile)],
+        childCwds: [childCwd],
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(target.cwd, childCwd, "revival cwd must be the per-child cwd, not run cwd");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveForegroundResumeTarget falls back to run cwd when no per-child cwd is stored", () => {
+    const runId = `fg-revival-cwd-runcwd-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-runcwd-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        results: [makeMinimalResult("worker", sessionFile)],
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(
+        target.cwd,
+        runCwd,
+        "revival cwd must be run cwd when no per-child cwd is stored (single run)",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("updateRememberedForegroundChild stores per-child cwd and it is used for revival", () => {
+    const runId = `fg-revival-update-child-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-upd-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "child-dir");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      // First remember with run cwd
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        results: [makeMinimalResult("worker", sessionFile)],
+      });
+
+      // Then update via updateRememberedForegroundChild with per-child cwd
+      updateRememberedForegroundChild(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        index: 0,
+        result: makeMinimalResult("worker", sessionFile),
+        childCwd,
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival cwd must be the per-child cwd after updateRememberedForegroundChild",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Follow-up 2: childLocation fallback path
+
+  it("rememberForegroundRun: childLocation.childCwd is used when no explicit childCwd is present", () => {
+    const runId = `fg-revival-childloc-remember-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-childloc-rem-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "feature-worktree");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      const resultWithChildLocation: SingleResult = {
+        ...makeMinimalResult("worker", sessionFile),
+        childLocation: { childCwd, displayPath: "feature-worktree" },
+      };
+
+      // No explicit childCwds supplied — only result.childLocation is set
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        results: [resultWithChildLocation],
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival cwd must fall back to childLocation.childCwd (BUG-02 follow-up 2)",
+      );
+      assert.notEqual(
+        target.cwd,
+        runCwd,
+        "revival cwd must not be the run cwd when childLocation carries a different cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("updateRememberedForegroundChild: childLocation.childCwd is used when no explicit childCwd is present", () => {
+    const runId = `fg-revival-childloc-update-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-childloc-upd-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "feature-worktree");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        results: [makeMinimalResult("worker", sessionFile)],
+      });
+
+      const resultWithChildLocation: SingleResult = {
+        ...makeMinimalResult("worker", sessionFile),
+        childLocation: { childCwd, displayPath: "feature-worktree" },
+      };
+
+      // No explicit childCwd supplied — only result.childLocation is set
+      updateRememberedForegroundChild(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        index: 0,
+        result: resultWithChildLocation,
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival cwd must fall back to childLocation.childCwd after updateRememberedForegroundChild (BUG-02 follow-up 2)",
+      );
+      assert.notEqual(
+        target.cwd,
+        runCwd,
+        "revival cwd must not be the run cwd when childLocation carries a different cwd",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("explicit childCwd wins over childLocation.childCwd on revival", () => {
+    const runId = `fg-revival-explicitcwd-wins-${process.pid}`;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-explicitwin-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const explicitChildCwd = path.join(root, "explicit-cwd");
+      const childLocationCwd = path.join(root, "childloc-cwd");
+      const sessionFile = makeSessionFile(path.join(root, "sessions"));
+      const state: SubagentState = {
+        baseCwd: runCwd,
+        currentSessionId: null,
+        asyncJobs: new Map(),
+        foregroundRuns: new Map(),
+        foregroundControls: new Map(),
+        lastForegroundControlId: null,
+        cleanupTimers: new Map(),
+        lastUiContext: null,
+        poller: null,
+        completionSeen: new Map(),
+        watcher: null,
+        watcherRestartTimer: null,
+        resultFileCoalescer: { schedule: () => false, clear: () => {} },
+      } satisfies SubagentState;
+
+      const resultWithChildLocation: SingleResult = {
+        ...makeMinimalResult("worker", sessionFile),
+        childLocation: { childCwd: childLocationCwd, displayPath: "childloc-cwd" },
+      };
+
+      // Both explicit childCwds and childLocation are supplied; explicit wins
+      rememberForegroundRun(state, {
+        runId,
+        mode: "single",
+        cwd: runCwd,
+        results: [resultWithChildLocation],
+        childCwds: [explicitChildCwd],
+      });
+
+      const target = resolveForegroundResumeTarget({ id: runId }, state);
+      assert.ok(target, "must resolve a resume target");
+      assert.equal(
+        target.cwd,
+        explicitChildCwd,
+        "explicit childCwd must win over childLocation.childCwd",
+      );
+      assert.notEqual(
+        target.cwd,
+        childLocationCwd,
+        "childLocation.childCwd must not override explicit cwd",
+      );
+      assert.notEqual(
+        target.cwd,
+        runCwd,
+        "run cwd must not be used when explicit childCwd is present",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BUG-02 item 2b — persisted paused-foreground step carries per-child cwd
+// and revival from that status file uses it (not the run cwd).
+// ---------------------------------------------------------------------------
+
+describe("persisted paused-foreground step cwd (BUG-02 item 2b)", () => {
+  it("persistPausedForegroundCohortRun writes per-child cwd into the status step", () => {
+    const runId = `fg-persist-cohort-stepcwd-${process.pid}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-persist-cohort-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "child-dir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(sessionFile, "");
+
+      const progress = makeProgress("worker", 0, {});
+      const pause = {
+        kind: "awaiting_supervisor" as const,
+        requestedAt: 10,
+        pausedAt: 20,
+      };
+      const result: SingleResult = {
+        agent: "worker",
+        task: "task-worker",
+        exitCode: 0,
+        usage,
+        progress,
+        sessionFile,
+        acceptance,
+        pause,
+      };
+
+      persistPausedForegroundCohortRun({
+        runId,
+        cwd: runCwd,
+        sessionId: "session-cohort-stepcwd",
+        mode: "parallel",
+        stage: "paused",
+        results: [result],
+        childCwds: [childCwd],
+      });
+
+      const persisted = readStatus(asyncDir);
+      assert.ok(persisted, "paused status file must be written");
+      assert.equal(
+        persisted.steps?.[0]?.cwd,
+        childCwd,
+        "persisted step.cwd must be the per-child cwd, not the run cwd",
+      );
+    } finally {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("revival from persisted paused-foreground status uses per-child cwd (not run cwd)", () => {
+    const runId = `fg-revival-from-paused-${process.pid}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-revival-paused-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      const childCwd = path.join(root, "child-dir");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(sessionFile, "");
+
+      const progress = makeProgress("worker", 0, {});
+      const pause = {
+        kind: "awaiting_supervisor" as const,
+        requestedAt: 10,
+        pausedAt: 20,
+      };
+      const result: SingleResult = {
+        agent: "worker",
+        task: "task-worker",
+        exitCode: 0,
+        usage,
+        progress,
+        sessionFile,
+        acceptance,
+        pause,
+      };
+
+      persistPausedForegroundCohortRun({
+        runId,
+        cwd: runCwd,
+        sessionId: "session-revival-paused",
+        mode: "parallel",
+        stage: "paused",
+        results: [result],
+        childCwds: [childCwd],
+      });
+
+      // After a restart, revival goes through resolveAsyncResumeTarget
+      const target = resolveAsyncResumeTarget(
+        { id: runId, index: 0 },
+        {
+          asyncDirRoot: ASYNC_DIR,
+          resultsDir: path.join(path.dirname(ASYNC_DIR), "async-subagent-results"),
+        },
+        { readOnly: true, requireSessionFile: false },
+      );
+      assert.equal(
+        target.cwd,
+        childCwd,
+        "revival from persisted paused-foreground status must use the per-child cwd",
+      );
+      assert.notEqual(
+        target.cwd,
+        runCwd,
+        "revival cwd must not be the run cwd (BUG-02 regression)",
+      );
+    } finally {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("buildCohortPauseStep carries per-child cwd into the step object", () => {
+    const childCwd = path.join(os.tmpdir(), "tlh-cohort-step-cwd");
+    const step = buildCohortPauseStep({
+      agent: "worker",
+      status: "pending",
+      now: Date.now(),
+      cwd: childCwd,
+    });
+    assert.equal(
+      step.cwd,
+      childCwd,
+      "buildCohortPauseStep must include the per-child cwd in the step",
+    );
+  });
+
+  it("buildPausedStepFromResult carries per-child cwd into the step object", () => {
+    const childCwd = path.join(os.tmpdir(), "tlh-paused-step-cwd");
+    const result: SingleResult = {
+      agent: "worker",
+      task: "task",
+      exitCode: 0,
+      usage,
+    };
+    const step = buildPausedStepFromResult(result, Date.now(), {
+      stage: "paused",
+      cwd: childCwd,
+    });
+    assert.equal(
+      step.cwd,
+      childCwd,
+      "buildPausedStepFromResult must include the per-child cwd in the step",
+    );
+  });
+
+  it("parallel foreground wiring: persistPausedForegroundCohortRun childCwds flows through for same-cwd-as-session scenario", () => {
+    // This is the seam test for item 2c: the task cwd equals the session/ctx cwd,
+    // so childLocation is absent from the result. Without childCwds being threaded
+    // through persistPausedForegroundCohortRun, the persisted step.cwd would be
+    // absent and revival would fall back to the run cwd.
+    const runId = `fg-persist-samecwd-${process.pid}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fg-persist-samecwd-"));
+    try {
+      const runCwd = path.join(root, "run-dir");
+      // taskCwd is intentionally set to the session cwd (os.tmpdir()),
+      // which differs from runCwd. childLocation would be absent for this child.
+      const taskCwd = os.tmpdir();
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(sessionFile, "");
+
+      const progress = makeProgress("worker", 0, {});
+      const pause = {
+        kind: "awaiting_supervisor" as const,
+        requestedAt: 10,
+        pausedAt: 20,
+      };
+      // No childLocation — simulates a child whose cwd equals the session cwd
+      const result: SingleResult = {
+        agent: "worker",
+        task: "task-worker",
+        exitCode: 0,
+        usage,
+        progress,
+        sessionFile,
+        acceptance,
+        pause,
+        // childLocation intentionally absent
+      };
+
+      persistPausedForegroundCohortRun({
+        runId,
+        cwd: runCwd,
+        sessionId: "session-samecwd",
+        mode: "parallel",
+        stage: "paused",
+        results: [result],
+        childCwds: [taskCwd], // explicit resolved cwd
+      });
+
+      const persisted = readStatus(asyncDir);
+      assert.ok(persisted, "paused status file must be written");
+      assert.equal(
+        persisted.steps?.[0]?.cwd,
+        taskCwd,
+        "step.cwd must be the task cwd even when childLocation is absent",
+      );
+
+      const target = resolveAsyncResumeTarget(
+        { id: runId, index: 0 },
+        {
+          asyncDirRoot: ASYNC_DIR,
+          resultsDir: path.join(path.dirname(ASYNC_DIR), "async-subagent-results"),
+        },
+        { readOnly: true, requireSessionFile: false },
+      );
+      assert.equal(
+        target.cwd,
+        taskCwd,
+        "revival must use the task cwd, not the run cwd (BUG-02 same-cwd-as-session regression)",
+      );
+    } finally {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

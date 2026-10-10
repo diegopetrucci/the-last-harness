@@ -120,13 +120,6 @@ function buildForegroundNativeResult(input) {
         details: input.details,
     };
 }
-function resolveEffectiveSingleTimeout(callerTimeoutMs, agentTimeoutCeilingMs) {
-    if (callerTimeoutMs === undefined)
-        return agentTimeoutCeilingMs;
-    if (agentTimeoutCeilingMs === undefined)
-        return callerTimeoutMs;
-    return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
-}
 export function resolveToolBudget(raw, label = "toolBudget") {
     const resolved = validateToolBudgetConfig(raw, label);
     return { toolBudget: resolved.budget, error: resolved.error };
@@ -198,30 +191,30 @@ async function runForegroundParallelTasks(input) {
     const interruptControllers = new Map();
     const startedIndexes = new Set();
     const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
-    const taskLocationSnapshots = input.tasks.map((task) => {
-        const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
-        return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
-    });
+    const taskResolvedCwds = input.tasks.map((task) => resolveParallelTaskCwd(task, input.paramsCwd));
+    const taskLocationSnapshots = taskResolvedCwds.map((taskCwd) => captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor));
     const writeParallelPauseCheckpoint = (requesterIndex, requester, ownerPid, options) => {
         const now = Date.now();
         const steps = input.tasks.map((task, index) => {
             const liveResult = input.liveResults[index];
             const liveProgress = input.liveProgress[index];
             const result = liveResult ?? (index === requesterIndex ? requester : undefined);
+            const taskCwd = taskResolvedCwds[index];
             if (index === requesterIndex && result) {
                 return buildPausedStepFromResult(result, now, {
                     stage: options.rootStage,
                     ownerPid,
                     ...(options.requesterStatus ? { status: options.requesterStatus } : {}),
+                    cwd: taskCwd,
                 });
             }
             if (result &&
                 options.rootStage === "paused" &&
                 isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)) {
-                return buildPausedStepFromResult(result, now, { stage: "paused" });
+                return buildPausedStepFromResult(result, now, { stage: "paused", cwd: taskCwd });
             }
             if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
-                return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
+                return buildPausedStepFromResult(liveResult, now, { stage: "paused", cwd: taskCwd });
             }
             const cohortChildLocation = result?.childLocation ?? taskLocationSnapshots[index];
             if (startedIndexes.has(index) ||
@@ -244,6 +237,7 @@ async function runForegroundParallelTasks(input) {
                         input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
                     tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                     childLocation: cohortChildLocation,
+                    cwd: taskCwd,
                 });
             }
             return buildCohortPauseStep({
@@ -263,6 +257,7 @@ async function runForegroundParallelTasks(input) {
                     input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
                 tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
                 childLocation: cohortChildLocation,
+                cwd: taskCwd,
             });
         });
         const pauseTelemetry = input.telemetryProvenance
@@ -431,8 +426,8 @@ async function runForegroundParallelTasks(input) {
             ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
             skills: effectiveSkills === false ? [] : effectiveSkills,
             acceptanceContext: { mode: "parallel" },
-            timeoutMs: input.timeoutMs,
-            deadlineAt: input.deadlineAt,
+            timeoutMs: agentConfig?.maxExecutionTimeMs,
+            timeoutOwner: agentConfig?.maxExecutionTimeMs !== undefined ? "role" : undefined,
             toolBudget: input.toolBudgets[index],
             onUpdate: input.onUpdate
                 ? (progressUpdate) => {
@@ -582,7 +577,6 @@ export async function runParallelPath(data, deps) {
     const parallelProgressDir = path.join(artifactsDir, "progress", runId);
     if (parallelProgressPrecreated)
         writeInitialProgressFile(parallelProgressDir);
-    const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
     const results = await runForegroundParallelTasks({
         tasks,
         taskTexts,
@@ -615,8 +609,6 @@ export async function runParallelPath(data, deps) {
         liveResults,
         liveProgress,
         onUpdate,
-        timeoutMs: data.timeoutMs,
-        deadlineAt,
         toolBudgets,
         ...(tkTicket ? { tkTicket } : {}),
         ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
@@ -668,6 +660,7 @@ export async function runParallelPath(data, deps) {
         cwd: effectiveCwd,
         results: details.results,
         ...(telemetry ? { telemetry } : {}),
+        childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
     });
     if (results.some((result) => result.pause)) {
         persistPausedForegroundCohortRun({
@@ -677,6 +670,7 @@ export async function runParallelPath(data, deps) {
             mode: "parallel",
             stage: "paused",
             results,
+            childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
             startedAt: foregroundControl?.startedAt,
             telemetry,
         });
@@ -771,7 +765,6 @@ export async function runSinglePath(data, deps) {
     const effectiveOutputMode = params.outputMode ?? "inline";
     const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
-    const effectiveTimeoutMs = resolveEffectiveSingleTimeout(data.timeoutMs, agentConfig.maxExecutionTimeMs);
     const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(artifactsDir, runId));
     const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
     if (validationError) {
@@ -821,7 +814,6 @@ export async function runSinglePath(data, deps) {
             onUpdate(update);
         }
         : undefined;
-    const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
     const childLocationSnapshot = captureChildLocationSnapshot(ctx.cwd, effectiveCwd);
     let r;
     try {
@@ -902,8 +894,8 @@ export async function runSinglePath(data, deps) {
             ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
             skills: effectiveSkills,
             acceptanceContext: { mode: "single" },
-            timeoutMs: effectiveTimeoutMs,
-            deadlineAt,
+            timeoutMs: agentConfig.maxExecutionTimeMs,
+            timeoutOwner: agentConfig.maxExecutionTimeMs !== undefined ? "role" : undefined,
             toolBudget: effectiveToolBudget.toolBudget,
         });
     }
