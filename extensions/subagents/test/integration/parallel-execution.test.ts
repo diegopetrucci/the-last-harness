@@ -738,7 +738,7 @@ describe(
     );
 
     it(
-      "top-level parallel preserves completed siblings and marks timed-out children",
+      "parallel role budgets preserve completed siblings and mark timed-out children",
       {
         skip: !createSubagentExecutor
           ? "executor not importable"
@@ -760,9 +760,8 @@ describe(
           ],
         });
         mockPi.onCall({ matchArgIncludes: "Fast review", output: "fast done" });
-        const executor = makeExecutor([makeAgent("echo")], {
+        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs: 300 })], {
           parallel: { concurrency: 2 },
-          execution: { maxRunTimeMs: 300 },
         });
 
         const start = Date.now();
@@ -784,10 +783,7 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.results?.length, 2);
         assert.equal(result.details?.results?.[0]?.timedOut, true);
-        assert.equal(
-          result.details?.results?.[0]?.error,
-          "Subagent exceeded the configured maximum execution time.",
-        );
+        assert.equal(result.details?.results?.[0]?.error, "Subagent timed out after 300ms.");
         assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Child index: 0/);
         assert.match(result.details?.results?.[0]?.finalOutput ?? "", /Current tool: read/);
         assert.match(
@@ -803,14 +799,8 @@ describe(
         assert.match(text, /Children: 1 completed, 1 failed/);
         assert.match(text, /1\/2\. echo — failed/);
         assert.match(text, /2\/2\. echo — completed/);
-        assert.equal(
-          text.match(/Subagent exceeded the configured maximum execution time\./g)?.length ?? 0,
-          1,
-        );
-        assert.match(
-          text,
-          /Summary:\nSubagent exceeded the configured maximum execution time\.\n\nRecovery diagnostics:/,
-        );
+        assert.equal(text.match(/Subagent timed out after 300ms\./g)?.length ?? 0, 1);
+        assert.match(text, /Summary:\nSubagent timed out after 300ms\.\n\nRecovery diagnostics:/);
         assert.match(text, /Child index: 0/);
         assert.match(text, /Recent child output:\n- slow partial update/);
         assert.match(text, /Summary:\nfast done/);

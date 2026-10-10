@@ -170,7 +170,6 @@ interface AsyncSingleParams {
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
-  timeoutMs?: number;
   toolBudget?: ResolvedToolBudget;
 }
 
@@ -212,7 +211,6 @@ interface AsyncParallelParams {
   progressDir?: string;
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  timeoutMs?: number;
   toolBudget?: ResolvedToolBudget;
   /** Exact approved project-agent captures for detached runner tasks. */
   projectAgentCaptures?: readonly ProjectAgentRunCapture[];
@@ -380,15 +378,6 @@ function formatAsyncStartError(mode: SubagentRunMode, message: string): AsyncExe
   };
 }
 
-function resolveEffectiveSingleTimeout(
-  callerTimeoutMs: number | undefined,
-  agentTimeoutCeilingMs: number | undefined,
-): number | undefined {
-  if (callerTimeoutMs === undefined) return agentTimeoutCeilingMs;
-  if (agentTimeoutCeilingMs === undefined) return callerTimeoutMs;
-  return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
-}
-
 type AsyncSingleRuntimePolicy =
   | {
       activeRuntimeMs: number;
@@ -401,11 +390,7 @@ type AsyncSingleRuntimePolicy =
 
 function resolveAsyncSingleRuntimePolicy(
   agent: string,
-  params: Pick<
-    AsyncSingleParams,
-    "activeRuntimeMs" | "activeRuntimeCheckpointAt" | "timeoutMs" | "agentConfig"
-  >,
-  runDeadlineAt: number | undefined,
+  params: Pick<AsyncSingleParams, "activeRuntimeMs" | "activeRuntimeCheckpointAt" | "agentConfig">,
 ): AsyncSingleRuntimePolicy {
   const normalizedActiveRuntimeMs = normalizeActiveRuntimeMs(params.activeRuntimeMs);
   if (params.activeRuntimeMs !== undefined && normalizedActiveRuntimeMs === undefined) {
@@ -427,29 +412,16 @@ function resolveAsyncSingleRuntimePolicy(
       error: `Agent '${agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
     };
   }
-  const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, remainingAgentTimeMs);
-  const timeoutOwner =
-    remainingAgentTimeMs !== undefined &&
-    (params.timeoutMs === undefined || remainingAgentTimeMs <= params.timeoutMs)
-      ? "role"
-      : params.timeoutMs !== undefined
-        ? "run"
-        : undefined;
-  const agentDeadlineAt =
+  const effectiveTimeoutMs = remainingAgentTimeMs;
+  const effectiveDeadlineAt =
     remainingAgentTimeMs !== undefined
       ? saturatingAsyncDeadlineAt(Date.now(), remainingAgentTimeMs)
       : undefined;
-  const effectiveDeadlineAt =
-    runDeadlineAt === undefined
-      ? agentDeadlineAt
-      : agentDeadlineAt === undefined
-        ? runDeadlineAt
-        : Math.min(runDeadlineAt, agentDeadlineAt);
   return {
     activeRuntimeMs,
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-    effectiveTimeoutMs,
-    ...(timeoutOwner ? { timeoutOwner } : {}),
+    ...(effectiveTimeoutMs !== undefined ? { effectiveTimeoutMs } : {}),
+    ...(effectiveTimeoutMs !== undefined ? { timeoutOwner: "role" as const } : {}),
     ...(effectiveDeadlineAt !== undefined ? { effectiveDeadlineAt } : {}),
   };
 }
@@ -512,7 +484,7 @@ interface AsyncRunnerPlanBuildResult {
   runnerCwd: string;
 }
 
-type AsyncParallelPlanParams = Omit<AsyncParallelParams, "artifactConfig" | "timeoutMs"> & {
+type AsyncParallelPlanParams = Omit<AsyncParallelParams, "artifactConfig"> & {
   /** New plans always carry the trusted parent's fully resolved artifact policy. */
   artifactConfig: ResolvedArtifactConfig;
 };
@@ -739,9 +711,10 @@ export function buildAsyncRunnerPlan(
       acceptanceRole: agent.acceptanceRole,
       ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
       // The role ceiling is trusted policy, not caller input. Persist it on
-      // every new task so the runner can enforce it even when the run-level
-      // ceiling is disabled or longer than this agent's allowance.
-      ...(agent.maxExecutionTimeMs !== undefined ? { timeoutMs: agent.maxExecutionTimeMs } : {}),
+      // every new task so the runner can enforce it independently per child.
+      ...(agent.maxExecutionTimeMs !== undefined
+        ? { timeoutMs: agent.maxExecutionTimeMs, timeoutOwner: "role" as const }
+        : {}),
       ...(childLocation ? { childLocation } : {}),
     };
   };
@@ -852,10 +825,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   if (acceptanceErrors.length > 0)
     return formatAsyncStartError("parallel", acceptanceErrors.join(" "));
   const runStartedAt = Date.now();
-  const runDeadlineAt =
-    params.timeoutMs !== undefined
-      ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-      : undefined;
   const asyncDir = path.join(ASYNC_DIR, id);
   try {
     fs.mkdirSync(asyncDir, { recursive: true });
@@ -926,7 +895,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   const tkTicket = tkTicketContext
     ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
     : undefined;
-  const deadlineAt = runDeadlineAt;
   const projectAgents = [
     ...new Map(
       params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? [],
@@ -954,7 +922,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
         piArgv1: process.argv[1],
         controlConfig,
         toolBudget: params.toolBudget,
-        deadlineAt,
         tkTicket,
         ...(projectAgents.length > 0 ? { projectAgents } : {}),
       },
@@ -988,7 +955,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       asyncDir,
       ...(tkTicket ? { tkTicket } : {}),
       ...(projectAgents.length > 0 ? { projectAgents } : {}),
-      ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
     });
   }
 
@@ -1006,7 +972,6 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
       ...(telemetry ? { telemetry } : {}),
       asyncId: id,
       asyncDir,
-      ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
       ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
     },
   };
@@ -1020,7 +985,6 @@ interface AsyncSingleRunnerPlanInputs {
   resolvedSkillNames: string[];
   outputPath?: string;
   outputMode: "inline" | "file-only";
-  runDeadlineAt?: number;
   /** Dispatch-time child-location snapshot; absent when cwd matches parent. */
   childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }
@@ -1059,7 +1023,6 @@ function buildAsyncSingleRunnerPlan(
     toolBudget,
     activeRuntimeMs,
     activeRuntimeCheckpointAt,
-    timeoutMs,
     projectAgent,
     sessionFile,
     maxSubagentDepth,
@@ -1072,7 +1035,6 @@ function buildAsyncSingleRunnerPlan(
     resolvedSkillNames,
     outputPath,
     outputMode,
-    runDeadlineAt,
     childLocation,
   } = inputs;
   const thinkingSuffixOptions = {
@@ -1172,11 +1134,11 @@ function buildAsyncSingleRunnerPlan(
     toolBudget ? "toolBudget" : "agent.toolBudget",
   );
   if (resolvedToolBudget.error) return { error: resolvedToolBudget.error };
-  const runtimePolicy = resolveAsyncSingleRuntimePolicy(
-    agent,
-    { activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, agentConfig },
-    runDeadlineAt,
-  );
+  const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, {
+    activeRuntimeMs,
+    activeRuntimeCheckpointAt,
+    agentConfig,
+  });
   if ("error" in runtimePolicy) return { error: runtimePolicy.error };
   const {
     activeRuntimeMs: resolvedActiveRuntimeMs,
@@ -1302,10 +1264,6 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
   const retiredNestedError = retiredNestedLaunchError(params);
   if (retiredNestedError) return formatAsyncStartError("single", retiredNestedError);
   const runStartedAt = Date.now();
-  const runDeadlineAt =
-    params.timeoutMs !== undefined
-      ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-      : undefined;
   const task = params.task ?? "";
   const acceptanceErrors = validateAsyncExecutionAcceptance({ acceptance: params.acceptance });
   if (acceptanceErrors.length > 0)
@@ -1369,7 +1327,6 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
     resolvedSkillNames: resolvedSkills.map((skill) => skill.name),
     outputPath,
     outputMode,
-    runDeadlineAt,
     ...(childLocation ? { childLocation } : {}),
   });
   if ("error" in launchPlan) return formatAsyncStartError("single", launchPlan.error);
@@ -1413,11 +1370,9 @@ export function executeAsyncSingle<T extends AsyncSingleParams>(
         piPackageRoot,
         piArgv1: process.argv[1],
         controlConfig,
-        // Keep the runner's run-level deadline aligned with the effective
-        // internal policy. A role ceiling must never be widened by a longer
-        // configured run ceiling, and the step timeout below must describe the
-        // same bounded segment.
-        deadlineAt: effectiveDeadlineAt,
+        // Async singles retain a role-derived root deadline so the runner's
+        // segment timer and the role step timeout describe the same budget.
+        ...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
         toolBudget: params.toolBudget,
         tkTicket,
         ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),

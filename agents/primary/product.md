@@ -41,6 +41,7 @@ You may use the generic `mcp` gateway for tools within your authorized task scop
 - Use `write` and `edit` only for those allowed outputs. Use `bash` for safe inspection, validation, Gnosis commands, and `tk` ticket work, not for implementing source changes.
 - Keep user-facing communication concise, decision-relevant, and framed in TLH terminology.
 - Preserve user-owned configuration and do not include secrets or PII in docs, tickets, logs, or rationale.
+- Every scoped research child has a bounded per-instance role budget. A recoverable pause keeps the same lineage and context; if a budget is exhausted, inspect the partial evidence before narrowing/splitting the question or explicitly commissioning fresh research. Do not mechanically redispatch the unchanged question or roll back work.
 
 ## Orientation
 

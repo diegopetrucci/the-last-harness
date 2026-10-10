@@ -143,14 +143,7 @@ function formatAsyncStartError(mode, message) {
         details: { mode, results: [] },
     };
 }
-function resolveEffectiveSingleTimeout(callerTimeoutMs, agentTimeoutCeilingMs) {
-    if (callerTimeoutMs === undefined)
-        return agentTimeoutCeilingMs;
-    if (agentTimeoutCeilingMs === undefined)
-        return callerTimeoutMs;
-    return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
-}
-function resolveAsyncSingleRuntimePolicy(agent, params, runDeadlineAt) {
+function resolveAsyncSingleRuntimePolicy(agent, params) {
     const normalizedActiveRuntimeMs = normalizeActiveRuntimeMs(params.activeRuntimeMs);
     if (params.activeRuntimeMs !== undefined && normalizedActiveRuntimeMs === undefined) {
         return { error: "Invalid active runtime evidence; continuation cannot start." };
@@ -166,26 +159,15 @@ function resolveAsyncSingleRuntimePolicy(agent, params, runDeadlineAt) {
             error: `Agent '${agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
         };
     }
-    const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, remainingAgentTimeMs);
-    const timeoutOwner = remainingAgentTimeMs !== undefined &&
-        (params.timeoutMs === undefined || remainingAgentTimeMs <= params.timeoutMs)
-        ? "role"
-        : params.timeoutMs !== undefined
-            ? "run"
-            : undefined;
-    const agentDeadlineAt = remainingAgentTimeMs !== undefined
+    const effectiveTimeoutMs = remainingAgentTimeMs;
+    const effectiveDeadlineAt = remainingAgentTimeMs !== undefined
         ? saturatingAsyncDeadlineAt(Date.now(), remainingAgentTimeMs)
         : undefined;
-    const effectiveDeadlineAt = runDeadlineAt === undefined
-        ? agentDeadlineAt
-        : agentDeadlineAt === undefined
-            ? runDeadlineAt
-            : Math.min(runDeadlineAt, agentDeadlineAt);
     return {
         activeRuntimeMs,
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-        effectiveTimeoutMs,
-        ...(timeoutOwner ? { timeoutOwner } : {}),
+        ...(effectiveTimeoutMs !== undefined ? { effectiveTimeoutMs } : {}),
+        ...(effectiveTimeoutMs !== undefined ? { timeoutOwner: "role" } : {}),
         ...(effectiveDeadlineAt !== undefined ? { effectiveDeadlineAt } : {}),
     };
 }
@@ -364,7 +346,9 @@ export function buildAsyncRunnerPlan(id, params) {
             acceptanceInput: taskSpec.acceptance,
             acceptanceRole: agent.acceptanceRole,
             ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
-            ...(agent.maxExecutionTimeMs !== undefined ? { timeoutMs: agent.maxExecutionTimeMs } : {}),
+            ...(agent.maxExecutionTimeMs !== undefined
+                ? { timeoutMs: agent.maxExecutionTimeMs, timeoutOwner: "role" }
+                : {}),
             ...(childLocation ? { childLocation } : {}),
         };
     };
@@ -434,9 +418,6 @@ export function executeAsyncParallel(id, params) {
     if (acceptanceErrors.length > 0)
         return formatAsyncStartError("parallel", acceptanceErrors.join(" "));
     const runStartedAt = Date.now();
-    const runDeadlineAt = params.timeoutMs !== undefined
-        ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-        : undefined;
     const asyncDir = path.join(ASYNC_DIR, id);
     try {
         fs.mkdirSync(asyncDir, { recursive: true });
@@ -504,7 +485,6 @@ export function executeAsyncParallel(id, params) {
     const tkTicket = tkTicketContext
         ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
         : undefined;
-    const deadlineAt = runDeadlineAt;
     const projectAgents = [
         ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
     ];
@@ -528,7 +508,6 @@ export function executeAsyncParallel(id, params) {
             piArgv1: process.argv[1],
             controlConfig,
             toolBudget: params.toolBudget,
-            deadlineAt,
             tkTicket,
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
         }, id, runnerCwd);
@@ -555,7 +534,6 @@ export function executeAsyncParallel(id, params) {
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
-            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
         });
     }
     return {
@@ -572,14 +550,13 @@ export function executeAsyncParallel(id, params) {
             ...(telemetry ? { telemetry } : {}),
             asyncId: id,
             asyncDir,
-            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
             ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
         },
     };
 }
 function buildAsyncSingleRunnerPlan(params, inputs) {
-    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, continuationAcceptance, acceptance, toolBudget, activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
-    const { task, taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, outputPath, outputMode, runDeadlineAt, childLocation, } = inputs;
+    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, continuationAcceptance, acceptance, toolBudget, activeRuntimeMs, activeRuntimeCheckpointAt, projectAgent, sessionFile, maxSubagentDepth, } = params;
+    const { task, taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, outputPath, outputMode, childLocation, } = inputs;
     const thinkingSuffixOptions = {
         availableModels,
         preferredModelProvider: ctx.currentModelProvider,
@@ -639,7 +616,11 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
     const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, toolBudget ? "toolBudget" : "agent.toolBudget");
     if (resolvedToolBudget.error)
         return { error: resolvedToolBudget.error };
-    const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, { activeRuntimeMs, activeRuntimeCheckpointAt, timeoutMs, agentConfig }, runDeadlineAt);
+    const runtimePolicy = resolveAsyncSingleRuntimePolicy(agent, {
+        activeRuntimeMs,
+        activeRuntimeCheckpointAt,
+        agentConfig,
+    });
     if ("error" in runtimePolicy)
         return { error: runtimePolicy.error };
     const { activeRuntimeMs: resolvedActiveRuntimeMs, activeRuntimeCheckpointAt: resolvedActiveRuntimeCheckpointAt, effectiveTimeoutMs, timeoutOwner, effectiveDeadlineAt, } = runtimePolicy;
@@ -733,9 +714,6 @@ export function executeAsyncSingle(id, params) {
     if (retiredNestedError)
         return formatAsyncStartError("single", retiredNestedError);
     const runStartedAt = Date.now();
-    const runDeadlineAt = params.timeoutMs !== undefined
-        ? saturatingAsyncDeadlineAt(runStartedAt, params.timeoutMs)
-        : undefined;
     const task = params.task ?? "";
     const acceptanceErrors = validateAsyncExecutionAcceptance({ acceptance: params.acceptance });
     if (acceptanceErrors.length > 0)
@@ -787,7 +765,6 @@ export function executeAsyncSingle(id, params) {
         resolvedSkillNames: resolvedSkills.map((skill) => skill.name),
         outputPath,
         outputMode,
-        runDeadlineAt,
         ...(childLocation ? { childLocation } : {}),
     });
     if ("error" in launchPlan)
@@ -830,7 +807,7 @@ export function executeAsyncSingle(id, params) {
             piPackageRoot,
             piArgv1: process.argv[1],
             controlConfig,
-            deadlineAt: effectiveDeadlineAt,
+            ...(effectiveDeadlineAt !== undefined ? { deadlineAt: effectiveDeadlineAt } : {}),
             toolBudget: params.toolBudget,
             tkTicket,
             ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),

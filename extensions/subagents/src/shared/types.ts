@@ -521,6 +521,8 @@ export interface SingleResult {
   exitSignal?: NodeJS.Signals;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -727,6 +729,8 @@ export interface AsyncStatus {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   pid?: number;
@@ -778,6 +782,8 @@ export interface AsyncStatus {
     exitCode?: number | null;
     exitSignal?: NodeJS.Signals;
     timedOut?: boolean;
+    /** Internal timeout boundary that owns a timed-out child, when known. */
+    timeoutOwner?: "role" | "run";
     toolBudget?: ToolBudgetState;
     toolBudgetBlocked?: boolean;
     contextUsage?: ContextUsageDiagnostics;
@@ -849,6 +855,8 @@ export interface AsyncResultArtifactResultItem {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -1010,6 +1018,9 @@ export interface ForegroundResumeChild {
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
+  timedOut?: boolean;
+  /** Internal timeout boundary that owns a timed-out child, when known. */
+  timeoutOwner?: "role" | "run";
   activeRuntimeMs?: number;
   /** Timestamp of the last authoritative active-runtime checkpoint. */
   activeRuntimeCheckpointAt?: number;
@@ -1152,6 +1163,8 @@ export interface RunSyncOptions {
   timeoutMs?: number;
   /** Internal diagnostic selected by the execution boundary that owns the deadline. */
   timeoutMessage?: string;
+  /** Internal timeout boundary that owns the deadline. */
+  timeoutOwner?: "role" | "run";
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
   pauseBlockingSupervisor?: boolean;

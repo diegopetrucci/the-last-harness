@@ -120,13 +120,6 @@ function buildForegroundNativeResult(input) {
         details: input.details,
     };
 }
-function resolveEffectiveSingleTimeout(callerTimeoutMs, agentTimeoutCeilingMs) {
-    if (callerTimeoutMs === undefined)
-        return agentTimeoutCeilingMs;
-    if (agentTimeoutCeilingMs === undefined)
-        return callerTimeoutMs;
-    return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
-}
 export function resolveToolBudget(raw, label = "toolBudget") {
     const resolved = validateToolBudgetConfig(raw, label);
     return { toolBudget: resolved.budget, error: resolved.error };
@@ -431,8 +424,8 @@ async function runForegroundParallelTasks(input) {
             ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
             skills: effectiveSkills === false ? [] : effectiveSkills,
             acceptanceContext: { mode: "parallel" },
-            timeoutMs: input.timeoutMs,
-            deadlineAt: input.deadlineAt,
+            timeoutMs: agentConfig?.maxExecutionTimeMs,
+            timeoutOwner: agentConfig?.maxExecutionTimeMs !== undefined ? "role" : undefined,
             toolBudget: input.toolBudgets[index],
             onUpdate: input.onUpdate
                 ? (progressUpdate) => {
@@ -582,7 +575,6 @@ export async function runParallelPath(data, deps) {
     const parallelProgressDir = path.join(artifactsDir, "progress", runId);
     if (parallelProgressPrecreated)
         writeInitialProgressFile(parallelProgressDir);
-    const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
     const results = await runForegroundParallelTasks({
         tasks,
         taskTexts,
@@ -615,8 +607,6 @@ export async function runParallelPath(data, deps) {
         liveResults,
         liveProgress,
         onUpdate,
-        timeoutMs: data.timeoutMs,
-        deadlineAt,
         toolBudgets,
         ...(tkTicket ? { tkTicket } : {}),
         ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
@@ -771,7 +761,6 @@ export async function runSinglePath(data, deps) {
     const effectiveOutputMode = params.outputMode ?? "inline";
     const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     const maxSubagentDepth = resolveChildMaxSubagentDepth(currentMaxSubagentDepth, agentConfig.maxSubagentDepth);
-    const effectiveTimeoutMs = resolveEffectiveSingleTimeout(data.timeoutMs, agentConfig.maxExecutionTimeMs);
     const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(artifactsDir, runId));
     const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
     if (validationError) {
@@ -821,7 +810,6 @@ export async function runSinglePath(data, deps) {
             onUpdate(update);
         }
         : undefined;
-    const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
     const childLocationSnapshot = captureChildLocationSnapshot(ctx.cwd, effectiveCwd);
     let r;
     try {
@@ -902,8 +890,8 @@ export async function runSinglePath(data, deps) {
             ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
             skills: effectiveSkills,
             acceptanceContext: { mode: "single" },
-            timeoutMs: effectiveTimeoutMs,
-            deadlineAt,
+            timeoutMs: agentConfig.maxExecutionTimeMs,
+            timeoutOwner: agentConfig.maxExecutionTimeMs !== undefined ? "role" : undefined,
             toolBudget: effectiveToolBudget.toolBudget,
         });
     }

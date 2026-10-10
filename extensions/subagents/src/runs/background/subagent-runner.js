@@ -220,7 +220,7 @@ function normalizeFailedSupervisorPauseResults(results, steps, requesterIndex, f
 }
 const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
 const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR = "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
-const ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR = "Async runner config contains retired timeoutMs execution control. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct single or parallel run after removing timeoutMs.";
+const ASYNC_RUNNER_RETIRED_TIMEOUT_ERROR = "Async runner config contains retired timeoutMs execution control. Remove timeoutMs and restart with a new direct single or parallel run; per-role execution budgets are applied automatically.";
 const ASYNC_RUNNER_INVALID_CONFIG_ERROR = "Async runner config is malformed.";
 function isRecord(value) {
     return typeof value === "object" && value !== null;
@@ -563,6 +563,7 @@ async function runSubagentWithInput(config, plan) {
                 skipped: pr.skipped,
                 interrupted: prTimedOut ? undefined : pr.interrupted,
                 timedOut: prTimedOut ? true : undefined,
+                timeoutOwner: statusPayload.steps[fi]?.timeoutOwner ?? group.tasks[t]?.timeoutOwner,
                 toolBudget: pr.toolBudget,
                 toolBudgetBlocked: pr.toolBudgetBlocked,
                 contextUsage: pr.contextUsage,
@@ -641,6 +642,7 @@ async function runSubagentWithInput(config, plan) {
                 : undefined,
             interrupted: stepTimedOut ? undefined : singleResult.interrupted,
             timedOut: stepTimedOut ? true : undefined,
+            timeoutOwner: statusPayload.steps[flatIndex]?.timeoutOwner ?? seqStep.timeoutOwner,
             toolBudget: singleResult.toolBudget,
             toolBudgetBlocked: singleResult.toolBudgetBlocked,
             contextUsage: singleResult.contextUsage,
@@ -708,6 +710,8 @@ async function runSubagentWithInput(config, plan) {
                 : singleResult.exitCode;
         statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
         statusPayload.steps[flatIndex].timedOut = stepTimedOut ? true : undefined;
+        statusPayload.steps[flatIndex].timeoutOwner =
+            statusPayload.steps[flatIndex].timeoutOwner ?? seqStep.timeoutOwner;
         statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
         statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
         statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
@@ -924,6 +928,8 @@ async function runSubagentWithInput(config, plan) {
                         : singleResult.exitCode;
                 statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
                 statusPayload.steps[fi].timedOut = stepTimedOut ? true : undefined;
+                statusPayload.steps[fi].timeoutOwner =
+                    statusPayload.steps[fi].timeoutOwner ?? task.timeoutOwner;
                 statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
                 statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
                 statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;

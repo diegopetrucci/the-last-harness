@@ -88,7 +88,7 @@ import registerSubagentNotify, {
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
-import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
+import { warnRetiredExecutionPolicy } from "../agents/execution-ceiling.ts";
 import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.ts";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
@@ -446,8 +446,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   // reread install/runtime state when they complete.
   const telemetryProvenance = captureSubagentTelemetryProvenance();
   const config = loadConfig();
+  warnRetiredExecutionPolicy(config.execution);
   const artifactConfig = resolveArtifactConfig(config.artifacts);
-  const executionPolicy = resolveExecutionPolicy(config.execution);
   const tempArtifactsDir = getArtifactsDir(null);
   cleanupAllArtifactDirs(artifactConfig.cleanupDays);
   const liveDetailController = createSubagentLiveDetailController();
@@ -534,7 +534,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     state,
     config,
     artifactConfig,
-    executionPolicy,
     tempArtifactsDir,
     getSubagentSessionRoot,
     expandTilde,

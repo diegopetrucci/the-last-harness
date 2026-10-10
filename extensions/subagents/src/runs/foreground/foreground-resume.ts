@@ -66,10 +66,7 @@ import {
   type SubagentToolResult,
   RESULTS_DIR,
 } from "../../shared/types.ts";
-import {
-  remainingExecutionTimeMs,
-  type ResolvedExecutionPolicy,
-} from "../../agents/execution-ceiling.ts";
+import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import type { AuthorizedProjectAgentRun } from "./project-agent-control.ts";
 import {
   lookupPrivateProjectActionReference,
@@ -848,45 +845,25 @@ async function resolveResumeActionTarget(input: {
   return target;
 }
 
-function resolveSuccessfulResumeCompletion(target: {
-  state: AsyncStatus["state"];
-  successfulCompletion?: boolean;
-}): boolean {
-  return (
-    ("successfulCompletion" in target ? target.successfulCompletion : undefined) ??
-    target.state === "complete"
-  );
-}
-
 type ResumeRuntimePolicyPreflight =
   | {
       kind: "ready";
       activeRuntimeMs: number;
       activeRuntimeCheckpointAt?: number;
-      successfulCompletion: boolean;
-      runTimeoutMs?: number;
     }
   | { kind: "error"; message: string };
 
 function preflightResumeRuntimePolicy(
   target: ResumeSourceTarget,
   agentConfig: AgentConfig,
-  executionPolicy: ResolvedExecutionPolicy,
 ): ResumeRuntimePolicyPreflight {
-  const runTimeoutMs =
-    executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
-  const successfulCompletion = resolveSuccessfulResumeCompletion(target);
-  // A successful selected child is the sole reset boundary. Every other
-  // resumable outcome carries only validated logical runtime evidence; paused
-  // wall time never enters the continuation budget. The aggregate lifecycle
-  // state remains independent because a parallel cohort may have failed after
-  // this selected child completed successfully.
+  // Completion does not reset a persisted child lineage. Every resumable
+  // outcome carries its validated logical runtime evidence; paused wall time
+  // never enters the continuation budget. The aggregate lifecycle state remains
+  // independent because a parallel cohort may have failed after this selected
+  // child completed successfully.
   const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
-  if (
-    !successfulCompletion &&
-    target.activeRuntimeMs !== undefined &&
-    normalizedTargetActiveRuntimeMs === undefined
-  ) {
+  if (target.activeRuntimeMs !== undefined && normalizedTargetActiveRuntimeMs === undefined) {
     return {
       kind: "error",
       message: "Invalid active runtime evidence; continuation cannot start.",
@@ -895,33 +872,32 @@ function preflightResumeRuntimePolicy(
   const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(
     target.activeRuntimeCheckpointAt,
   );
-  if (
-    !successfulCompletion &&
-    target.activeRuntimeCheckpointAt !== undefined &&
-    activeRuntimeCheckpointAt === undefined
-  ) {
+  if (target.activeRuntimeCheckpointAt !== undefined && activeRuntimeCheckpointAt === undefined) {
     return {
       kind: "error",
       message: "Invalid active runtime checkpoint; continuation cannot start.",
     };
   }
-  const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
+  const activeRuntimeMs = normalizedTargetActiveRuntimeMs ?? 0;
+  const roleTimeoutEvidence =
+    target.timeoutOwner === "role" &&
+    (target.timedOut === true || target.terminationReason === "timed_out");
   const remainingAgentTimeMs = remainingExecutionTimeMs(
     agentConfig.maxExecutionTimeMs,
     activeRuntimeMs,
   );
-  if (remainingAgentTimeMs === 0) {
+  if (roleTimeoutEvidence || remainingAgentTimeMs === 0) {
     return {
       kind: "error",
-      message: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+      message: roleTimeoutEvidence
+        ? `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.`
+        : `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
     };
   }
   return {
     kind: "ready",
     activeRuntimeMs,
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-    successfulCompletion,
-    ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
   };
 }
 
@@ -967,7 +943,6 @@ type ResumeAsyncInput = {
   ctx: ExtensionContext;
   deps: ExecutorDeps;
   artifactConfig: ResolvedArtifactConfig;
-  executionPolicy: ResolvedExecutionPolicy;
 };
 
 type ResumePreparation =
@@ -986,8 +961,6 @@ type ResumePreparation =
       persistedProjectAuthorization?: AuthorizedProjectAgentRun;
       activeRuntimeMs: number;
       activeRuntimeCheckpointAt?: number;
-      successfulCompletion: boolean;
-      runTimeoutMs?: number;
     };
 
 function managementError(text: string): ResumePreparation {
@@ -1102,10 +1075,9 @@ async function prepareResume(input: ResumeAsyncInput): Promise<ResumePreparation
     };
   }
 
-  const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, input.executionPolicy);
+  const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig);
   if (runtimePolicy.kind === "error") return managementError(runtimePolicy.message);
-  const { activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs } =
-    runtimePolicy;
+  const { activeRuntimeMs, activeRuntimeCheckpointAt } = runtimePolicy;
   const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
   const contextPolicy = preflightResumeContextPolicy(
     target,
@@ -1145,8 +1117,6 @@ async function prepareResume(input: ResumeAsyncInput): Promise<ResumePreparation
     persistedProjectAuthorization,
     activeRuntimeMs,
     ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-    successfulCompletion,
-    ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
   };
 }
 
@@ -1168,8 +1138,6 @@ export async function resumeAsyncRun(
     persistedProjectAuthorization,
     activeRuntimeMs,
     activeRuntimeCheckpointAt,
-    successfulCompletion,
-    runTimeoutMs,
   } = preparation;
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
   const { availableModels } = modelRegistrySnapshot;
@@ -1264,10 +1232,7 @@ export async function resumeAsyncRun(
       sessionFile: target.sessionFile,
       continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
       activeRuntimeMs,
-      ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
-        ? { activeRuntimeCheckpointAt }
-        : {}),
-      timeoutMs: runTimeoutMs,
+      ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
       outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
       maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
       controlConfig: resolveControlConfig(input.deps.config.control),

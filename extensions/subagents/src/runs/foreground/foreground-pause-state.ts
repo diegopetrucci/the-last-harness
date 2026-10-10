@@ -188,6 +188,8 @@ export function persistPausedForegroundCohortRun(input: {
       ...(pausedForegroundTerminationReason(result)
         ? { terminationReason: pausedForegroundTerminationReason(result) }
         : {}),
+      ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+      ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
       exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
       ...(result.acceptance ? { acceptance: result.acceptance } : {}),
       ...(result.pause
@@ -392,6 +394,8 @@ export function buildPausedStepFromResult(
           ),
         }
       : {}),
+    ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+    ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
   };
 }
 
@@ -537,6 +541,8 @@ export function persistPausedForegroundSingleRun(input: {
           ...(pausedForegroundTerminationReason(input.result)
             ? { terminationReason: pausedForegroundTerminationReason(input.result) }
             : {}),
+          ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+          ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
           ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
           ...cloneForegroundPauseHealth(input.result.progress),
           ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
@@ -614,6 +620,8 @@ export function persistPausedForegroundSingleRun(input: {
               ...(pausedForegroundTerminationReason(input.result)
                 ? { terminationReason: pausedForegroundTerminationReason(input.result) }
                 : {}),
+              ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+              ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
               ...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
               ...cloneForegroundPauseHealth(input.result.progress, true),
               ...(activeRuntimeMs !== undefined

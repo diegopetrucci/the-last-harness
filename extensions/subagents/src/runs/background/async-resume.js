@@ -11,6 +11,7 @@ import { parseContextPressureCrossedThresholds, parseContextPressureProjection, 
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
+import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.js";
 import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 function resolvePausedContinuationAcceptance(runId, acceptance) {
     if (typeof acceptance !== "object" || acceptance === null || Array.isArray(acceptance)) {
@@ -172,6 +173,10 @@ function validateResultFile(value, resultPath) {
             const interrupted = child.interrupted;
             if (interrupted !== undefined && typeof interrupted !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`);
+            const timedOut = child.timedOut;
+            if (timedOut !== undefined && typeof timedOut !== "boolean")
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`);
+            const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
             const activeRuntimeMs = child.activeRuntimeMs;
             if (activeRuntimeMs !== undefined &&
                 (typeof activeRuntimeMs !== "number" ||
@@ -191,6 +196,8 @@ function validateResultFile(value, resultPath) {
                 sessionFile,
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+                ...(typeof timedOut === "boolean" ? { timedOut } : {}),
+                ...(timeoutOwner ? { timeoutOwner } : {}),
                 ...(model ? { model } : {}),
                 ...(tkTicketId ? { tkTicketId } : {}),
                 ...(thinking ? { thinking } : {}),
@@ -721,8 +728,12 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+    const timeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner ?? context.resultSteps[index]?.timeoutOwner);
+    const timedOut = selectedStatusStep?.timedOut ?? context.resultSteps[index]?.timedOut;
     return {
         ...targetWithModelMetadata,
+        ...(timedOut === true ? { timedOut: true } : {}),
+        ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
         ...(diagnosticMetadata.contextPressure
             ? { contextPressure: diagnosticMetadata.contextPressure }

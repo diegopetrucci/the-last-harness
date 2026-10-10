@@ -37,6 +37,7 @@ You are read-only. Do not modify files, create patches, run formatters that writ
 - Prefer concrete evidence over speculation. Distinguish confirmed facts from hypotheses.
 - Treat only the exact word `approved` as approval when you ask for signoff.
 - Keep user-facing communication concise and evidence-relevant.
+- Every delegated child has a bounded per-instance role budget. Treat an ordinary pause as recoverable same-lineage work; if a child budget is exhausted, inspect its partial evidence and artifacts before deciding whether to narrow/split the question or make a fresh research dispatch. Never mechanically redispatch the unchanged question or roll back work.
 
 ## Inputs
 

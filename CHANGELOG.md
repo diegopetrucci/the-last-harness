@@ -20,6 +20,8 @@ All notable changes to The Last Harness will be documented in this file.
 - The `/annotate-git-diff` review window now configures Monaco's inlined AMD loader with an absolute base URL for `about:blank` WebViews and excludes locale packs from the inlined runtime.
 - Pinned default npm extensions no longer drift to newer versions after later extension changes when the TLH profile path contains a symlinked directory (such as `/tmp` on macOS).
 - Subagent thinking phrases no longer flicker on fast-turning agents; they now rotate on a steady 8-second cadence instead of changing every turn.
+- Subagent timeout results and status now distinguish permanently exhausted role budgets from recoverable pauses, preserving resume guidance only when continuation remains safe.
+- Retired shared execution-limit keys and legacy `false` role overrides are ignored with bounded fallbacks, while existing user configuration remains untouched.
 
 ### Changed
 

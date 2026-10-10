@@ -36,6 +36,7 @@ You may use the generic `mcp` gateway for tools within your authorized task scop
 - Keep work small, local, and reviewable. If the request becomes broad, ambiguous, or multi-step, recommend switching to `architect`.
 - Prefer simple fixes, focused tests, and minimal scope.
 - Keep user-facing communication concise and execution-oriented.
+- Every delegated child has a bounded per-instance role budget. Recoverable pauses retain the same lineage and context; after budget exhaustion, inspect partial output and artifacts before deciding whether to narrow/split the task or explicitly make a fresh dispatch. Never mechanically redispatch the unchanged task or roll back work.
 
 ## Workflow
 

@@ -168,6 +168,8 @@ export function rememberForegroundRun(state, input) {
                 ...(pausedForegroundTerminationReason(result)
                     ? { terminationReason: pausedForegroundTerminationReason(result) }
                     : {}),
+                ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+                ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
                 ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
                 ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
                     ? {
@@ -241,6 +243,8 @@ export function updateRememberedForegroundChild(state, input) {
         ...(pausedForegroundTerminationReason(input.result)
             ? { terminationReason: pausedForegroundTerminationReason(input.result) }
             : {}),
+        ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+        ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt) !== undefined
             ? {
@@ -361,6 +365,9 @@ export function resolveForegroundResumeTarget(params, state) {
             ? { durableAttentionReasons: [...child.durableAttentionReasons] }
             : {}),
         ...(child.compaction ? { compaction: { ...child.compaction } } : {}),
+        ...(child.terminationReason ? { terminationReason: child.terminationReason } : {}),
+        ...(child.timedOut !== undefined ? { timedOut: child.timedOut } : {}),
+        ...(child.timeoutOwner ? { timeoutOwner: child.timeoutOwner } : {}),
         ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
             ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
             : {}),
