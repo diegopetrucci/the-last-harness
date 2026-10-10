@@ -21,6 +21,22 @@ const PINNED_ARGS = {
   piCmd: "/home/user/.the-last-harness/runtime/bin/pi",
 };
 
+test("renderWrapper: MCP adapter startup guard runs before the pinned pi exec", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  const guardIndex = rendered.indexOf(
+    'scripts/lib/mcp-adapter-cutover.mjs" --startup-guard --agent-dir "${default_agent_dir}"',
+  );
+  const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
+
+  assert.ok(guardIndex >= 0, "rendered wrapper must invoke the MCP adapter startup guard");
+  assert.ok(piExecIndex >= 0, "rendered wrapper must exec the pinned pi runtime");
+  assert.ok(guardIndex < piExecIndex, "startup guard must run before the pinned pi runtime");
+  assert.ok(
+    rendered.includes("tlh_package_mcp_adapter_guard_is_usable()"),
+    "rendered wrapper must validate the startup guard support graph",
+  );
+});
+
 test("renderWrapper: NODE_COMPILE_CACHE export is present exactly once in the pi exec path", () => {
   const rendered = renderWrapper(PINNED_ARGS);
   const lines = rendered.split("\n");

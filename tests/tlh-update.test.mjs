@@ -1,12 +1,43 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const updateScript = join(repoRoot, "scripts", "tlh-update.mjs");
+const recoveryScript = join(repoRoot, "scripts", "tlh-recover-update.mjs");
+const sdkPackageManagerScript = join(
+  repoRoot,
+  "node_modules",
+  "@earendil-works",
+  "pi-coding-agent",
+  "dist",
+  "core",
+  "package-manager.js",
+);
+const sdkGitScript = join(
+  repoRoot,
+  "node_modules",
+  "@earendil-works",
+  "pi-coding-agent",
+  "dist",
+  "utils",
+  "git.js",
+);
+const nativeMcpSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+const legacyMcpSource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+const unpinnedMcpSource = "npm:@diegopetrucci/pi-mcp-adapter";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -67,12 +98,53 @@ function runUpdate(agentDir, args = [], env = {}) {
 }
 
 /** Run tlh-update.mjs without throwing; returns the full SpawnSyncReturns. */
-function spawnUpdate(agentDir, args = [], env = {}) {
+function spawnUpdate(agentDir, args = [], env = {}, cwd = repoRoot) {
   return spawnSync(process.execPath, [updateScript, ...args], {
-    cwd: repoRoot,
+    cwd,
     env: buildChildEnv(agentDir, env),
     encoding: "utf8",
   });
+}
+
+function spawnRecovery(agentDir, args = [], env = {}, cwd = repoRoot) {
+  return spawnSync(process.execPath, [recoveryScript, ...args], {
+    cwd,
+    env: buildChildEnv(agentDir, env),
+    encoding: "utf8",
+  });
+}
+
+function writeFakeRuntimePi(dir, logPath) {
+  const piPath = join(dir, "runtime", "bin", "pi");
+  mkdirSync(join(dir, "runtime", "bin"), { recursive: true });
+  writeFileSync(
+    piPath,
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${JSON.stringify(logPath)}\nexit 0\n`,
+  );
+  chmodSync(piPath, 0o755);
+  return piPath;
+}
+
+function writeInstalledMcpMetadata(
+  agentDir,
+  version,
+  packageName = "@diegopetrucci/pi-mcp-adapter",
+) {
+  const packageDir = join(agentDir, "npm", "node_modules", ...packageName.split("/"));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, "package.json"),
+    JSON.stringify({ name: packageName, version }, null, 2),
+  );
+}
+
+function writeInstalledGitMetadata(agentDir, cachePath, version) {
+  const packageDir = join(agentDir, "git", ...cachePath.split("/"));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, "package.json"),
+    JSON.stringify({ name: "pi-mcp-adapter", version }, null, 2),
+  );
 }
 
 function writeDownloadedInstallerFixture(dir, body) {
@@ -464,9 +536,223 @@ test("--extensions --dry-run: shows extension update plan output", (t) => {
   assert.match(output, /The Last Harness extension update plan/);
 });
 
+test("--extensions holds legacy profile and project selections before invoking fake pi", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const project = join(dir, "project");
+  const piLog = join(dir, "pi.log");
+  mkdirSync(join(project, ".pi"), { recursive: true });
+  writeSettings(agentDir, { packages: [legacyMcpSource] });
+  writeSettings(join(project, ".pi"), { packages: [nativeMcpSource] });
+  writeFakeRuntimePi(dir, piLog);
+
+  const profileHeld = spawnUpdate(agentDir, ["--extensions"]);
+  assert.notEqual(profileHeld.status, 0);
+  assert.match(profileHeld.stderr, /MCP adapter extension update held/);
+  assert.equal(existsSync(piLog), false);
+
+  writeSettings(agentDir, { packages: [] });
+  writeSettings(join(project, ".pi"), { packages: [legacyMcpSource] });
+  const projectHeld = spawnUpdate(agentDir, ["--extensions"], {}, project);
+  assert.notEqual(projectHeld.status, 0);
+  assert.match(projectHeld.stderr, /MCP adapter extension update held/);
+  assert.equal(existsSync(piLog), false);
+});
+
+test("--extensions and recovery hold project overrides with a shadowed unsafe global source", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const project = join(dir, "project");
+  const piLog = join(dir, "pi.log");
+  mkdirSync(join(project, ".pi"), { recursive: true });
+  writeSettings(join(project, ".pi"), { packages: [nativeMcpSource] });
+  writeFakeRuntimePi(dir, piLog);
+
+  for (const globalSource of [legacyMcpSource, unpinnedMcpSource]) {
+    writeSettings(agentDir, { packages: [globalSource] });
+    const update = spawnUpdate(agentDir, ["--extensions"], {}, project);
+    assert.notEqual(update.status, 0);
+    assert.match(update.stderr, /MCP adapter extension update held/);
+    assert.equal(existsSync(piLog), false);
+
+    const recovery = spawnRecovery(agentDir, ["--extensions"], {}, project);
+    assert.notEqual(recovery.status, 0);
+    assert.match(recovery.stderr, /MCP adapter extension update held/);
+    assert.equal(existsSync(piLog), false);
+  }
+});
+
+test("--extensions permits exact native profile/project selections and records the real executor", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const project = join(dir, "project");
+  const piLog = join(dir, "pi.log");
+  mkdirSync(join(project, ".pi"), { recursive: true });
+  writeSettings(agentDir, { packages: [nativeMcpSource] });
+  writeSettings(join(project, ".pi"), { packages: [nativeMcpSource] });
+  writeFakeRuntimePi(dir, piLog);
+
+  const result = spawnUpdate(agentDir, ["--extensions"], {}, project);
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(readFileSync(piLog, "utf8"), "update --extensions\n");
+});
+
+test("--extensions rejects a ranged native selector even with a compatible warm cache", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const piLog = join(dir, "pi.log");
+  writeSettings(agentDir, {
+    packages: ["npm:@diegopetrucci/pi-mcp-adapter@^5.0.0"],
+  });
+  writeInstalledMcpMetadata(agentDir, "5.2.0");
+  writeFakeRuntimePi(dir, piLog);
+
+  const result = spawnUpdate(agentDir, ["--extensions"]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /MCP adapter extension update held/);
+  assert.equal(existsSync(piLog), false);
+});
+
+test("Git identity matrix is anchored to the installed SDK source parser", () => {
+  const sdkPackageManager = readFileSync(sdkPackageManagerScript, "utf8");
+  const sdkGit = readFileSync(sdkGitScript, "utf8");
+
+  assert.match(sdkPackageManager, /parseSource\(source\)/);
+  assert.match(sdkPackageManager, /const gitParsed = parseGitUrl\(source\)/);
+  assert.match(sdkGit, /function splitRef\(url\)/);
+  assert.match(sdkGit, /export function parseGitUrl\(source\)/);
+  assert.match(sdkGit, /git@/);
+  assert.match(sdkGit, /https\?\|ssh\|git/);
+});
+
+test("main and recovery hold recognized MCP legacy and unresolved Git sources equally", (t) => {
+  const sources = [
+    {
+      label: "HTTPS",
+      legacy: "https://github.com/diegopetrucci/pi-mcp-adapter.git#v2.36.0",
+      unresolved: "https://github.com/diegopetrucci/pi-mcp-adapter.git",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      label: "SCP",
+      legacy: "git@github.com:diegopetrucci/pi-mcp-adapter.git@v2.36.0",
+      unresolved: "git@github.com:diegopetrucci/pi-mcp-adapter.git",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      label: "SSH",
+      legacy: "ssh://git@github.com/diegopetrucci/pi-mcp-adapter.git#v2.36.0",
+      unresolved: "ssh://git@github.com/diegopetrucci/pi-mcp-adapter.git",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      label: "mixed-case HTTPS",
+      legacy: "HTTPS://GITHUB.COM/DiegoPetrucci/PI-MCP-ADAPTER.git#v2.36.0",
+      unresolved: "HTTPS://GITHUB.COM/DiegoPetrucci/PI-MCP-ADAPTER.git",
+      cachePath: "github.com/DiegoPetrucci/PI-MCP-ADAPTER",
+    },
+  ];
+
+  for (const { label, legacy, unresolved, cachePath } of sources) {
+    for (const source of [legacy, unresolved]) {
+      const { dir, agentDir } = createFixture(t);
+      const piLog = join(dir, "pi.log");
+      writeSettings(agentDir, { packages: [source] });
+      writeInstalledGitMetadata(agentDir, cachePath, "2.36.0");
+      writeFakeRuntimePi(dir, piLog);
+
+      const update = spawnUpdate(agentDir, ["--extensions"]);
+      assert.notEqual(update.status, 0, `${label} main unexpectedly ran\n${update.stdout}`);
+      assert.match(update.stderr, /MCP adapter extension update held/);
+      assert.equal(existsSync(piLog), false, `${label} main invoked fake pi`);
+
+      const recovery = spawnRecovery(agentDir, ["--extensions"]);
+      assert.notEqual(recovery.status, 0, `${label} recovery unexpectedly ran\n${recovery.stdout}`);
+      assert.match(recovery.stderr, /MCP adapter extension update held/);
+      assert.equal(existsSync(piLog), false, `${label} recovery invoked fake pi`);
+    }
+  }
+});
+
+test("main and recovery permit a recognized native Git ref with its matching cache", (t) => {
+  const sources = [
+    {
+      source: "https://github.com/diegopetrucci/pi-mcp-adapter.git#v5.0.0",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      source: "git@github.com:diegopetrucci/pi-mcp-adapter.git@v5.0.0",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      source: "ssh://git@github.com/diegopetrucci/pi-mcp-adapter.git#v5.0.0",
+      cachePath: "github.com/diegopetrucci/pi-mcp-adapter",
+    },
+    {
+      source: "HTTPS://GITHUB.COM/DiegoPetrucci/PI-MCP-ADAPTER.git#v5.0.0",
+      cachePath: "github.com/DiegoPetrucci/PI-MCP-ADAPTER",
+    },
+  ];
+
+  for (const { source, cachePath } of sources) {
+    const { dir, agentDir } = createFixture(t);
+    const piLog = join(dir, "pi.log");
+    writeSettings(agentDir, { packages: [source] });
+    writeInstalledGitMetadata(agentDir, cachePath, "5.0.0");
+    writeFakeRuntimePi(dir, piLog);
+
+    const update = spawnUpdate(agentDir, ["--extensions"]);
+    assert.equal(update.status, 0, `${source} main failed\n${update.stderr}`);
+    const recovery = spawnRecovery(agentDir, ["--extensions"]);
+    assert.equal(recovery.status, 0, `${source} recovery failed\n${recovery.stderr}`);
+    assert.equal(readFileSync(piLog, "utf8"), "update --extensions\nupdate --extensions\n");
+  }
+});
+
+test("main and recovery ignore unrelated sources containing the adapter name", (t) => {
+  for (const source of [
+    "npm:@example/pi-mcp-adapter-tools@2.36.0",
+    "https://github.com/example/pi-mcp-adapter-tools.git#v2.36.0",
+  ]) {
+    const { dir, agentDir } = createFixture(t);
+    const piLog = join(dir, "pi.log");
+    writeSettings(agentDir, { packages: [source] });
+    writeFakeRuntimePi(dir, piLog);
+
+    const update = spawnUpdate(agentDir, ["--extensions"]);
+    assert.equal(update.status, 0, `${source} main failed\n${update.stderr}`);
+    const recovery = spawnRecovery(agentDir, ["--extensions"]);
+    assert.equal(recovery.status, 0, `${source} recovery failed\n${recovery.stderr}`);
+    assert.equal(readFileSync(piLog, "utf8"), "update --extensions\nupdate --extensions\n");
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 6. PI_OFFLINE=1 without --dry-run refuses with error
 // ---------------------------------------------------------------------------
+
+test("recovery --extensions holds legacy and ranged MCP selections but runs exact native pins", (t) => {
+  const { dir, agentDir } = createFixture(t);
+  const piLog = join(dir, "pi.log");
+  writeFakeRuntimePi(dir, piLog);
+  writeSettings(agentDir, { packages: [legacyMcpSource] });
+
+  const legacy = spawnRecovery(agentDir, ["--extensions"]);
+  assert.notEqual(legacy.status, 0);
+  assert.match(legacy.stderr, /MCP adapter extension update held/);
+  assert.equal(existsSync(piLog), false);
+
+  writeSettings(agentDir, {
+    packages: ["npm:@diegopetrucci/pi-mcp-adapter@^5.0.0"],
+  });
+  const ranged = spawnRecovery(agentDir, ["--extensions"]);
+  assert.notEqual(ranged.status, 0);
+  assert.match(ranged.stderr, /MCP adapter extension update held/);
+  assert.equal(existsSync(piLog), false);
+
+  writeSettings(agentDir, { packages: [nativeMcpSource] });
+  const native = spawnRecovery(agentDir, ["--extensions"]);
+  assert.equal(native.status, 0, `${native.stdout}\n${native.stderr}`);
+  assert.equal(readFileSync(piLog, "utf8"), "update --extensions\n");
+});
 
 test("PI_OFFLINE=1 without --dry-run refuses with 'PI_OFFLINE is set' error", (t) => {
   const { agentDir } = createFixture(t);

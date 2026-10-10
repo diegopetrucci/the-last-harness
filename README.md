@@ -186,7 +186,7 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
 - Gnosis, `tk`, and TLH workflow integrations: [`docs/integrations.md`](docs/integrations.md)
 - Web search setup, privacy, and opt-out: [`docs/web-search.md`](docs/web-search.md)
-- MCP usage and caveats: [`docs/mcp.md`](docs/mcp.md)
+- MCP usage, guarded migration, and rollback: [`docs/mcp.md`](docs/mcp.md)
 - Launch telemetry and opt-out: [`docs/telemetry.md`](docs/telemetry.md)
 - Git commit attribution footer, setting, and toggle flow: [`docs/git-attribution.md`](docs/git-attribution.md)
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)

@@ -121,6 +121,20 @@ const BASE_SUPPORT_FILES = Object.freeze([
         installName: "",
     },
     {
+        variable: "MCP_ADAPTER_CUTOVER_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/mcp-adapter-cutover.mjs",
+        tempPath: "lib/mcp-adapter-cutover.mjs",
+        installName: "",
+    },
+    {
+        variable: "MCP_ADAPTER_MIGRATION_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/mcp-adapter-migration.mjs",
+        tempPath: "lib/mcp-adapter-migration.mjs",
+        installName: "",
+    },
+    {
         variable: "TLH_GNOSIS_SCRIPT",
         requirement: REQUIRED,
         relativePath: "scripts/tlh-gnosis.mjs",

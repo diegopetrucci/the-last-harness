@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -403,6 +404,24 @@ function createManagedWrapperFixture() {
   mkdirSync(wrapperBinDir, { recursive: true });
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(join(agentDir, "settings.json"), "{}\n", "utf8");
+
+  // Populate the fake package root with the real startup guard and its
+  // relative imports so the wrapper's guard check runs as in a real install.
+  const pkgScriptsLib = join(packageRoot, "scripts", "lib");
+  mkdirSync(pkgScriptsLib, { recursive: true });
+  for (const name of [
+    "mcp-adapter-cutover.mjs",
+    "default-extensions.mjs",
+    "tlh-install-package-source.mjs",
+  ]) {
+    copyFileSync(join(repoRoot, "scripts", "lib", name), join(pkgScriptsLib, name));
+  }
+  const pkgConfig = join(packageRoot, "config");
+  mkdirSync(pkgConfig, { recursive: true });
+  copyFileSync(
+    join(repoRoot, "config", "default-extensions.json"),
+    join(pkgConfig, "default-extensions.json"),
+  );
 
   writeExecutable(
     piPath,
