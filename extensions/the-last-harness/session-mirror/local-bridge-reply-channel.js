@@ -421,10 +421,11 @@ export function createSessionMirrorReplyChannel(options) {
         const current = socket;
         const closeFrame = handshakeComplete ? replyCloseFrame(reason) : undefined;
         if (current !== undefined && closeFrame !== undefined) {
-            void writeFrame(current, closeFrame, () => undefined, FAILURE).finally(() => {
+            const onSettled = () => {
                 destroy();
                 notifyClosed();
-            });
+            };
+            void writeFrame(current, closeFrame, () => undefined, FAILURE).then(onSettled, onSettled);
         }
         else {
             destroy();
