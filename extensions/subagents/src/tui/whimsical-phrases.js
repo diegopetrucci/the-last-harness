@@ -453,6 +453,7 @@ export const WHIMSICAL_THINKING_PHRASES = [
     "Topping with tests...",
     "Cherry-picking the commits...",
 ];
+export const PHRASE_HOLD_MS = 8000;
 const WHIMSICAL_SHUFFLE_SEED = 0x544c4801;
 function deterministicPhrasePermutation(length) {
     const indices = Array.from({ length }, (_, index) => index);
@@ -465,7 +466,20 @@ function deterministicPhrasePermutation(length) {
     return indices;
 }
 const WHIMSICAL_THINKING_ORDER = deterministicPhrasePermutation(WHIMSICAL_THINKING_PHRASES.length);
-export function whimsicalThinkingPhrase(turnCount) {
+export function whimsicalThinkingPhrase(turnCount, snapshotNow, startedAt, elapsedMs) {
+    if (elapsedMs !== undefined && Number.isFinite(elapsedMs)) {
+        const slot = Math.floor(Math.max(0, elapsedMs) / PHRASE_HOLD_MS);
+        const phraseIndex = WHIMSICAL_THINKING_ORDER[slot % WHIMSICAL_THINKING_ORDER.length];
+        return WHIMSICAL_THINKING_PHRASES[phraseIndex];
+    }
+    if (snapshotNow !== undefined &&
+        startedAt !== undefined &&
+        Number.isFinite(snapshotNow) &&
+        Number.isFinite(startedAt)) {
+        const slot = Math.floor(Math.max(0, snapshotNow - startedAt) / PHRASE_HOLD_MS);
+        const phraseIndex = WHIMSICAL_THINKING_ORDER[slot % WHIMSICAL_THINKING_ORDER.length];
+        return WHIMSICAL_THINKING_PHRASES[phraseIndex];
+    }
     const turn = turnCount !== undefined && Number.isFinite(turnCount) ? Math.max(0, Math.trunc(turnCount)) : 0;
     const phraseIndex = WHIMSICAL_THINKING_ORDER[turn % WHIMSICAL_THINKING_ORDER.length];
     return WHIMSICAL_THINKING_PHRASES[phraseIndex];

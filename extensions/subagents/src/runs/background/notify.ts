@@ -8,6 +8,7 @@
  * signals are never delayed.
  */
 
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -23,65 +24,41 @@ import {
   type AcceptanceLedger,
   type SubagentState,
 } from "../../shared/types.ts";
+import {
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 
-// --- Injection / context bounds on child-controlled text ---
-// These constants limit text that originates from child subagents and enters
-// the parent transcript, message envelope, or TUI. They are a trust boundary,
-// not token-tuning knobs. Do not raise them without considering the injection
-// surface. Sanitization helpers (normalizeAsyncIdentifier, boundedReference,
-// boundedLabel, MAX_LABEL_CHARS, MAX_REFERENCE_CHARS, MAX_ASYNC_ID_CHARS,
-// MAX_SESSION_PATH_CHARS) are the primary control-character and path-traversal
-// fence; the char-count caps below are a secondary depth limit on the same
-// surface.
-//
-// MAX_SUMMARY_CHARS is a PER-CHILD budget, not a shared pool. Each child's
-// result is an independent unit of information, so a child's report must not
-// shrink merely because it has siblings. The same constant applies to the
-// single-result sites and to each displayed child in the grouped shape.
-//
-// Sizing is empirical. Across 158 subagent output artifacts on disk, the share
-// arriving complete and inline under each candidate cap was:
-//   750 -> 23%   1 200 -> 35%   3 000 -> 73%
-//   6 000 -> 88%  8 000 -> 96%  12 000 -> 98%  16 000 -> 99%
-// Distribution: p50 1 772, p75 3 064, p90 6 267, p95 7 556, max 16 672.
-// 8 000 is the knee of that curve; beyond it buys 2-3 points for 1.5-2x the size.
-//
-// MAX_COMPLETION_MESSAGE_CHARS is a pure ceiling on the assembled message, not a
-// routinely-binding cap. Under per-child sizing the ceiling MUST exceed the
-// per-child budget, otherwise one full-size result overflows an equal-sized
-// envelope on its own. 32 000 covers up to 4 children at full size. Calibration:
-// the foreground path already allows 200 KB per result (DEFAULT_MAX_OUTPUT in
-// shared/types.ts), so 32 000 is still ~6x tighter than foreground for the same
-// work; the previous 8 000 was ~25x tighter, and that asymmetry was the defect.
-//
-// MAX_DISPLAY_SUMMARY_CHARS is the TUI-only cap; it is applied both at send
-// time (structuredDetails.resultPreview) and at render time so a larger content
-// string does not produce a wall of text in the terminal.
+// Child-controlled text that enters the parent transcript, message envelope,
+// or TUI is a trust boundary, not a token-tuning knob.
+// MAX_SUMMARY_CHARS (8_000) is a per-child budget, not a shared pool.
+// MAX_COMPLETION_MESSAGE_CHARS is 32_000. MAX_DISPLAY_SUMMARY_CHARS is 1_200.
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 // Cap on simultaneous-completion entries shown in a grouped notice. Bounds both the
 // assembled message size and the reserved scaffolding so those fixed costs never
 // exceed the ceiling regardless of how many completions batch together.
-const MAX_GROUPED_ENTRIES = 8;
+export const MAX_GROUPED_ENTRIES = 8;
+// Keep each persisted logical batch within the analyzer's bounded chunk state.
+export const MAX_COMPLETION_BATCH_CHUNKS = 64;
+export const MAX_COMPLETION_BATCH_ENTRIES = MAX_COMPLETION_BATCH_CHUNKS * MAX_GROUPED_ENTRIES;
+export const MAX_COMPLETION_FLUSH_BATCHES = 256;
+export const SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION = 1 as const;
+export const SUBAGENT_COMPLETION_BATCH_KIND = "subagent_completion_batch" as const;
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;
-const MAX_NESTED_ENTRIES = 8;
-const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
 
-interface NestedNotifyChild {
-  id?: string;
-  agent?: string;
-  state?: string;
-  children?: NestedNotifyChild[];
-}
+// UUIDs provide cross-process uniqueness; the monotonic suffix also keeps IDs
+// distinct if a test or host replaces crypto.randomUUID with a deterministic stub.
+let completionBatchIdentitySequence = 0;
 
 interface SubagentChildResult {
   agent: string;
@@ -92,7 +69,6 @@ interface SubagentChildResult {
   artifactPath?: string;
   sessionPath?: string;
   index?: number;
-  children?: NestedNotifyChild[];
   acceptance?: AcceptanceLedger;
 }
 
@@ -113,6 +89,7 @@ export interface SubagentNotifyDetails {
   sessionLabel?: string;
   sessionValue?: string;
   awaitingSupervisor?: boolean;
+  telemetry?: SubagentRunTelemetry;
   /**
    * @internal Set by buildCompletionDetails for results with structured child data. Enables
    * formatSingleCompletion and formatGroupedCompletion to re-format the preview for the
@@ -121,6 +98,141 @@ export interface SubagentNotifyDetails {
    * notify.ts.
    */
   readonly _reformatPreview?: (ceilingForPreview: number) => string;
+}
+
+/**
+ * Telemetry-only grouped completion fields. Keep this allowlist intentionally
+ * narrower than SubagentNotifyDetails: grouped prose already carries display
+ * data, while structured chunks must never carry task, output, path, or error
+ * text.
+ */
+export interface SubagentCompletionBatchEntry {
+  agent: string;
+  status: SubagentNotifyDetails["status"];
+  durationMs?: number;
+  asyncId?: string;
+  telemetry?: SubagentRunTelemetry;
+}
+
+export interface SubagentCompletionBatchDetails {
+  schemaVersion: typeof SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION;
+  kind: typeof SUBAGENT_COMPLETION_BATCH_KIND;
+  batchId: string;
+  batchIndex: number;
+  batchCount: number;
+  /** Shared identity for logical batches emitted by one oversized flush. */
+  flushId?: string;
+  /** Zero-based logical-batch position within the flush. */
+  flushIndex?: number;
+  /** Number of logical batches in the flush. */
+  flushCount?: number;
+  triggersTurn: boolean;
+  completions: SubagentCompletionBatchEntry[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCompletionStatus(value: unknown): value is SubagentNotifyDetails["status"] {
+  return value === "completed" || value === "failed" || value === "paused";
+}
+
+export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
+  if (
+    !isRecord(value) ||
+    typeof value.agent !== "string" ||
+    !isCompletionStatus(value.status) ||
+    typeof value.resultPreview !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.durationMs !== undefined &&
+    (typeof value.durationMs !== "number" ||
+      !Number.isFinite(value.durationMs) ||
+      value.durationMs < 0)
+  ) {
+    return false;
+  }
+  return value.asyncId === undefined || normalizeAsyncIdentifier(value.asyncId) !== undefined;
+}
+
+function isCompletionBatchEntry(value: unknown): value is SubagentCompletionBatchEntry {
+  if (
+    !isRecord(value) ||
+    typeof value.agent !== "string" ||
+    value.agent.length > MAX_LABEL_CHARS ||
+    hasUnsafeIdentifierCharacters(value.agent) ||
+    !isCompletionStatus(value.status)
+  ) {
+    return false;
+  }
+  if (
+    value.durationMs !== undefined &&
+    (typeof value.durationMs !== "number" ||
+      !Number.isFinite(value.durationMs) ||
+      value.durationMs < 0)
+  ) {
+    return false;
+  }
+  if (value.asyncId !== undefined && normalizeAsyncIdentifier(value.asyncId) === undefined) {
+    return false;
+  }
+  return (
+    value.telemetry === undefined || normalizeSubagentRunTelemetry(value.telemetry) !== undefined
+  );
+}
+
+export function isSubagentCompletionBatchDetails(
+  value: unknown,
+): value is SubagentCompletionBatchDetails {
+  if (!isRecord(value)) return false;
+  const batchIndex = value.batchIndex;
+  const batchCount = value.batchCount;
+  const flushId = value.flushId;
+  const flushIndex = value.flushIndex;
+  const flushCount = value.flushCount;
+  const flushMetadataInvalid =
+    (flushId === undefined) !== (flushIndex === undefined) ||
+    (flushIndex === undefined) !== (flushCount === undefined) ||
+    (flushId !== undefined &&
+      (typeof flushId !== "string" ||
+        flushId.length === 0 ||
+        flushId.length > MAX_ASYNC_ID_CHARS ||
+        hasUnsafeIdentifierCharacters(flushId))) ||
+    (flushIndex !== undefined &&
+      (typeof flushIndex !== "number" || !Number.isSafeInteger(flushIndex) || flushIndex < 0)) ||
+    (flushCount !== undefined &&
+      (typeof flushCount !== "number" ||
+        !Number.isSafeInteger(flushCount) ||
+        flushCount < 1 ||
+        flushCount > MAX_COMPLETION_FLUSH_BATCHES)) ||
+    (typeof flushIndex === "number" && typeof flushCount === "number" && flushIndex >= flushCount);
+  if (
+    value.schemaVersion !== SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION ||
+    value.kind !== SUBAGENT_COMPLETION_BATCH_KIND ||
+    typeof value.batchId !== "string" ||
+    value.batchId.length === 0 ||
+    value.batchId.length > MAX_ASYNC_ID_CHARS ||
+    hasUnsafeIdentifierCharacters(value.batchId) ||
+    typeof batchIndex !== "number" ||
+    !Number.isSafeInteger(batchIndex) ||
+    batchIndex < 0 ||
+    typeof batchCount !== "number" ||
+    !Number.isSafeInteger(batchCount) ||
+    batchCount < 1 ||
+    batchCount > MAX_COMPLETION_BATCH_CHUNKS ||
+    batchIndex >= batchCount ||
+    flushMetadataInvalid ||
+    typeof value.triggersTurn !== "boolean" ||
+    !Array.isArray(value.completions) ||
+    value.completions.length === 0 ||
+    value.completions.length > MAX_GROUPED_ENTRIES
+  ) {
+    return false;
+  }
+  return value.completions.every(isCompletionBatchEntry);
 }
 
 interface SubagentResult {
@@ -142,6 +254,7 @@ interface SubagentResult {
   taskIndex?: number;
   totalTasks?: number;
   sessionId?: string | null;
+  telemetry?: unknown;
 }
 
 type NotifyTimerHandle = ReturnType<typeof setTimeout> | number;
@@ -193,21 +306,9 @@ function boundedSummaryOrSuppress(value: string, maxChars: number): string {
 /**
  * Per-child summary budget for the grouped shape.
  *
- * Reserves all non-summary scaffolding — per-child labels, both reference lines from
- * formatChildReferences, blank separators, nested-child lines, and outer preview content
- * such as the failure summary and counts header — before dividing the remaining ceiling
- * among displayed children. This is the species fix: a budget divided up to a limit
- * without first reserving the fixed recovery scaffolding that must travel with the
- * allocated content causes truncation to cut from the end, which is exactly where
- * per-child artifact/session recovery pointers live.
- *
- * Every displayed child gets the full MAX_SUMMARY_CHARS budget when the collective
- * summary text fits within the ceiling after reservation. Only when a wide fan-out
- * forces a smaller per-child share do we fall back to an equal split. The former
- * MIN_PER_CHILD_SUMMARY_CHARS floor is intentionally absent: at the top-level ceiling
- * (32 000) with worst-case scaffolding the per-child share never drops below ~2 750,
- * so the floor delivered no benefit there and only caused overshoot in grouped contexts
- * where it forced per-child budgets past the available ceiling.
+ * Reserves non-summary scaffolding before dividing the remaining ceiling among
+ * displayed children. Each child gets MAX_SUMMARY_CHARS (8_000) when the
+ * summaries fit; otherwise the remainder is split equally.
  */
 function resolvePerChildSummaryBudget(
   displayedChildCount: number,
@@ -442,49 +543,6 @@ function countChildStatuses(children: SubagentChildResult[]): string | undefined
   return parts.length ? parts.join(", ") : undefined;
 }
 
-interface NestedFormatBudget {
-  remaining: number;
-  omissionMarkers: Set<string>;
-}
-
-function formatNestedChildren(
-  children: NestedNotifyChild[] | undefined,
-  indent = "   ",
-  budget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() },
-): string[] {
-  if (!children?.length) return [];
-  const entries: string[] = [];
-  const markOmitted = (currentIndent: string, marker: string) => {
-    if (budget.omissionMarkers.has(marker)) return;
-    budget.omissionMarkers.add(marker);
-    entries.push(`${currentIndent}${marker}`);
-  };
-  const append = (runs: NestedNotifyChild[] | undefined, currentIndent: string, depth: number) => {
-    if (!runs?.length) return;
-    if (depth >= MAX_NESTED_DEPTH) {
-      markOmitted(currentIndent, "… [nested depth limit reached]");
-      return;
-    }
-    for (const child of runs) {
-      if (budget.remaining <= 0) {
-        markOmitted(currentIndent, "… [additional nested entries omitted]");
-        return;
-      }
-      budget.remaining--;
-      const label = boundedLabel(child.agent ?? child.id ?? "nested");
-      const state = child.state ? boundedLabel(child.state) : undefined;
-      entries.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
-      append(child.children, `${currentIndent}  `, depth + 1);
-    }
-  };
-  append(children, indent, 0);
-  // Emit the heading only when there is content beneath it. When the shared budget is
-  // exhausted and the omission marker was already recorded by an earlier sibling, this
-  // child has no entries to show; emitting the heading alone would produce a bare
-  // 'Nested subagents:' with nothing beneath it.
-  return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
-}
-
 function formatChildReferences(child: SubagentChildResult, privacySafe = false): string[] {
   if (privacySafe) return [];
   const acceptanceLine = (() => {
@@ -522,16 +580,9 @@ function formatProtectedLifecyclePreview(
         .filter((entry) => entry.status === status),
     )
     .slice(0, MAX_DISPLAYED_CHILDREN);
-  // Compute per-child scaffold costs using a separate budget so the shared budget
-  // used during rendering is not consumed during cost estimation.
-  const nestedBudgetForCost: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const childCosts = displayedChildren.map(({ child, index, status }) => {
     const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
-    const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
-    return joinedLineCost([labelLine, ...nested, ""]);
+    return joinedLineCost([labelLine, ""]);
   });
   // Reduce displayed children when their scaffold alone would exceed the ceiling,
   // incrementing the omission counter rather than silently tail-cutting a displayed child.
@@ -559,42 +610,21 @@ function formatProtectedLifecyclePreview(
     effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
   const showCountsLine = !!counts && optionalLinesAffordable;
   const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
-  // Shared nested budget across all displayed children; each call to formatNestedChildren
-  // drains from the same pool, matching the pattern at the other multi-child call sites.
-  const nestedBudget: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const lines: string[] = [];
   if (showCountsLine) lines.push(`Children: ${counts}`, "");
   if (showOmissionLine) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
   for (const { child, index, status } of effectiveDisplayedChildren) {
     lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-    lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
     lines.push("");
   }
   return lines.join("\n").trimEnd();
 }
 
 /**
- * Formats a result preview, sizing each child summary so the assembled preview fits
- * within ceilingForPreview characters with all recovery pointers intact.
- *
- * ceilingForPreview is the TOTAL chars available for the preview string. The caller is
- * responsible for subtracting any outer scaffolding (formatSingleCompletion head/tail,
- * grouped entry head/tail) before passing this value. Inside this function, the remaining
- * space is further divided by subtracting inner preview scaffolding (labels, reference
- * lines, blank separators, outer-failure summary, counts header) before distributing the
- * remainder among per-child summaries via resolvePerChildSummaryBudget.
- *
- * Ceiling contract: this function NEVER returns a string longer than ceilingForPreview.
- * The four mechanisms that enforce this are:
- *   1. resolvePerChildSummaryBudget uses no floor so per-child budgets are always ≤ the
- *      available space.
- *   2. Outer failure summaries are bounded by ceilingForPreview minus fixed scaffolding.
- *   3. The single-child summary budget is floored at 0 (not MIN_PER_CHILD_SUMMARY_CHARS).
- *   4. Summary lines are suppressed entirely when the budget is too tight to produce a
- *      well-formed truncation marker, preventing mangled fragments.
+ * Formats a result preview so each child summary fits within ceilingForPreview,
+ * with recovery pointers intact. The result is never longer than
+ * ceilingForPreview. Per-child summaries use MAX_SUMMARY_CHARS (8_000) when the
+ * ceiling allows.
  */
 function formatResultPreview(
   result: SubagentResult,
@@ -606,10 +636,6 @@ function formatResultPreview(
   });
   if (privacySafe) return formatProtectedLifecyclePreview(result, ceilingForPreview);
   const children = Array.isArray(result.results) ? result.results : [];
-  const nestedBudget: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   // The budget here is caller-derived, so it can fall below the truncation-marker width.
   // Suppress rather than emit a sliced marker: an empty preview at a 5-char ceiling is
   // correct, a string that looks like a corrupted truncation notice is not.
@@ -625,19 +651,15 @@ function formatResultPreview(
     !children.some((child) => resolveChildStatus(child) === "failed");
   if (children.length === 1) {
     const child = children[0]!;
-    // Compute refs and nested upfront so their cost can bound the outer-summary budget.
-    // Nested is computed here (consuming nestedBudget once) and reused in rendering.
+    // Compute references upfront so their cost can bound the outer-summary budget.
     const singleChildRefs = formatChildReferences(child, privacySafe);
-    const singleChildNested = formatNestedChildren(child.children, "   ", nestedBudget);
     const refsCost = joinedLineCost(singleChildRefs);
-    const nestedCost = joinedLineCost(singleChildNested);
-    // Drop refs and nested entirely when they alone exceed the ceiling. At those ceilings
+    // Drop references entirely when they alone exceed the ceiling. At that ceiling
     // the recovery pointers cannot be preserved; the summary gets the full budget instead.
-    const scaffoldFits = refsCost + nestedCost <= ceilingForPreview;
+    const scaffoldFits = refsCost <= ceilingForPreview;
     const effectiveRefs = scaffoldFits ? singleChildRefs : [];
-    const effectiveNested = scaffoldFits ? singleChildNested : [];
-    const effectiveScaffoldCost = scaffoldFits ? refsCost + nestedCost : 0;
-    // Bound the outer failure summary to leave room for refs/nested + separator so
+    const effectiveScaffoldCost = scaffoldFits ? refsCost : 0;
+    // Bound the outer failure summary to leave room for references + separator so
     // the fixed scaffold lines are never crowded out by a long outer summary.
     const outerSummaryBudget = isUnrepresentedOuterFailure
       ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - 2))
@@ -671,7 +693,6 @@ function formatResultPreview(
     if (outerFailureSummary) lines.push(outerFailureSummary, "");
     if (showSummaryLine) lines.push(childDisplayText);
     lines.push(...effectiveRefs);
-    lines.push(...effectiveNested);
     return lines.join("\n").trim();
   }
   // Multi-child path.
@@ -684,19 +705,12 @@ function formatResultPreview(
         .filter((entry) => entry.status === status),
     )
     .slice(0, MAX_DISPLAYED_CHILDREN);
-  // Compute per-child scaffold costs upfront using a separate NestedFormatBudget so the
-  // shared nestedBudget is not consumed by the cost-estimation pass.
-  const nestedBudgetForCost: NestedFormatBudget = {
-    remaining: MAX_NESTED_ENTRIES,
-    omissionMarkers: new Set(),
-  };
   const childCosts = displayedChildren.map(({ child, index, status }) => {
     const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
     const refs = formatChildReferences(child, privacySafe);
-    const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
     // Include an empty placeholder for the summary's position so joinedLineCost accounts
     // for the separator between the label and the first ref line.
-    return joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+    return joinedLineCost([labelLine, "", ...refs, ""]);
   });
   // Dynamic reduction: drop trailing displayed children when their scaffolding alone would
   // exceed the ceiling, incrementing the omission counter instead. This implements the
@@ -781,7 +795,6 @@ function formatResultPreview(
     }
     // else: suppress (budget too tight for a well-formed truncation marker)
     lines.push(...formatChildReferences(child, privacySafe));
-    lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
     lines.push("");
   }
   return lines.join("\n").trimEnd();
@@ -910,8 +923,8 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
   for (const entry of entries) {
     blocks.push(...entry.headLines);
     // When _reformatPreview is available, re-format the preview for this entry's
-    // previewCeiling. This reserves nested child reference lines (recovery pointers
-    // inside multi-child resultPreviews) before dividing the per-child summary budget,
+    // previewCeiling. This reserves child reference lines (recovery pointers) before
+    // dividing the per-child summary budget,
     // fixing the species: batched entries previously treated the entire resultPreview
     // as truncatable prose, causing fitPreviewWithinCeiling to cut inner child
     // artifact/session lines from the tail.
@@ -934,6 +947,47 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
 
 const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 
+function serializeCompletionBatchEntry(
+  details: SubagentNotifyDetails,
+): SubagentCompletionBatchEntry {
+  const asyncId = normalizeAsyncIdentifier(details.asyncId);
+  const telemetry = normalizeSubagentRunTelemetry(details.telemetry);
+  return {
+    agent: boundedLabel(details.agent),
+    status: details.status,
+    ...(typeof details.durationMs === "number" &&
+    Number.isFinite(details.durationMs) &&
+    details.durationMs >= 0
+      ? { durationMs: details.durationMs }
+      : {}),
+    ...(asyncId ? { asyncId } : {}),
+    ...(telemetry ? { telemetry } : {}),
+  };
+}
+
+function createCompletionBatchIdentity(): string {
+  const sequence = completionBatchIdentitySequence++;
+  return `${randomUUID()}-${sequence.toString(36)}`;
+}
+
+function sendNudge(
+  pi: Pick<ExtensionAPI, "sendUserMessage">,
+  options: { triggerTurn: boolean; isIdle?: () => boolean },
+): void {
+  // When the parent is idle and a turn is expected, wake the agent through
+  // prompt() so before_agent_start fires and the TLH system prompt is
+  // restored. deliverAs:'followUp' is safe under a streaming race: it
+  // queues a benign followUp rather than throwing. When streaming, or during
+  // a lifecycle flush (triggerTurn:false), the custom message alone is
+  // sufficient — Pi steers a streaming turn, and the shutdown path sends no
+  // new turn. Idleness is read live at send time; when no session context
+  // has been captured yet, assume idle (the nudge degrades to a benign
+  // followUp if that assumption is wrong).
+  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
+  }
+}
+
 function sendCompletion(
   pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
   details: SubagentNotifyDetails[],
@@ -947,47 +1001,80 @@ function sendCompletion(
     MAX_COMPLETION_MESSAGE_CHARS,
     "\n… [completion message truncated]",
   );
-  // Exclude the internal _reformatPreview closure from the serialised structured
-  // details — it is a non-serialisable function and must not appear in the message.
-  const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0] ?? {};
-  const structuredDetails =
-    details.length === 1
-      ? {
-          ...serializableDetail,
-          resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
-          ...(details[0]!.sessionValue
-            ? { sessionValue: boundedReference(details[0]!.sessionValue) }
-            : {}),
-          ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
-            ? {
-                resumeTarget: {
-                  ...(details[0]!.resumeTarget.index !== undefined
-                    ? { index: details[0]!.resumeTarget.index }
-                    : {}),
-                  ...(details[0]!.resumeTarget.childCount !== undefined
-                    ? { childCount: details[0]!.resumeTarget.childCount }
-                    : {}),
-                },
-              }
-            : {}),
-        }
-      : undefined;
-  pi.sendMessage({
-    customType: "subagent-notify",
-    content,
-    display: true,
-    ...(structuredDetails ? { details: structuredDetails } : {}),
-  });
-  // When the parent is idle and a turn is expected, wake the agent through
-  // prompt() so before_agent_start fires and the TLH system prompt is
-  // restored. deliverAs:'followUp' is safe under a streaming race: it
-  // queues a benign followUp rather than throwing. When streaming, or during
-  // a lifecycle flush (triggerTurn:false), the custom message alone is
-  // sufficient — Pi steers a streaming turn, and the shutdown path sends no
-  // new turn. Idleness is read live at send time; when no session context
-  // has been captured yet, assume idle (the nudge degrades to a benign
-  // followUp if that assumption is wrong).
-  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
+
+  if (details.length === 1) {
+    // Exclude the internal _reformatPreview closure from the serialised structured
+    // details — it is a non-serialisable function and must not appear in the message.
+    const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0]!;
+    pi.sendMessage({
+      customType: "subagent-notify",
+      content,
+      display: true,
+      details: {
+        ...serializableDetail,
+        resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
+        ...(details[0]!.sessionValue
+          ? { sessionValue: boundedReference(details[0]!.sessionValue) }
+          : {}),
+        ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
+          ? {
+              resumeTarget: {
+                ...(details[0]!.resumeTarget.index !== undefined
+                  ? { index: details[0]!.resumeTarget.index }
+                  : {}),
+                ...(details[0]!.resumeTarget.childCount !== undefined
+                  ? { childCount: details[0]!.resumeTarget.childCount }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+    });
+    sendNudge(pi, options);
+    return;
+  }
+
+  const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
+  const flushId = createCompletionBatchIdentity();
+  const completions = details.map(serializeCompletionBatchEntry);
+  let triggersTurn = false;
+  for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
+    const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
+    const logicalCompletions = completions.slice(
+      logicalStart,
+      logicalStart + MAX_COMPLETION_BATCH_ENTRIES,
+    );
+    const batchCount = Math.ceil(logicalCompletions.length / MAX_GROUPED_ENTRIES);
+    const batchId = createCompletionBatchIdentity();
+    for (let batchIndex = 0; batchIndex < batchCount; batchIndex++) {
+      const start = batchIndex * MAX_GROUPED_ENTRIES;
+      const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
+      const isFinalChunk =
+        logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
+      triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+      const batchDetails: SubagentCompletionBatchDetails = {
+        schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
+        kind: SUBAGENT_COMPLETION_BATCH_KIND,
+        batchId,
+        batchIndex,
+        batchCount,
+        flushId,
+        flushIndex: logicalBatchIndex,
+        flushCount: logicalBatchCount,
+        triggersTurn,
+        completions: batchCompletions,
+      };
+      pi.sendMessage({
+        customType: "subagent-notify",
+        // The grouped prose is persisted/displayed exactly once; subsequent chunk
+        // records carry only their bounded structured details.
+        content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
+        display: logicalBatchIndex === 0 && batchIndex === 0,
+        details: batchDetails,
+      });
+    }
+  }
+  if (triggersTurn) {
     pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
   }
 }
@@ -1040,6 +1127,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
 
   const asyncId = resolveAsyncIdentifier(result);
   const resumeTarget = resolveResumeTarget(result, asyncId);
+  const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
 
   return {
     agent,
@@ -1060,6 +1148,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
     (result as { pause?: { kind?: string } }).pause?.kind === "awaiting_supervisor"
       ? { awaitingSupervisor: true }
       : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 

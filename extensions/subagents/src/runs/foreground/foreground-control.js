@@ -9,10 +9,9 @@ import { formatControlNoticeMessage, shouldNotifyControlEvent, } from "../shared
 import { readStatus } from "../../shared/utils.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
 import { hasProjectAgentControlMarker, isRecordValue, projectRunAuthorizationError, authorizePersistedProjectAgentRun, } from "./project-agent-control.js";
-import { NESTED_ASYNC_RUNS_DIR } from "./foreground-nested-control.js";
 import { getForegroundControl } from "./foreground-run-state.js";
-export { getForegroundControl, foregroundStatusResult, trustedSessionRootsForStatus, trimRememberedForegroundRuns, rememberForegroundRun, updateRememberedForegroundChild, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
-export { registerForegroundMessageInbox, clearForegroundMessageInbox, interruptNestedRun, steerNestedRun, } from "./foreground-nested-control.js";
+export { getForegroundControl, foregroundStatusResult, trimRememberedForegroundRuns, rememberForegroundRun, updateRememberedForegroundChild, resolveRememberedForegroundRun, cancelPersistedPausedForegroundRun, } from "./foreground-run-state.js";
+export { registerForegroundMessageInbox, clearForegroundMessageInbox, } from "./foreground-message-inbox.js";
 export { buildResumeModelResolution, enrichPersistedPausedForegroundSingleRun, recoverFailedPausedForegroundTransition, resumeAsyncRun, } from "./foreground-resume.js";
 export { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./foreground-support.js";
 function isAsyncInterruptFailure(result) {
@@ -27,8 +26,6 @@ export function buildRunStatusParams(params) {
         id: params.id,
         dir: params.dir,
         index: params.index,
-        view: params.view,
-        lines: params.lines,
     };
 }
 export function buildManagementActionParams(params) {
@@ -37,7 +34,6 @@ export function buildManagementActionParams(params) {
         agent: params.agent,
         chainName: params.chainName,
         agentScope: params.agentScope,
-        config: params.config,
     };
 }
 const UNSUPPORTED_SAVED_CHAIN_INPUT_MESSAGE = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
@@ -63,11 +59,7 @@ export function unsupportedSavedChainInput(params) {
     return undefined;
 }
 export function getRequestedModeLabel(params) {
-    if ((params.tasks?.length ?? 0) > 0)
-        return "parallel";
-    if (params.agent)
-        return "single";
-    return "single";
+    return (params.tasks?.length ?? 0) > 0 ? "parallel" : "single";
 }
 export function getAsyncInterruptTarget(state, runId, location) {
     if (location) {
@@ -113,16 +105,6 @@ export function resolvedAsyncInterruptTarget(target) {
 }
 export function selectInterruptTarget(params, state) {
     const requestedId = params.id?.trim();
-    if (params.dir) {
-        const location = resolveAsyncRunLocation(params, ASYNC_DIR, RESULTS_DIR);
-        const runId = location.resolvedId ?? path.basename(path.resolve(params.dir));
-        if (!runId)
-            return { target: undefined, params };
-        return {
-            target: { kind: "async", id: runId, location },
-            params: { ...params, id: runId },
-        };
-    }
     if (requestedId) {
         const resolved = resolveSubagentRunId(requestedId, { state });
         if (resolved)
@@ -185,18 +167,8 @@ export function requestForegroundInterrupt(control) {
     }
     return interrupted;
 }
-function resolveAsyncResultsDir(asyncDir) {
-    const relative = path.relative(NESTED_ASYNC_RUNS_DIR, path.resolve(asyncDir));
-    if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
-        return undefined;
-    const [rootRunId, runId] = relative.split(path.sep).filter(Boolean);
-    if (!rootRunId || !runId)
-        return undefined;
-    return path.join(RESULTS_DIR, "nested", rootRunId);
-}
 function requestAsyncInterruptForTarget(state, target, kill) {
-    const resultsDir = resolveAsyncResultsDir(target.asyncDir);
-    const status = reconcileAsyncRun(target.asyncDir, resultsDir ? { kill, resultsDir } : { kill }).status;
+    const status = reconcileAsyncRun(target.asyncDir, { kill }).status;
     if (!status || status.state !== "running" || typeof status.pid !== "number") {
         return { ok: false, kind: "not_running" };
     }
@@ -259,33 +231,6 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
             };
         }
     }
-    try {
-        for (const rootEntry of fs.readdirSync(NESTED_ASYNC_RUNS_DIR, { withFileTypes: true })) {
-            if (!rootEntry.isDirectory())
-                continue;
-            const rootDir = path.join(NESTED_ASYNC_RUNS_DIR, rootEntry.name);
-            try {
-                for (const runEntry of fs.readdirSync(rootDir, { withFileTypes: true })) {
-                    if (!runEntry.isDirectory())
-                        continue;
-                    candidates.push({
-                        asyncDir: path.join(rootDir, runEntry.name),
-                        fallbackId: runEntry.name,
-                    });
-                }
-            }
-            catch (error) {
-                if (isNotFoundError(error))
-                    continue;
-                errors.push(`Failed to list nested async runs in '${rootDir}': ${error instanceof Error ? error.message : String(error)}`);
-            }
-        }
-    }
-    catch (error) {
-        if (!isNotFoundError(error)) {
-            errors.push(`Failed to list nested async runs in '${NESTED_ASYNC_RUNS_DIR}': ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
     for (const candidate of candidates) {
         if (knownAsyncDirs.has(candidate.asyncDir))
             continue;
@@ -295,8 +240,7 @@ function discoverDiskOnlyRunningAsyncTargets(state, knownAsyncDirs) {
                 rawStatus.state !== "running" ||
                 diskOnlyAsyncStatusBelongsElsewhere(state, rawStatus))
                 continue;
-            const resultsDir = resolveAsyncResultsDir(candidate.asyncDir);
-            const status = reconcileAsyncRun(candidate.asyncDir, resultsDir ? { resultsDir } : {}).status;
+            const status = reconcileAsyncRun(candidate.asyncDir).status;
             if (status?.state === "running") {
                 targets.push({
                     asyncId: typeof status.runId === "string" && status.runId ? status.runId : candidate.fallbackId,

@@ -19,12 +19,14 @@ import type {
   Details,
   DisplayItem,
   ErrorInfo,
-  NestedRunSummary,
   SingleResult,
   ToolCallSummary,
   Usage,
 } from "./types.ts";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.ts";
+import {
+  createAsyncStatusJsonParseError,
+  createAsyncStatusUnsafeError,
+} from "../runs/background/async-status-corruption.ts";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.ts";
 
 // ============================================================================
@@ -47,6 +49,20 @@ const statusCache = new Map<
   { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }
 >();
 
+/** Keep status reads bounded before persisted JSON is trusted. */
+export const MAX_ASYNC_STATUS_BYTES = 16 * 1024 * 1024;
+const STATUS_READ_CHUNK_BYTES = 64 * 1024;
+
+type OptionalOpenConstants = {
+  readonly O_NONBLOCK?: number;
+  readonly O_NOFOLLOW?: number;
+};
+
+const optionalOpenConstants: OptionalOpenConstants = fs.constants;
+const STATUS_NONBLOCK_FLAG = optionalOpenConstants.O_NONBLOCK ?? 0;
+const STATUS_NOFOLLOW_FLAG = optionalOpenConstants.O_NOFOLLOW ?? 0;
+const STATUS_OPEN_FLAGS = fs.constants.O_RDONLY | STATUS_NONBLOCK_FLAG | STATUS_NOFOLLOW_FLAG;
+
 export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
   const statusPath =
     path.basename(asyncDirOrStatusPath) === "status.json"
@@ -58,6 +74,44 @@ export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+function statusReadError(statusPath: string, error: unknown): Error {
+  return new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
+    cause: error,
+  });
+}
+
+function unsafeStatusError(
+  asyncDir: string,
+  statusPath: string,
+  reason: "non_regular" | "oversized",
+  detail: string,
+  cause?: unknown,
+): Error {
+  return createAsyncStatusUnsafeError({
+    asyncDir,
+    statusPath,
+    reason,
+    message: `Failed to read async status file '${statusPath}': ${detail}`,
+    ...(cause !== undefined ? { cause } : {}),
+  });
+}
+
+function isKnownUnsafeOpenError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
+}
+
+function isNonRegularStatusPath(statusPath: string): boolean {
+  try {
+    return !fs.lstatSync(statusPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+class StatusFileTooLargeError extends Error {}
 
 /**
  * Normalize a cwd for stable comparison across call sites.
@@ -82,70 +136,157 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
+function isStatusObject(value: unknown): value is AsyncStatus {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function readBoundedStatusContent(fd: number): string {
+  const chunks: Buffer[] = [];
+  let bytesRead = 0;
+
+  while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
+    const bytesRemaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
+    const buffer = Buffer.allocUnsafe(Math.min(STATUS_READ_CHUNK_BYTES, bytesRemaining));
+    const chunkSize = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
+    if (chunkSize === 0) break;
+    chunks.push(buffer.subarray(0, chunkSize));
+    bytesRead += chunkSize;
+  }
+
+  if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
+    throw new StatusFileTooLargeError(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+  }
+  return Buffer.concat(chunks, bytesRead).toString("utf-8");
+}
+
 /**
- * Read async job status from disk (with mtime-based caching)
+ * Read async job status from disk through one nonblocking, no-follow
+ * descriptor. The descriptor is validated with fstat before it is read so a
+ * path replacement cannot redirect the content read to another artifact.
  */
 export function readStatus(asyncDir: string): AsyncStatus | null {
-  const statusPath = path.join(asyncDir, "status.json");
+  const statusPath = path.resolve(asyncDir, "status.json");
 
-  let stat: fs.Stats;
+  // On platforms without one of these flags, lstat avoids opening an already
+  // known non-regular path. POSIX platforms use both flags below, so the open
+  // itself remains the race-safe authority for metadata and content.
+  if (STATUS_NONBLOCK_FLAG === 0 || STATUS_NOFOLLOW_FLAG === 0) {
+    let pathStat: fs.Stats;
+    try {
+      pathStat = fs.lstatSync(statusPath);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw new Error(
+        `Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`,
+        {
+          cause: error,
+        },
+      );
+    }
+    if (!pathStat.isFile()) {
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+      );
+    }
+  }
+
+  let fd: number;
   try {
-    stat = fs.statSync(statusPath);
+    fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
   } catch (error) {
     if (isNotFoundError(error)) return null;
-    throw new Error(
-      `Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`,
-      {
+    if (isKnownUnsafeOpenError(error) || isNonRegularStatusPath(statusPath)) {
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+        error,
+      );
+    }
+    throw statusReadError(statusPath, error);
+  }
+
+  try {
+    let stat: fs.Stats;
+    try {
+      stat = fs.fstatSync(fd);
+    } catch (error) {
+      throw statusReadError(statusPath, error);
+    }
+    if (!stat.isFile()) {
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "non_regular",
+        "status path is not a regular file",
+      );
+    }
+    if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
+      throw unsafeStatusError(
+        asyncDir,
+        statusPath,
+        "oversized",
+        `status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`,
+      );
+    }
+
+    const cached = statusCache.get(statusPath);
+    if (
+      cached &&
+      cached.mtime === stat.mtimeMs &&
+      cached.ctime === stat.ctimeMs &&
+      cached.size === stat.size &&
+      cached.ino === stat.ino
+    ) {
+      return cached.status;
+    }
+
+    let content: string;
+    try {
+      content = readBoundedStatusContent(fd);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      if (error instanceof StatusFileTooLargeError) {
+        throw unsafeStatusError(asyncDir, statusPath, "oversized", error.message, error);
+      }
+      throw statusReadError(statusPath, error);
+    }
+
+    let status: AsyncStatus;
+    try {
+      const parsed: unknown = JSON.parse(content);
+      if (!isStatusObject(parsed)) throw new Error("status must be a valid JSON object");
+      status = normalizeAsyncLifecycleStatus(parsed);
+    } catch (error) {
+      throw createAsyncStatusJsonParseError({
+        asyncDir,
+        statusPath,
+        content,
         cause: error,
-      },
-    );
-  }
+      });
+    }
 
-  const cached = statusCache.get(statusPath);
-  if (
-    cached &&
-    cached.mtime === stat.mtimeMs &&
-    cached.ctime === stat.ctimeMs &&
-    cached.size === stat.size &&
-    cached.ino === stat.ino
-  ) {
-    return cached.status;
-  }
-
-  let content: string;
-  try {
-    content = fs.readFileSync(statusPath, "utf-8");
-  } catch (error) {
-    if (isNotFoundError(error)) return null;
-    throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-      cause: error,
+    statusCache.set(statusPath, {
+      mtime: stat.mtimeMs,
+      ctime: stat.ctimeMs,
+      size: stat.size,
+      ino: stat.ino,
+      status,
     });
+    if (statusCache.size > 50) {
+      const firstKey = statusCache.keys().next().value;
+      if (firstKey) statusCache.delete(firstKey);
+    }
+    return status;
+  } finally {
+    fs.closeSync(fd);
   }
-
-  let status: AsyncStatus;
-  try {
-    status = normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
-  } catch (error) {
-    throw createAsyncStatusJsonParseError({
-      asyncDir,
-      statusPath,
-      content,
-      cause: error,
-    });
-  }
-
-  statusCache.set(statusPath, {
-    mtime: stat.mtimeMs,
-    ctime: stat.ctimeMs,
-    size: stat.size,
-    ino: stat.ino,
-    status,
-  });
-  if (statusCache.size > 50) {
-    const firstKey = statusCache.keys().next().value;
-    if (firstKey) statusCache.delete(firstKey);
-  }
-  return status;
 }
 
 /**
@@ -332,8 +473,7 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
           ? part.arguments
           : {};
       const text = formatToolCall(part.name, args);
-      const expandedText = formatToolCall(part.name, args, true);
-      summaries.push(toolCallSummary(text, expandedText));
+      summaries.push(toolCallSummary(text, text));
     }
   }
   return summaries;
@@ -352,22 +492,6 @@ export function sumResultsUsage(results: SingleResult[]): Usage {
   return usage;
 }
 
-function addNestedCost(
-  total: NonNullable<Details["totalCost"]>,
-  children: NestedRunSummary[] | undefined,
-): void {
-  for (const child of children ?? []) {
-    if (child.totalCost) {
-      total.inputTokens += child.totalCost.inputTokens;
-      total.outputTokens += child.totalCost.outputTokens;
-      total.costUsd += child.totalCost.costUsd;
-      continue;
-    }
-    addNestedCost(total, child.children);
-    for (const step of child.steps ?? []) addNestedCost(total, step.children);
-  }
-}
-
 /** Sum input tokens, output tokens, and cost across a set of SingleResults. */
 export function sumResultsCost(results: SingleResult[]): NonNullable<Details["totalCost"]> {
   const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
@@ -375,7 +499,6 @@ export function sumResultsCost(results: SingleResult[]): NonNullable<Details["to
     total.inputTokens += result.usage.input;
     total.outputTokens += result.usage.output;
     total.costUsd += result.usage.cost;
-    addNestedCost(total, result.children);
   }
   return total;
 }

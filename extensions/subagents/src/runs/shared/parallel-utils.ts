@@ -1,7 +1,6 @@
 import type {
   MaxOutputConfig,
   ResolvedArtifactConfig,
-  NestedRouteInfo,
   ResolvedControlConfig,
   ResolvedToolBudget,
   TkTicketMetadata,
@@ -96,6 +95,8 @@ export type SubagentRunPlan =
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
+  /** Optional parent-captured privacy-safe telemetry envelope. */
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   /** Canonical direct single/parallel execution plan. */
   plan: SubagentRunPlan;
   resultPath: string;
@@ -106,7 +107,6 @@ export interface SubagentRunConfig {
   artifactsDir?: string;
   /** Resolved once before persistence; historical readers resolve missing values at the boundary. */
   artifactConfig: ResolvedArtifactConfig;
-  share?: boolean;
   sessionDir?: string;
   asyncDir: string;
   continuationSource?: {
@@ -120,13 +120,6 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
-  nestedSelf?: {
-    parentRunId: string;
-    parentStepIndex?: number;
-    depth: number;
-    path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-  };
   tkTicket?: TkTicketMetadata;
   /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentRunCapture[];

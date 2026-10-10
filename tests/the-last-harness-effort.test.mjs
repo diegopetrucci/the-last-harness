@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { getPackageDir, initTheme } from "@earendil-works/pi-coding-agent";
@@ -14,14 +15,19 @@ const { registerEffortCommand } = await jiti.import("../extensions/the-last-harn
 initTheme("dark", false);
 
 // Pi 0.85.1 moved keybinding initialisation to interactive app startup; seed
-// the global keybindings (pi-coding-agent's nested pi-tui instance) so that
+// the global keybindings (pi-coding-agent's pi-tui instance) so that
 // ThinkingSelectorComponent hints (e.g. app.thinking.save / Ctrl+S) render
 // correctly in tests without a live TUI session.
+// Use createRequire anchored at pi-coding-agent's package.json to resolve pi-tui
+// from the same location pi-coding-agent uses — preserving the singleton intent
+// even when pi-tui is hoisted into the repo's node_modules.
 {
   const piPkg = getPackageDir();
   const piKeybindingsUrl = pathToFileURL(join(piPkg, "dist", "core", "keybindings.js")).href;
+  const req = createRequire(join(piPkg, "package.json"));
+  const piTuiPkgPath = req.resolve("@earendil-works/pi-tui/package.json");
   const piTuiKeybindingsUrl = pathToFileURL(
-    join(piPkg, "node_modules", "@earendil-works", "pi-tui", "dist", "keybindings.js"),
+    join(dirname(piTuiPkgPath), "dist", "keybindings.js"),
   ).href;
   const { KeybindingsManager: PiKeybindingsManager } = await import(piKeybindingsUrl);
   const { setKeybindings: setPiKeybindings } = await import(piTuiKeybindingsUrl);
@@ -112,86 +118,6 @@ function createInteractiveThinkingContext(model, cwd = process.cwd()) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Agent-prompt factories matching actual frontmatter (T1)
-// ---------------------------------------------------------------------------
-
-function rushPrimary() {
-  return {
-    name: "rush",
-    description: "Rush primary",
-    tlhModelDefaults: [
-      {
-        provider: "anthropic",
-        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        effort: "low",
-      },
-      {
-        provider: "openai-codex",
-        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-        effort: "medium",
-      },
-      { provider: "openrouter", effort: "low" },
-    ],
-    tlhModelDefaultsSource: "frontmatter",
-    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
-    preferCurrentOpenaiModel: true,
-    tools: [],
-    systemPrompt: "rush",
-    filePath: "agents/primary/rush.md",
-  };
-}
-
-function productPrimary() {
-  return {
-    name: "product",
-    description: "Product primary",
-    tlhModelDefaults: [
-      {
-        provider: "anthropic",
-        models: [{ provider: "anthropic", id: "claude-opus-5" }],
-        effort: "high",
-      },
-      {
-        provider: "openai-codex",
-        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
-        effort: "high",
-      },
-      { provider: "openrouter", effort: "high" },
-    ],
-    tlhModelDefaultsSource: "frontmatter",
-    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
-    tools: [],
-    systemPrompt: "product",
-    filePath: "agents/primary/product.md",
-  };
-}
-
-function bugHunterPrimary() {
-  return {
-    name: "bug-hunter",
-    description: "Bug-hunter primary",
-    tlhModelDefaults: [
-      {
-        provider: "anthropic",
-        models: [{ provider: "anthropic", id: "claude-opus-5" }],
-        effort: "high",
-      },
-      {
-        provider: "openai-codex",
-        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
-        effort: "high",
-      },
-      { provider: "openrouter", effort: "high" },
-    ],
-    tlhModelDefaultsSource: "frontmatter",
-    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
-    tools: [],
-    systemPrompt: "bug-hunter",
-    filePath: "agents/primary/bug-hunter.md",
-  };
-}
-
 function architectPrimary() {
   return {
     name: "architect",
@@ -227,130 +153,36 @@ function reasoningModel(provider = "anthropic") {
   };
 }
 
-// ---------------------------------------------------------------------------
-// 1. Overrideable primaries — rush, product, bug-hunter
-// ---------------------------------------------------------------------------
-
-for (const [name, createPrimary] of [
-  ["rush", rushPrimary],
-  ["product", productPrimary],
-  ["bug-hunter", bugHunterPrimary],
-]) {
-  test(`${name} exposes every supported thinking level`, () => {
-    const pi = createPiHarness();
-    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
-    const completions = pi.commands.get("effort").getArgumentCompletions("");
-    assert.deepEqual(
-      completions.map((completion) => completion.value),
-      ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-    );
-  });
-
-  test(`${name} accepts a supported thinking selection without a primary floor`, async () => {
-    const pi = createPiHarness();
-    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
-    const { notifications, ctx } = createCtx({ model: reasoningModel() });
-    await pi.commands.get("effort").handler("off", ctx);
-    assert.equal(pi.thinkingLevel, "off");
-    assert.deepEqual(notifications.at(-1), {
-      message: "Thinking level set to off for this session.",
-      type: "info",
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 2. Primary defaults do not constrain native effort choices
-// ---------------------------------------------------------------------------
-
-test("architect completions expose every native thinking level", () => {
+test("effort completions list every native thinking level", () => {
   const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
+  registerEffortCommand(pi);
   const completions = pi.commands.get("effort").getArgumentCompletions("");
   assert.deepEqual(
-    completions.map((c) => c.value),
+    completions.map((completion) => completion.value),
     ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
   );
 });
 
-test("architect accepts low as a session-only effort selection", async () => {
+test("effort completions filter by prefix", () => {
   const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(pi.thinkingLevel, "low");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-// ---------------------------------------------------------------------------
-// 3. Disabled primary (no active primary) — passthrough regression guard
-// ---------------------------------------------------------------------------
-
-test("getArgumentCompletions with no primary returns all thinking levels", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(undefined));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(
-    completions.map((c) => c.value),
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-  );
-});
-
-test("getArgumentCompletions with no primary filters by prefix normally", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(undefined));
+  registerEffortCommand(pi);
   const completions = pi.commands.get("effort").getArgumentCompletions("m");
-  // THINKING_LEVELS order: off, minimal, low, medium, high, xhigh, max — so minimal precedes medium and max.
   assert.deepEqual(
-    completions.map((c) => c.value),
+    completions.map((completion) => completion.value),
     ["minimal", "medium", "max"],
   );
 });
 
-test("disabled primary handler accepts off", async () => {
+test("effort handler accepts a native thinking level", async () => {
   const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(undefined));
+  registerEffortCommand(pi);
   const { notifications, ctx } = createCtx({ model: reasoningModel() });
   await pi.commands.get("effort").handler("off", ctx);
   assert.equal(pi.thinkingLevel, "off");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("disabled primary handler accepts medium", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(undefined));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("medium", ctx);
-  assert.equal(pi.thinkingLevel, "medium");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("disabled primary handler accepts high", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(undefined));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("high", ctx);
-  assert.equal(pi.thinkingLevel, "high");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("no runtime passed behaves identically to disabled primary (full completions)", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi); // no runtime argument
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(
-    completions.map((c) => c.value),
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-  );
-});
-
-test("no runtime passed handler accepts any valid level", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi); // no runtime argument
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(pi.thinkingLevel, "low");
-  assert.equal(notifications.at(-1)?.type, "info");
+  assert.deepEqual(notifications.at(-1), {
+    message: "Thinking level set to off for this session.",
+    type: "info",
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageFilterDisables, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { isLocalPackageSource, packageSourceInstallDir, packageSourcePiSource, } from "./lib/tlh-install-package-source.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
@@ -13,6 +13,8 @@ const __dirname = dirname(__filename);
 const DEFAULT_PACKAGE_SOURCE = "git:github.com/diegopetrucci/the-last-harness";
 const TLH_CHANGELOG_SENTINEL = "9999.0.0";
 const HARNESS_PACKAGE_IDENTITY = packageIdentity(DEFAULT_PACKAGE_SOURCE);
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 function usage() {
     return `Usage: node scripts/merge-settings.mjs [defaults.json] [options]
 
@@ -129,9 +131,54 @@ function shouldEnsureDefaultExtensionSource(existingPackages, extension, { force
         return true;
     return !extension.replaces.some((oldSource) => packageIdentityExists(existingPackages, packageIdentity(oldSource)));
 }
+function objectPackageIdentities(packages) {
+    return new Set(packages
+        .filter((entry) => isPlainObject(entry))
+        .map(packageIdentity)
+        .filter((identity) => Boolean(identity)));
+}
+function isUnpersistedPackageFilter(settings, extension, disabledIds) {
+    return (!disabledIds.has(extension.id) && defaultExtensionPackageFilterDisables(settings, extension));
+}
+function hasCanonicalEntryWithReplacementObject(settings, extension) {
+    if (!Array.isArray(settings.packages))
+        return false;
+    const canonicalIdentity = packageIdentity(extension.source);
+    if (!canonicalIdentity)
+        return false;
+    const replacementIdentities = new Set(extension.replaces
+        .map(packageIdentity)
+        .filter((identity) => Boolean(identity && identity !== canonicalIdentity)));
+    if (replacementIdentities.size === 0)
+        return false;
+    return (settings.packages.some((entry) => packageIdentity(entry) === canonicalIdentity) &&
+        settings.packages.some((entry) => {
+            const identity = packageIdentity(entry);
+            return isPlainObject(entry) && identity !== undefined && replacementIdentities.has(identity);
+        }));
+}
 function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds, existingSettings, { force }) {
     const next = clone(defaults);
     next.lastChangelogVersion = TLH_CHANGELOG_SENTINEL;
+    // Strip the builtin:mcp exclusion from the defaults clone when mcporter is
+    // disabled, so the merge engine does not add it when the adapter is not
+    // active. Removing it from the persisted settings is handled separately by
+    // applyBuiltinMcpExclusionSync. A missing manifest entry also means there is
+    // no adapter to coordinate with, so do not introduce the exclusion.
+    const mcporterEntry = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (!mcporterEntry ||
+        disabledIds.has(MCPORTER_EXTENSION_ID) ||
+        defaultExtensionPackageFilterDisables(existingSettings, mcporterEntry)) {
+        if (Array.isArray(next.extensions)) {
+            const filtered = next.extensions.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+            if (filtered.length === 0) {
+                delete next.extensions;
+            }
+            else {
+                next.extensions = filtered;
+            }
+        }
+    }
     // Strip the anthropic-auth warning suppression from the defaults clone when
     // that extension is disabled, so the merge engine cannot re-introduce
     // warnings.anthropicExtraUsage into an opted-out user's settings on update.
@@ -148,10 +195,13 @@ function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds
     const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages)
         ? existingSettings.packages
         : [];
+    const objectIdentities = objectPackageIdentities(existingPackages);
     const ensuredPackages = [
         ensuredSource,
         ...defaultExtensions
             .filter((extension) => !disabledIds.has(extension.id))
+            .filter((extension) => !isUnpersistedPackageFilter(existingSettings, extension, disabledIds))
+            .filter((extension) => !defaultExtensionPackageIdentities(extension).some((identity) => objectIdentities.has(identity)))
             .filter((extension) => shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }))
             .map((extension) => extension.source),
     ];
@@ -167,12 +217,17 @@ function prepareDefaults(defaults, packageSource, defaultExtensions, disabledIds
     const disabledIdentities = new Set(defaultExtensions
         .filter((extension) => disabledIds.has(extension.id))
         .flatMap(defaultExtensionPackageIdentities));
+    const preservedPackageFilterIdentities = new Set(defaultExtensions
+        .filter((extension) => isUnpersistedPackageFilter(existingSettings, extension, disabledIds))
+        .flatMap(defaultExtensionPackageIdentities));
     const packages = Array.isArray(next.packages) ? next.packages : [];
     next.packages = [
         ...ensuredPackages,
         ...packages.filter((entry) => {
             const identity = packageIdentity(entry);
-            return !ensuredIdentities.has(identity || "") && !disabledIdentities.has(identity || "");
+            return (!ensuredIdentities.has(identity || "") &&
+                !disabledIdentities.has(identity || "") &&
+                !preservedPackageFilterIdentities.has(identity || ""));
         }),
     ];
     return next;
@@ -267,23 +322,84 @@ function applyNonCanonicalHarnessCleanup(settings, ensuredSource, changes) {
     }
 }
 function applyReplacedDefaultExtensions(settings, defaultExtensions, disabledIds, changes, { force }) {
-    if (!Array.isArray(settings.packages))
+    const initialPackages = settings.packages;
+    if (!Array.isArray(initialPackages))
         return;
+    let packages = initialPackages;
     for (const extension of defaultExtensions) {
         if (!shouldMigrateDefaultExtensionReplacements(extension, { force }))
             continue;
         if (disabledIds.has(extension.id))
             continue;
         const newIdentity = packageIdentity(extension.source);
-        for (const oldSource of extension.replaces) {
-            const oldIdentity = packageIdentity(oldSource);
-            if (!oldIdentity || oldIdentity === newIdentity)
-                continue;
-            let removedSource;
-            while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
-                changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
-            }
+        const oldIdentities = new Set(extension.replaces
+            .map(packageIdentity)
+            .filter((identity) => Boolean(identity && identity !== newIdentity)));
+        if (!newIdentity || oldIdentities.size === 0)
+            continue;
+        if (!packages.some((entry) => oldIdentities.has(packageIdentity(entry) || ""))) {
+            continue;
         }
+        // Any existing canonical identity is authoritative, including a plain
+        // string pin. Only replacement identities may be removed; a canonical
+        // object may carry a different pin and user-owned metadata.
+        const canonicalEntry = packages.find((entry) => packageIdentity(entry) === newIdentity);
+        const replacementObjectEntry = packages.find((entry) => {
+            const identity = packageIdentity(entry);
+            return isPlainObject(entry) && identity !== undefined && oldIdentities.has(identity);
+        });
+        const retainedEntry = canonicalEntry ?? replacementObjectEntry;
+        if (retainedEntry === undefined) {
+            for (const oldIdentity of oldIdentities) {
+                let removedSource;
+                while ((removedSource = removePackageByIdentity(settings, oldIdentity))) {
+                    changes.push(`remove replaced default extension package: ${removedSource} -> ${extension.source}`);
+                }
+            }
+            continue;
+        }
+        const retainedCanonical = packageIdentity(retainedEntry) === newIdentity;
+        const objectSource = packageSourceOf(retainedEntry);
+        let migratedEntry = retainedEntry;
+        let removesCriticalExtensionFilter = false;
+        if (isPlainObject(retainedEntry)) {
+            const next = {
+                ...clone(retainedEntry),
+                ...(retainedCanonical ? {} : { source: extension.source }),
+            };
+            removesCriticalExtensionFilter =
+                extension.critical === true && Object.hasOwn(next, "extensions");
+            if (removesCriticalExtensionFilter)
+                delete next.extensions;
+            migratedEntry = next;
+        }
+        const nextPackages = [];
+        let keptEntry = false;
+        for (const entry of packages) {
+            const identity = packageIdentity(entry);
+            if (entry === retainedEntry && !keptEntry) {
+                nextPackages.push(migratedEntry);
+                keptEntry = true;
+                if (!retainedCanonical && objectSource !== extension.source) {
+                    changes.push(`update replaced default extension package source: ${objectSource} -> ${extension.source}`);
+                }
+                if (removesCriticalExtensionFilter) {
+                    changes.push(`remove critical default extension package filter: ${extension.id}`);
+                }
+                continue;
+            }
+            if (identity === newIdentity) {
+                changes.push(`remove duplicate default extension package: ${packageSourceOf(entry) || identity} (same identity as ${extension.source})`);
+                continue;
+            }
+            if (identity !== undefined && oldIdentities.has(identity)) {
+                changes.push(`remove replaced default extension package: ${packageSourceOf(entry) || identity} -> ${extension.source}`);
+                continue;
+            }
+            nextPackages.push(entry);
+        }
+        settings.packages = nextPackages;
+        packages = nextPackages;
     }
 }
 function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabledIds, changes, { force, sourceUpdatedIdentities = new Set(), }) {
@@ -295,6 +411,8 @@ function applyDefaultExtensionPackageDedupes(settings, defaultExtensions, disabl
             !sourceUpdatedIdentities.has(identity || ""))
             continue;
         if (disabledIds.has(extension.id))
+            continue;
+        if (isUnpersistedPackageFilter(settings, extension, disabledIds))
             continue;
         const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
         for (const removedSource of removedSources) {
@@ -308,6 +426,10 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
         return updatedIdentities;
     for (const extension of defaultExtensions) {
         if (disabledIds.has(extension.id))
+            continue;
+        if (isUnpersistedPackageFilter(settings, extension, disabledIds))
+            continue;
+        if (hasCanonicalEntryWithReplacementObject(settings, extension))
             continue;
         const identity = packageIdentity(extension.source);
         if (!identity)
@@ -380,12 +502,6 @@ function applyRetiredTlhDefaultPackageCleanup(settings, changes, managedPackageI
         managedPackageIdentities.delete(identity);
     }
 }
-function applyDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds, changes) {
-    const loadOrderRepair = repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
-    if (!loadOrderRepair)
-        return;
-    changes.push(`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`);
-}
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
     if (!Array.isArray(settings.packages))
         return;
@@ -397,54 +513,6 @@ function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
             changes.push(`force-remove retired default extension package: ${source}`);
         }
     }
-}
-function pruneContextCapDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "context-cap"));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale context-cap opt-out from tlh.disabledDefaultExtensions");
-}
-function pruneOracleDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && value.trim() === "oracle"));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale oracle opt-out from tlh.disabledDefaultExtensions");
-}
-function pruneRtkDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
-}
-function pruneIntercomDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
 }
 function pruneQuietToolsDisabledDefaultExtension(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -458,53 +526,17 @@ function pruneQuietToolsDisabledDefaultExtension(settings, changes) {
     settings.tlh.disabledDefaultExtensions = nextValues;
     changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
 }
-function pruneFffDisabledDefaultExtension(settings, changes) {
+function pruneVoiceTranscribeDisabledDefaultExtension(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
         return;
     const values = settings.tlh.disabledDefaultExtensions;
     if (!Array.isArray(values))
         return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())));
+    const nextValues = values.filter((value) => !(typeof value === "string" && ["pi-voice", "pi-transcribe"].includes(value.trim())));
     if (nextValues.length === values.length)
         return;
     settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
-}
-function pruneSubagentsDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale subagents opt-out from tlh.disabledDefaultExtensions");
-}
-function scrubGnosisSettings(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    if (!Object.hasOwn(settings.tlh, "gnosis"))
-        return;
-    delete settings.tlh.gnosis;
-    changes.push("remove tlh.gnosis (one-time cleanup)");
-}
-function scrubRtkSettings(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    if (!Object.hasOwn(settings.tlh, "rtk"))
-        return;
-    delete settings.tlh.rtk;
-    changes.push("remove tlh.rtk (one-time cleanup)");
-}
-function scrubDisableBuiltinsSettings(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.subagents))
-        return;
-    if (!Object.hasOwn(settings.subagents, "disableBuiltins"))
-        return;
-    delete settings.subagents.disableBuiltins;
-    changes.push("remove subagents.disableBuiltins (one-time cleanup)");
+    changes.push("remove stale voice/transcribe opt-out from tlh.disabledDefaultExtensions");
 }
 function removeCriticalDisabledDefaultExtensionOptOuts(settings, defaultExtensions, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -536,7 +568,13 @@ function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds
     const previousRaw = tlh && Object.hasOwn(tlh, "defaultExtensionProvenance")
         ? JSON.stringify(tlh.defaultExtensionProvenance)
         : undefined;
-    const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
+    const effectiveDisabledIds = new Set(disabledIds);
+    for (const extension of defaultExtensions) {
+        if (isUnpersistedPackageFilter(settings, extension, disabledIds)) {
+            effectiveDisabledIds.add(extension.id);
+        }
+    }
+    const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, effectiveDisabledIds);
     if (!setDefaultExtensionProvenance(settings, nextManagedIdentities))
         return;
     const nextTlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;
@@ -545,6 +583,82 @@ function syncDefaultExtensionProvenance(settings, defaultExtensions, disabledIds
         !previous.exists ||
         !sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)) {
         changes.push("update TLH default extension provenance metadata");
+    }
+}
+function hasBuiltinMcpExclusion(settings) {
+    return (isPlainObject(settings) &&
+        Array.isArray(settings.extensions) &&
+        settings.extensions.includes(BUILTIN_MCP_EXCLUSION));
+}
+function isBuiltinMcpExclusionManaged(settings) {
+    return (isPlainObject(settings) &&
+        isPlainObject(settings.tlh) &&
+        settings.tlh.builtinMcpExclusionManaged === true);
+}
+function markBuiltinMcpExclusionManaged(settings) {
+    const tlh = settings.tlh;
+    if (tlh === undefined) {
+        settings.tlh = { builtinMcpExclusionManaged: true };
+        return true;
+    }
+    if (!isPlainObject(tlh))
+        return false;
+    if (tlh.builtinMcpExclusionManaged === true)
+        return false;
+    tlh.builtinMcpExclusionManaged = true;
+    return true;
+}
+function clearBuiltinMcpExclusionManaged(settings) {
+    if (!isPlainObject(settings.tlh))
+        return false;
+    if (!Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged"))
+        return false;
+    delete settings.tlh.builtinMcpExclusionManaged;
+    return true;
+}
+function removeBuiltinMcpExclusion(settings) {
+    if (!Array.isArray(settings.extensions))
+        return false;
+    const before = settings.extensions;
+    const filtered = before.filter((entry) => entry !== BUILTIN_MCP_EXCLUSION);
+    if (filtered.length === before.length)
+        return false;
+    if (filtered.length === 0) {
+        delete settings.extensions;
+    }
+    else {
+        settings.extensions = filtered;
+    }
+    return true;
+}
+function isMcporterEffectivelyEnabled(disabledIds, existingSettings, defaultExtensions) {
+    const mcporter = defaultExtensions.find((e) => e.id === MCPORTER_EXTENSION_ID);
+    if (!mcporter || disabledIds.has(MCPORTER_EXTENSION_ID))
+        return false;
+    return !defaultExtensionPackageFilterDisables(existingSettings, mcporter);
+}
+/**
+ * Coordinate the persisted builtin:mcp exclusion with the bundled mcporter
+ * adapter. The ownership marker is only written when this merge inserts the
+ * exclusion; an unmarked entry is user-owned and is never removed here.
+ */
+function applyBuiltinMcpExclusionSync(settings, disabledIds, existingSettings, defaultExtensions, changes) {
+    const mcporterEnabled = isMcporterEffectivelyEnabled(disabledIds, existingSettings, defaultExtensions);
+    const exclusionWasPresent = hasBuiltinMcpExclusion(existingSettings);
+    const exclusionIsPresent = hasBuiltinMcpExclusion(settings);
+    if (mcporterEnabled) {
+        if (!exclusionWasPresent && exclusionIsPresent && markBuiltinMcpExclusionManaged(settings)) {
+            changes.push("mark builtin:mcp exclusion as TLH-managed");
+        }
+        return;
+    }
+    if (!isBuiltinMcpExclusionManaged(settings))
+        return;
+    if (removeBuiltinMcpExclusion(settings)) {
+        changes.push("remove TLH-managed builtin:mcp exclusion (mcporter disabled)");
+    }
+    if (clearBuiltinMcpExclusionManaged(settings)) {
+        changes.push("clear builtin:mcp exclusion ownership");
     }
 }
 function mergeSettings(existing, defaults, { force }) {
@@ -721,19 +835,11 @@ function main() {
     });
     applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
     applyRetiredTlhDefaultPackageCleanup(next, changes, withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities));
-    applyDefaultExtensionLoadOrder(next, defaultExtensions, disabledIds, changes);
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
-    scrubGnosisSettings(next, changes);
-    scrubRtkSettings(next, changes);
-    scrubDisableBuiltinsSettings(next, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-    pruneContextCapDisabledDefaultExtension(next, changes);
-    pruneOracleDisabledDefaultExtension(next, changes);
-    pruneRtkDisabledDefaultExtension(next, changes);
-    pruneIntercomDisabledDefaultExtension(next, changes);
     pruneQuietToolsDisabledDefaultExtension(next, changes);
-    pruneFffDisabledDefaultExtension(next, changes);
-    pruneSubagentsDisabledDefaultExtension(next, changes);
+    pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
+    applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
     log(args, `Pi settings: ${settingsPath}`);
     if (changes.length === 0) {

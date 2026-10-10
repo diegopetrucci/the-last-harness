@@ -3,13 +3,19 @@ import * as path from "node:path";
 import { formatToolCall } from "./formatters.js";
 import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, } from "./config-dir.js";
 import { getPiAgentDir } from "./profile.js";
-import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
+import { createAsyncStatusJsonParseError, createAsyncStatusUnsafeError, } from "../runs/background/async-status-corruption.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
 export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, };
 export function getAgentDir() {
     return getPiAgentDir();
 }
 const statusCache = new Map();
+export const MAX_ASYNC_STATUS_BYTES = 16 * 1024 * 1024;
+const STATUS_READ_CHUNK_BYTES = 64 * 1024;
+const optionalOpenConstants = fs.constants;
+const STATUS_NONBLOCK_FLAG = optionalOpenConstants.O_NONBLOCK ?? 0;
+const STATUS_NOFOLLOW_FLAG = optionalOpenConstants.O_NOFOLLOW ?? 0;
+const STATUS_OPEN_FLAGS = fs.constants.O_RDONLY | STATUS_NONBLOCK_FLAG | STATUS_NOFOLLOW_FLAG;
 export function invalidateStatusCache(asyncDirOrStatusPath) {
     const statusPath = path.basename(asyncDirOrStatusPath) === "status.json"
         ? path.resolve(asyncDirOrStatusPath)
@@ -18,6 +24,36 @@ export function invalidateStatusCache(asyncDirOrStatusPath) {
 }
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+function statusReadError(statusPath, error) {
+    return new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
+        cause: error,
+    });
+}
+function unsafeStatusError(asyncDir, statusPath, reason, detail, cause) {
+    return createAsyncStatusUnsafeError({
+        asyncDir,
+        statusPath,
+        reason,
+        message: `Failed to read async status file '${statusPath}': ${detail}`,
+        ...(cause !== undefined ? { cause } : {}),
+    });
+}
+function isKnownUnsafeOpenError(error) {
+    if (typeof error !== "object" || error === null || !("code" in error))
+        return false;
+    const code = error.code;
+    return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
+}
+function isNonRegularStatusPath(statusPath) {
+    try {
+        return !fs.lstatSync(statusPath).isFile();
+    }
+    catch {
+        return false;
+    }
+}
+class StatusFileTooLargeError extends Error {
 }
 export function normalizeComparableCwd(cwd) {
     const resolved = path.resolve(cwd);
@@ -34,63 +70,125 @@ function isNotFoundError(error) {
         "code" in error &&
         error.code === "ENOENT");
 }
+function isStatusObject(value) {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+        return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+function readBoundedStatusContent(fd) {
+    const chunks = [];
+    let bytesRead = 0;
+    while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
+        const bytesRemaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
+        const buffer = Buffer.allocUnsafe(Math.min(STATUS_READ_CHUNK_BYTES, bytesRemaining));
+        const chunkSize = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
+        if (chunkSize === 0)
+            break;
+        chunks.push(buffer.subarray(0, chunkSize));
+        bytesRead += chunkSize;
+    }
+    if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
+        throw new StatusFileTooLargeError(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+    }
+    return Buffer.concat(chunks, bytesRead).toString("utf-8");
+}
 export function readStatus(asyncDir) {
-    const statusPath = path.join(asyncDir, "status.json");
-    let stat;
+    const statusPath = path.resolve(asyncDir, "status.json");
+    if (STATUS_NONBLOCK_FLAG === 0 || STATUS_NOFOLLOW_FLAG === 0) {
+        let pathStat;
+        try {
+            pathStat = fs.lstatSync(statusPath);
+        }
+        catch (error) {
+            if (isNotFoundError(error))
+                return null;
+            throw new Error(`Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`, {
+                cause: error,
+            });
+        }
+        if (!pathStat.isFile()) {
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file");
+        }
+    }
+    let fd;
     try {
-        stat = fs.statSync(statusPath);
+        fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
     }
     catch (error) {
         if (isNotFoundError(error))
             return null;
-        throw new Error(`Failed to inspect async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
+        if (isKnownUnsafeOpenError(error) || isNonRegularStatusPath(statusPath)) {
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file", error);
+        }
+        throw statusReadError(statusPath, error);
     }
-    const cached = statusCache.get(statusPath);
-    if (cached &&
-        cached.mtime === stat.mtimeMs &&
-        cached.ctime === stat.ctimeMs &&
-        cached.size === stat.size &&
-        cached.ino === stat.ino) {
-        return cached.status;
-    }
-    let content;
     try {
-        content = fs.readFileSync(statusPath, "utf-8");
-    }
-    catch (error) {
-        if (isNotFoundError(error))
-            return null;
-        throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
+        let stat;
+        try {
+            stat = fs.fstatSync(fd);
+        }
+        catch (error) {
+            throw statusReadError(statusPath, error);
+        }
+        if (!stat.isFile()) {
+            throw unsafeStatusError(asyncDir, statusPath, "non_regular", "status path is not a regular file");
+        }
+        if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
+            throw unsafeStatusError(asyncDir, statusPath, "oversized", `status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+        }
+        const cached = statusCache.get(statusPath);
+        if (cached &&
+            cached.mtime === stat.mtimeMs &&
+            cached.ctime === stat.ctimeMs &&
+            cached.size === stat.size &&
+            cached.ino === stat.ino) {
+            return cached.status;
+        }
+        let content;
+        try {
+            content = readBoundedStatusContent(fd);
+        }
+        catch (error) {
+            if (isNotFoundError(error))
+                return null;
+            if (error instanceof StatusFileTooLargeError) {
+                throw unsafeStatusError(asyncDir, statusPath, "oversized", error.message, error);
+            }
+            throw statusReadError(statusPath, error);
+        }
+        let status;
+        try {
+            const parsed = JSON.parse(content);
+            if (!isStatusObject(parsed))
+                throw new Error("status must be a valid JSON object");
+            status = normalizeAsyncLifecycleStatus(parsed);
+        }
+        catch (error) {
+            throw createAsyncStatusJsonParseError({
+                asyncDir,
+                statusPath,
+                content,
+                cause: error,
+            });
+        }
+        statusCache.set(statusPath, {
+            mtime: stat.mtimeMs,
+            ctime: stat.ctimeMs,
+            size: stat.size,
+            ino: stat.ino,
+            status,
         });
+        if (statusCache.size > 50) {
+            const firstKey = statusCache.keys().next().value;
+            if (firstKey)
+                statusCache.delete(firstKey);
+        }
+        return status;
     }
-    let status;
-    try {
-        status = normalizeAsyncLifecycleStatus(JSON.parse(content));
+    finally {
+        fs.closeSync(fd);
     }
-    catch (error) {
-        throw createAsyncStatusJsonParseError({
-            asyncDir,
-            statusPath,
-            content,
-            cause: error,
-        });
-    }
-    statusCache.set(statusPath, {
-        mtime: stat.mtimeMs,
-        ctime: stat.ctimeMs,
-        size: stat.size,
-        ino: stat.ino,
-        status,
-    });
-    if (statusCache.size > 50) {
-        const firstKey = statusCache.keys().next().value;
-        if (firstKey)
-            statusCache.delete(firstKey);
-    }
-    return status;
 }
 export function findLatestSessionFile(sessionDir) {
     if (!fs.existsSync(sessionDir))
@@ -242,8 +340,7 @@ function extractToolCallSummaries(messages) {
                 ? part.arguments
                 : {};
             const text = formatToolCall(part.name, args);
-            const expandedText = formatToolCall(part.name, args, true);
-            summaries.push(toolCallSummary(text, expandedText));
+            summaries.push(toolCallSummary(text, text));
         }
     }
     return summaries;
@@ -260,26 +357,12 @@ export function sumResultsUsage(results) {
     }
     return usage;
 }
-function addNestedCost(total, children) {
-    for (const child of children ?? []) {
-        if (child.totalCost) {
-            total.inputTokens += child.totalCost.inputTokens;
-            total.outputTokens += child.totalCost.outputTokens;
-            total.costUsd += child.totalCost.costUsd;
-            continue;
-        }
-        addNestedCost(total, child.children);
-        for (const step of child.steps ?? [])
-            addNestedCost(total, step.children);
-    }
-}
 export function sumResultsCost(results) {
     const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
     for (const result of results) {
         total.inputTokens += result.usage.input;
         total.outputTokens += result.usage.output;
         total.costUsd += result.usage.cost;
-        addNestedCost(total, result.children);
     }
     return total;
 }

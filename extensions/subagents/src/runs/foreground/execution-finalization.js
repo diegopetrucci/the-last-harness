@@ -3,8 +3,9 @@ import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithF
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { DEFAULT_MAX_OUTPUT, truncateOutput, } from "../../shared/types.js";
 import { buildControlEvent } from "../shared/subagent-control.js";
+import { telemetryFromSingleResults, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
 import { boundChildError, formatProtocolOutputLimit } from "../shared/child-protocol.js";
-import { getFinalOutput, findLatestSessionFile, detectSubagentError, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
+import { getFinalOutput, detectSubagentError, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import { appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
@@ -210,14 +211,9 @@ export function snapshotResult(result, progress) {
         outputReference: result.outputReference ? { ...result.outputReference } : undefined,
     };
 }
-export function resolveResultSessionFile(result, options, shareEnabled) {
+export function resolveResultSessionFile(result, options) {
     if (options.sessionFile && (existsSync(options.sessionFile) || result.messages?.length)) {
         result.sessionFile = options.sessionFile;
-    }
-    else if (shareEnabled && options.sessionDir) {
-        const sessionFile = findLatestSessionFile(options.sessionDir);
-        if (sessionFile)
-            result.sessionFile = sessionFile;
     }
 }
 export function setupForegroundArtifacts(runtimeCwd, agentName, taskWithAcceptance, options) {
@@ -390,9 +386,9 @@ function finalizeSingleAttemptOutput(input) {
     return result;
 }
 export function finalizeSingleAttempt(input) {
-    const { result, progress, startTime, agent, options, sessionEnabled, supervisorPauseRequested, interruptedByControl, } = input;
+    const { result, progress, startTime, agent, options, supervisorPauseRequested, interruptedByControl, } = input;
     if (!result.protocolOutputLimit && supervisorPauseRequested) {
-        resolveResultSessionFile(result, options, sessionEnabled);
+        resolveResultSessionFile(result, options);
         result.exitCode = 0;
         result.interrupted = true;
         result.error = undefined;
@@ -417,7 +413,7 @@ export function finalizeSingleAttempt(input) {
         return result;
     }
     if (!result.protocolOutputLimit && interruptedByControl) {
-        resolveResultSessionFile(result, options, sessionEnabled);
+        resolveResultSessionFile(result, options);
         result.exitCode = 0;
         result.interrupted = true;
         result.error = undefined;
@@ -449,8 +445,8 @@ export function finalizeSingleAttempt(input) {
     return finalizeSingleAttemptOutput(input);
 }
 export function prepareForegroundRunFinalization(input) {
-    const { result, options, shareEnabled, artifactPathsResult, transcriptWriter } = input;
-    resolveResultSessionFile(result, options, shareEnabled);
+    const { result, options, artifactPathsResult, transcriptWriter } = input;
+    resolveResultSessionFile(result, options);
     if (result.timedOut) {
         const timeoutDiagnostics = formatTimeoutDiagnostics(result, options, artifactPathsResult ?? result.artifactPaths);
         result.finalOutput = timeoutDiagnostics;
@@ -527,6 +523,26 @@ export function finalizeForegroundArtifacts(input) {
         }
         artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
     }
+    const artifactTelemetry = options.telemetryProvenance && options.controlConfig
+        ? telemetryFromSingleResults({
+            runId: options.runId,
+            mode: options.telemetryMode ?? "single",
+            results: [result],
+            stepIndexes: [options.index ?? 0],
+            provenance: options.telemetryProvenance,
+            controls: options.controlConfig,
+            startedAt: options.startedAt,
+            endedAt: Date.now(),
+            lineage: options.telemetryLineage,
+            outcome: resolveSubagentTelemetryOutcome({
+                interrupted: Boolean(result.interrupted),
+                timedOut: result.timedOut,
+                success: result.exitCode === 0 && !result.interrupted,
+                terminationReason: result.terminationReason,
+                acceptanceStatus: result.acceptance?.status,
+            }),
+        })
+        : undefined;
     if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
         result.artifactPaths = artifactPathsResult;
         if (options.artifactConfig?.includeOutput !== false) {
@@ -583,6 +599,7 @@ export function finalizeForegroundArtifacts(input) {
             protocolOutputLimit: result.protocolOutputLimit,
             ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
             transcriptError: result.transcriptError,
+            ...(artifactTelemetry ? { telemetry: artifactTelemetry } : {}),
             skills: result.skills,
             skillsWarning: result.skillsWarning,
             timestamp: Date.now(),

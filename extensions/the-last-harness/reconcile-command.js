@@ -1,21 +1,12 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { formatHomePath, isRecord } from "./common.js";
+import { formatHomePath } from "./common.js";
 import { computeModelEffortDrift, readReconcileState, updateReconcileAcknowledgedSnapshot, } from "./model-effort-reconcile.js";
 import { clearPrimaryAgentModelOverrideByName, } from "./primary-agent-runtime.js";
+import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import { resetSubagentOverride } from "./subagent-settings.js";
 const RECONCILE_COMMAND = "reconcile";
 const RECONCILE_COMMAND_DESCRIPTION = "Review and resolve model/effort override drift from TLH packaged defaults";
-function getTlhGlobalSettings(cwd) {
-    try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
-        return isRecord(settings) ? settings : {};
-    }
-    catch {
-        return {};
-    }
-}
 function computeDrift(cwd, provider) {
     const primaryAgents = loadPrimaryAgents();
     const subagentMetadata = loadSubagentMetadata();

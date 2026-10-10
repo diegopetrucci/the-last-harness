@@ -33,8 +33,8 @@ import {
   waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForMockPiCall,
-  writePackageSkill,
 } from "../support/async-execution-helpers.ts";
+import { writePackageSkill } from "../support/single-execution-fixtures.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -152,7 +152,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -215,7 +214,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(start.isError, undefined);
@@ -257,7 +255,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
       outputMode: "file-only",
@@ -265,12 +262,7 @@ describe("async execution output and event streaming", () => {
     });
 
     assert.equal(run.details.asyncId, id);
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
@@ -307,7 +299,6 @@ describe("async execution output and event streaming", () => {
         agentConfig: makeAgent("worker", { completionGuard: false }),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig,
-        shareEnabled: false,
         maxOutput,
         maxSubagentDepth: 2,
       });
@@ -347,7 +338,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxOutput: { lines: 2, bytes: 1024 },
       maxSubagentDepth: 2,
     });
@@ -393,7 +383,6 @@ describe("async execution output and event streaming", () => {
         includeChildEventProjections: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     const bytePayload = readJsonRecord(await waitForAsyncResultFile(parallelId));
@@ -439,7 +428,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "context.md",
       outputBaseDir,
@@ -482,7 +470,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: outputPath,
       maxSubagentDepth: 2,
@@ -525,7 +512,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       output: "false",
       maxSubagentDepth: 2,
@@ -567,18 +553,11 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
@@ -606,18 +585,11 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
@@ -659,7 +631,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -705,18 +676,11 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, true);
@@ -747,7 +711,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -783,7 +746,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -839,7 +801,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -883,7 +844,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -919,7 +879,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     };
     try {
@@ -1085,7 +1044,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1122,7 +1080,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1162,18 +1119,11 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
 
-      const deadline = Date.now() + scaleTestTimeout(10_000);
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline) {
-          assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -1200,7 +1150,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       skills: ["pi-subagents"],
       maxSubagentDepth: 2,
@@ -1233,18 +1182,11 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
 
-      const deadline = Date.now() + scaleTestTimeout(10_000);
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline) {
-          assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -1298,7 +1240,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1358,7 +1299,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1409,7 +1349,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1483,7 +1422,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1529,12 +1467,7 @@ describe("async execution output and event streaming", () => {
     assert.equal(statusDuringEvent.activityState, "needs_attention");
     assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
 
-    const doneDeadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > doneDeadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
   });
 
   it("background event logs drop noisy message updates and cap child diagnostics", async () => {
@@ -1584,7 +1517,6 @@ describe("async execution output and event streaming", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot,
         maxSubagentDepth: 2,
       });
@@ -1642,7 +1574,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
@@ -1680,13 +1611,7 @@ describe("async execution output and event streaming", () => {
     );
     assert.equal(sawLiveOutput, true, "expected output-0.log to receive live child output");
 
-    const doneDeadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > doneDeadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, true);
@@ -1731,7 +1656,6 @@ describe("async execution output and event streaming", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });

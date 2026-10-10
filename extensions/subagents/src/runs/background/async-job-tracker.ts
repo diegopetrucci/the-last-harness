@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
+import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/render.ts";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.ts";
 import {
   type AsyncJobState,
@@ -12,17 +12,15 @@ import {
   POLL_INTERVAL_MS,
   RESULTS_DIR,
   SUBAGENT_CONTROL_EVENT,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
+  type SubagentAsyncRestoredEvent,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
-import {
-  hasLiveNestedDescendants,
-  updateAsyncJobNestedProjection,
-} from "../shared/nested-events.ts";
 import { scanAsyncRunsForRestore, type AsyncRunSummary } from "./async-status.ts";
 import {
   quarantineCorruptAsyncRun,
@@ -30,6 +28,7 @@ import {
 } from "./async-status-quarantine.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import { parsePersistedChildLocationSnapshot } from "../../shared/child-location.ts";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   lookupProjectAgentRunReference,
@@ -181,6 +180,7 @@ export function createAsyncJobTracker(
       asyncId: run.id,
       asyncDir: run.asyncDir,
       status: run.state,
+      ...(run.telemetry ? { telemetry: run.telemetry } : {}),
       sessionId: run.sessionId,
       activityState: run.activityState,
       lastActivityAt: run.lastActivityAt,
@@ -218,7 +218,6 @@ export function createAsyncJobTracker(
           controlEventSkippingOversizedLine: restoredCursor.skippingOversizedLine,
         };
       })(),
-      nestedChildren: run.nestedChildren,
       tkTicket: run.tkTicket,
       projectAgents: run.projectAgents,
     };
@@ -297,12 +296,13 @@ export function createAsyncJobTracker(
         ) {
           retainOrReleaseProjectReference(asyncId, job.asyncDir);
         } else if (!projectReferenceCleanupTimers.has(asyncId)) {
-          // This is only a fallback for terminal jobs whose project retention
-          // was deferred while nested descendants were still live.
+          // This is a fallback for terminal jobs whose project retention
+          // was deferred while sibling references were still live.
           scheduleProjectReferenceCleanup(asyncId, job.asyncDir, { siblingSafe: false });
         }
       }
       state.asyncJobs.delete(asyncId);
+      lastPhraseSlotKeys.delete(asyncId);
       if (state.lastUiContext) {
         rerenderWidget(state.lastUiContext);
       }
@@ -441,6 +441,31 @@ export function createAsyncJobTracker(
     }
   };
 
+  // Tracks the phrase-slot key from the previous tick for each running job.
+  // A slot change (driven by live time rather than status updates) marks
+  // widgetChanged so the widget rerenders at phrase boundaries.
+  const lastPhraseSlotKeys = new Map<string, string>();
+
+  const nowMs = (): number => options.now?.() ?? Date.now();
+
+  const updatePhraseSlot = (asyncId: string, job: AsyncJobState, now: number): boolean => {
+    const before = lastPhraseSlotKeys.get(asyncId);
+    const after = widgetPhraseSlotKey(job, now);
+    lastPhraseSlotKeys.set(asyncId, after);
+    return before !== after;
+  };
+
+  const renderOrPhraseChanged = (
+    renderKeyBefore: string,
+    asyncId: string,
+    job: AsyncJobState,
+    now: number,
+  ): boolean => {
+    const renderChanged = widgetRenderKey(job) !== renderKeyBefore;
+    const phraseChanged = updatePhraseSlot(asyncId, job, now);
+    return renderChanged || phraseChanged;
+  };
+
   const ensurePoller = () => {
     if (state.poller) return;
     state.poller = setInterval(() => {
@@ -454,40 +479,11 @@ export function createAsyncJobTracker(
       }
 
       let widgetChanged = false;
+      const phraseSlotNow = nowMs();
       for (const job of state.asyncJobs.values()) {
         const widgetStateBefore = widgetRenderKey(job);
-        let nestedRefreshFailed = false;
-        const refreshNestedProjection = () => {
-          try {
-            updateAsyncJobNestedProjection(job);
-          } catch (error) {
-            nestedRefreshFailed = true;
-            console.error(
-              `Failed to refresh nested async descendants for '${job.asyncDir}':`,
-              error,
-            );
-          }
-        };
-        const reconcileNestedDescendants = () => {
-          try {
-            if (job.nestedRoute)
-              reconcileNestedAsyncDescendants(job.nestedRoute, {
-                resultsDir,
-                kill: options.kill,
-                now: options.now,
-              });
-          } catch (error) {
-            nestedRefreshFailed = true;
-            console.error(
-              `Failed to refresh nested async descendants for '${job.asyncDir}':`,
-              error,
-            );
-          }
-          refreshNestedProjection();
-        };
         try {
           emitNewControlEvents(job);
-          reconcileNestedDescendants();
           const reconciliation = reconcileAsyncRun(job.asyncDir, {
             resultsDir,
             kill: options.kill,
@@ -501,6 +497,7 @@ export function createAsyncJobTracker(
               startedAt: job.startedAt,
               sessionFile: job.sessionFile,
               projectAgents: job.projectAgents,
+              telemetry: job.telemetry,
             },
           });
           const status = reconciliation.status ?? readStatus(job.asyncDir);
@@ -557,7 +554,6 @@ export function createAsyncJobTracker(
               }));
               job.agents = visibleSteps.map((step) => step.agent);
               job.steps = visibleSteps;
-              refreshNestedProjection();
               job.stepsTotal = visibleSteps.length;
               job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
               job.completedSteps = visibleSteps.filter(
@@ -575,41 +571,33 @@ export function createAsyncJobTracker(
             job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
             job.timedOut = status.timedOut ?? job.timedOut;
             job.sessionFile = status.sessionFile ?? job.sessionFile;
+            if (status.telemetry !== undefined) job.telemetry = status.telemetry;
             if (status.tkTicket !== undefined)
               job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
             if (status.projectAgents !== undefined) job.projectAgents = status.projectAgents;
-            const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
             if (
               (job.status === "complete" || job.status === "failed") &&
-              !nestedRefreshFailed &&
-              !liveNestedDescendants &&
               !projectReferenceCleanupTimers.has(job.asyncId)
             ) {
               scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
             }
-            if (liveNestedDescendants) cancelCleanup(job.asyncId);
             if (
               COMPLETION_RETENTION_STATES.has(job.status) &&
-              !nestedRefreshFailed &&
-              !liveNestedDescendants &&
               (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))
             ) {
               scheduleCleanup(job.asyncId);
             }
-            if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
+            if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
+              widgetChanged = true;
             continue;
           }
-          const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
           if (
             (job.status === "complete" || job.status === "failed") &&
-            !liveNestedDescendants &&
             !projectReferenceCleanupTimers.has(job.asyncId)
           ) {
             scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
           }
-          if (liveNestedDescendants) {
-            cancelCleanup(job.asyncId);
-          } else if (
+          if (
             COMPLETION_RETENTION_STATES.has(job.status) &&
             !state.cleanupTimers.has(job.asyncId)
           ) {
@@ -625,13 +613,10 @@ export function createAsyncJobTracker(
             job.status = "failed";
             job.updatedAt = Date.now();
           }
-          if (hasLiveNestedDescendants(job.nestedChildren)) {
-            cancelCleanup(job.asyncId);
-          } else if (!state.cleanupTimers.has(job.asyncId)) {
-            scheduleCleanup(job.asyncId);
-          }
+          if (!state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
         }
-        if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
+        if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
+          widgetChanged = true;
       }
 
       if (widgetChanged && state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);
@@ -642,6 +627,7 @@ export function createAsyncJobTracker(
   const handleStarted = (data: unknown) => {
     const info = data as AsyncStartedEvent;
     if (!info.id) return;
+    const telemetry = normalizeSubagentRunTelemetry(info.telemetry);
     if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
       return;
     const now = Date.now();
@@ -649,15 +635,15 @@ export function createAsyncJobTracker(
     const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
     const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
     const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
-    state.asyncJobs.set(info.id, {
+    const newJob: AsyncJobState = {
       asyncId: info.id,
       asyncDir,
       status: "queued",
+      ...(telemetry ? { telemetry } : {}),
       pid: typeof info.pid === "number" ? info.pid : undefined,
       ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
       mode: normalizeSubagentRunMode(info.mode),
       agents,
-      nestedRoute: info.nestedRoute,
       stepsTotal: agents?.length,
       startedAt: now,
       updatedAt: now,
@@ -666,7 +652,9 @@ export function createAsyncJobTracker(
       controlEventCursor: 0,
       tkTicket: normalizedTkTicket,
       projectAgents: info.projectAgents,
-    });
+    };
+    state.asyncJobs.set(info.id, newJob);
+    lastPhraseSlotKeys.set(info.id, widgetPhraseSlotKey(newJob, nowMs()));
     ensurePoller();
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
@@ -680,13 +668,15 @@ export function createAsyncJobTracker(
       asyncDir?: string;
       sessionId?: string;
       state?: AsyncJobState["status"];
+      telemetry?: unknown;
     };
     if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId)
       return;
     const asyncId = result.id;
     if (!asyncId) return;
     const job = state.asyncJobs.get(asyncId);
-    let nestedRefreshFailed = false;
+    const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
+    if (job && telemetry) job.telemetry = telemetry;
     if (job) {
       job.status =
         result.state === "continued" || result.state === "cancelled"
@@ -696,19 +686,11 @@ export function createAsyncJobTracker(
             : "failed";
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
-      try {
-        updateAsyncJobNestedProjection(job);
-      } catch (error) {
-        nestedRefreshFailed = true;
-        console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
-      }
     }
     if (result.state === "cancelled" || result.state === "continued") {
       retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
     } else if (
       (job?.status === "complete" || job?.status === "failed") &&
-      !nestedRefreshFailed &&
-      !hasLiveNestedDescendants(job?.nestedChildren) &&
       !projectReferenceCleanupTimers.has(asyncId)
     ) {
       scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
@@ -718,11 +700,7 @@ export function createAsyncJobTracker(
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
     }
-    if (hasLiveNestedDescendants(job?.nestedChildren)) {
-      cancelCleanup(asyncId);
-    } else if (!nestedRefreshFailed) {
-      scheduleCleanup(asyncId);
-    }
+    scheduleCleanup(asyncId);
   };
 
   const resetJobs = (ctx?: ExtensionContext) => {
@@ -748,6 +726,7 @@ export function createAsyncJobTracker(
       }
     }
     state.asyncJobs.clear();
+    lastPhraseSlotKeys.clear();
     state.foregroundControls?.clear();
     state.lastForegroundControlId = null;
     state.resultFileCoalescer.clear();
@@ -757,66 +736,127 @@ export function createAsyncJobTracker(
     }
   };
 
+  const emitRestoredSnapshot = (
+    sessionId: string | null,
+    runs: readonly AsyncRunSummary[],
+  ): void => {
+    const snapshotSessionId = sessionId ?? "";
+    const jobs =
+      sessionId === null
+        ? []
+        : runs.map((run) => {
+            const pid =
+              typeof run.pid === "number" && Number.isInteger(run.pid) && run.pid > 0
+                ? run.pid
+                : undefined;
+            return {
+              runId: run.id,
+              asyncDir: run.asyncDir,
+              sessionId: snapshotSessionId,
+              ...(pid !== undefined ? { pid } : {}),
+            };
+          });
+    const payload: SubagentAsyncRestoredEvent = {
+      sessionId: snapshotSessionId,
+      jobs,
+    };
+    try {
+      pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, payload);
+    } catch (error) {
+      console.error("Failed to publish the async restore snapshot:", error);
+    }
+  };
+
   const restoreActiveJobs = (ctx?: ExtensionContext) => {
     if (ctx?.hasUI) state.lastUiContext = ctx;
-    if (!state.currentSessionId) return;
+    const sessionId = state.currentSessionId;
     restoreControlEventProbeFailures.clear();
+    if (!sessionId) {
+      emitRestoredSnapshot(null, []);
+      return;
+    }
+
     let runs: AsyncRunSummary[];
     let issues: ReturnType<typeof scanAsyncRunsForRestore>["issues"];
+    let unsafeIssues: ReturnType<typeof scanAsyncRunsForRestore>["unsafeIssues"];
     try {
-      ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
+      ({ runs, issues, unsafeIssues } = scanAsyncRunsForRestore(asyncDirRoot, {
         states: ["queued", "running"],
-        sessionId: state.currentSessionId,
+        sessionId,
         resultsDir,
         kill: options.kill,
         now: options.now,
       }));
     } catch (error) {
       console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
+      // Even a failed scan is a producer attempt; keep TLH from starting a
+      // second scan and let it replace the prior restored set with empty.
+      emitRestoredSnapshot(sessionId, []);
       return;
     }
-    const quarantined = { jsonParse: 0, persistedValidation: 0 };
-    const deferred = { jsonParse: 0, persistedValidation: 0 };
-    const failed = { jsonParse: 0, persistedValidation: 0 };
-    for (const issue of issues) {
-      const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
-      if (result.outcome === "quarantined") {
-        if (result.kind === "json_parse") quarantined.jsonParse += 1;
-        else quarantined.persistedValidation += 1;
-        continue;
+
+    try {
+      const quarantined = { jsonParse: 0, persistedValidation: 0 };
+      const deferred = { jsonParse: 0, persistedValidation: 0 };
+      const failed = { jsonParse: 0, persistedValidation: 0 };
+      const skippedUnsafe = new Set<string>();
+      for (const issue of unsafeIssues) {
+        const dedupeKey = `unsafe-status\u0000${issue.entry}\u0000${issue.reason}`;
+        if (restoreWarningDedupe.has(dedupeKey)) continue;
+        restoreWarningDedupe.add(dedupeKey);
+        skippedUnsafe.add(dedupeKey);
+      }
+      for (const issue of issues) {
+        const result = quarantineCorruptAsyncRun(asyncDirRoot, issue, options.quarantine);
+        if (result.outcome === "quarantined") {
+          if (result.kind === "json_parse") quarantined.jsonParse += 1;
+          else quarantined.persistedValidation += 1;
+          continue;
+        }
+        if (
+          (result.outcome === "deferred" || result.outcome === "failed") &&
+          !restoreWarningDedupe.has(result.dedupeKey)
+        ) {
+          restoreWarningDedupe.add(result.dedupeKey);
+          const bucket = result.outcome === "deferred" ? deferred : failed;
+          if (result.kind === "json_parse") bucket.jsonParse += 1;
+          else bucket.persistedValidation += 1;
+        }
+      }
+      const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
+      if (skippedUnsafe.size > 0)
+        warnings.push(
+          `skipped ${skippedUnsafe.size} unsafe status artifact${skippedUnsafe.size === 1 ? "" : "s"}`,
+        );
+      const quarantinedSummary = formatRestoreIssueCounts(quarantined);
+      if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
+      const deferredSummary = formatRestoreIssueCounts(deferred);
+      if (deferredSummary) warnings.push(`deferred ${deferredSummary}`);
+      const failedSummary = formatRestoreIssueCounts(failed);
+      if (failedSummary) warnings.push(`left ${failedSummary} in place`);
+      if (warnings.length > 1)
+        warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);
+      for (const run of runs) {
+        state.asyncJobs.set(run.id, summaryToJob(run));
       }
       if (
-        (result.outcome === "deferred" || result.outcome === "failed") &&
-        !restoreWarningDedupe.has(result.dedupeKey)
+        restoreControlEventProbeFailures.size > 0 &&
+        !restoreWarningDedupe.has("control-event-probe-failure")
       ) {
-        restoreWarningDedupe.add(result.dedupeKey);
-        const bucket = result.outcome === "deferred" ? deferred : failed;
-        if (result.kind === "json_parse") bucket.jsonParse += 1;
-        else bucket.persistedValidation += 1;
+        restoreWarningDedupe.add("control-event-probe-failure");
+        const count = restoreControlEventProbeFailures.size;
+        warnRestoreIssues(
+          `Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`,
+        );
       }
+    } catch (error) {
+      emitRestoredSnapshot(sessionId, []);
+      throw error;
     }
-    const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
-    const quarantinedSummary = formatRestoreIssueCounts(quarantined);
-    if (quarantinedSummary) warnings.push(`quarantined ${quarantinedSummary}`);
-    const deferredSummary = formatRestoreIssueCounts(deferred);
-    if (deferredSummary) warnings.push(`deferred ${deferredSummary}`);
-    const failedSummary = formatRestoreIssueCounts(failed);
-    if (failedSummary) warnings.push(`left ${failedSummary} in place`);
-    if (warnings.length > 1)
-      warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
-    for (const run of runs) {
-      state.asyncJobs.set(run.id, summaryToJob(run));
-    }
-    if (
-      restoreControlEventProbeFailures.size > 0 &&
-      !restoreWarningDedupe.has("control-event-probe-failure")
-    ) {
-      restoreWarningDedupe.add("control-event-probe-failure");
-      const count = restoreControlEventProbeFailures.size;
-      warnRestoreIssues(
-        `Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`,
-      );
-    }
+
+    // Emit even for an empty restore. TLH uses this as the authoritative handoff
+    // and must not start a second directory scan after the producer ran.
+    emitRestoredSnapshot(sessionId, runs);
     if (runs.length === 0) return;
     ensurePoller();
     if (state.lastUiContext?.hasUI) rerenderWidget(state.lastUiContext);

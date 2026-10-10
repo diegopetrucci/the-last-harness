@@ -22,6 +22,7 @@ import {
   finalizeGitCheckout,
   installManagedGitCheckout,
   prepareGitCheckout,
+  readVerifiedGitCommitMetadata,
   refreshGitCheckout,
 } from "../scripts/lib/tlh-install-git.mjs";
 
@@ -78,6 +79,24 @@ function checkoutOptions(targetDir, originDir, extra = {}) {
     ...extra,
   };
 }
+
+test("verified checkout metadata includes the full normalized HEAD SHA", (t) => {
+  const fixture = createManagedGitCheckout(t);
+  const metadata = readVerifiedGitCommitMetadata({ agentDir: fixture.agentDir }, fixture.targetDir);
+
+  assert.deepEqual(metadata, {
+    commitSubject: "initial",
+    commitSha: runGit(["-C", fixture.targetDir, "rev-parse", "HEAD"]).toLowerCase(),
+  });
+
+  const nestedDir = join(fixture.targetDir, "nested");
+  mkdirSync(nestedDir);
+  assert.deepEqual(
+    readVerifiedGitCommitMetadata({ agentDir: fixture.agentDir }, nestedDir),
+    {},
+    "a nested path must not inherit metadata from an ancestor checkout",
+  );
+});
 
 function recordingCheckoutIo(warnings = [], commands = []) {
   return {

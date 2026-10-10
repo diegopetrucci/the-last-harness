@@ -1,11 +1,21 @@
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { TLH_LATEST_RELEASE_API_URL, TLH_NAME, TLH_RELEASES_URL, TLH_UPDATE_CHECK_INTERVAL_MS, TLH_UPDATE_CHECK_TIMEOUT_MS, } from "./constants.js";
+import { TLH_LATEST_RELEASE_API_URL, TLH_MAIN_COMPARE_API_URL, TLH_NAME, TLH_RELEASES_URL, TLH_UPDATE_CHECK_INTERVAL_MS, TLH_UPDATE_CHECK_TIMEOUT_MS, } from "./constants.js";
 import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion, } from "./package-version.js";
+import { readTlhInstallNotice } from "./install-state.js";
 import { readTlhInstallState, readTlhStartupState, tlhStartupStatePath, updateTlhStartupState, } from "./profile-state.js";
 import { isRecord } from "./common.js";
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const MAIN_TRACK_COMPARISON_STATUSES = new Set([
+    "behind",
+    "ahead",
+    "identical",
+    "diverged",
+    "unavailable",
+]);
 const defaultTlhUpdateCheckHooks = {
     now: () => Date.now(),
     fetchLatestRelease: fetchLatestTlhRelease,
+    fetchMainTrackComparison: fetchMainTrackComparison,
 };
 let tlhUpdateCheckHooks = defaultTlhUpdateCheckHooks;
 let maybeNotifyAvailableTlhUpdateInFlight;
@@ -60,6 +70,61 @@ function getCachedTlhLatestRelease(state) {
         : `${TLH_RELEASES_URL}/tag/${tagName}`;
     return { version, tagName, releaseUrl };
 }
+function normalizedCommitSha(value) {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    return COMMIT_SHA_PATTERN.test(normalized) ? normalized : undefined;
+}
+function getMainTrackCommitSha(notice) {
+    if (notice?.kind !== "ref" || notice.detail !== "main") {
+        return undefined;
+    }
+    return normalizedCommitSha(notice.commitSha);
+}
+function isValidMainTrackComparisonStatus(value) {
+    return (typeof value === "string" &&
+        MAIN_TRACK_COMPARISON_STATUSES.has(value));
+}
+function normalizeMainTrackComparison(value) {
+    if (!isRecord(value)) {
+        return { status: "unavailable" };
+    }
+    const status = value.status;
+    if (!isValidMainTrackComparisonStatus(status) || status === "unavailable") {
+        return { status: "unavailable" };
+    }
+    if (status !== "behind") {
+        return { status };
+    }
+    const behindBy = value.behindBy;
+    if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+        return { status: "unavailable" };
+    }
+    return { status, behindBy };
+}
+function getCachedTlhMainTrackComparison(state, commitSha) {
+    const updateCheck = getTlhUpdateCheckState(state);
+    if (normalizedCommitSha(updateCheck.mainTrackCommitSha) !== commitSha) {
+        return undefined;
+    }
+    const status = updateCheck.mainTrackStatus;
+    if (!isValidMainTrackComparisonStatus(status)) {
+        return undefined;
+    }
+    if (status === "unavailable") {
+        return "unavailable";
+    }
+    if (status !== "behind") {
+        return { status };
+    }
+    const behindBy = updateCheck.mainTrackBehindBy;
+    if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+        return "unavailable";
+    }
+    return { status, behindBy };
+}
 function shouldRefreshTlhLatestRelease(state) {
     const checkedAt = getTlhUpdateCheckState(state).checkedAt;
     const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
@@ -98,6 +163,55 @@ async function fetchLatestTlhRelease(currentVersion) {
         ? data.html_url.trim()
         : `${TLH_RELEASES_URL}/tag/${tagName}`;
     return { version, tagName, releaseUrl };
+}
+async function fetchMainTrackComparison(commitSha) {
+    const normalizedSha = normalizedCommitSha(commitSha);
+    if (!normalizedSha) {
+        return undefined;
+    }
+    const response = await fetch(`${TLH_MAIN_COMPARE_API_URL}/main...${normalizedSha}`, {
+        headers: {
+            Accept: "application/vnd.github+json",
+            "User-Agent": `${TLH_NAME}/${getTlhVersion()}`,
+        },
+        signal: AbortSignal.timeout(TLH_UPDATE_CHECK_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+        return undefined;
+    }
+    const data = (await response.json());
+    const status = data.status;
+    if (status !== "behind" &&
+        status !== "ahead" &&
+        status !== "identical" &&
+        status !== "diverged") {
+        return undefined;
+    }
+    if (status !== "behind") {
+        return { status };
+    }
+    const behindBy = data.behind_by;
+    if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+        return undefined;
+    }
+    return { status, behindBy };
+}
+export function getTlhMainTrackBehindCount(cwd, installNotice = readTlhInstallNotice()) {
+    if (shouldSkipTlhUpdateCheck(cwd)) {
+        return undefined;
+    }
+    const commitSha = getMainTrackCommitSha(installNotice);
+    if (!commitSha) {
+        return undefined;
+    }
+    const state = readTlhStartupState();
+    if (shouldRefreshTlhLatestRelease(state)) {
+        return undefined;
+    }
+    const comparison = getCachedTlhMainTrackComparison(state, commitSha);
+    return typeof comparison === "object" && comparison.status === "behind"
+        ? comparison.behindBy
+        : undefined;
 }
 function normalizeInstallStateValue(value) {
     if (typeof value !== "string") {
@@ -159,8 +273,17 @@ function maybeNotifyCachedTlhUpdate(ctx, currentVersion, state, options = {}) {
     });
     return true;
 }
-async function runMaybeNotifyAvailableTlhUpdate() {
+function safelyRunTlhUpdateCheck(operation) {
+    try {
+        return Promise.resolve(operation()).catch(() => undefined);
+    }
+    catch {
+        return Promise.resolve(undefined);
+    }
+}
+async function runMaybeNotifyAvailableTlhUpdate(installNotice) {
     const currentVersion = getTlhVersion();
+    const mainTrackCommitSha = getMainTrackCommitSha(installNotice);
     let state = readTlhStartupState();
     if (!shouldRefreshTlhLatestRelease(state)) {
         return {
@@ -174,23 +297,38 @@ async function runMaybeNotifyAvailableTlhUpdate() {
             checkedAt: new Date(tlhUpdateCheckHooks.now()).toISOString(),
         },
     });
-    let latestRelease;
-    try {
-        latestRelease = await tlhUpdateCheckHooks.fetchLatestRelease(currentVersion);
-    }
-    catch {
-        return { currentVersion };
-    }
-    if (!latestRelease) {
-        return { currentVersion };
-    }
+    const latestReleasePromise = safelyRunTlhUpdateCheck(() => tlhUpdateCheckHooks.fetchLatestRelease(currentVersion));
+    const mainTrackComparisonPromise = mainTrackCommitSha
+        ? safelyRunTlhUpdateCheck(() => tlhUpdateCheckHooks.fetchMainTrackComparison(mainTrackCommitSha))
+        : Promise.resolve(undefined);
+    const [latestRelease, mainTrackComparison] = await Promise.all([
+        latestReleasePromise,
+        mainTrackComparisonPromise,
+    ]);
     state = readTlhStartupState();
+    const updateCheck = getTlhUpdateCheckState(state);
+    const normalizedComparison = mainTrackCommitSha
+        ? (normalizeMainTrackComparison(mainTrackComparison) ?? { status: "unavailable" })
+        : undefined;
     updateTlhStartupState({
         updateCheck: {
-            ...getTlhUpdateCheckState(state),
-            latestVersion: latestRelease.version,
-            latestTagName: latestRelease.tagName,
-            latestReleaseUrl: latestRelease.releaseUrl,
+            ...updateCheck,
+            ...(latestRelease
+                ? {
+                    latestVersion: latestRelease.version,
+                    latestTagName: latestRelease.tagName,
+                    latestReleaseUrl: latestRelease.releaseUrl,
+                }
+                : {}),
+            ...(mainTrackCommitSha && normalizedComparison
+                ? {
+                    mainTrackCommitSha,
+                    mainTrackStatus: normalizedComparison.status,
+                    ...(normalizedComparison.status === "behind"
+                        ? { mainTrackBehindBy: normalizedComparison.behindBy }
+                        : { mainTrackBehindBy: undefined }),
+                }
+                : {}),
         },
     });
     return { currentVersion, latestRelease };
@@ -205,15 +343,20 @@ export async function maybeNotifyAvailableTlhUpdate(ctx, options = {}) {
     if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
         return;
     }
+    const installNotice = options.installNotice ?? readTlhInstallNotice();
     const inFlight = maybeNotifyAvailableTlhUpdateInFlight ??
-        runMaybeNotifyAvailableTlhUpdate().finally(() => {
+        runMaybeNotifyAvailableTlhUpdate(installNotice).finally(() => {
             if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
                 maybeNotifyAvailableTlhUpdateInFlight = undefined;
             }
         });
     maybeNotifyAvailableTlhUpdateInFlight = inFlight;
     const result = await inFlight;
-    maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, readTlhStartupState(), options);
+    const state = readTlhStartupState();
+    maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, state, options);
+    if (options.onMainTrackBehindCountChange) {
+        options.onMainTrackBehindCountChange(getTlhMainTrackBehindCount(ctx.cwd, installNotice));
+    }
 }
 export function __setTlhUpdateCheckTestHooks(hooks = {}) {
     tlhUpdateCheckHooks = {

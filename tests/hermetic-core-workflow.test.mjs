@@ -90,6 +90,11 @@ function createHermeticGitEnv(root) {
   writeFileSync(globalGitConfig, "", "utf8");
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
+    if (key.startsWith("PI_") || key.startsWith("TLH_")) {
+      delete env[key];
+    }
+  }
+  for (const key of Object.keys(env)) {
     if (
       key === "GIT_CONFIG" ||
       key.startsWith("GIT_CONFIG_") ||
@@ -122,7 +127,19 @@ function createHermeticGitEnv(root) {
 }
 
 function createHermeticRuntimeEnv(fixture, overrides = {}) {
+  // Collect all ambient PI_* and TLH_* keys at call time and mark them as
+  // undefined so withEnv deletes them from process.env during the run.
+  // This prevents inherited subagent-shell vars (e.g. PI_SUBAGENT_CHILD=1)
+  // from reaching in-process code like registerTlhStartupMode that reads
+  // process.env directly.
+  const piTlhUnsets = {};
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("PI_") || key.startsWith("TLH_")) {
+      piTlhUnsets[key] = undefined;
+    }
+  }
   return {
+    ...piTlhUnsets,
     ...fixture.gitEnv,
     PI_CODING_AGENT_DIR: fixture.agentDir,
     PATH: fixture.fakebin,
@@ -274,8 +291,8 @@ function writeFakeTk(path) {
 
 function registerScriptedProviders(modelRegistry, scriptState) {
   const models = {
-    anthropic: ["claude-opus-5", "claude-sonnet-4-6"],
-    "openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol"],
+    anthropic: ["claude-opus-5-5", "claude-sonnet-4-6"],
+    "openai-codex": ["gpt-5.4", "gpt-5.5", "gpt-6.1-sol"],
   };
   for (const [provider, ids] of Object.entries(models)) {
     modelRegistry.registerProvider(provider, {
@@ -304,13 +321,13 @@ function currentRole() {
 }
 
 function scriptedRoleForModel(model) {
-  if (model.provider === "anthropic" && model.id === "claude-opus-5") {
+  if (model.provider === "anthropic" && model.id === "claude-opus-5-5") {
     return "architect";
   }
   if (model.provider === "openai-codex" && model.id === "gpt-5.4") {
     return "developer";
   }
-  if (model.provider === "openai-codex" && (model.id === "gpt-5.5" || model.id === "gpt-5.6-sol")) {
+  if (model.provider === "openai-codex" && (model.id === "gpt-5.5" || model.id === "gpt-6.1-sol")) {
     return "code-reviewer";
   }
   return currentRole();
@@ -532,6 +549,41 @@ function sortedToolNames(toolInfos) {
   return toolInfos.map((tool) => tool.name).sort((left, right) => left.localeCompare(right));
 }
 
+// AuthStorage.inMemory() is not publicly exported from @earendil-works/pi-coding-agent.
+function createInMemoryCredentialStore() {
+  const store = new Map();
+  const tails = new Map();
+  const noop = () => {};
+  function enqueue(providerId, fn) {
+    const tail = tails.get(providerId) ?? Promise.resolve();
+    const result = tail.then(() => fn());
+    tails.set(providerId, result.then(noop, noop));
+    return result;
+  }
+  return {
+    async read(providerId) {
+      return store.get(providerId);
+    },
+    async list() {
+      return [...store.entries()].map(([id, cred]) => ({ providerId: id, type: cred.type }));
+    },
+    modify(providerId, fn) {
+      return enqueue(providerId, async () => {
+        const current = store.get(providerId);
+        const next = await fn(current);
+        if (next === undefined) return current;
+        store.set(providerId, next);
+        return next;
+      });
+    },
+    delete(providerId) {
+      return enqueue(providerId, async () => {
+        store.delete(providerId);
+      });
+    },
+  };
+}
+
 const EXPECTED_ACTIVE_TOOLS = {
   architect: ["bash", "edit", "find", "grep", "ls", "read", "subagent", "write"],
   developer: ["bash", "edit", "find", "grep", "ls", "read", "write"],
@@ -641,7 +693,7 @@ test(
             ? params.model.split("/")
             : role === "developer"
               ? ["openai-codex", "gpt-5.4"]
-              : ["openai-codex", "gpt-5.6-sol"];
+              : ["openai-codex", "gpt-6.1-sol"];
           // Strip thinking suffix (e.g. ':max') appended by TLH before registry lookup
           const registryId = modelKey[1]?.includes(":") ? modelKey[1].split(":")[0] : modelKey[1];
           const model = modelRegistry.find(modelKey[0], registryId);
@@ -704,8 +756,10 @@ test(
       systemPrompt: "You are running a deterministic hermetic workflow test.",
       appendSystemPrompt: [],
     });
-    await resourceLoader.reload();
-    const architectModel = modelRegistry.find("anthropic", "claude-opus-5");
+    // reload() must run inside the hermetic env because the extension factory
+    // fires during reload and reads process.env (registerTlhStartupMode).
+    await withEnv(createHermeticRuntimeEnv(fixture), () => resourceLoader.reload());
+    const architectModel = modelRegistry.find("anthropic", "claude-opus-5-5");
     assert.ok(architectModel);
 
     const { session } = await withEnv(createHermeticRuntimeEnv(fixture), async () =>
@@ -812,7 +866,7 @@ test(
       );
       assert.equal(
         scriptState.providerCalls.some(
-          (entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-5.6-sol",
+          (entry) => entry.role === "code-reviewer" && entry.model === "openai-codex/gpt-6.1-sol",
         ),
         true,
         diagnostics,
@@ -970,7 +1024,7 @@ test(
         diagnostics,
       );
       assert.equal(
-        sessionRoles.some(
+        promptLogs.some(
           (entry) =>
             entry.role === "developer" && /TLH Child Subagent Defaults/.test(entry.systemPrompt),
         ),
@@ -978,7 +1032,7 @@ test(
         diagnostics,
       );
       assert.equal(
-        sessionRoles.some(
+        promptLogs.some(
           (entry) =>
             entry.role === "code-reviewer" &&
             /TLH Child Subagent Defaults/.test(entry.systemPrompt),
@@ -1005,5 +1059,132 @@ test(
     } finally {
       session.dispose();
     }
+  },
+);
+
+test(
+  "hermetic env strips ambient PI_*/TLH_* so architect session runs in parent mode",
+  {
+    skip: process.platform === "win32",
+  },
+  async (t) => {
+    // Representative vars exported by a TLH subagent shell. When any of these
+    // leak into the in-process env during an architect session they cause
+    // registerTlhStartupMode to select child mode, bypassing parent defaults.
+    const ambientSubagentVars = {
+      PI_SUBAGENT_CHILD: "1",
+      PI_SUBAGENT_CHILD_AGENT: "test-runner",
+      PI_MODEL: "gpt-5.6-sol",
+      PI_PROVIDER: "openai-codex",
+      PI_REASONING_LEVEL: "medium",
+      PI_SESSION_ID: "ambient-session-123",
+      PI_SUBAGENT_PARENT_SESSION: "parent-session-456",
+      TLH_AGENT_DIR: "/ambient/agent/dir",
+    };
+
+    await withEnv(ambientSubagentVars, async () => {
+      // PI_SUBAGENT_CHILD=1 is now visible in process.env. All PI_*/TLH_*-
+      // sensitive work (reload, createAgentSession, session.prompt) must run
+      // inside createHermeticRuntimeEnv's withEnv so those keys are deleted
+      // from process.env before the extension factory (registerTlhStartupMode)
+      // reads them. The factory fires during resourceLoader.reload().
+      const fixture = setupFixture(t);
+
+      // Use an in-memory credential store so the fire-and-forget
+      // void this.refresh() calls inside registerProvider never reach
+      // FileAuthStorageBackend.ensureParentDir()/ensureFileExists().
+      // With a file-backed store those calls race with t.after cleanup:
+      // after the fixture dir is deleted, readLatestData() detects the
+      // missing auth.json and kicks off reloadFromStorageAsync, which
+      // recreates agent/ and auth.json. An in-memory store has no
+      // disk I/O path, so no files are created after cleanup.
+      const credentials = createInMemoryCredentialStore();
+      const modelRuntime = await ModelRuntime.create({
+        credentials,
+        allowModelNetwork: false,
+      });
+      const modelRegistry = new ModelRegistry(modelRuntime);
+      const scriptState = { steps: new Map(), ticketId: "tlh-test-1", providerCalls: [] };
+      registerScriptedProviders(modelRegistry, scriptState);
+
+      const toolLogs = [];
+      const promptLogs = [];
+
+      // Compute the hermetic env once while PI_SUBAGENT_CHILD=1 is still set
+      // so piTlhUnsets captures it. The returned env marks all PI_*/TLH_* keys
+      // as undefined; withEnv will delete them from process.env before any
+      // in-process code (extension factory, registerTlhStartupMode) runs.
+      const hermeticEnv = createHermeticRuntimeEnv(fixture);
+
+      await withEnv({ ...hermeticEnv, NODE_TEST_CONTEXT: undefined }, async () => {
+        const resourceLoader = new DefaultResourceLoader({
+          cwd: fixture.workspace,
+          agentDir: fixture.agentDir,
+          extensionFactories: [
+            theLastHarness,
+            createLoggingExtension(toolLogs, promptLogs, "architect"),
+          ],
+          noContextFiles: true,
+          noPromptTemplates: true,
+          noSkills: true,
+          noThemes: true,
+          systemPrompt: "You are running a deterministic hermetic workflow test.",
+          appendSystemPrompt: [],
+        });
+        // Extension factory fires here with PI_SUBAGENT_CHILD unset → parent mode.
+        await resourceLoader.reload();
+        const architectModel = modelRegistry.find("anthropic", "claude-opus-5-5");
+        assert.ok(architectModel, "expected architect model to be registered");
+
+        const { session } = await createAgentSession({
+          cwd: fixture.workspace,
+          agentDir: fixture.agentDir,
+          modelRuntime,
+          model: architectModel,
+          resourceLoader,
+          sessionManager: SessionManager.inMemory(fixture.workspace),
+          tools: EXPECTED_ACTIVE_TOOLS.architect,
+          customTools: [],
+          sessionStartEvent: { reason: "startup", sessionName: "architect" },
+        });
+
+        try {
+          // Run one prompt step to trigger before_agent_start, which is when
+          // the system prompt is assembled. The scripted step-0 response for
+          // the architect role is a plain text reply with no tool calls, so
+          // this resolves immediately without spawning subagents.
+          await session.prompt("Describe your role briefly.");
+
+          const regressionDiagnostics = JSON.stringify(
+            { promptLogs, providerCalls: scriptState.providerCalls },
+            null,
+            2,
+          );
+
+          // Confirm the logging extension captured before_agent_start.
+          assert.equal(
+            promptLogs.some((entry) => entry.role === "architect"),
+            true,
+            `before_agent_start did not fire for architect - check logging extension setup.\n${regressionDiagnostics}`,
+          );
+
+          // Parent mode: the architect system prompt must NOT contain the child
+          // subagent defaults injected when PI_SUBAGENT_CHILD=1 reaches
+          // registerTlhStartupMode. If this assertion fails, it means the
+          // hermetic env did not unset PI_SUBAGENT_CHILD before reload() ran.
+          assert.equal(
+            promptLogs.some(
+              (entry) =>
+                entry.role === "architect" &&
+                /TLH Child Subagent Defaults/.test(entry.systemPrompt),
+            ),
+            false,
+            `Architect ran in child mode: PI_SUBAGENT_CHILD=1 leaked through the hermetic env.\n${regressionDiagnostics}`,
+          );
+        } finally {
+          session.dispose();
+        }
+      });
+    });
   },
 );

@@ -8,7 +8,6 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
   createTempDir,
-  createEventBus,
   removeTempDir,
   makeAgentConfigs,
   makeAgent,
@@ -20,14 +19,12 @@ import {
   runSync,
   getFinalOutput,
   createSubagentExecutor,
+  makeExecutor,
   type MockPiCallRecord,
-  type ExecutionModule,
-  type ExecuteAsyncSingleOverride,
 } from "../support/single-execution-fixtures.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import {
   escapeRegExp,
-  explicitAcceptanceRejectionOutput,
   inferredAcceptanceRejectionOutput,
   writePackageSkill,
   type ProgressSummary,
@@ -80,32 +77,6 @@ describe(
       return readCall().args;
     }
 
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
     it("tracks progress during execution", async () => {
       mockPi.onCall({ output: "Done" });
       const agents = makeAgentConfigs(["echo"]);
@@ -484,7 +455,7 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "default report" });
-        const executor = makeExecutor([makeAgent("researcher", { output: "context.md" })]);
+        const executor = makeExecutor(tempDir, [makeAgent("researcher", { output: "context.md" })]);
         const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
         const ctx = {
           ...makeMinimalCtx(tempDir),
@@ -527,7 +498,7 @@ describe(
       async () => {
         mockPi.onCall({ output: "override report" });
         const overridePath = path.join(tempDir, "custom-report.md");
-        const executor = makeExecutor([
+        const executor = makeExecutor(tempDir, [
           makeAgent("researcher", {
             output: "default-report.md",
             systemPrompt:
@@ -571,7 +542,9 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "inline report" });
-        const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);
+        const executor = makeExecutor(tempDir, [
+          makeAgent("echo", { output: "default-report.md" }),
+        ]);
 
         const result = await executor.execute(
           "single-string-false-output",
@@ -635,15 +608,13 @@ describe(
     });
 
     it(
-      "foreground acceptance rejection preserves an inline saved-output reference",
+      "rejects retired explicit acceptance before foreground launch",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
         const outputPath = path.join(tempDir, "acceptance-rejected-inline.md");
-        const savedContent = "saved deliverable from an otherwise successful run";
-        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
-        const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo", { completionGuard: false })]);
 
         const result = await executor.execute(
           "acceptance-rejected-inline",
@@ -658,34 +629,23 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        const child = result.details?.results?.[0];
         const display = result.content.map((item) => item.text ?? "").join("\n");
 
         assert.equal(result.isError, true);
-        assert.equal(child?.exitCode, 1);
-        assert.equal(child?.acceptance?.explicit, true);
-        assert.equal(child?.acceptance?.status, "rejected");
-        assert.equal(child?.savedOutputPath, outputPath);
-        const savedBytes = fs.readFileSync(outputPath);
-        assert.equal(savedBytes.toString("utf-8"), savedContent);
-        const artifactOutputPath = child?.artifactPaths?.outputPath;
-        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
-        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
-        assert.match(child?.error ?? "", /Acceptance rejected/);
-        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
+        assert.match(display, /acceptance is no longer supported/i);
+        assert.equal(mockPi.callCount(), 0);
+        assert.equal(fs.existsSync(outputPath), false);
       },
     );
 
     it(
-      "foreground file-only acceptance rejection preserves only the saved-output reference",
+      "rejects retired explicit acceptance before file-only launch",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
         const outputPath = path.join(tempDir, "acceptance-rejected-file-only.md");
-        const savedContent = "saved file-only deliverable";
-        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
-        const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo", { completionGuard: false })]);
 
         const result = await executor.execute(
           "acceptance-rejected-file-only",
@@ -701,22 +661,12 @@ describe(
           undefined,
           makeMinimalCtx(tempDir),
         );
-        const child = result.details?.results?.[0];
         const display = result.content.map((item) => item.text ?? "").join("\n");
 
         assert.equal(result.isError, true);
-        assert.equal(child?.exitCode, 1);
-        assert.equal(child?.acceptance?.explicit, true);
-        assert.equal(child?.acceptance?.status, "rejected");
-        assert.equal(child?.savedOutputPath, outputPath);
-        const savedBytes = fs.readFileSync(outputPath);
-        assert.equal(savedBytes.toString("utf-8"), savedContent);
-        const artifactOutputPath = child?.artifactPaths?.outputPath;
-        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
-        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
-        assert.match(child?.error ?? "", /Acceptance rejected/);
-        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
-        assert.doesNotMatch(display, new RegExp(escapeRegExp(savedContent)));
+        assert.match(display, /acceptance is no longer supported/i);
+        assert.equal(mockPi.callCount(), 0);
+        assert.equal(fs.existsSync(outputPath), false);
       },
     );
 
@@ -729,7 +679,7 @@ describe(
         const outputPath = path.join(tempDir, "inferred-acceptance-rejected.md");
         const savedContent = "saved deliverable without a report";
         mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
-        const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+        const executor = makeExecutor(tempDir, [makeAgent("worker", { completionGuard: false })]);
 
         const result = await executor.execute(
           "inferred-acceptance-rejected",

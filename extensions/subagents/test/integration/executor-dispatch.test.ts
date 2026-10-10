@@ -5,7 +5,13 @@ import * as path from "node:path";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import type { discoverAgents } from "../../src/agents/agents.ts";
-import type { ExtensionConfig } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  DEFAULT_MAX_OUTPUT,
+  RESULTS_DIR,
+  type ExtensionConfig,
+} from "../../src/shared/types.ts";
+import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createEventBus,
   createMockPi,
@@ -15,6 +21,7 @@ import {
   makeExtensionAPI,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   makeSubagentState,
   removeTempDir,
   tryImport,
@@ -25,6 +32,7 @@ import {
 } from "../../../the-last-harness-subagent-safety.mjs";
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
+import { writePackageSkill } from "../support/single-execution-fixtures.ts";
 
 type DiscoverAgents = typeof discoverAgents;
 
@@ -132,14 +140,15 @@ function providerErrorResponse(model: string) {
   };
 }
 
-function providerAwareContext(
+async function providerAwareContext(
   cwd: string,
   availableModels: ReturnType<typeof providerAwareAvailableModels>,
 ) {
-  const ctx = makeMinimalCtx(cwd);
+  const { context: ctx } = await makeModelRegistryContext(
+    cwd,
+    availableModels.map((model) => ({ provider: model.provider, models: [model] })),
+  );
   ctx.model = makeModel("session", { provider: "anthropic" });
-  ctx.modelRegistry.getAvailable = () => availableModels;
-  ctx.modelRegistry.getAll = () => availableModels;
   return ctx;
 }
 
@@ -149,25 +158,6 @@ function writeProjectOverride(projectRoot: string, agentName: string, model: str
   fs.writeFileSync(
     settingsPath,
     JSON.stringify({ subagents: { agentOverrides: { [agentName]: { model } } } }, null, 2),
-    "utf-8",
-  );
-}
-
-function writePackageSkill(packageRoot: string, skillName: string): void {
-  const skillDir = path.join(packageRoot, "skills", skillName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify(
-      { name: `${skillName}-pkg`, version: "1.0.0", pi: { skills: [`./skills/${skillName}`] } },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
-  fs.writeFileSync(
-    path.join(skillDir, "SKILL.md"),
-    `---\nname: ${skillName}\ndescription: test skill\n---\nbody\n`,
     "utf-8",
   );
 }
@@ -204,6 +194,7 @@ describe("subagent executor dispatch wiring", () => {
       projectAgentsDir: null,
     }),
     config: ExtensionConfig = {},
+    overrides: { runSync?: typeof runSync } = {},
   ) {
     return createSubagentExecutor({
       pi: makeExtensionAPI({ events: createEventBus() }),
@@ -213,6 +204,7 @@ describe("subagent executor dispatch wiring", () => {
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (value: string) => value,
       discoverAgents: discoverAgentsImpl,
+      ...overrides,
     });
   }
 
@@ -344,6 +336,19 @@ describe("subagent executor dispatch wiring", () => {
         params: { agent: "echo", task: "task one", includeProgress: true },
         guidance: /includeProgress is no longer supported.*tracked automatically/,
       },
+      {
+        label: "top-level maxOutput",
+        params: { agent: "echo", task: "task one", maxOutput: { lines: 1, bytes: 100 } },
+        guidance: /maxOutput is no longer supported.*Output bounds are managed internally/,
+      },
+      {
+        label: "parallel-task maxOutput",
+        params: {
+          tasks: [{ agent: "echo", task: "task one", maxOutput: { lines: 1, bytes: 100 } }],
+        },
+        guidance:
+          /tasks\[0\]\.maxOutput is no longer supported.*Output bounds are managed internally/,
+      },
     ];
 
     for (const testCase of cases) {
@@ -366,6 +371,85 @@ describe("subagent executor dispatch wiring", () => {
     }
   });
 
+  it("leaves maxOutput absent across foreground and async dispatch paths", async () => {
+    const observedForeground: string[] = [];
+    const observedRunSync: typeof runSync = async (
+      runtimeCwd,
+      agents,
+      agentName,
+      task,
+      options,
+    ) => {
+      assert.equal(options.maxOutput, undefined);
+      observedForeground.push(agentName);
+      return runSync(runtimeCwd, agents, agentName, task, options);
+    };
+    const tailSentinel = "ASYNC_DEFAULT_MAX_OUTPUT_TAIL_SENTINEL";
+    const longOutput = `${Array.from(
+      { length: DEFAULT_MAX_OUTPUT.lines + 25 },
+      (_, index) => `output-line-${index}`,
+    ).join("\n")}\n${tailSentinel}`;
+    mockPi.onCall({ output: longOutput });
+    mockPi.onCall({ output: longOutput });
+    const executor = makeExecutorWithDiscoverAgents(undefined, {}, { runSync: observedRunSync });
+    const asyncIds: string[] = [];
+    try {
+      const foregroundSingle = await executor.execute(
+        "default-absence-foreground-single",
+        { agent: "echo", task: "single" },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(foregroundSingle.isError, undefined);
+
+      const foregroundParallel = await executor.execute(
+        "default-absence-foreground-parallel",
+        { tasks: [{ agent: "echo", task: "parallel" }] },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(foregroundParallel.isError, undefined);
+
+      const asyncSingle = await executor.execute(
+        "default-absence-async-single",
+        { agent: "echo", task: "async single", async: true },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(asyncSingle.isError, undefined);
+      assert.ok(asyncSingle.details?.asyncId);
+      asyncIds.push(asyncSingle.details.asyncId);
+
+      const asyncParallel = await executor.execute(
+        "default-absence-async-parallel",
+        { tasks: [{ agent: "echo", task: "async parallel" }], async: true },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(asyncParallel.isError, undefined);
+      assert.ok(asyncParallel.details?.asyncId);
+      asyncIds.push(asyncParallel.details.asyncId);
+
+      const payloads = await Promise.all(asyncIds.map((id) => readAsyncPayload(id)));
+      for (const payload of payloads) {
+        assert.equal(payload.state, "complete");
+        assert.equal(payload.success, true);
+        assert.equal(payload.truncated, false);
+        assert.ok(payload.summary.includes(tailSentinel));
+      }
+      assert.deepEqual(observedForeground, ["echo", "echo"]);
+    } finally {
+      for (const id of asyncIds) {
+        fs.rmSync(path.join(ASYNC_DIR, id), { recursive: true, force: true });
+        fs.rmSync(path.join(RESULTS_DIR, `${id}.json`), { force: true });
+      }
+    }
+  });
+
   it("passes model-defaults generated provider fallbacks through single dispatch", async () => {
     mockPi.reset();
     const availableModels = providerAwareAvailableModels();
@@ -379,7 +463,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -403,7 +487,7 @@ describe("subagent executor dispatch wiring", () => {
       { tasks: [task] },
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, availableModels),
+      await providerAwareContext(tempDir, availableModels),
     );
 
     assert.equal(result.isError, undefined);
@@ -425,7 +509,7 @@ describe("subagent executor dispatch wiring", () => {
       input,
       new AbortController().signal,
       undefined,
-      providerAwareContext(tempDir, providerAwareAvailableModels()),
+      await providerAwareContext(tempDir, providerAwareAvailableModels()),
     );
 
     assert.equal(result.isError, undefined);

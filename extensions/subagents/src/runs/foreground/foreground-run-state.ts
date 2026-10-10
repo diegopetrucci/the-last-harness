@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   PROJECT_AGENT_TERMINAL_RETENTION_MS,
   normalizeProjectAgentRunCapture,
@@ -16,7 +15,6 @@ import {
   transitionLifecycleStatus,
   withLifecycleContinuation,
 } from "../shared/lifecycle-state.ts";
-import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -31,7 +29,11 @@ import {
   type SubagentState,
   type SubagentToolResult,
 } from "../../shared/types.ts";
-import type { ExecutorDeps, SubagentParamsLike } from "./subagent-executor.ts";
+import {
+  transitionSubagentRunTelemetryLifecycle,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
+import type { SubagentParamsLike } from "./subagent-executor.ts";
 import {
   isClaimedPausedLifecycle,
   pausedForegroundStatusPath,
@@ -42,7 +44,6 @@ import {
   normalizeActiveRuntimeMs,
 } from "../shared/lifecycle-state.ts";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.ts";
-import { updateForegroundNestedProjection } from "../shared/nested-events.ts";
 import { projectRunAuthorizationError } from "./project-agent-control.ts";
 import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
@@ -86,22 +87,9 @@ function formatForegroundActivity(
   return [`active ${seconds}s ago`, ...facts].join(" | ");
 }
 
-export function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
-  const roots: string[] = [];
-  const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-  if (parentSessionFile) roots.push(deps.getSubagentSessionRoot(parentSessionFile));
-  return [...new Set(roots)];
-}
-
 export function foregroundStatusResult(
   control: SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never,
 ): SubagentToolResult<Details> {
-  let nestedWarning: string | undefined;
-  try {
-    updateForegroundNestedProjection(control);
-  } catch (error) {
-    nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
-  }
   const activity = formatForegroundActivity(control);
   const lines = [
     `Run: ${control.runId}`,
@@ -112,14 +100,6 @@ export function foregroundStatusResult(
       : undefined,
     activity ? `Activity: ${activity}` : undefined,
   ].filter((line): line is string => Boolean(line));
-  lines.push(
-    ...formatNestedRunStatusLines(control.nestedChildren, {
-      indent: "",
-      commandHints: true,
-      maxLines: 20,
-    }),
-  );
-  if (nestedWarning) lines.push(`Warning: ${nestedWarning}`);
   return {
     content: [{ type: "text", text: lines.join("\n") }],
     details: { mode: "management", results: [] },
@@ -203,6 +183,13 @@ export function rememberForegroundRun(
     mode: SubagentRunMode;
     cwd: string;
     results: SingleResult[];
+    telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwds, indexed to match `results`.
+     * When present and a given entry differs from the run cwd, that entry is
+     * stored on the child and preferred over the run cwd on revival.
+     */
+    childCwds?: string[];
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -212,12 +199,17 @@ export function rememberForegroundRun(
     mode: input.mode,
     cwd: input.cwd,
     updatedAt,
+    ...(input.telemetry ? { telemetry: input.telemetry } : {}),
     children: input.results.map((result, index) => {
       const activeRuntimeMs =
         normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
         normalizeActiveRuntimeMs(result.progress?.durationMs);
+      const resolvedChildCwd =
+        typeof input.childCwds?.[index] === "string" ? input.childCwds[index] : undefined;
       const child = {
         agent: result.agent,
+        ...(resolvedChildCwd !== undefined ? { cwd: resolvedChildCwd } : {}),
+        ...(result.childLocation ? { childLocation: result.childLocation } : {}),
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
         ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
           ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
@@ -278,6 +270,12 @@ export function updateRememberedForegroundChild(
     cwd: string;
     index: number;
     result: SingleResult;
+    telemetry?: SubagentRunTelemetry;
+    /**
+     * Fully resolved per-child dispatch cwd. When provided, stored on the
+     * child entry and preferred over the run cwd on revival.
+     */
+    childCwd?: string;
   },
 ): void {
   state.foregroundRuns ??= new Map();
@@ -288,6 +286,7 @@ export function updateRememberedForegroundChild(
     state.foregroundRuns.set(input.runId, run);
   }
   run.updatedAt = updatedAt;
+  if (input.telemetry) run.telemetry = input.telemetry;
   const child = run.children[input.index] ?? {
     agent: input.result.agent,
     index: input.index,
@@ -298,6 +297,8 @@ export function updateRememberedForegroundChild(
   run.children[input.index] = {
     ...child,
     agent: input.result.agent,
+    ...(typeof input.childCwd === "string" ? { cwd: input.childCwd } : {}),
+    ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
     ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
     ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
       ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
@@ -414,6 +415,7 @@ export function resolveForegroundResumeTarget(
       tkTicketId?: string;
       activeRuntimeMs?: number;
       activeRuntimeCheckpointAt?: number;
+      telemetry?: SubagentRunTelemetry;
       projectAgents?: ProjectAgentRunCapture[];
     }
   | undefined {
@@ -495,7 +497,7 @@ export function resolveForegroundResumeTarget(
       ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
       : {}),
     index,
-    cwd: run.cwd,
+    cwd: child.cwd ?? child.childLocation?.childCwd ?? run.cwd,
     sessionFile,
     ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
       ? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -534,6 +536,7 @@ export function resolveForegroundResumeTarget(
           ),
         }
       : {}),
+    ...(run.telemetry ? { telemetry: run.telemetry } : {}),
   };
 }
 function updateRememberedForegroundCancellation(
@@ -702,9 +705,17 @@ export function cancelPersistedPausedForegroundRun(
               step.status === "paused" || step.status === "pausing" || step.status === "pending",
           ) ?? false;
         const remainingResumable = hasResumableSiblingStep(nextSteps, targetIndex);
+        const nextState = remainingActionable || remainingResumable ? "paused" : "cancelled";
+        const telemetry = transitionSubagentRunTelemetryLifecycle({
+          telemetry: status.telemetry,
+          runState: nextState,
+          stepIndex: targetIndex,
+          stepState: "cancelled",
+          endedAt: cancelledAt,
+        });
         return {
           ...status,
-          state: remainingActionable || remainingResumable ? "paused" : "cancelled",
+          state: nextState,
           pid: undefined,
           ...(remainingActionable || remainingResumable
             ? {}
@@ -718,6 +729,7 @@ export function cancelPersistedPausedForegroundRun(
             : undefined,
           lastUpdate: cancelledAt,
           endedAt: cancelledAt,
+          ...(telemetry ? { telemetry } : {}),
           lifecycle: withLifecycleContinuation(status, targetIndex, undefined),
           steps: nextSteps,
         };

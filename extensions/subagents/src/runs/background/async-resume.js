@@ -11,6 +11,7 @@ import { parseContextPressureCrossedThresholds, parseContextPressureProjection, 
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
+import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 function resolvePausedContinuationAcceptance(runId, acceptance) {
     if (typeof acceptance !== "object" || acceptance === null || Array.isArray(acceptance)) {
         throw new Error(`Async run '${runId}' is paused but its persisted acceptance ledger is incomplete or malformed; refusing to resume with an unverified acceptance contract.`);
@@ -79,6 +80,20 @@ function resolveResumeHealthMetadata(primary, fallback) {
     };
 }
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
+const RESUME_TERMINAL_RUN_STATES = new Set([
+    "complete",
+    "failed",
+    "paused",
+    "cancelled",
+    "continued",
+]);
+function resolveResumeTelemetry(context) {
+    const resultTelemetry = normalizeSubagentRunTelemetry(context.result?.telemetry);
+    const statusTelemetry = normalizeSubagentRunTelemetry(context.status?.telemetry);
+    return mergeSubagentRunTelemetry(resultTelemetry, statusTelemetry, {
+        persistedOutcomeWins: Boolean(context.status && RESUME_TERMINAL_RUN_STATES.has(context.status.state)),
+    });
+}
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -141,6 +156,8 @@ function validateResultFile(value, resultPath) {
             const child = ensureObject(entry, `${resultPath} results[${index}]`);
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
+            const rawStepCwd = child["cwd"];
+            const stepCwd = typeof rawStepCwd === "string" && rawStepCwd.length > 0 ? rawStepCwd : undefined;
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
             const tkTicketId = normalizeTkTicketId(child.tkTicketId);
             const thinking = parseThinkingLevel(child.thinking);
@@ -174,6 +191,7 @@ function validateResultFile(value, resultPath) {
             return {
                 agent,
                 sessionFile,
+                ...(stepCwd ? { cwd: stepCwd } : {}),
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(model ? { model } : {}),
@@ -213,6 +231,7 @@ function validateResultFile(value, resultPath) {
         .filter((capture) => Boolean(capture));
     const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(data.activeRuntimeCheckpointAt);
+    const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
     return {
         id: validateOptionalString(data, "id", resultPath),
         runId: validateOptionalString(data, "runId", resultPath),
@@ -242,6 +261,7 @@ function validateResultFile(value, resultPath) {
         ...(results ? { results } : {}),
         ...(projectAgent ? { projectAgent } : {}),
         ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
     };
 }
 function parseProjectAgentCapture(value, source, field) {
@@ -391,6 +411,7 @@ function resultState(result) {
 function validateStatusForResume(status, source) {
     if (!status)
         return;
+    status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     if (typeof status.runId !== "string")
         throw new Error(`Invalid async status '${source}': runId must be a string.`);
     if (status.sessionId !== undefined && typeof status.sessionId !== "string")
@@ -597,6 +618,7 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
             : {}),
         ...(healthMetadata.compaction ? { compaction: { ...healthMetadata.compaction } } : {}),
         ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+        ...(context.telemetry ? { telemetry: context.telemetry } : {}),
     };
 }
 function resolveLiveAsyncResumeTarget(context) {
@@ -667,7 +689,16 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
         state: context.state,
         agent,
         index,
-        cwd: context.status?.cwd ?? context.result?.cwd,
+        cwd: (typeof selectedStatusStep?.cwd === "string" && selectedStatusStep.cwd.length > 0
+            ? selectedStatusStep.cwd
+            : undefined) ??
+            (typeof selectedStatusStep?.childLocation?.childCwd === "string" &&
+                selectedStatusStep.childLocation.childCwd.length > 0
+                ? selectedStatusStep.childLocation.childCwd
+                : undefined) ??
+            context.resultSteps[index]?.cwd ??
+            context.status?.cwd ??
+            context.result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
     };
     const modelMetadata = resolveResumeModelMetadata(index, selectedStatusStep, context.resultSteps, context.result);
@@ -698,6 +729,7 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
             ? { claimed: true }
             : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
+        ...(context.telemetry ? { telemetry: context.telemetry } : {}),
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
@@ -843,6 +875,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         options,
         tkTicket,
     };
+    context.telemetry = resolveResumeTelemetry(context);
     if (state === "running") {
         const liveTarget = resolveLiveAsyncResumeTarget(context);
         if (liveTarget)

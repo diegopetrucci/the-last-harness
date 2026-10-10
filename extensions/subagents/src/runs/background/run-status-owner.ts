@@ -6,13 +6,11 @@ import { getArtifactPaths } from "../../shared/artifacts.ts";
 import {
   type ActivityState,
   type AsyncStatus,
-  type NestedRouteInfo,
   type ResolvedArtifactConfig,
   type ResolvedToolBudget,
   type TkTicketMetadata,
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 } from "../../shared/types.ts";
-import { nestedSummaryFromAsyncStatus, writeNestedEvent } from "../shared/nested-events.ts";
 import {
   boundChildError,
   claimChildTerminalReason,
@@ -50,7 +48,7 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { sanitizeModelFallbackNotice } from "../shared/model-fallback.ts";
 import { normalizeTkTicketId } from "../shared/tk-ticket.ts";
-import { readStatus } from "../../shared/utils.ts";
+import { readStatus, resolveChildCwd } from "../../shared/utils.ts";
 import {
   createHealthTransitionState,
   resetHealthTransitionState,
@@ -97,20 +95,12 @@ export type RunnerStatusPayload = Omit<
   error?: string;
 };
 
-type NestedSelf = {
-  parentRunId: string;
-  parentStepIndex?: number;
-  depth: number;
-  path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-};
-
 export interface BackgroundStatusOwnerInput {
   id: string;
   asyncDir: string;
   cwd: string;
   plan: SubagentRunPlan;
   overallStartTime: number;
-  shareEnabled: boolean;
   artifactConfig: ResolvedArtifactConfig;
   artifactsDir?: string;
   sessionDir?: string;
@@ -119,8 +109,7 @@ export interface BackgroundStatusOwnerInput {
   toolBudget?: ResolvedToolBudget;
   tkTicket?: TkTicketMetadata;
   projectAgents?: ProjectAgentRunCapture[];
-  nestedRoute?: NestedRouteInfo;
-  nestedSelf?: NestedSelf;
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   timeoutMessage?: string;
   appendEvent: (line: string) => void;
   appendDiagnosticEvent?: (line: string, droppedEventType?: string) => void;
@@ -133,8 +122,6 @@ export interface BackgroundStatusOwnerInput {
  */
 export interface BackgroundStatusControlHooks {
   clearActivityState: () => void;
-  interruptNestedDescendants: () => void;
-  timeoutNestedDescendants: () => void;
   interruptActiveChildren: () => void;
   timeoutActiveChildren: () => void;
   abortInterrupt: () => void;
@@ -172,7 +159,7 @@ export interface BackgroundRunStatusOwner {
   ): void;
   refreshTrackedSessionFile(flatIndex: number): string | undefined;
   resolveTrackedSessionFile(flatIndex: number, fallback?: string): string | undefined;
-  writeStatusPayload(options?: { projectNested?: boolean; lifecycleLocked?: boolean }): void;
+  writeStatusPayload(options?: { lifecycleLocked?: boolean }): void;
   checkpointActiveRuntime(now?: number, freeze?: boolean): boolean;
   healthStateForStep(flatIndex: number): HealthTransitionState;
   transitionStepHealth(flatIndex: number, action: HealthTransitionAction): HealthTransitionResult;
@@ -182,6 +169,7 @@ export interface BackgroundRunStatusOwner {
   endStepCompaction(flatIndex: number, options?: { publish?: boolean }): void;
   endAllStepCompactions(options?: { publish?: boolean }): void;
   syncTopLevelHealthProjection(): boolean;
+  recordStepTimeout(flatIndex: number, message?: string): void;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
   pausedAcceptanceLedger(
     acceptance: SubagentStep["effectiveAcceptance"],
@@ -221,7 +209,6 @@ export interface BackgroundRunStatusOwner {
   applyPausedStepMetadata(flatIndex: number, endedAt: number): void;
   startRuntimeCheckpointTimer(): void;
   disposeRuntimeCheckpointTimer(): void;
-  emitNestedSelfEvent(type: "subagent.nested.updated" | "subagent.nested.completed"): void;
 }
 
 const LIFECYCLE_TRANSITION_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
@@ -311,8 +298,8 @@ function resolveAsyncStepTranscriptPath(input: {
   ).transcriptPath;
 }
 
-export function createBackgroundRunStatusOwner(
-  input: BackgroundStatusOwnerInput,
+export function createBackgroundRunStatusOwner<T extends BackgroundStatusOwnerInput>(
+  input: T,
 ): BackgroundRunStatusOwner {
   const {
     id,
@@ -320,7 +307,6 @@ export function createBackgroundRunStatusOwner(
     cwd,
     plan,
     overallStartTime,
-    shareEnabled,
     artifactConfig,
     artifactsDir,
     sessionDir,
@@ -329,8 +315,7 @@ export function createBackgroundRunStatusOwner(
     toolBudget,
     tkTicket,
     projectAgents,
-    nestedRoute,
-    nestedSelf,
+    telemetry,
     timeoutMessage,
     appendEvent,
     appendDiagnosticEvent,
@@ -388,12 +373,17 @@ export function createBackgroundRunStatusOwner(
             ? [task.model]
             : undefined,
       ...(task.childLocation ? { childLocation: task.childLocation } : {}),
+      // Record the fully resolved per-step dispatch cwd so revival can prefer
+      // it over the run-level cwd.  resolveChildCwd returns the base run cwd
+      // when the task has no explicit cwd (undefined), making this a no-op
+      // write for same-cwd tasks; the revival logic only acts on it when it
+      // differs from the run-level cwd.
+      cwd: resolveChildCwd(cwd, task.cwd),
       recentTools: [],
       recentOutput: [],
     };
   });
-  const sessionEnabled =
-    Boolean(sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
+  const sessionEnabled = Boolean(sessionDir) || flatSteps.some((step) => Boolean(step.sessionFile));
   const initialActiveRuntimeValues = initialStatusSteps
     .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
     .filter((value): value is number => value !== undefined);
@@ -429,6 +419,7 @@ export function createBackgroundRunStatusOwner(
     steps: initialStatusSteps,
     ...(tkTicket ? { tkTicket } : {}),
     ...(projectAgents ? { projectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
     artifactsDir,
     sessionDir,
     outputFile: path.join(asyncDir, "output-0.log"),
@@ -451,8 +442,6 @@ export function createBackgroundRunStatusOwner(
   const terminalReason: ChildTerminalReasonLatch = {};
   const controlHooks: BackgroundStatusControlHooks = {
     clearActivityState: () => undefined,
-    interruptNestedDescendants: () => undefined,
-    timeoutNestedDescendants: () => undefined,
     interruptActiveChildren: () => undefined,
     timeoutActiveChildren: () => undefined,
     abortInterrupt: () => undefined,
@@ -487,31 +476,6 @@ export function createBackgroundRunStatusOwner(
         .map((name) => path.resolve(dir, name));
     } catch {
       return [];
-    }
-  }
-
-  function emitNestedSelfEvent(
-    type: "subagent.nested.updated" | "subagent.nested.completed",
-  ): void {
-    if (!nestedRoute || !nestedSelf) return;
-    try {
-      writeNestedEvent(nestedRoute, {
-        type,
-        ts: Date.now(),
-        parentRunId: nestedSelf.parentRunId,
-        parentStepIndex: nestedSelf.parentStepIndex,
-        child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-          id,
-          parentRunId: nestedSelf.parentRunId,
-          parentStepIndex: nestedSelf.parentStepIndex,
-          depth: nestedSelf.depth,
-          path: nestedSelf.path,
-          mode: statusPayload.mode,
-          ts: Date.now(),
-        }),
-      });
-    } catch (error) {
-      console.error("Failed to emit nested async status event:", error);
     }
   }
 
@@ -560,9 +524,7 @@ export function createBackgroundRunStatusOwner(
     return refreshTrackedSessionFile(flatIndex);
   }
 
-  function writeStatusPayload(
-    options: { projectNested?: boolean; lifecycleLocked?: boolean } = {},
-  ): void {
+  function writeStatusPayload(options: { lifecycleLocked?: boolean } = {}): void {
     // Once ANY concurrent lifecycle state has been adopted from disk, every
     // subsequent write must go through the lifecycle lock and merge against the
     // persisted record. The merge guarantees that a persisted terminal run
@@ -584,6 +546,9 @@ export function createBackgroundRunStatusOwner(
         adoptConcurrentTerminalStatus();
       } else {
         statusPayload.lifecycle = merged.lifecycle;
+        if (merged.lastUpdate !== undefined) statusPayload.lastUpdate = merged.lastUpdate;
+        if (merged.telemetry) statusPayload.telemetry = merged.telemetry;
+        else statusPayload.telemetry = undefined;
         for (let index = 0; index < (merged.steps?.length ?? 0); index++) {
           const mergedStep = merged.steps?.[index];
           const localStep = statusPayload.steps[index];
@@ -611,13 +576,6 @@ export function createBackgroundRunStatusOwner(
     } else {
       writeNormalizedLifecycleStatus(asyncDir, statusPayload);
     }
-    if (options.projectNested !== false) {
-      emitNestedSelfEvent(
-        statusPayload.state === "running" || statusPayload.state === "queued"
-          ? "subagent.nested.updated"
-          : "subagent.nested.completed",
-      );
-    }
   }
 
   function checkpointActiveRuntime(now = Date.now(), freeze = false): boolean {
@@ -640,8 +598,8 @@ export function createBackgroundRunStatusOwner(
       ];
     });
     // Runtime checkpoints are authoritative internal evidence. Persist them
-    // through the same terminal/pause-aware path, but do not publish nested
-    // projections or heartbeat/control notifications for each checkpoint.
+    // through the same terminal/pause-aware path without publishing a separate
+    // heartbeat or control notification for each checkpoint.
     return applyActiveRuntimeCheckpoint(candidates, {
       now,
       freeze,
@@ -657,7 +615,7 @@ export function createBackgroundRunStatusOwner(
           normalizeActiveRuntimeCheckpointAt(now) ?? 0,
         );
         statusPayload.lastUpdate = now;
-        writeStatusPayload({ projectNested: false, lifecycleLocked: true });
+        writeStatusPayload({ lifecycleLocked: true });
       },
     });
   }
@@ -877,9 +835,30 @@ export function createBackgroundRunStatusOwner(
     interrupted = persisted.state === "paused";
     if (persisted.state === "paused") pausedCheckpointCommitted = true;
     concurrentTerminalStatusAdopted = true;
-    controlHooks.interruptNestedDescendants();
     controlHooks.interruptActiveChildren();
     return persisted;
+  }
+
+  function recordStepTimeout(flatIndex: number, message?: string): void {
+    if (
+      concurrentTerminalStatusAdopted ||
+      statusPayload.state !== "running" ||
+      timedOut ||
+      interrupted
+    )
+      return;
+    const now = Date.now();
+    const timeoutError = message ?? timeoutMessage ?? "Subagent timed out.";
+    const step = statusPayload.steps[flatIndex];
+    if (!step) return;
+    // A step-owned deadline is durable evidence for the canonical result, but it
+    // is not a run-wide terminal transition: sibling interrupt/pause/output
+    // signals must still be able to claim the run if they end this segment.
+    step.timedOut = true;
+    step.error ??= timeoutError;
+    step.terminationReason = "timed_out";
+    statusPayload.lastUpdate = now;
+    writeStatusPayload();
   }
 
   function onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void {
@@ -932,11 +911,17 @@ export function createBackgroundRunStatusOwner(
       : undefined;
   }
 
+  function hasNonTimedOutActiveStep(): boolean {
+    return statusPayload.steps.some(
+      (step) => step.timedOut !== true && (step.status === "running" || step.status === "pending"),
+    );
+  }
+
   function pauseMetadataForIndex(
     index: number,
     pausedAt?: number,
   ): AsyncStatus["pause"] | undefined {
-    if (!supervisorPauseRequest) return undefined;
+    if (!supervisorPauseRequest || statusPayload.steps[index]?.timedOut === true) return undefined;
     if (index === supervisorPauseRequest.requesterIndex) {
       return {
         ...supervisorPauseRequest.pause,
@@ -955,7 +940,14 @@ export function createBackgroundRunStatusOwner(
     requesterIndex: number,
     pause: NonNullable<AsyncStatus["pause"]>,
   ): void {
-    if (supervisorPauseRequest || interrupted || timedOut || statusPayload.state !== "running")
+    if (
+      supervisorPauseRequest ||
+      interrupted ||
+      timedOut ||
+      statusPayload.state !== "running" ||
+      statusPayload.steps[requesterIndex]?.timedOut === true ||
+      !hasNonTimedOutActiveStep()
+    )
       return;
     if (!claimChildTerminalReason(terminalReason, "paused")) return;
     supervisorPauseRequest = {
@@ -994,7 +986,7 @@ export function createBackgroundRunStatusOwner(
           lastUpdate: now,
           sessionFile: requesterSessionFile ?? status.sessionFile,
           steps: status.steps?.map((step, index) => {
-            if (step.status !== "running") return step;
+            if (step.status !== "running" || step.timedOut === true) return step;
             const stepSessionFile = refreshTrackedSessionFile(index);
             const activeRuntimeMs = boundedActiveRuntimeMs(step.activeRuntimeMs);
             return {
@@ -1043,13 +1035,13 @@ export function createBackgroundRunStatusOwner(
         },
       }),
     );
-    controlHooks.interruptNestedDescendants();
     controlHooks.abortInterrupt();
     controlHooks.interruptActiveChildren();
   }
 
   function interrupt(): void {
     if (interrupted || statusPayload.state !== "running") return;
+    if (!hasNonTimedOutActiveStep()) return;
     if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
     interrupted = true;
     const now = Date.now();
@@ -1064,7 +1056,7 @@ export function createBackgroundRunStatusOwner(
     statusPayload.lastUpdate = now;
     for (let flatIndex = 0; flatIndex < statusPayload.steps.length; flatIndex++) {
       const step = statusPayload.steps[flatIndex]!;
-      if (step.status !== "running") continue;
+      if (step.status !== "running" || step.timedOut === true) continue;
       step.status = "paused";
       step.activityState = undefined;
       step.idleEpisodeId = undefined;
@@ -1082,7 +1074,6 @@ export function createBackgroundRunStatusOwner(
     // this write and settlement is preserved.
     pausedCheckpointCommitted = true;
     appendEvent(JSON.stringify({ type: "subagent.run.paused", ts: now, runId: id }));
-    controlHooks.interruptNestedDescendants();
     controlHooks.abortInterrupt();
     controlHooks.interruptActiveChildren();
   }
@@ -1131,7 +1122,6 @@ export function createBackgroundRunStatusOwner(
       }),
     );
     controlHooks.abortTimeout();
-    controlHooks.timeoutNestedDescendants();
     controlHooks.timeoutActiveChildren();
   }
 
@@ -1215,7 +1205,7 @@ export function createBackgroundRunStatusOwner(
 
   function applyPausedStepMetadata(flatIndex: number, endedAt: number): void {
     const step = statusPayload.steps[flatIndex];
-    if (!step) return;
+    if (!step || step.timedOut === true) return;
     const sessionFile = refreshTrackedSessionFile(flatIndex);
     if (sessionFile) step.sessionFile = sessionFile;
     step.pause = pauseMetadataForIndex(flatIndex, endedAt);
@@ -1311,6 +1301,7 @@ export function createBackgroundRunStatusOwner(
     endStepCompaction,
     endAllStepCompactions,
     syncTopLevelHealthProjection,
+    recordStepTimeout,
     onChildProtocolOutputLimit,
     pausedAcceptanceLedger,
     pausedStepResult,
@@ -1325,7 +1316,6 @@ export function createBackgroundRunStatusOwner(
     applyPausedStepMetadata,
     startRuntimeCheckpointTimer,
     disposeRuntimeCheckpointTimer,
-    emitNestedSelfEvent,
   };
   return owner;
 }

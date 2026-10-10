@@ -49,7 +49,6 @@ import {
   type ResolvedStepBehavior,
   type StepOverrides,
 } from "../../shared/settings.ts";
-import { normalizeSkillInput } from "../../agents/skills.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import {
   inspectTkTicketReference,
@@ -83,14 +82,9 @@ import {
   Semaphore,
 } from "../shared/parallel-utils.ts";
 import {
-  attachNestedChildrenToResultChildren,
   formatForegroundNativeSubagentResult,
   resolveSubagentResultStatus,
 } from "../../shared/result-formatting.ts";
-import {
-  attachRootChildrenToSteps,
-  updateForegroundNestedProjection,
-} from "../shared/nested-events.ts";
 import {
   safeTerminalDocument,
   safeTerminalDocumentLeaf,
@@ -102,18 +96,23 @@ import {
 } from "../../shared/foreground-pause.ts";
 import { runSync } from "./execution.ts";
 import {
+  buildSubagentRunTelemetry,
+  telemetryFromSingleResults,
+  resolveParallelSubagentTelemetryOutcome,
+  resolveSubagentTelemetryOutcome,
+  type SubagentTelemetryLineage,
+  type SubagentTelemetryProvenance,
+} from "../../shared/telemetry.ts";
+import {
   resolveChildMaxSubagentDepth,
   resolveCurrentMaxSubagentDepth,
   resolveTopLevelParallelConcurrency,
   resolveTopLevelParallelMaxTasks,
-  type AcceptanceInput,
   type AgentProgress,
   type ArtifactPaths,
   type ControlEvent,
   type Details,
   type ExtensionConfig,
-  type MaxOutputConfig,
-  type NestedRunSummary,
   type ResolvedArtifactConfig,
   type ResolvedControlConfig,
   type ResolvedToolBudget,
@@ -135,22 +134,16 @@ interface TaskParam {
   outputMode?: "inline" | "file-only";
   model?: string;
   modelFallbackNotice?: string;
-  acceptance?: AcceptanceInput;
-  toolBudget?: ToolBudgetConfig;
 }
 
 interface ForegroundPathParams {
   agent?: string;
   task?: string;
   tasks?: TaskParam[];
-  toolBudget?: ToolBudgetConfig;
-  maxOutput?: MaxOutputConfig;
   model?: string;
   modelFallbackNotice?: string;
-  skill?: string | string[] | boolean;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
-  acceptance?: AcceptanceInput;
 }
 
 interface ForegroundPathDeps {
@@ -168,16 +161,17 @@ interface ExecutionPathData {
   agents: AgentConfig[];
   projectAgentCaptures?: readonly ProjectAgentRunCapture[];
   runId: string;
-  shareEnabled: boolean;
   sessionDirForIndex: (idx?: number) => string;
   sessionFileForIndex: (idx?: number) => string | undefined;
   sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
   artifactConfig: ResolvedArtifactConfig;
   artifactsDir: string;
   controlConfig: ResolvedControlConfig;
+  telemetryProvenance?: SubagentTelemetryProvenance;
+  telemetryLineage?: SubagentTelemetryLineage;
+  startedAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
-  toolBudget?: ResolvedToolBudget;
   modelScope?: ModelScopeConfig;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
@@ -273,7 +267,6 @@ function buildForegroundNativeResult(input: {
   runId: string;
   mode: SubagentRunMode;
   details: Details;
-  nestedChildren?: NestedRunSummary[];
   displayOutputs?: string[];
   statusOverride?: SubagentResultStatus;
   errorSummary?: string;
@@ -296,7 +289,7 @@ function buildForegroundNativeResult(input: {
   const grouped = formatForegroundNativeSubagentResult({
     runId: input.runId,
     mode: input.mode,
-    children: attachNestedChildrenToResultChildren(input.runId, children, input.nestedChildren),
+    children,
     ...(input.statusOverride ? { statusOverride: input.statusOverride } : {}),
     ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
   });
@@ -323,13 +316,10 @@ export function resolveToolBudget(
   return { toolBudget: resolved.budget, error: resolved.error };
 }
 
-function resolveEffectiveToolBudget(input: {
-  stepBudget?: ToolBudgetConfig;
-  runBudget?: ResolvedToolBudget;
-  agentBudget?: ToolBudgetConfig;
-}): { toolBudget?: ResolvedToolBudget; error?: string } {
-  if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
-  if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
+function resolveEffectiveToolBudget(input: { agentBudget?: ToolBudgetConfig }): {
+  toolBudget?: ResolvedToolBudget;
+  error?: string;
+} {
   return resolveToolBudget(input.agentBudget, "agent.toolBudget");
 }
 
@@ -364,11 +354,9 @@ interface ForegroundParallelRunInput {
   sessionDirForIndex: (idx?: number) => string;
   sessionFileForIndex: (idx?: number) => string | undefined;
   sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
-  shareEnabled: boolean;
   artifactConfig: ResolvedArtifactConfig;
   artifactsDir: string;
   outputBaseDir: string;
-  maxOutput?: MaxOutputConfig;
   paramsCwd: string;
   progressDir: string;
   availableModels: ModelInfo[];
@@ -393,6 +381,9 @@ interface ForegroundParallelRunInput {
   tkTicket?: TkTicketMetadata;
   tkTicketIndex?: number;
   projectAgentCaptures?: readonly import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
+  telemetryProvenance?: SubagentTelemetryProvenance;
+  telemetryLineage?: SubagentTelemetryLineage;
+  startedAt?: number;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
 }
@@ -475,10 +466,12 @@ async function runForegroundParallelTasks(
   // a child cwd is confirmed to differ; when all tasks share the parent cwd
   // (the common case) the accessor is never called and zero git work is done.
   const parentFactsAccessor = makeParentGitFactsAccessor(input.ctx.cwd);
-  const taskLocationSnapshots = input.tasks.map((task) => {
-    const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd);
-    return captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor);
-  });
+  // Pre-resolve each task's fully resolved cwd so the pause checkpoint path
+  // can write an explicit per-step cwd without recomputing it per step.
+  const taskResolvedCwds = input.tasks.map((task) => resolveParallelTaskCwd(task, input.paramsCwd));
+  const taskLocationSnapshots = taskResolvedCwds.map((taskCwd) =>
+    captureChildLocationSnapshot(input.ctx.cwd, taskCwd, undefined, parentFactsAccessor),
+  );
   const writeParallelPauseCheckpoint = (
     requesterIndex: number,
     requester: SingleResult,
@@ -490,11 +483,13 @@ async function runForegroundParallelTasks(
       const liveResult = input.liveResults[index];
       const liveProgress = input.liveProgress[index];
       const result = liveResult ?? (index === requesterIndex ? requester : undefined);
+      const taskCwd = taskResolvedCwds[index];
       if (index === requesterIndex && result) {
         return buildPausedStepFromResult(result, now, {
           stage: options.rootStage,
           ownerPid,
           ...(options.requesterStatus ? { status: options.requesterStatus } : {}),
+          cwd: taskCwd,
         });
       }
       if (
@@ -502,10 +497,10 @@ async function runForegroundParallelTasks(
         options.rootStage === "paused" &&
         isTerminalForegroundResultSnapshot(result, liveProgress ?? result.progress)
       ) {
-        return buildPausedStepFromResult(result, now, { stage: "paused" });
+        return buildPausedStepFromResult(result, now, { stage: "paused", cwd: taskCwd });
       }
       if (liveResult && isTerminalForegroundResultSnapshot(liveResult, liveProgress)) {
-        return buildPausedStepFromResult(liveResult, now, { stage: "paused" });
+        return buildPausedStepFromResult(liveResult, now, { stage: "paused", cwd: taskCwd });
       }
       // Prefer childLocation from the live result (set by execution.ts at dispatch).
       // Fall back to the precomputed dispatch snapshot for pending tasks that
@@ -535,6 +530,7 @@ async function runForegroundParallelTasks(
             input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
           tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
           childLocation: cohortChildLocation,
+          cwd: taskCwd,
         });
       }
       return buildCohortPauseStep({
@@ -556,8 +552,41 @@ async function runForegroundParallelTasks(
           input.projectAgentCaptures?.find((capture) => capture.provenance.agent === task.agent),
         tkTicketId: resolveParallelTaskTkTicketId(input, task, index, result),
         childLocation: cohortChildLocation,
+        cwd: taskCwd,
       });
     });
+    const pauseTelemetry = input.telemetryProvenance
+      ? buildSubagentRunTelemetry({
+          runId: input.runId,
+          execution: "foreground",
+          mode: "parallel",
+          provenance: input.telemetryProvenance,
+          controls: input.controlConfig,
+          startedAt: input.foregroundControl?.startedAt,
+          endedAt: Date.now(),
+          outcome: { state: "paused", terminationReason: "paused" },
+          lineage: input.telemetryLineage,
+          steps: steps.map((step, index) => {
+            const timing = {
+              ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+              ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+              ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+              ...(step.activeRuntimeMs !== undefined
+                ? { activeRuntimeMs: step.activeRuntimeMs }
+                : {}),
+            };
+            return {
+              index,
+              agent: step.agent,
+              model: step.modelIdentity,
+              ...(Object.keys(timing).length > 0 ? { timing } : {}),
+              outcome:
+                resolveSubagentTelemetryOutcome({ state: step.status }) ??
+                ({ state: "queued" } as const),
+            };
+          }),
+        })
+      : undefined;
     persistPausedForegroundCohortRun({
       runId: input.runId,
       cwd: input.paramsCwd,
@@ -568,6 +597,7 @@ async function runForegroundParallelTasks(
       startedAt: input.foregroundControl?.startedAt,
       pause: requester.pause,
       steps,
+      telemetry: pauseTelemetry,
     });
   };
   const requestCohortPause = (
@@ -698,20 +728,21 @@ async function runForegroundParallelTasks(
         interruptSignal: interruptController.signal,
         pauseBlockingSupervisor: supervisorBridgeActive,
         runId: input.runId,
+        startedAt: input.startedAt,
         index,
         sessionDir: input.sessionDirForIndex(index),
         sessionFile: input.sessionFileForTask(task.agent, index),
-        share: input.shareEnabled,
         artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
         artifactConfig: input.artifactConfig,
-        maxOutput: input.maxOutput,
         outputPath,
         outputMode: behavior?.outputMode,
         maxSubagentDepth: input.maxSubagentDepths[index],
         controlConfig: input.controlConfig,
         onControlEvent: input.onControlEvent,
         steerInboxDir,
-        nestedRoute: input.foregroundControl?.nestedRoute,
+        telemetryProvenance: input.telemetryProvenance,
+        telemetryMode: "parallel",
+        telemetryLineage: input.telemetryLineage,
         modelOverride: input.modelOverrides[index],
         providerFallbackModels: input.providerFallbackModels[index],
         modelFallbackNotice: behavior?.modelFallbackNotice,
@@ -723,7 +754,6 @@ async function runForegroundParallelTasks(
         ...(tkTicketId ? { tkTicketId } : {}),
         ...(taskChildLocationSnapshot ? { childLocation: taskChildLocationSnapshot } : {}),
         skills: effectiveSkills === false ? [] : effectiveSkills,
-        acceptance: task.acceptance,
         acceptanceContext: { mode: "parallel" },
         timeoutMs: input.timeoutMs,
         deadlineAt: input.deadlineAt,
@@ -817,11 +847,13 @@ export async function runParallelPath(
     sessionDirForIndex,
     sessionFileForIndex,
     sessionFileForTask,
-    shareEnabled,
     artifactConfig,
     artifactsDir,
     onUpdate,
     controlConfig,
+    telemetryProvenance,
+    telemetryLineage,
+    startedAt,
   } = data;
   const onControlEvent = createForegroundControlNotifier(data, deps);
   const allArtifactPaths: ArtifactPaths[] = [];
@@ -860,8 +892,6 @@ export async function runParallelPath(
   const toolBudgets: (ResolvedToolBudget | undefined)[] = [];
   for (let index = 0; index < tasks.length; index++) {
     const resolved = resolveEffectiveToolBudget({
-      stepBudget: tasks[index]?.toolBudget,
-      runBudget: data.toolBudget,
       agentBudget: agentConfigs[index]?.toolBudget,
     });
     if (resolved.error) return buildParallelModeError(resolved.error);
@@ -949,11 +979,9 @@ export async function runParallelPath(
     sessionDirForIndex,
     sessionFileForIndex,
     sessionFileForTask,
-    shareEnabled,
     artifactConfig,
     artifactsDir,
     outputBaseDir,
-    maxOutput: params.maxOutput,
     paramsCwd: effectiveCwd,
     progressDir: parallelProgressDir,
     availableModels,
@@ -978,20 +1006,44 @@ export async function runParallelPath(
     ...(tkTicket ? { tkTicket } : {}),
     ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
     projectAgentCaptures: data.projectAgentCaptures,
+    telemetryProvenance: data.telemetryProvenance,
+    telemetryLineage: data.telemetryLineage,
+    startedAt: data.startedAt,
     runSync: data.runSync,
   });
   for (const result of results) {
     if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
   }
-  if (foregroundControl) {
-    updateForegroundNestedProjection(foregroundControl);
-    attachRootChildrenToSteps(runId, results, foregroundControl.nestedChildren);
-  }
   const interrupted = results.find((result) => result.interrupted);
+  const endedAt = Date.now();
+  const telemetry = telemetryProvenance
+    ? telemetryFromSingleResults({
+        runId,
+        mode: "parallel",
+        results,
+        provenance: telemetryProvenance,
+        controls: controlConfig,
+        startedAt: startedAt ?? foregroundControl?.startedAt,
+        endedAt,
+        lineage: telemetryLineage,
+        outcome: resolveParallelSubagentTelemetryOutcome(
+          results.map((result, index) => ({
+            index,
+            agent: result.agent,
+            state: result.cancel ? "cancelled" : result.pause ? "paused" : undefined,
+            success: result.exitCode === 0 && !result.interrupted,
+            interrupted: result.interrupted,
+            timedOut: result.timedOut,
+            terminationReason: result.terminationReason,
+          })),
+        ),
+      })
+    : undefined;
   const details = compactForegroundDetails({
     mode: "parallel",
     runId,
     results,
+    ...(telemetry ? { telemetry } : {}),
     artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
     totalChildUsage: sumResultsUsage(results),
     totalCost: sumResultsCost(results),
@@ -1001,6 +1053,8 @@ export async function runParallelPath(
     mode: "parallel",
     cwd: effectiveCwd,
     results: details.results,
+    ...(telemetry ? { telemetry } : {}),
+    childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
   });
   if (results.some((result) => result.pause)) {
     persistPausedForegroundCohortRun({
@@ -1010,7 +1064,9 @@ export async function runParallelPath(
       mode: "parallel",
       stage: "paused",
       results,
+      childCwds: tasks.map((task) => resolveParallelTaskCwd(task, effectiveCwd)),
       startedAt: foregroundControl?.startedAt,
+      telemetry,
     });
   }
   if (interrupted) {
@@ -1040,14 +1096,10 @@ export async function runParallelPath(
       details,
     };
   }
-  if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
   const nativeResult = buildForegroundNativeResult({
     runId,
     mode: "parallel",
     details,
-    ...(foregroundControl?.nestedChildren?.length
-      ? { nestedChildren: foregroundControl.nestedChildren }
-      : {}),
   });
   if (nativeResult) {
     return {
@@ -1089,11 +1141,13 @@ export async function runSinglePath(
     runId,
     sessionDirForIndex,
     sessionFileForTask,
-    shareEnabled,
     artifactConfig,
     artifactsDir,
     onUpdate,
     controlConfig,
+    telemetryProvenance,
+    telemetryLineage,
+    startedAt,
   } = data;
   const onControlEvent = createForegroundControlNotifier(data, deps);
   const allArtifactPaths: ArtifactPaths[] = [];
@@ -1107,7 +1161,6 @@ export async function runSinglePath(
   }
   const supervisorBridgeActive = agentConfig.supervisorBridge !== false;
   const effectiveToolBudget = resolveEffectiveToolBudget({
-    runBudget: data.toolBudget,
     agentBudget: agentConfig.toolBudget,
   });
   if (effectiveToolBudget.error)
@@ -1133,7 +1186,6 @@ export async function runSinglePath(
       source: (params.model as string | undefined) ? "explicit" : "inherited",
     },
   );
-  const skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
   const providerFallbackModels = providerFallbackModelsForTarget(params);
   const modelFallbackNotice = params.modelFallbackNotice;
   const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
@@ -1169,12 +1221,7 @@ export async function runSinglePath(
   }
   task = injectSingleOutputInstruction(task, outputPath);
 
-  let effectiveSkills: string[] | undefined;
-  if (skillOverride === false) {
-    effectiveSkills = [];
-  } else {
-    effectiveSkills = skillOverride;
-  }
+  const effectiveSkills = agentConfig.skills;
   const interruptController = new AbortController();
   const foregroundControl = deps.state.foregroundControls.get(runId);
   const steerInboxDir = foregroundControl
@@ -1229,12 +1276,11 @@ export async function runSinglePath(
       interruptSignal: interruptController.signal,
       pauseBlockingSupervisor: supervisorBridgeActive,
       runId,
+      startedAt,
       sessionDir: sessionDirForIndex(0),
       sessionFile: sessionFileForTask(params.agent!, 0),
-      share: shareEnabled,
       artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
       artifactConfig,
-      maxOutput: params.maxOutput,
       outputPath,
       outputMode: effectiveOutputMode,
       maxSubagentDepth,
@@ -1242,9 +1288,24 @@ export async function runSinglePath(
       controlConfig,
       onControlEvent,
       steerInboxDir,
-      nestedRoute: foregroundControl?.nestedRoute,
+      telemetryProvenance: data.telemetryProvenance,
+      telemetryMode: "single",
+      telemetryLineage: data.telemetryLineage,
       onSupervisorPauseTransition: (transition) => {
         const { stage, result } = transition;
+        const pauseTelemetry = telemetryProvenance
+          ? telemetryFromSingleResults({
+              runId,
+              mode: "single",
+              results: [result],
+              provenance: telemetryProvenance,
+              controls: controlConfig,
+              startedAt: startedAt ?? foregroundControl?.startedAt,
+              endedAt: Date.now(),
+              lineage: telemetryLineage,
+              outcome: { state: "paused", terminationReason: "paused" },
+            })
+          : undefined;
         try {
           persistPausedForegroundSingleRun({
             runId,
@@ -1253,6 +1314,7 @@ export async function runSinglePath(
             stage,
             ownerPid: stage === "pausing" ? transition.ownerPid : undefined,
             result,
+            telemetry: pauseTelemetry,
           });
         } catch (error) {
           if (stage === "paused") recoverFailedPausedForegroundTransition({ runId, error });
@@ -1265,6 +1327,7 @@ export async function runSinglePath(
             cwd: effectiveCwd,
             index: 0,
             result,
+            ...(pauseTelemetry ? { telemetry: pauseTelemetry } : {}),
           });
       },
       index: 0,
@@ -1279,7 +1342,6 @@ export async function runSinglePath(
       ...(tkTicketId ? { tkTicketId } : {}),
       ...(childLocationSnapshot ? { childLocation: childLocationSnapshot } : {}),
       skills: effectiveSkills,
-      acceptance: params.acceptance,
       acceptanceContext: { mode: "single" },
       timeoutMs: effectiveTimeoutMs,
       deadlineAt,
@@ -1316,14 +1378,31 @@ export async function runSinglePath(
     // rejected by either inferred or explicit post-run acceptance.
     acceptanceRejected: r.acceptance?.status === "rejected" && Boolean(r.savedOutputPath),
   });
-  if (foregroundControl) {
-    updateForegroundNestedProjection(foregroundControl);
-    attachRootChildrenToSteps(runId, [r], foregroundControl.nestedChildren);
-  }
+  const endedAt = Date.now();
+  const telemetry = telemetryProvenance
+    ? telemetryFromSingleResults({
+        runId,
+        mode: "single",
+        results: [r],
+        provenance: telemetryProvenance,
+        controls: controlConfig,
+        startedAt: startedAt ?? foregroundControl?.startedAt,
+        endedAt,
+        lineage: telemetryLineage,
+        outcome: resolveSubagentTelemetryOutcome({
+          interrupted: Boolean(r.interrupted),
+          timedOut: r.timedOut,
+          success: r.exitCode === 0 && !r.interrupted,
+          terminationReason: r.terminationReason,
+          acceptanceStatus: r.acceptance?.status,
+        }),
+      })
+    : undefined;
   const details = compactForegroundDetails({
     mode: "single",
     runId,
     results: [r],
+    ...(telemetry ? { telemetry } : {}),
     ...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
     artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
     truncation: r.truncation,
@@ -1335,20 +1414,17 @@ export async function runSinglePath(
     mode: "single",
     cwd: effectiveCwd,
     results: details.results,
+    ...(telemetry ? { telemetry } : {}),
   });
   if (r.pause?.kind === "awaiting_supervisor")
     enrichPersistedPausedForegroundSingleRun({ runId, result: r });
 
   if (!r.interrupted) {
-    if (foregroundControl) updateForegroundNestedProjection(foregroundControl);
     const nativeResult = buildForegroundNativeResult({
       runId,
       mode: "single",
       details,
       displayOutputs: [finalizedOutput.displayOutput],
-      ...(foregroundControl?.nestedChildren?.length
-        ? { nestedChildren: foregroundControl.nestedChildren }
-        : {}),
     });
     if (nativeResult) {
       return {

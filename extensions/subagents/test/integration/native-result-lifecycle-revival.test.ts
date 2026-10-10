@@ -4,23 +4,18 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
-import {
-  ASYNC_DIR,
-  RESULTS_DIR,
-  SUBAGENT_ASYNC_STARTED_EVENT,
-  resolveTempRootDir,
-} from "../../src/shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT } from "../../src/shared/types.ts";
 import {
   consumeChildMessageRequests,
   steerRequestsDir,
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
-import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
+import { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -41,6 +36,7 @@ import {
   type NativeExecutorOptions,
 } from "../support/native-result-lifecycle-fixtures.ts";
 import { scaleTestTimeout, type ScaledMs } from "../support/scale-timeout.ts";
+import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
 describe(
   "completed-run revival",
@@ -77,6 +73,45 @@ describe(
 
     function waitForMockPiCall(index: number, timeoutMs?: ScaledMs): Promise<void> {
       return waitForMockPiCallFor(mockPi, index, timeoutMs);
+    }
+
+    function isRecord(value: unknown): value is Record<string, unknown> {
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+
+    function requireRecord(value: unknown, label: string): Record<string, unknown> {
+      if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+      return value;
+    }
+
+    function requireRecordArray(value: unknown, label: string): Record<string, unknown>[] {
+      if (!Array.isArray(value) || !value.every(isRecord))
+        throw new Error(`${label} must be an array of objects.`);
+      return value;
+    }
+
+    function requireStringArray(value: unknown, label: string): string[] {
+      if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+        throw new Error(`${label} must be an array of strings.`);
+      return value;
+    }
+
+    function readResultAcceptance(value: unknown): {
+      status: unknown;
+      effectiveAcceptance: Record<string, unknown>;
+    } {
+      const payload = requireRecord(value, "result payload");
+      const results = requireRecordArray(payload.results, "result payload.results");
+      const result = results[0];
+      if (!result) throw new Error("result payload.results must contain an entry.");
+      const acceptance = requireRecord(result.acceptance, "result acceptance");
+      return {
+        status: acceptance.status,
+        effectiveAcceptance: requireRecord(
+          acceptance.effectiveAcceptance,
+          "result effective acceptance",
+        ),
+      };
     }
 
     function pausedAcceptanceLedger() {
@@ -587,7 +622,7 @@ describe(
       }
     });
 
-    it("resume action revives paused async acceptance with paused-ledger provenance and monotonic overrides", async () => {
+    it("preserves paused-ledger provenance despite read-only resume wording", async () => {
       mockPi.onCall({ delay: 10_000, output: "paused before acceptance" });
       mockPi.onCall({
         output: [
@@ -598,12 +633,7 @@ describe(
               {
                 id: "criterion-1",
                 status: "satisfied",
-                evidence: "Implemented the requested fix after resume.",
-              },
-              {
-                id: "criterion-2",
-                status: "satisfied",
-                evidence: "Included the requested resume note.",
+                evidence: "Preserved the inferred checked contract after the read-only resume.",
               },
             ],
             changedFiles: ["src/example.ts"],
@@ -616,7 +646,6 @@ describe(
             noStagedFiles: true,
             diffSummary: "resumed fix only",
             reviewFindings: ["no blockers"],
-            manualNotes: "Resume note included.",
           }),
           "```",
         ].join("\n"),
@@ -628,13 +657,6 @@ describe(
           agent: "worker",
           task: "Implement the paused acceptance fix",
           async: true,
-          acceptance: {
-            level: "checked",
-            criteria: [
-              { id: "criterion-1", must: "Implement the requested change without widening scope" },
-            ],
-            stopRules: ["Do not widen scope"],
-          },
         },
         new AbortController().signal,
         undefined,
@@ -680,12 +702,7 @@ describe(
         {
           action: "resume",
           id: asyncId,
-          message: "Finish the fix and include the resume note.",
-          acceptance: {
-            level: "attested",
-            criteria: [{ id: "criterion-2", must: "Include the requested resume note" }],
-            evidence: ["manual-notes"],
-          },
+          message: "Inspect the result and summarize the resume note, read-only.",
         },
         new AbortController().signal,
         undefined,
@@ -699,47 +716,40 @@ describe(
       const revivedId = resumed.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
       await waitForFile(path.join(RESULTS_DIR, `${asyncId}.json`), pausedResumeWaitMs);
-      const pausedPayload = JSON.parse(
+      const pausedPayload: unknown = JSON.parse(
         fs.readFileSync(path.join(RESULTS_DIR, `${asyncId}.json`), "utf-8"),
-      ) as {
-        results?: Array<{
-          acceptance?: {
-            status?: string;
-            effectiveAcceptance?: { explicit?: boolean; level?: string; stopRules?: string[] };
-          };
-        }>;
-      };
-      assert.equal(pausedPayload.results?.[0]?.acceptance?.status, "skipped");
-      assert.equal(pausedPayload.results?.[0]?.acceptance?.effectiveAcceptance?.explicit, true);
-      assert.equal(pausedPayload.results?.[0]?.acceptance?.effectiveAcceptance?.level, "checked");
-      await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`), pausedResumeWaitMs);
-      const revivedPayload = JSON.parse(
-        fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
-      ) as {
-        results?: Array<{
-          acceptance?: {
-            status?: string;
-            effectiveAcceptance?: {
-              level?: string;
-              explicit?: boolean;
-              criteria?: Array<{ id?: string }>;
-              evidence?: string[];
-              stopRules?: string[];
-            };
-          };
-        }>;
-      };
-      const revivedAcceptance = revivedPayload.results?.[0]?.acceptance?.effectiveAcceptance;
-      assert.equal(revivedPayload.results?.[0]?.acceptance?.status, "checked");
-      assert.equal(revivedAcceptance?.level, "checked");
-      assert.equal(revivedAcceptance?.explicit, true);
-      assert.deepEqual(
-        revivedAcceptance?.criteria?.map((criterion) => criterion.id),
-        ["criterion-1", "criterion-2"],
       );
-      assert.equal(revivedAcceptance?.evidence?.includes("changed-files"), true);
-      assert.equal(revivedAcceptance?.evidence?.includes("manual-notes"), true);
-      assert.deepEqual(revivedAcceptance?.stopRules, ["Do not widen scope"]);
+      const pausedAcceptance = readResultAcceptance(pausedPayload);
+      const pausedEffectiveAcceptance = pausedAcceptance.effectiveAcceptance;
+      assert.equal(pausedAcceptance.status, "skipped");
+      assert.equal(pausedEffectiveAcceptance.explicit, false);
+      assert.equal(pausedEffectiveAcceptance.level, "checked");
+      assert.deepEqual(pausedEffectiveAcceptance.inferredReason, [
+        "async write-capable or risky run",
+      ]);
+      assert.deepEqual(
+        requireRecordArray(pausedEffectiveAcceptance.criteria, "paused acceptance criteria").map(
+          (criterion) => criterion.id,
+        ),
+        ["criterion-1"],
+      );
+      assert.ok(
+        requireStringArray(
+          pausedEffectiveAcceptance.evidence,
+          "paused acceptance evidence",
+        ).includes("changed-files"),
+      );
+      assert.deepEqual(
+        requireStringArray(pausedEffectiveAcceptance.stopRules, "paused stop rules"),
+        [],
+      );
+      await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`), pausedResumeWaitMs);
+      const revivedPayload: unknown = JSON.parse(
+        fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
+      );
+      const revivedAcceptance = readResultAcceptance(revivedPayload);
+      assert.equal(revivedAcceptance.status, "checked");
+      assert.deepEqual(revivedAcceptance.effectiveAcceptance, pausedEffectiveAcceptance);
     });
 
     it("resume action revives a non-currentStep paused parallel child with its skipped acceptance contract intact", async () => {
@@ -754,12 +764,7 @@ describe(
               {
                 id: "criterion-1",
                 status: "satisfied",
-                evidence: "Preserved the original paused contract.",
-              },
-              {
-                id: "criterion-2",
-                status: "satisfied",
-                evidence: "Added the requested resume note.",
+                evidence: "Preserved the inferred checked contract after the read-only resume.",
               },
             ],
             changedFiles: ["test/integration/native-result-lifecycle.test.ts"],
@@ -772,7 +777,6 @@ describe(
             noStagedFiles: true,
             diffSummary: "resumed child only",
             reviewFindings: ["no blockers"],
-            manualNotes: "Resume note included.",
           }),
           "```",
         ].join("\n"),
@@ -784,34 +788,8 @@ describe(
         "resume-paused-parallel-acceptance-start",
         {
           tasks: [
-            {
-              agent: "a",
-              task: "Implement child a changes",
-              acceptance: {
-                level: "checked",
-                criteria: [
-                  {
-                    id: "criterion-1",
-                    must: "Implement the requested change without widening scope",
-                  },
-                ],
-                stopRules: ["Do not widen scope"],
-              },
-            },
-            {
-              agent: "b",
-              task: "Implement child b changes",
-              acceptance: {
-                level: "checked",
-                criteria: [
-                  {
-                    id: "criterion-1",
-                    must: "Implement the requested change without widening scope",
-                  },
-                ],
-                stopRules: ["Do not widen scope"],
-              },
-            },
+            { agent: "a", task: "Implement child a changes" },
+            { agent: "b", task: "Implement child b changes" },
           ],
           async: true,
         },
@@ -832,15 +810,14 @@ describe(
         "running parallel children with last-started currentStep",
         pausedResumeWaitMs,
       );
-      const runningStatus = JSON.parse(
+      const runningStatus: unknown = JSON.parse(
         fs.readFileSync(path.join(ASYNC_DIR, asyncId, "status.json"), "utf-8"),
-      ) as {
-        currentStep?: number;
-        steps?: Array<{ acceptance?: { status?: string } }>;
-      };
-      assert.equal(runningStatus.currentStep, 1);
-      assert.equal(runningStatus.steps?.[0]?.acceptance, undefined);
-      assert.equal(runningStatus.steps?.[1]?.acceptance, undefined);
+      );
+      const runningRecord = requireRecord(runningStatus, "running status");
+      assert.equal(runningRecord.currentStep, 1);
+      const runningSteps = requireRecordArray(runningRecord.steps, "running status steps");
+      assert.equal(runningSteps[0]?.acceptance, undefined);
+      assert.equal(runningSteps[1]?.acceptance, undefined);
       await waitForMockPiCall(1);
 
       const interrupted = await executor.execute(
@@ -862,32 +839,46 @@ describe(
         "paused parallel skipped acceptance ledgers",
         pausedResumeWaitMs,
       );
-      const pausedStatus = JSON.parse(
+      const pausedStatus: unknown = JSON.parse(
         fs.readFileSync(path.join(ASYNC_DIR, asyncId, "status.json"), "utf-8"),
-      ) as {
-        steps?: Array<{
-          acceptance?: {
-            status?: string;
-            effectiveAcceptance?: {
-              explicit?: boolean;
-              level?: string;
-              criteria?: Array<{ id?: string }>;
-              stopRules?: string[];
-            };
-          };
-        }>;
-      };
-      const pausedNonCurrentAcceptance = pausedStatus.steps?.[0]?.acceptance;
-      assert.equal(pausedNonCurrentAcceptance?.status, "skipped");
-      assert.equal(pausedNonCurrentAcceptance?.effectiveAcceptance?.explicit, true);
-      assert.equal(pausedNonCurrentAcceptance?.effectiveAcceptance?.level, "checked");
+      );
+      const pausedRecord = requireRecord(pausedStatus, "paused status");
+      const pausedSteps = requireRecordArray(pausedRecord.steps, "paused status steps");
+      const pausedNonCurrentAcceptance = readResultAcceptance({
+        results: [{ acceptance: pausedSteps[0]?.acceptance }],
+      });
+      const pausedCurrentAcceptance = readResultAcceptance({
+        results: [{ acceptance: pausedSteps[1]?.acceptance }],
+      });
+      assert.equal(pausedNonCurrentAcceptance.status, "skipped");
+      assert.equal(pausedCurrentAcceptance.status, "skipped");
+      const pausedEffectiveAcceptance = pausedNonCurrentAcceptance.effectiveAcceptance;
+      assert.equal(pausedEffectiveAcceptance.explicit, false);
+      assert.equal(pausedEffectiveAcceptance.level, "checked");
+      assert.deepEqual(pausedEffectiveAcceptance.inferredReason, [
+        "async write-capable or risky run",
+      ]);
       assert.deepEqual(
-        pausedNonCurrentAcceptance?.effectiveAcceptance?.criteria?.map((criterion) => criterion.id),
+        requireRecordArray(pausedEffectiveAcceptance.criteria, "paused acceptance criteria").map(
+          (criterion) => criterion.id,
+        ),
         ["criterion-1"],
       );
-      assert.deepEqual(pausedNonCurrentAcceptance?.effectiveAcceptance?.stopRules, [
-        "Do not widen scope",
-      ]);
+      assert.ok(
+        requireStringArray(
+          pausedEffectiveAcceptance.evidence,
+          "paused acceptance evidence",
+        ).includes("changed-files"),
+      );
+      assert.deepEqual(
+        requireStringArray(pausedEffectiveAcceptance.stopRules, "paused stop rules"),
+        [],
+      );
+      assert.deepEqual(
+        pausedCurrentAcceptance.effectiveAcceptance,
+        pausedEffectiveAcceptance,
+        "both paused children retain the same inferred contract",
+      );
 
       const resumed = await executor.execute(
         "resume-paused-parallel-acceptance-resume",
@@ -895,12 +886,7 @@ describe(
           action: "resume",
           id: asyncId,
           index: 0,
-          message: "Finish child a and include the resume note.",
-          acceptance: {
-            level: "attested",
-            criteria: [{ id: "criterion-2", must: "Include the requested resume note" }],
-            evidence: ["manual-notes"],
-          },
+          message: "Inspect child a and summarize the resume note, read-only.",
         },
         new AbortController().signal,
         undefined,
@@ -914,33 +900,12 @@ describe(
       const revivedId = resumed.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
       await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`), pausedResumeWaitMs);
-      const revivedPayload = JSON.parse(
+      const revivedPayload: unknown = JSON.parse(
         fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
-      ) as {
-        results?: Array<{
-          acceptance?: {
-            status?: string;
-            effectiveAcceptance?: {
-              level?: string;
-              explicit?: boolean;
-              criteria?: Array<{ id?: string }>;
-              evidence?: string[];
-              stopRules?: string[];
-            };
-          };
-        }>;
-      };
-      const revivedAcceptance = revivedPayload.results?.[0]?.acceptance?.effectiveAcceptance;
-      assert.equal(revivedPayload.results?.[0]?.acceptance?.status, "checked");
-      assert.equal(revivedAcceptance?.level, "checked");
-      assert.equal(revivedAcceptance?.explicit, true);
-      assert.deepEqual(
-        revivedAcceptance?.criteria?.map((criterion) => criterion.id),
-        ["criterion-1", "criterion-2"],
       );
-      assert.equal(revivedAcceptance?.evidence?.includes("changed-files"), true);
-      assert.equal(revivedAcceptance?.evidence?.includes("manual-notes"), true);
-      assert.deepEqual(revivedAcceptance?.stopRules, ["Do not widen scope"]);
+      const revivedAcceptance = readResultAcceptance(revivedPayload);
+      assert.equal(revivedAcceptance.status, "checked");
+      assert.deepEqual(revivedAcceptance.effectiveAcceptance, pausedEffectiveAcceptance);
     });
 
     it("resume action revives completed async runs with concise status receipts", async () => {
@@ -969,7 +934,11 @@ describe(
           ),
           "utf-8",
         );
-        const { executor } = makeExecutor();
+        const observedExecuteAsyncSingle: typeof executeAsyncSingle = (id, params) => {
+          assert.equal(params.maxOutput, undefined);
+          return executeAsyncSingle(id, params);
+        };
+        const { executor } = makeExecutor({ executeAsyncSingle: observedExecuteAsyncSingle });
 
         const result = await executor.execute(
           "resume-revive",
@@ -993,13 +962,7 @@ describe(
         assert.doesNotMatch(result.content[0]?.text ?? "", /Follow:/);
         const revivedId = result.details?.asyncId;
         assert.ok(revivedId, "expected revived async id");
-        const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-        const deadline = Date.now() + 10_000;
-        while (!fs.existsSync(resultPath)) {
-          if (Date.now() > deadline)
-            assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+        await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
       } finally {
         fs.rmSync(asyncDir, { recursive: true, force: true });
       }
@@ -1307,14 +1270,11 @@ describe(
         assert.equal(fs.existsSync(asyncDir), false);
         assert.equal(fs.existsSync(resultPath), true);
         const { executor } = makeExecutor();
-        // Explicit `dir` preserves the missing lifecycle path on the target;
-        // id-only result lookup would normalize asyncDir to null and skip the guard.
         const result = await executor.execute(
           "resume-background-result-only",
           {
             action: "resume",
             id: runId,
-            dir: asyncDir,
             message: "Continue from the saved result.",
           },
           new AbortController().signal,
@@ -1329,136 +1289,6 @@ describe(
         fs.rmSync(asyncDir, { recursive: true, force: true });
         fs.rmSync(resultPath, { force: true });
         fs.rmSync(sessionFile, { force: true });
-      }
-    });
-
-    it("resumes a completed nested result when its lifecycle status is missing without recreating the directory", async () => {
-      mockPi.onCall({ output: "revived from nested result" });
-      const runId = `nested-result-missing-status-${Date.now()}`;
-      const route = createNestedRoute(`nested-root-${Date.now()}`);
-      const nestedAsyncDir = path.join(
-        resolveTempRootDir(),
-        "nested-subagent-runs",
-        route.rootRunId,
-        runId,
-      );
-      const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
-      const parentSessionFile = path.join(tempDir, "parent.jsonl");
-      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-      fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      fs.writeFileSync(parentSessionFile, "", "utf-8");
-      writeNestedEvent(route, {
-        type: "subagent.nested.completed",
-        ts: Date.now(),
-        parentRunId: route.rootRunId,
-        parentStepIndex: 0,
-        child: {
-          id: runId,
-          parentRunId: route.rootRunId,
-          parentStepIndex: 0,
-          depth: 1,
-          path: [{ runId: route.rootRunId, stepIndex: 0 }],
-          state: "complete",
-          agent: "worker",
-          ownerState: "gone",
-          asyncDir: nestedAsyncDir,
-          sessionFile,
-        },
-      });
-      const { executor, state } = makeExecutor();
-      state.foregroundControls.set(route.rootRunId, {
-        runId: route.rootRunId,
-        mode: "single",
-        startedAt: 1,
-        updatedAt: 1,
-        nestedRoute: route,
-      });
-      state.lastForegroundControlId = route.rootRunId;
-      try {
-        const context = makeMinimalCtx(tempDir);
-        context.sessionManager.getSessionFile = () => parentSessionFile;
-        const result = await executor.execute(
-          "resume-nested-result-missing-status",
-          { action: "resume", id: runId, message: "Continue the nested child." },
-          new AbortController().signal,
-          undefined,
-          context,
-        );
-
-        assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
-        await waitForRevivedAsyncResult(result);
-        assert.equal(fs.existsSync(nestedAsyncDir), false);
-      } finally {
-        fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
-        fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
-        fs.rmSync(parentSessionFile, { force: true });
-        fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
-      }
-    });
-
-    it("rejects a paused nested result when its lifecycle status is missing without recreating the directory", async () => {
-      const runId = `nested-paused-missing-status-${Date.now()}`;
-      const route = createNestedRoute(`nested-root-${Date.now()}`);
-      const nestedAsyncDir = path.join(
-        resolveTempRootDir(),
-        "nested-subagent-runs",
-        route.rootRunId,
-        runId,
-      );
-      const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
-      const parentSessionFile = path.join(tempDir, "parent.jsonl");
-      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-      fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
-      fs.writeFileSync(sessionFile, "", "utf-8");
-      fs.writeFileSync(parentSessionFile, "", "utf-8");
-      writeNestedEvent(route, {
-        type: "subagent.nested.completed",
-        ts: Date.now(),
-        parentRunId: route.rootRunId,
-        parentStepIndex: 0,
-        child: {
-          id: runId,
-          parentRunId: route.rootRunId,
-          parentStepIndex: 0,
-          depth: 1,
-          path: [{ runId: route.rootRunId, stepIndex: 0 }],
-          state: "paused",
-          agent: "worker",
-          ownerState: "gone",
-          asyncDir: nestedAsyncDir,
-          sessionFile,
-        },
-      });
-      const { executor, state } = makeExecutor();
-      state.foregroundControls.set(route.rootRunId, {
-        runId: route.rootRunId,
-        mode: "single",
-        startedAt: 1,
-        updatedAt: 1,
-        nestedRoute: route,
-      });
-      state.lastForegroundControlId = route.rootRunId;
-      try {
-        const context = makeMinimalCtx(tempDir);
-        context.sessionManager.getSessionFile = () => parentSessionFile;
-        const result = await executor.execute(
-          "resume-nested-paused-missing-status",
-          { action: "resume", id: runId, message: "Continue the paused nested child." },
-          new AbortController().signal,
-          undefined,
-          context,
-        );
-
-        assert.equal(result.isError, true);
-        assert.match(result.content[0]?.text ?? "", /skipped acceptance ledger could not be read/);
-        assert.equal(fs.existsSync(nestedAsyncDir), false);
-        assert.equal(mockPi.callCount(), 0);
-      } finally {
-        fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
-        fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
-        fs.rmSync(parentSessionFile, { force: true });
-        fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
       }
     });
 
@@ -1502,13 +1332,7 @@ describe(
       assert.equal(reviveArgs[reviveArgs.indexOf("--session") + 1], selectedSession);
       const revivedId = revived.details?.asyncId;
       assert.ok(revivedId, "expected revived async id");
-      const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
-      const deadline = Date.now() + 10_000;
-      while (!fs.existsSync(resultPath)) {
-        if (Date.now() > deadline)
-          assert.fail(`Timed out waiting for revived result file: ${resultPath}`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await waitForAsyncResultFile(revivedId, scaleTestTimeout(10_000));
     });
   },
 );

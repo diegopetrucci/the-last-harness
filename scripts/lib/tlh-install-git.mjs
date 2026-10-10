@@ -414,6 +414,42 @@ function gitSucceeds(config, targetDir, args, io = {}, env = {}) {
     });
     return !result.error && result.status === 0;
 }
+export function readVerifiedGitCommitMetadata(config, targetDir, io = {}) {
+    if (config.dryRun)
+        return {};
+    const spawnCapture = io.spawnCapture || defaultSpawnCapture;
+    const readGit = (args) => spawnCapture(config, ["git", "-C", targetDir, ...args], {
+        allowFailure: true,
+        env: gitEnvironment(),
+    });
+    const topLevelResult = readGit(["rev-parse", "--show-toplevel"]);
+    if (topLevelResult.error || topLevelResult.status !== 0)
+        return {};
+    const topLevel = topLevelResult.stdout.trim();
+    if (!topLevel)
+        return {};
+    try {
+        if (realpathForCompare(topLevel) !== realpathForCompare(targetDir))
+            return {};
+    }
+    catch {
+        return {};
+    }
+    const metadata = {};
+    const subjectResult = readGit(["log", "-1", "--format=%s"]);
+    if (!subjectResult.error && subjectResult.status === 0) {
+        const subject = subjectResult.stdout.trim();
+        if (subject)
+            metadata.commitSubject = subject;
+    }
+    const shaResult = readGit(["rev-parse", "HEAD"]);
+    if (!shaResult.error && shaResult.status === 0) {
+        const commitSha = shaResult.stdout.trim().toLowerCase();
+        if (/^[0-9a-f]{40}$/.test(commitSha))
+            metadata.commitSha = commitSha;
+    }
+    return metadata;
+}
 function checkoutStatus(config, targetDir, io, env = {}) {
     return gitOutput(config, targetDir, ["status", "--porcelain", "--untracked-files=all", "--", ".", ROOT_NODE_MODULES_PATHSPEC], io, env);
 }

@@ -8,9 +8,10 @@
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
  * Toggle: async parameter (default: false)
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
+ * Config file: <getAgentDir()>/extensions/subagent/config.json (isolated TLH profile)
  */
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -46,7 +47,15 @@ import {
   externalSubagentCoexistenceWarning,
   findConfiguredExternalSubagentPackages,
 } from "./external-package-guard.ts";
-import { cleanupRuntimeDirs } from "./runtime-cleanup.ts";
+import {
+  CLEANUP_MARKER_FRESH_WINDOW_MS,
+  CLEANUP_MARKER_LEASE_OFFSET_MS,
+  RUNTIME_CLEANUP_MARKER_NAME,
+} from "./runtime-cleanup-constants.ts";
+import {
+  resolveRunnerModulePath,
+  resolveRunnerNodeCommand,
+} from "../runs/background/async-execution.ts";
 import {
   createSubagentLiveDetailController,
   SUBAGENT_LIVE_DETAIL_SHORTCUT,
@@ -58,8 +67,6 @@ import {
   renderSubagentResult,
 } from "../tui/render.ts";
 import { SubagentParams } from "./schemas.ts";
-import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.ts";
-import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.ts";
 import {
   createSubagentExecutor,
   normalizeProjectAgentAccess,
@@ -72,13 +79,17 @@ import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
+  isSubagentCompletionBatchDetails,
+  isSubagentNotifyDetails,
   MAX_DISPLAY_SUMMARY_CHARS,
+  type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
+import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.ts";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
@@ -87,7 +98,9 @@ import {
   ASYNC_DIR,
   RESULTS_DIR,
   SLASH_TEXT_RESULT_TYPE,
+  TEMP_ROOT_DIR,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
   SUBAGENT_ASYNC_STARTED_EVENT,
   SUBAGENT_CONTROL_EVENT,
   WIDGET_KEY,
@@ -99,32 +112,19 @@ import {
   SUBAGENT_CONTROL_MESSAGE_TYPE,
   type SubagentControlMessageDetails,
 } from "./control-notices.ts";
+import { registerCacheWarmingDecision } from "./cache-warming-decision.ts";
+import { announceBundledSubagentRestoreProvider } from "../../../shared/subagent-restore-contract.ts";
 
 export { loadConfig } from "./config.ts";
 
 type PiToolWithInternalFailure = "subagent";
 
 /**
- * Apply the same session boundary as createAsyncJobTracker to the heartbeat's
- * open event payloads. Only sessionId is consumed here; unknown fields remain
- * untouched. A missing sessionId is accepted only when there is no string
- * current session ID, matching the tracker rule without inventing attribution.
- */
-function isCurrentHeartbeatEvent(
-  data: unknown,
-  currentSessionId: string | null,
-): data is Record<string, unknown> {
-  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
-  return (
-    typeof currentSessionId !== "string" ||
-    ("sessionId" in data && data.sessionId === currentSessionId)
-  );
-}
-
-/**
- * Pi 0.83 represents tool failure separately from AgentToolResult. Keep the
- * extension's rich internal result until execute() returns, then strip the
- * private flag and restore it through the supported tool_result patch hook.
+ * Legacy bridge: through Pi 0.87.1, AgentToolResult had no `isError` field;
+ * TLH stripped the internal flag and restored it via the tool_result patch hook.
+ * Pi 0.99.x adds an optional `isError` consumed natively by agent-core.
+ * The bridge is retained for minimal-change compatibility; no behaviour change
+ * is needed because a required boolean is assignable to an optional one.
  */
 export function createSubagentToolResultBridge() {
   const failedResults = new Map<
@@ -199,6 +199,81 @@ function ensureAccessibleDir(dirPath: string): void {
     }
     fs.mkdirSync(dirPath, { recursive: true });
     fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Detached runtime-cleanup scheduler
+// ---------------------------------------------------------------------------
+
+/** Minimal spawn signature used by the detached cleanup runner. */
+export type SpawnRunnerFn = (
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+) => { on(event: string, handler: (err: Error) => void): void; unref(): void };
+
+export interface DetachedRuntimeCleanupDeps {
+  now?: () => number;
+  spawnFn?: SpawnRunnerFn;
+  markerPath?: string;
+}
+
+/**
+ * Schedule a best-effort, rate-limited detached cleanup of stale runtime dirs.
+ *
+ * If a fresh marker exists the call is a no-op. Otherwise the marker is
+ * backdated as a short lease, then the runtime-cleanup-runner is spawned
+ * detached and unref()-ed. Any spawn failure is silently swallowed so that
+ * registration never throws.
+ */
+export function scheduleDetachedRuntimeCleanup(deps: DetachedRuntimeCleanupDeps = {}): void {
+  const nowMs = deps.now?.() ?? Date.now();
+  const markerPath = deps.markerPath ?? path.join(TEMP_ROOT_DIR, RUNTIME_CLEANUP_MARKER_NAME);
+
+  // Check whether an existing marker is fresh (0 <= age < 24h).
+  try {
+    const stat = fs.statSync(markerPath);
+    const age = nowMs - stat.mtimeMs;
+    if (age >= 0 && age < CLEANUP_MARKER_FRESH_WINDOW_MS) return;
+  } catch {
+    // Missing marker → treat as stale.
+  }
+
+  // Write/touch marker backdated to act as a short lease.
+  const leaseDate = new Date(nowMs - CLEANUP_MARKER_LEASE_OFFSET_MS);
+  try {
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    try {
+      fs.utimesSync(markerPath, leaseDate, leaseDate);
+    } catch {
+      fs.writeFileSync(markerPath, "");
+      fs.utimesSync(markerPath, leaseDate, leaseDate);
+    }
+  } catch {
+    // Can't persist the lease; proceed anyway — a missed write is recoverable.
+  }
+
+  // Resolve runner path (.ts in source loaders, .js in generated runtime).
+  const runner = resolveRunnerModulePath(import.meta.url, "runtime-cleanup-runner");
+  const nodeCommand = resolveRunnerNodeCommand();
+  const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner] : [runner];
+
+  const spawnFn: SpawnRunnerFn = deps.spawnFn ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+  try {
+    const proc = spawnFn(nodeCommand, runnerArgs, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: process.env,
+    });
+    proc.on("error", (err) => {
+      // Best-effort — spawn failures must not surface to the parent session.
+      void err;
+    });
+    proc.unref();
+  } catch {
+    // Sync spawn failure: silently swallow so registration never throws.
   }
 }
 
@@ -364,23 +439,15 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   ensureAccessibleDir(RESULTS_DIR);
   ensureAccessibleDir(ASYNC_DIR);
-  cleanupRuntimeDirs();
+  scheduleDetachedRuntimeCleanup();
 
+  // This is the provenance boundary for the parent extension. Detached
+  // runners receive this immutable snapshot through their config and must not
+  // reread install/runtime state when they complete.
+  const telemetryProvenance = captureSubagentTelemetryProvenance();
   const config = loadConfig();
   const artifactConfig = resolveArtifactConfig(config.artifacts);
   const executionPolicy = resolveExecutionPolicy(config.execution);
-  const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
-  // Lazily captured session context for modelRegistry access.
-  // ctx is not available at extension setup; we capture it from the session_start
-  // event handler and hold a reference so the heartbeat controller can resolve
-  // the live registry at beat time — the same pattern used for control notices.
-  let heartbeatSessionCtx: Pick<
-    import("@earendil-works/pi-coding-agent").ExtensionContext,
-    "modelRegistry"
-  > | null = null;
-  const hbWiring = createHeartbeatWiring(pi, config, {
-    getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
-  });
   const tempArtifactsDir = getArtifactsDir(null);
   cleanupAllArtifactDirs(artifactConfig.cleanupDays);
   const liveDetailController = createSubagentLiveDetailController();
@@ -447,12 +514,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   primeExistingResults();
 
   const runtimeCleanup = () => {
-    // Disarm heartbeat gap (with summary) on extension reload so any active gap is
-    // closed before the new extension instance takes over.  The session is still
-    // active at this point so the session entry CAN be emitted.
-    // Then destroy to abort any in-flight beat and fully tear down the controller.
-    hbWiring.disarm();
-    hbWiring.destroy();
     removeLiveDetailTerminalInput();
     liveDetailController.clearToolRows();
     toolResultBridge.clear();
@@ -478,7 +539,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     getSubagentSessionRoot,
     expandTilde,
     discoverAgents,
-    getHeartbeatSummary: () => hbWiring.getSessionSummary(),
+    telemetryProvenance,
     getProjectAgentAccess: (request) =>
       normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
   });
@@ -494,12 +555,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     return new Text(content, 0, 0);
   });
 
-  pi.registerMessageRenderer<SubagentNotifyDetails>(
+  pi.registerMessageRenderer<SubagentNotifyDetails | SubagentCompletionBatchDetails>(
     "subagent-notify",
     (message, options, theme) => {
       const content = typeof message.content === "string" ? message.content : "";
       const parsedContent = parseSubagentNotifyContent(content);
-      const structuredDetails = message.details as SubagentNotifyDetails | undefined;
+      const rawStructuredDetails = message.details as unknown;
+      const structuredDetails = isSubagentCompletionBatchDetails(rawStructuredDetails)
+        ? undefined
+        : isSubagentNotifyDetails(rawStructuredDetails)
+          ? rawStructuredDetails
+          : undefined;
       const parsedSession =
         parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
           ? {
@@ -560,7 +626,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
         ? trimmedPreview.split("\n").filter((line) => line.trim())
         : [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
       for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-        text += `\n  ${theme.fg("dim", `⎿  ${line}`)}`;
+        text += `\n  ${theme.fg("dim", `   ${line}`)}`;
       }
       if (options.expanded) {
         for (const line of referenceLines) {
@@ -658,6 +724,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
         { expanded },
         theme,
         frame,
+        Date.now(),
       );
     },
   });
@@ -674,43 +741,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     },
   });
 
-  registerSlashCommands(pi, state, config, () => hbWiring.getSessionSummary());
-
-  // Heartbeat-specific Pi event hooks: only register when heartbeat is enabled.
-  // When disabled, no before_provider_request payload capture (memory/PII risk)
-  // and no idle-state or model-change hooks.  The wiring is already a no-op
-  // when disabled, but not registering these hooks avoids any unnecessary
-  // callbacks and satisfies the zero-hook requirement.
-  if (resolvedHbConfig.enabled) {
-    // Capture provider payload for ghost-stream replay.
-    pi.on("before_provider_request", (event, ctx) => {
-      if (ctx.model) {
-        hbWiring.onProviderRequest(event.payload, ctx.model);
-      }
-    });
-
-    // Disarm on real turn start (before_agent_start) and notify the
-    // controller of idle-state transitions.
-    pi.on("before_agent_start", () => {
-      hbWiring.onIdle(false);
-      hbWiring.disarm();
-    });
-    pi.on("agent_settled", () => {
-      hbWiring.onIdle(true);
-      // Re-arm if live async runs are still active — the gap was disarmed during
-      // the parent turn and must resume once the parent is idle again.
-      hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-    });
-
-    // Disarm on model or thinking-level changes (prompt-cache state
-    // may shift when provider/parameters change).
-    pi.on("model_select", () => {
-      hbWiring.disarm();
-    });
-    pi.on("thinking_level_select", () => {
-      hbWiring.disarm();
-    });
-  }
+  registerSlashCommands(pi, state, config);
+  registerCacheWarmingDecision(pi, state);
 
   const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
   const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
@@ -725,29 +757,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
     }
   }
-  // Register heartbeat async-lifecycle handlers BEFORE registerSubagentNotify so
-  // that disarm fires synchronously before the wake nudge in notify.ts.
-  // Only subscribe when heartbeat is enabled: when disabled, the wiring is a
-  // no-op but these subscriptions still add live callbacks for every async event.
-  const hbCompleteHandler = (data: unknown) => {
-    if (!isCurrentHeartbeatEvent(data, state.currentSessionId)) return;
-    const id = data.id;
-    if (typeof id !== "string" || id.length === 0) return;
-    hbWiring.notifyAsyncComplete(id, state.asyncJobs);
-  };
-  const hbStartedHandler = (data: unknown) => {
-    if (!isCurrentHeartbeatEvent(data, state.currentSessionId)) return;
-    const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
-    hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
-  };
-  const noop = () => {};
-  const hbCompleteUnsub = resolvedHbConfig.enabled
-    ? pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, hbCompleteHandler)
-    : noop;
-  const hbStartedUnsub = resolvedHbConfig.enabled
-    ? pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, hbStartedHandler)
-    : noop;
-
   registerSubagentNotify(pi, state, {});
 
   const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
@@ -772,8 +781,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     });
   };
   const eventUnsubscribes = [
-    hbCompleteUnsub,
-    hbStartedUnsub,
     pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
     pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
     pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
@@ -804,83 +811,70 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     }
   };
 
-  const resetSessionState = (ctx: ExtensionContext) => {
-    toolResultBridge.clear();
-    state.baseCwd = ctx.cwd;
-    state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-    // Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
-    // Only set in the root session (the interactive UI session), not in
-    // child subagent processes — children inherit the parent's value
-    // through the process environment at spawn time and must not overwrite
-    // it with their own session identity.
-    if (!process.env[SUBAGENT_CHILD_ENV]) {
-      const sessionId = ctx.sessionManager.getSessionId();
-      if (sessionId) {
-        process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
-      }
+  const emitRestoreFailureSnapshot = (): void => {
+    const sessionId = state.currentSessionId;
+    if (!sessionId) return;
+    try {
+      pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, { sessionId, jobs: [] });
+    } catch (error) {
+      console.error("Failed to publish the async restore failure snapshot:", error);
     }
-    state.lastUiContext = ctx;
-    cleanupSessionArtifacts(ctx);
-    clearPendingForegroundControlNotices(state);
-    liveDetailController.clearToolRows();
-    resetJobs(ctx);
-    restoreActiveJobs(ctx);
-    primeExistingResults();
+  };
+
+  const resetSessionState = (ctx: ExtensionContext) => {
+    let restoreAttempted = false;
+    try {
+      toolResultBridge.clear();
+      state.baseCwd = ctx.cwd;
+      // Do not retain a prior session identity if resolving the new one fails.
+      state.currentSessionId = null;
+      state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+      // Set PI_SUBAGENT_PARENT_SESSION for permission-system forwarding.
+      // Only set in the root session (the interactive UI session), not in
+      // child subagent processes — children inherit the parent's value
+      // through the process environment at spawn time and must not overwrite
+      // it with their own session identity.
+      if (!process.env[SUBAGENT_CHILD_ENV]) {
+        const sessionId = ctx.sessionManager.getSessionId();
+        if (sessionId) {
+          process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+        }
+      }
+      state.lastUiContext = ctx;
+      cleanupSessionArtifacts(ctx);
+      clearPendingForegroundControlNotices(state);
+      liveDetailController.clearToolRows();
+      resetJobs(ctx);
+      restoreAttempted = true;
+      restoreActiveJobs(ctx);
+      primeExistingResults();
+    } catch (error) {
+      // restoreActiveJobs publishes its own empty snapshot for scan/restore
+      // failures. This covers only earlier local setup failures, preserving the
+      // original exception while giving TLH a session-scoped failure handoff.
+      if (!restoreAttempted) emitRestoreFailureSnapshot();
+      throw error;
+    }
   };
 
   pi.on("session_start", (_event, ctx) => {
-    if (resolvedHbConfig.enabled) {
-      // Reset session-scoped state (failure breaker, consecutive failures, session
-      // totals) for the new session.  Must run before capturing ctx so stale
-      // state from the previous session does not persist into this one.
-      hbWiring.resetSession();
-      // Heartbeat: capture live session ctx so the controller can resolve the
-      // model registry lazily at beat time (same captured-ctx pattern as control
-      // notices; ctx is not available at extension setup time).
-      heartbeatSessionCtx = ctx;
-      // Forward initial idle state. Use optional call in case the ctx is a
-      // minimal stub in tests.
-      hbWiring.onIdle((ctx as { isIdle?: () => boolean }).isIdle?.() ?? true);
-    }
     controlNoticeSessionContext = ctx;
     removeLiveDetailTerminalInput();
     resetSessionState(ctx);
-    if (resolvedHbConfig.enabled) {
-      // Re-arm heartbeat for any live async jobs restored by resetSessionState.
-      hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-    }
     installLiveDetailTerminalInput(ctx);
     supervisorChannel.start();
   });
 
-  // Heartbeat: synchronously disarm (with session-entry disclosure) before
-  // session replacement or fork so beat-bearing gaps are never silently lost.
-  // Only register when enabled: these are heartbeat-specific hooks.
-  if (resolvedHbConfig.enabled) {
-    pi.on("session_before_switch", () => {
-      hbWiring.disarm();
-    });
-    pi.on("session_before_fork", () => {
-      hbWiring.disarm();
-    });
-  }
-
   // Tree navigation and compaction rebuild ToolExecutionComponents with fresh
   // renderer state. Release old row identities before Pi renders the new chat.
-  // Heartbeat: disarm on tree/compact since prompt-cache state may have changed.
   pi.on("session_tree", () => {
-    hbWiring.disarm();
     liveDetailController.clearToolRows();
   });
   pi.on("session_compact", () => {
-    hbWiring.disarm();
     liveDetailController.clearToolRows();
   });
 
   pi.on("session_shutdown", () => {
-    // Heartbeat: destroy (cancel timers, abort in-flight, close gap without
-    // session entry since session is going away).
-    hbWiring.destroy();
     removeLiveDetailTerminalInput();
     toolResultBridge.clear();
     delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -916,4 +910,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       if (!isStaleExtensionContextError(error)) throw error;
     }
   });
+
+  // TLH loads first and resets this marker. Announce only after every
+  // registration step above succeeds, so a partial factory failure leaves TLH
+  // free to use its fallback artifact scan.
+  announceBundledSubagentRestoreProvider();
 }

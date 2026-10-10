@@ -92,10 +92,6 @@ function text(result: Awaited<ReturnType<ReturnType<typeof makeExecutor>["execut
   return result.content[0]?.type === "text" ? result.content[0].text : "";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (a) Removed actions return Unknown-action error
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("executor: removed actions return Unknown-action error", () => {
   it("returns Unknown-action for append-step", async () => {
     const executor = makeExecutor(createState());
@@ -156,10 +152,6 @@ describe("executor: removed actions return Unknown-action error", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (b) action='steer' still routes to async path
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("executor: direct saved-chain inputs fail closed", () => {
   it("rejects chain, chainName, chainDir, and clarify with field-specific omit guidance", async () => {
     const executor = makeExecutor(createState());
@@ -207,10 +199,6 @@ describe("executor: direct saved-chain inputs fail closed", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// (b) action='steer' still routes to async path
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe("executor: steer still routes correctly", () => {
   it("queues steering for a running async child by id", async () => {
     const state = createState();
@@ -247,10 +235,6 @@ describe("executor: steer still routes correctly", () => {
     }
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// (c) Removed schedule action fails closed through the full extension stack
-// ─────────────────────────────────────────────────────────────────────────────
 
 function parentToolEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };

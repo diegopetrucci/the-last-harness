@@ -3,6 +3,7 @@ import { basename } from "node:path";
 
 import {
   getAgentDir,
+  parseArgs,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -108,7 +109,10 @@ import {
   isThinkingLevel,
   setExtensionThinkingLevel,
 } from "./thinking.js";
-import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import {
+  blockForcedSystemPrompt,
+  setStructuredChildPromptRuntime,
+} from "../shared/subagent-child-boundary.js";
 import type { ProjectAgentGuidanceInventory } from "../shared/project-agent-guidance.js";
 import {
   buildChildSubagentSystemPrompt,
@@ -157,6 +161,11 @@ type TlhPrimaryAgentRuntimeOptions = {
    */
   now?: () => number;
   /**
+   * Injectable process.argv for testing launch-flag detection.
+   * Defaults to process.argv.
+   */
+  argv?: string[];
+  /**
    * AgentSession exported by Pi's virtual bundled module when the extension
    * loader provides one. The model persistence seam also validates/uses the
    * published bundle path when this optional route is unavailable.
@@ -172,7 +181,7 @@ type SessionThinkingOverride = {
 };
 
 export type TlhPrimaryAgentRuntime = {
-  applySessionStart(ctx: ExtensionContext): Promise<void>;
+  applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void>;
   projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
   currentPrimaryAgentLabel(): string;
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
@@ -218,6 +227,7 @@ function registerChildSubagentRuntime(
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    blockForcedSystemPrompt(event.systemPromptOptions);
     const settings = getTlhGlobalSettings(ctx.cwd);
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
@@ -228,9 +238,8 @@ function registerChildSubagentRuntime(
     ]
       .filter(Boolean)
       .join("\n\n");
-    return {
-      systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
-    };
+    setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "root", [additions]);
+    return undefined;
   });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -262,9 +271,12 @@ function createTlhPrimaryAgentRuntime(
     projectAgentLoader?: ProjectAgentSnapshotLoader;
     projectDefaultsLoader?: ProjectDefaultsLoader;
     now?: () => number;
+    argv?: string[];
   } = {},
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
   const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
+  const argv = runtimeOptions.argv ?? process.argv;
+  const parsedLaunchArgs = parseArgs(argv.slice(2));
   const warned = new Set<string>();
   const noticed = new Set<string>();
   const primaryToolState = createPrimaryToolState();
@@ -1080,10 +1092,6 @@ function createTlhPrimaryAgentRuntime(
       }
     }
 
-    // An out-of-band model change must not leave the session-only gate stuck on another model.
-    if (sessionOnlyModel && !preservesSessionOnlyModel) {
-      updateSessionOnlyModel(undefined);
-    }
     if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const activePrimaryModel =
       shouldApplyModel && !preservesSessionOnlyModel
@@ -1410,7 +1418,7 @@ function createTlhPrimaryAgentRuntime(
     });
   }
 
-  async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+  async function applySessionStart(ctx: ExtensionContext, reason?: string): Promise<void> {
     const sessionStartOperation = projectAgentLifecycle.beginSessionStart();
     noticed.clear();
     // Session-only model intent does not cross session_start. This includes
@@ -1418,17 +1426,26 @@ function createTlhPrimaryAgentRuntime(
     // process-global call belongs to the new session.
     beginModelSelectionSession(ctx);
     updateSessionOnlyModel(undefined);
+    // On startup, --model locks the CLI-resolved model as the session-only choice.
+    if (reason === "startup") {
+      if (parsedLaunchArgs.model !== undefined && ctx.model) {
+        updateSessionOnlyModel(ctx.model);
+      }
+    }
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     clearSessionThinkingOverride();
-    // Treat session_start as a fresh notification scope even if the host did
-    // not deliver the prior session_shutdown event.
-    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
-    noticed.clear();
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     activateTlhTicketSessionScope(ctx.cwd);
     await projectAgentLifecycle.loadSessionResources(ctx, sessionStartOperation);
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     syncPrimaryAgentState(ctx);
+    // On startup, --thinking locks the CLI thinking level over packaged defaults.
+    if (reason === "startup" && parsedLaunchArgs.thinking !== undefined) {
+      const level: string | undefined = ctx.thinkingLevel;
+      if (level !== undefined && isThinkingLevel(level)) {
+        recordUserThinkingLevel(level);
+      }
+    }
     if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     await applyPrimaryDefaults(ctx, {
       warnOnMissing: false,
@@ -1874,6 +1891,7 @@ export function registerTlhPrimaryAgentRuntime(
       projectAgentLoader: options.projectAgentLoader,
       projectDefaultsLoader: options.projectDefaultsLoader,
       now: options.now,
+      argv: options.argv,
     },
   );
   runtime.registerCommands();

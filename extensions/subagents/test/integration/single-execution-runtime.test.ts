@@ -15,23 +15,40 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
   available,
   runSync,
   createSubagentExecutor,
+  makeExecutor,
   type ExecutionModule,
   type ExecuteAsyncSingleOverride,
   type ExecutorToolResult,
 } from "../support/single-execution-fixtures.ts";
-import { ASYNC_DIR } from "../../src/shared/types.ts";
-import type { AsyncStatus } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  RESULTS_DIR,
+  SUBAGENT_ASYNC_STARTED_EVENT,
+  getAsyncConfigPath,
+} from "../../src/shared/types.ts";
+import type { AsyncStatus, Details, SubagentToolResult } from "../../src/shared/types.ts";
 import {
   buildSkippedAcceptanceLedger,
   resolveEffectiveAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
-import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
+import {
+  buildSubagentRunTelemetry,
+  type SubagentTelemetryProvenance,
+} from "../../src/shared/telemetry.ts";
+import {
+  waitForAsyncResultFile,
+  waitForMockPiCall,
+  startedMockPiPids,
+  waitForPidsToExit,
+} from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { mockAssistantMessage, readPersistedStatus } from "../support/single-execution-fixtures.ts";
 
@@ -74,32 +91,6 @@ describe(
       });
     }
 
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
     it(
       "uses the human-owned run ceiling for foreground execution",
       {
@@ -119,6 +110,7 @@ describe(
         };
         mockPi.onCall({ output: "policy" });
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
           { execution: { maxRunTimeMs: 1_234 } },
           undefined,
@@ -157,6 +149,7 @@ describe(
         };
         mockPi.onCall({ output: "role policy" });
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 600 })],
           { execution: { maxRunTimeMs: false } },
           undefined,
@@ -182,7 +175,7 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor();
+        const executor = makeExecutor(tempDir);
         const cases = [
           { agent: "echo", task: "Task", timeoutMs: 1 },
           { agent: "echo", task: "Task", async: true, timeoutMs: 1 },
@@ -253,6 +246,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo")],
             {},
             state,
@@ -282,6 +276,129 @@ describe(
           assert.equal(state.foregroundRuns.has(sourceRunId), false);
         } finally {
           fs.rmSync(sessionFile, { force: true });
+        }
+      },
+    );
+
+    it(
+      "carries source telemetry provenance and continuation lineage through an async resume",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const sourceRunId = `resume-telemetry-${Date.now().toString(36)}-${process.pid}`;
+        const asyncDir = path.join(ASYNC_DIR, sourceRunId);
+        const sessionFile = path.join(asyncDir, "source-session.jsonl");
+        const sourceProvenance: SubagentTelemetryProvenance = {
+          tlhVersion: "source-tlh",
+          piVersion: "source-pi",
+          installGeneration: "source-generation",
+          loadedAt: 101,
+        };
+        const currentProvenance: SubagentTelemetryProvenance = {
+          tlhVersion: "current-tlh",
+          piVersion: "current-pi",
+          installGeneration: "current-generation",
+          loadedAt: 202,
+        };
+        const sourceTelemetry = buildSubagentRunTelemetry({
+          runId: sourceRunId,
+          execution: "async",
+          mode: "single",
+          steps: [
+            {
+              index: 0,
+              agent: "echo",
+              outcome: { state: "completed" },
+            },
+          ],
+          provenance: sourceProvenance,
+          controls: {
+            needsAttentionAfterMs: 30_000,
+            failedToolAttemptsBeforeAttention: 3,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event"],
+          },
+          startedAt: 1_000,
+          endedAt: 1_100,
+          outcome: { state: "completed" },
+        });
+        fs.mkdirSync(asyncDir, { recursive: true });
+        fs.writeFileSync(sessionFile, `{"type":"session","id":"${sourceRunId}"}\n`, "utf-8");
+        const status: AsyncStatus = {
+          runId: sourceRunId,
+          mode: "single",
+          state: "complete",
+          startedAt: 1_000,
+          endedAt: 1_100,
+          cwd: tempDir,
+          steps: [
+            {
+              agent: "echo",
+              status: "complete",
+              startedAt: 1_000,
+              endedAt: 1_100,
+              sessionFile,
+              exitCode: 0,
+            },
+          ],
+          telemetry: sourceTelemetry,
+        };
+        fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+
+        const pi = { events: createEventBus(), getSessionName: () => undefined };
+        let continuationRunId: string | undefined;
+        let observedConfig: SubagentRunConfig | undefined;
+        pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => {
+          if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+          const id = (payload as { id?: unknown }).id;
+          if (typeof id !== "string") return;
+          continuationRunId = id;
+          const configPath = getAsyncConfigPath(id);
+          if (fs.existsSync(configPath)) {
+            observedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8")) as SubagentRunConfig;
+          }
+        });
+        mockPi.onCall({ output: "resumed continuation complete" });
+        try {
+          const result = await makeExecutor(
+            tempDir,
+            [makeAgent("echo")],
+            {},
+            undefined,
+            undefined,
+            undefined,
+            currentProvenance,
+            pi,
+          ).execute(
+            "resume-telemetry-call",
+            { action: "resume", id: sourceRunId, message: "Continue with telemetry context." },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.ok(continuationRunId);
+          assert.ok(observedConfig);
+          assert.deepEqual(observedConfig.telemetry?.provenance, sourceProvenance);
+          assert.deepEqual(observedConfig.telemetry?.lineage, {
+            continuationFrom: { sourceRunId, sourceStepIndex: 0 },
+          });
+          const persisted = JSON.parse(
+            fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+          ) as AsyncStatus;
+          assert.deepEqual(persisted.telemetry?.provenance, sourceProvenance);
+          assert.deepEqual(persisted.telemetry?.lineage?.continuations, [
+            { sourceStepIndex: 0, continuationRunId },
+          ]);
+          await waitForAsyncResultFile(continuationRunId);
+        } finally {
+          fs.rmSync(asyncDir, { recursive: true, force: true });
+          if (continuationRunId) {
+            fs.rmSync(path.join(ASYNC_DIR, continuationRunId), { recursive: true, force: true });
+            fs.rmSync(path.join(RESULTS_DIR, `${continuationRunId}.json`), { force: true });
+          }
         }
       },
     );
@@ -330,6 +447,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 2_000 })],
             { execution: { maxRunTimeMs: 1_234 } },
             state,
@@ -400,6 +518,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 100 })],
             { execution: { maxRunTimeMs: false } },
             state,
@@ -488,11 +607,13 @@ describe(
           ],
         });
         const ctx = makeMinimalCtx(tempDir);
-        let snapshotReads = 0;
-        const originalGetAvailable = ctx.modelRegistry.getAvailable.bind(ctx.modelRegistry);
-        ctx.modelRegistry.getAvailable = () => {
-          snapshotReads += 1;
-          return originalGetAvailable();
+        let snapshotStatusReads = 0;
+        const originalGetError = ctx.modelRegistry.getError.bind(ctx.modelRegistry);
+        // getError is part of the supported registry evidence surface and is
+        // only reached after the resume preflight asks for a model snapshot.
+        ctx.modelRegistry.getError = () => {
+          snapshotStatusReads += 1;
+          return originalGetError();
         };
         let continuationCalls = 0;
         const executeAsyncSingle: ExecuteAsyncSingleOverride = () => {
@@ -501,6 +622,7 @@ describe(
         };
         try {
           const result = await makeExecutor(
+            tempDir,
             [makeAgent("echo", { maxExecutionTimeMs: 500 })],
             { execution: { maxRunTimeMs: 10_000 } },
             state,
@@ -519,7 +641,7 @@ describe(
             result.content[0]?.text,
             "Agent 'echo' has exhausted its maxExecutionTimeMs ceiling after 700ms of active runtime.",
           );
-          assert.equal(snapshotReads, 0);
+          assert.equal(snapshotStatusReads, 0);
           assert.equal(continuationCalls, 0);
           assert.equal(mockPi.callCount(), 0);
           assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
@@ -548,7 +670,12 @@ describe(
           foregroundControls: new Map(),
           lastForegroundControlId: null,
         };
-        const executor = makeExecutor([makeAgent("echo", { maxExecutionTimeMs })], {}, state);
+        const executor = makeExecutor(
+          tempDir,
+          [makeAgent("echo", { maxExecutionTimeMs })],
+          {},
+          state,
+        );
         const runPromise = executor.execute(
           "producer-pause-run",
           { agent: "echo", task: "Pause after starting" },
@@ -557,7 +684,7 @@ describe(
           makeMinimalCtx(tempDir),
         );
 
-        const readyDeadline = Date.now() + 5_000;
+        const readyDeadline = Date.now() + scaleTestTimeout(5_000);
         while (Date.now() < readyDeadline) {
           if (
             mockPi.callCount() === 1 &&
@@ -596,6 +723,16 @@ describe(
         assert.equal(result.isError, undefined);
         assert.equal(result.details?.timeoutMs, maxExecutionTimeMs - activeRuntimeMs);
         assert.ok(result.details?.deadlineAt !== undefined);
+        // The resume action spawns a continuation async runner (fire-and-forget).
+        // Wait for the continuation mock-pi call to appear and then for all mock-pi
+        // processes to exit so that afterEach's removeTempDir does not race with
+        // in-progress file writes inside tempDir.
+        await waitForMockPiCall(mockPi, 1, scaleTestTimeout(10_000));
+        await waitForPidsToExit(
+          startedMockPiPids(mockPi),
+          "resume-timeout-forwarding cleanup",
+          scaleTestTimeout(15_000),
+        );
       },
     );
 
@@ -675,6 +812,7 @@ describe(
           lastForegroundControlId: null,
         };
         const initialExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs })],
           {},
           initialState,
@@ -751,6 +889,7 @@ describe(
           lastForegroundControlId: null,
         };
         const resumed = await makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs })],
           {},
           restartedState,
@@ -839,7 +978,7 @@ describe(
         const beforeStatus = fs.readFileSync(statusPath);
         const beforeSession = fs.readFileSync(sessionFile);
         try {
-          const result = await makeExecutor([makeAgent("echo")], {}, state).execute(
+          const result = await makeExecutor(tempDir, [makeAgent("echo")], {}, state).execute(
             "foreground-context-race-resume",
             { action: "resume", id: runId, message: "Continue." },
             new AbortController().signal,
@@ -960,10 +1099,12 @@ describe(
           };
 
           try {
-            const ctx = makeMinimalCtx(tempDir);
+            const { context: ctx } = await makeModelRegistryContext(tempDir, [
+              { provider: "route-test", models: [model] },
+            ]);
             ctx.model = model;
-            ctx.modelRegistry.getAvailable = () => [model];
             const result = await makeExecutor(
+              tempDir,
               [agent],
               {},
               state,
@@ -1034,6 +1175,7 @@ describe(
           lastForegroundControlId: null,
         };
         const executor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: runCeilingMs })],
           {},
           state,
@@ -1054,6 +1196,7 @@ describe(
         // Same run state, but the agent is now declared with a ceiling the run has
         // already burned through.
         const resumeExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
           {},
           state,
@@ -1094,6 +1237,7 @@ describe(
           lastForegroundControlId: null,
         };
         const initialExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: 10_000 })],
           {},
           state,
@@ -1120,6 +1264,7 @@ describe(
         );
 
         const resumeExecutor = makeExecutor(
+          tempDir,
           [makeAgent("echo", { maxExecutionTimeMs: resumeCeilingMs })],
           {},
           state,
@@ -1253,6 +1398,45 @@ describe(
       // Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
     });
 
+    it("finalizes a pre-spawn timeout once and removes prepared prompt files", async () => {
+      const isolatedTmpDir = path.join(tempDir, "pre-spawn-timeout-tmp");
+      fs.mkdirSync(isolatedTmpDir);
+      const previousTmpDir = process.env.TMPDIR;
+      process.env.TMPDIR = isolatedTmpDir;
+      const updates: SubagentToolResult<Details>[] = [];
+
+      try {
+        const result = await runSync(
+          tempDir,
+          [makeAgent("echo", { systemPrompt: "temporary system prompt" })],
+          "echo",
+          "Task",
+          {
+            runId: "timeout-before-spawn",
+            timeoutMs: 0,
+            onUpdate: (update: SubagentToolResult<Details>) => updates.push(update),
+          },
+        );
+
+        assert.equal(result.timedOut, true);
+        assert.equal(result.error, "Subagent timed out after 0ms.");
+        assert.equal(result.progress.status, "failed");
+        assert.equal(mockPi.callCount(), 0, "an expired deadline must not spawn a child");
+        assert.equal(updates.length, 1, "the terminal timeout update should be emitted once");
+        assert.equal(updates[0]?.details?.results?.[0]?.timedOut, true);
+        assert.equal(updates[0]?.details?.progress?.[0]?.status, "failed");
+        const updateText = updates[0]?.content[0];
+        assert.match(
+          updateText?.type === "text" ? updateText.text : "",
+          /Subagent timed out after 0ms\./,
+        );
+        assert.deepEqual(fs.readdirSync(isolatedTmpDir), []);
+      } finally {
+        if (previousTmpDir === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = previousTmpDir;
+      }
+    });
+
     it("marks foreground runs that exceed timeoutMs as timed out", async () => {
       mockPi.onCall({
         steps: [
@@ -1267,18 +1451,20 @@ describe(
       });
       const agents = makeAgentConfigs(["slow"]);
 
+      const timeoutMs = scaleTestTimeout(150);
+      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
       const start = Date.now();
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-single",
-        timeoutMs: 150,
+        timeoutMs,
       });
       const elapsed = Date.now() - start;
 
       assert.ok(elapsed < 5000, `should time out early, took ${elapsed}ms`);
       assert.notEqual(result.exitCode, 0);
       assert.equal(result.timedOut, true);
-      assert.equal(result.error, "Subagent timed out after 150ms.");
-      assert.match(result.finalOutput ?? "", /Subagent timed out after 150ms\./);
+      assert.equal(result.error, expectedTimeoutText);
+      assert.ok((result.finalOutput ?? "").includes(expectedTimeoutText));
       assert.match(result.finalOutput ?? "", /Run id: timeout-single/);
       assert.match(result.finalOutput ?? "", /Current tool: read/);
       assert.match(result.finalOutput ?? "", /Current path: README\.md/);
@@ -1343,9 +1529,11 @@ describe(
       const sessionFile = path.join(tempDir, "child-session.jsonl");
       const artifactsDir = path.join(tempDir, "artifacts");
 
+      const timeoutMs = scaleTestTimeout(150);
+      const expectedTimeoutText = `Subagent timed out after ${timeoutMs}ms.`;
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-artifact-metadata",
-        timeoutMs: 150,
+        timeoutMs,
         sessionFile,
         artifactsDir,
         artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
@@ -1355,7 +1543,7 @@ describe(
       assert.equal(result.sessionFile, sessionFile);
       assert.ok(result.artifactPaths, "should have artifact paths");
       const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
-      assert.match(artifactText, /Subagent timed out after 150ms\./);
+      assert.ok(artifactText.includes(expectedTimeoutText));
       assert.match(artifactText, /Run id: timeout-artifact-metadata/);
       assert.match(
         artifactText,

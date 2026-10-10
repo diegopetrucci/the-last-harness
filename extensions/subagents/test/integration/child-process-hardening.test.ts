@@ -8,6 +8,7 @@ import {
   requestAsyncInterrupt,
   startedMockPiPids,
   waitForAsyncResultFile,
+  waitForAsyncStatusPredicate,
   waitForMockPiCall,
   waitForPidsToExit,
 } from "../support/async-execution-helpers.ts";
@@ -269,7 +270,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -393,6 +393,52 @@ describe(
     );
 
     it(
+      "preserves async timeout precedence when stdout overflow arrives later",
+      { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
+      async () => {
+        const id = `background-timeout-before-overflow-${Date.now().toString(36)}`;
+        const oversizedLine = `ASYNC_TIMEOUT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
+        const releaseMarker = path.join(tempDir, "async-timeout-release");
+        mockPi.onCall({
+          waitForMarker: releaseMarker,
+          rawStdout: oversizedLine,
+          keepAliveAfterFinalMessageMs: 10_000,
+          ignoreSigterm: true,
+        });
+        const start = executeAsyncSingle(id, {
+          agent: "worker",
+          task: "Wait for timeout before emitting overflow",
+          agentConfig: makeAgent("worker", {
+            maxExecutionTimeMs: scaleTestTimeout(1_000),
+          }),
+          ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+          artifactConfig: compactArtifactConfig(),
+          maxSubagentDepth: 2,
+        });
+        assert.equal(start.isError, undefined);
+        await waitForMockPiCall(mockPi, 0);
+        const asyncDir = path.join(ASYNC_DIR, id);
+        const timedOutStatus = await waitForAsyncStatusPredicate(
+          asyncDir,
+          (status) => status.timedOut === true && status.steps?.[0]?.timedOut === true,
+          "async step timeout",
+        );
+        assert.equal(timedOutStatus.steps?.[0]?.terminationReason, "timed_out");
+        fs.writeFileSync(releaseMarker, "", "utf-8");
+
+        const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+        const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+        const child = result.results[0];
+        assert.equal(result.success, false);
+        assert.equal(result.timedOut, true);
+        assert.equal(child?.timedOut, true);
+        assert.equal(child?.terminationReason, "timed_out");
+        assert.equal(child?.protocolOutputLimit, undefined);
+        assert.doesNotMatch(child?.error ?? "", /protocol_output_limit/);
+      },
+    );
+
+    it(
       "terminates background stdout protocol overflow deterministically",
       { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
       async () => {
@@ -418,7 +464,6 @@ describe(
           agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: compactArtifactConfig(),
-          shareEnabled: false,
           maxSubagentDepth: 2,
         });
         assert.equal(start.isError, undefined);
@@ -518,7 +563,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);
@@ -588,7 +632,6 @@ describe(
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       assert.equal(start.isError, undefined);

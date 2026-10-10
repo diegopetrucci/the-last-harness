@@ -9,6 +9,7 @@ import { makeTempDir } from "./test-fixture-helpers.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const sessionsScript = join(repoRoot, "scripts", "tlh-sessions.mjs");
+const sessionReplacementHook = join(repoRoot, "tests", "session-replacement-hook.mjs");
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -33,10 +34,11 @@ function sessionHeaderLine(id = "sess-001", cwd = "/workspace/my-project") {
 }
 
 function assistantLine(timestamp, toolCalls = []) {
-  const content = toolCalls.map(({ toolCallId, toolName }) => ({
+  const content = toolCalls.map(({ toolCallId, toolName, arguments: callArguments }) => ({
     type: "toolCall",
     toolCallId,
     toolName,
+    ...(callArguments !== undefined ? { arguments: callArguments } : {}),
   }));
   return JSON.stringify({
     type: "message",
@@ -48,7 +50,11 @@ function assistantLine(timestamp, toolCalls = []) {
   });
 }
 
-function toolResultLine(timestamp, toolCallId, { isError = false, toolName = "bash" } = {}) {
+function toolResultLine(
+  timestamp,
+  toolCallId,
+  { isError = false, toolName = "bash", details } = {},
+) {
   return JSON.stringify({
     type: "message",
     message: {
@@ -57,6 +63,7 @@ function toolResultLine(timestamp, toolCallId, { isError = false, toolName = "ba
       toolName,
       isError,
       content: [{ type: "text", text: "ok" }],
+      ...(details ? { details } : {}),
       timestamp,
     },
   });
@@ -75,6 +82,22 @@ function runSessions(agentDir, extraArgs = []) {
     encoding: "utf8",
     cwd: repoRoot,
   });
+}
+
+function runSessionsWithReplacement(agentDir, sessionPath, replacementPath, extraArgs = []) {
+  return spawnSync(
+    process.execPath,
+    ["--import", sessionReplacementHook, sessionsScript, "--agent-dir", agentDir, ...extraArgs],
+    {
+      encoding: "utf8",
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TLH_TEST_SESSION_PATH: sessionPath,
+        TLH_TEST_REPLACEMENT_PATH: replacementPath,
+      },
+    },
+  );
 }
 
 function parseJsonOutput(result) {
@@ -122,6 +145,150 @@ test("tlh-sessions: per-tool mode emits valid JSON with required top-level field
   assert.ok(typeof output.provenance === "object");
   assert.ok(typeof output.coverage === "object");
   assert.ok(Array.isArray(output.tools), "tools must be an array");
+});
+
+test("tlh-sessions: reports correlation evidence overflow in every mode", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const lines = [sessionHeaderLine("overflow-session")];
+  for (let index = 0; index < 4097; index++) {
+    const toolCallId = `overflow-call-${index}`;
+    lines.push(assistantLine("2026-01-01T00:00:00.000Z", [{ toolCallId, toolName: "subagent" }]));
+    lines.push(
+      toolResultLine("2026-01-01T00:00:01.000Z", toolCallId, {
+        toolName: "subagent",
+        details: { results: [] },
+      }),
+    );
+  }
+  writeSessionFile(sessionsDir, "overflow-project", "session.jsonl", lines);
+
+  for (const mode of ["per-session", "per-tool", "subagents"]) {
+    const output = parseJsonOutput(runSessions(agentDir, ["--mode", mode]));
+    assert.equal(output.coverage.totalCorrelationEvidenceFailures, 1);
+    assert.equal(output.coverage.correlationEvidenceFailures.scanCaptureOverflow, 1);
+    assert.equal(output.coverage.correlationEvidenceFailures.rescanCaptureOverflow, 0);
+    assert.equal(output.coverage.correlationEvidenceFailures.digestMismatch, 0);
+    assert.equal(output.coverage.correlationEvidenceFailures.generationMismatch, 0);
+  }
+});
+
+test("tlh-sessions: emits privacy-safe mismatch coverage for same-toolCallId replacement", (t) => {
+  const { agentDir, root, sessionsDir } = makeAgentFixture(t);
+  const toolCallId = "call_same_tool|fc_same_tool";
+  const originalPath = writeSessionFile(sessionsDir, "replacement-project", "session.jsonl", [
+    sessionHeaderLine("replacement-session"),
+    assistantLine("2026-01-01T00:00:00.000Z", [{ toolCallId, toolName: "subagent" }]),
+    toolResultLine("2026-01-01T00:00:01.000Z", toolCallId, {
+      toolName: "subagent",
+      details: { runId: "original-run", results: [] },
+    }),
+  ]);
+  const replacementPath = join(root, "replacement.jsonl");
+  writeFileSync(
+    replacementPath,
+    [
+      sessionHeaderLine("replacement-session"),
+      assistantLine("2026-01-01T00:00:00.000Z", [{ toolCallId, toolName: "subagent" }]),
+      toolResultLine("2026-01-01T00:00:01.000Z", toolCallId, {
+        toolName: "subagent",
+        details: { runId: "replacement-run-one", results: [] },
+      }),
+      assistantLine("2026-01-01T00:00:02.000Z", [{ toolCallId, toolName: "subagent" }]),
+      toolResultLine("2026-01-01T00:00:03.000Z", toolCallId, {
+        toolName: "subagent",
+        details: { runId: "replacement-run-two", results: [] },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const output = parseJsonOutput(
+    runSessionsWithReplacement(agentDir, originalPath, replacementPath),
+  );
+  assert.equal(output.coverage.totalCorrelationEvidenceFailures, 1);
+  assert.equal(output.coverage.correlationEvidenceFailures.scanCaptureOverflow, 0);
+  assert.equal(output.coverage.correlationEvidenceFailures.rescanCaptureOverflow, 0);
+  assert.equal(output.coverage.correlationEvidenceFailures.digestMismatch, 1);
+  assert.equal(output.coverage.correlationEvidenceFailures.generationMismatch, 1);
+  assert.equal(output.sessions[0]?.subagentCorrelationCount, 0);
+
+  const serialized = JSON.stringify(output);
+  assert.ok(!serialized.includes(toolCallId), "raw provider/composite IDs must stay out of output");
+  assert.ok(
+    !serialized.includes("replacement-run"),
+    "raw replacement details must stay out of output",
+  );
+});
+
+test("tlh-sessions: subagents mode emits privacy-safe run analysis", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const usage = {
+    inputTokens: 3,
+    outputTokens: 4,
+    cacheReadTokens: 1,
+    cacheWriteTokens: 0,
+    costUsd: 0.125,
+  };
+  const telemetry = {
+    schemaVersion: 1,
+    run: { id: "cli-run", execution: "foreground", mode: "single" },
+    steps: [
+      {
+        index: 0,
+        agent: "cli-agent",
+        model: { provider: "test-provider", model: "test-model" },
+        usage,
+        timing: { durationMs: 50, activeRuntimeMs: 45 },
+        outcome: { state: "completed", terminationReason: "completed" },
+      },
+    ],
+    usage,
+    timing: { startedAt: 1, endedAt: 51, durationMs: 50, activeRuntimeMs: 45 },
+    outcome: { state: "completed", terminationReason: "completed" },
+    provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 1 },
+    controls: {
+      needsAttentionAfterMs: 1000,
+      failedToolAttemptsBeforeAttention: 2,
+      notifyOn: ["needs_attention"],
+      notifyChannels: ["event", "async"],
+    },
+  };
+  writeSessionFile(sessionsDir, "cli-project", "session.jsonl", [
+    sessionHeaderLine("cli-session", "/home/user/private-project"),
+    assistantLine("2026-01-01T00:00:01.000Z", [
+      {
+        toolCallId: "cli-launch",
+        toolName: "subagent",
+        arguments: { agent: "cli-agent", task: "private task /private/path" },
+      },
+    ]),
+    toolResultLine("2026-01-01T00:00:02.000Z", "cli-launch", {
+      toolName: "subagent",
+      details: { runId: "cli-run", telemetry },
+    }),
+  ]);
+
+  const output = parseJsonOutput(runSessions(agentDir, ["--mode", "subagents"]));
+  assert.equal(output.schemaVersion, "1");
+  assert.equal(output.mode, "subagents");
+  assert.equal(output.runs.length, 1);
+  assert.match(output.runs[0].runId, /^id-[0-9a-f]{16}$/);
+  assert.equal(output.runs[0].execution, "foreground");
+  assert.equal(output.aggregates.usage.costUsd, 0.125);
+  assert.equal(output.operations.launches.foreground, 1);
+  assert.ok(typeof output.provenance.profileId === "string");
+  assert.ok(!("agentDir" in output.provenance));
+  assert.ok(!("sessionsDir" in output.provenance));
+  const serialized = JSON.stringify(output);
+  assert.ok(!serialized.includes("/home/user/private-project"));
+  const secondOutput = parseJsonOutput(runSessions(agentDir, ["--mode", "subagents"]));
+  assert.notEqual(
+    output.runs[0].runId,
+    secondOutput.runs[0].runId,
+    "subagent run aliases must not be stable across reports",
+  );
+  assert.ok(!serialized.includes("private task"));
+  assert.ok(!serialized.includes("/private/path"));
 });
 
 // ---------------------------------------------------------------------------
@@ -213,10 +380,19 @@ test("tlh-sessions: default per-tool output has no path fields", (t) => {
 
 test("tlh-sessions: --include-paths adds filePath, projectLabel, and provenance", (t) => {
   const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const compositeId = "call_paths|fc_provider_001";
   writeSessionFile(sessionsDir, "my-project-slug", "session.jsonl", [
     sessionHeaderLine("sess-paths", "/home/user/my-project"),
-    assistantLine("2026-01-01T00:00:01.000Z", [{ toolCallId: "tc-1", toolName: "bash" }]),
-    toolResultLine("2026-01-01T00:00:02.000Z", "tc-1"),
+    assistantLine("2026-01-01T00:00:01.000Z", [
+      { toolCallId: compositeId, toolName: "subagent", arguments: { agent: "path-agent" } },
+    ]),
+    toolResultLine("2026-01-01T00:00:02.000Z", compositeId, {
+      toolName: "subagent",
+      details: {
+        runId: "run-paths",
+        results: [{ agent: "path-agent", sessionFile: join(sessionsDir, "missing.jsonl") }],
+      },
+    }),
   ]);
 
   const result = runSessions(agentDir, ["--include-paths"]);
@@ -233,6 +409,74 @@ test("tlh-sessions: --include-paths adds filePath, projectLabel, and provenance"
   const session = output.sessions[0];
   assert.ok(typeof session.filePath === "string", "filePath must be present with --include-paths");
   assert.equal(session.projectLabel, "my-project-slug", "projectLabel must be the cwd slug");
+  assert.equal(session.subagentCorrelationCount, 1);
+  assert.match(session.subagentCorrelations[0].toolCallId, /^id-[0-9a-f]{16}$/);
+  assert.ok(!JSON.stringify(output).includes(compositeId), "raw composite ID must be redacted");
+});
+
+test("tlh-sessions: --include-paths aliases parent and child session IDs", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const parentSessionId = "019ea106-4d07-748c-a247-32b5716dc52e";
+  const childSessionId = "019ea107-7d67-75cf-b430-5169c4429ce9";
+  const childSessionFile = writeSessionFile(sessionsDir, "project", "child.jsonl", [
+    sessionHeaderLine(childSessionId, "/workspace/project"),
+  ]);
+  const compositeId = "call_aliases|fc_provider_001";
+  writeSessionFile(sessionsDir, "project", "parent.jsonl", [
+    sessionHeaderLine(parentSessionId, "/workspace/project"),
+    assistantLine("2026-01-01T00:00:01.000Z", [
+      { toolCallId: compositeId, toolName: "subagent", arguments: { agent: "alias-agent" } },
+    ]),
+    toolResultLine("2026-01-01T00:00:02.000Z", compositeId, {
+      toolName: "subagent",
+      details: {
+        runId: "run-aliases",
+        results: [{ agent: "alias-agent", sessionFile: childSessionFile }],
+      },
+    }),
+  ]);
+
+  const result = runSessions(agentDir, ["--include-paths"]);
+  const output = parseJsonOutput(result);
+  const parent = output.sessions.find((session) => session.sessionId === parentSessionId);
+  assert.ok(parent, "parent session must be present");
+  assert.equal(parent.subagentCorrelationCount, 1);
+  const correlation = parent.subagentCorrelations[0];
+  assert.match(correlation.parentSessionId, /^id-[0-9a-f]{16}$/);
+  assert.match(correlation.childSessionId, /^id-[0-9a-f]{16}$/);
+  assert.ok(!JSON.stringify(correlation).includes(parentSessionId));
+  assert.ok(!JSON.stringify(correlation).includes(childSessionId));
+  assert.ok(!JSON.stringify(correlation).includes(compositeId));
+});
+
+test("tlh-sessions: correlation aliases use a fresh report salt", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const compositeId = "call-salted|fc-provider-001";
+  writeSessionFile(sessionsDir, "salted-project", "session.jsonl", [
+    sessionHeaderLine("salted-parent"),
+    assistantLine("2026-01-01T00:00:01.000Z", [{ toolCallId: compositeId, toolName: "subagent" }]),
+    toolResultLine("2026-01-01T00:00:02.000Z", compositeId, {
+      toolName: "subagent",
+      details: {
+        runId: "salted-run",
+        results: [{ agent: "salted-agent", sessionFile: join(sessionsDir, "missing.jsonl") }],
+      },
+    }),
+  ]);
+
+  const first = parseJsonOutput(runSessions(agentDir, ["--include-paths"]));
+  const second = parseJsonOutput(runSessions(agentDir, ["--include-paths"]));
+  const firstCorrelation = first.sessions[0].subagentCorrelations[0];
+  const secondCorrelation = second.sessions[0].subagentCorrelations[0];
+  assert.match(firstCorrelation.parentSessionId, /^id-[0-9a-f]{16}$/);
+  assert.match(firstCorrelation.toolCallId, /^id-[0-9a-f]{16}$/);
+  assert.match(firstCorrelation.runId, /^id-[0-9a-f]{16}$/);
+  assert.notEqual(
+    firstCorrelation.toolCallId,
+    secondCorrelation.toolCallId,
+    "correlation aliases must not be stable across reports",
+  );
+  assert.ok(!JSON.stringify(first).includes(compositeId));
 });
 
 test("tlh-sessions: --include-paths adds provenance to per-tool output", (t) => {
@@ -383,6 +627,56 @@ test("tlh-sessions: per-session latency stats are computed correctly", (t) => {
   assert.equal(session.observedLatencyMs.min, 1000);
   assert.equal(session.observedLatencyMs.max, 3000);
   assert.equal(session.observedLatencyMs.median, 2000);
+});
+
+test("tlh-sessions: persisted Pi shapes populate every analysis mode", (t) => {
+  const { agentDir, sessionsDir } = makeAgentFixture(t);
+  const compositeId = "call_provider_123|fc_provider_123";
+  writeSessionFile(sessionsDir, "persisted", "session.jsonl", [
+    sessionHeaderLine("persisted-session"),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        timestamp: 1767225600000,
+        content: [{ type: "toolCall", id: compositeId, name: "bash", arguments: {} }],
+      },
+      timestamp: "2026-01-01T00:00:00.000Z",
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: compositeId,
+        toolName: "bash",
+        isError: false,
+        content: [],
+        timestamp: 1767225601000,
+      },
+      timestamp: "2026-01-01T00:00:01.000Z",
+    }),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background task completed: developer",
+      timestamp: "2026-01-01T00:00:02.000Z",
+    }),
+  ]);
+
+  const perSession = parseJsonOutput(runSessions(agentDir));
+  assert.equal(perSession.sessions[0]?.toolCallCount, 1);
+  assert.equal(perSession.sessions[0]?.observedLatencyMs.median, 1000);
+  assert.equal(perSession.coverage.totalProjectionGaps, 0);
+
+  const perTool = parseJsonOutput(runSessions(agentDir, ["--mode", "per-tool"]));
+  assert.equal(perTool.tools.find((tool) => tool.toolName === "bash")?.callCount, 1);
+  assert.equal(perTool.coverage.totalProjectionGaps, 0);
+
+  const subagents = parseJsonOutput(runSessions(agentDir, ["--mode", "subagents"]));
+  assert.equal(subagents.coverage.evidence.completionNotifications, 1);
+  assert.ok(!JSON.stringify(perSession).includes(compositeId));
+  assert.ok(!JSON.stringify(perTool).includes(compositeId));
+  assert.ok(!JSON.stringify(subagents).includes(compositeId));
 });
 
 // Fix 4: toolCallCount must reflect all observed calls, not just matched pairs

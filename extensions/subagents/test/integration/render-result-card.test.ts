@@ -6,10 +6,7 @@ import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput, type Details, type SubagentToolResult } from "../../src/shared/types.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
-import {
-  WHIMSICAL_THINKING_PHRASES,
-  whimsicalThinkingPhrase,
-} from "../../src/tui/whimsical-phrases.ts";
+import { PHRASE_HOLD_MS, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
 const theme = createPlainTheme();
 
@@ -281,6 +278,17 @@ describe("renderSubagentResult", () => {
     const hintIndex = lines.findIndex((line) => line.includes(liveDetailHint));
 
     assert.ok(reviewerRowIndex !== -1, "first agent row should be present");
+    assert.match(
+      lines[reviewerActivityIndex] ?? "",
+      /^ {7}read: reviewer\.ts$/,
+      "foreground parallel activity must keep the exact 7-space column",
+    );
+    assert.match(
+      lines[writerActivityIndex] ?? "",
+      /^ {7}write: writer\.ts$/,
+      "second foreground parallel activity must keep the exact 7-space column",
+    );
+    assert.doesNotMatch(text, /⎿/, "foreground parallel rendering must not add the branch glyph");
     assert.ok(reviewerTicketIndex > reviewerRowIndex, "ticket should remain under its agent row");
     assert.ok(
       reviewerActivityIndex > reviewerTicketIndex,
@@ -964,7 +972,8 @@ describe("renderSubagentResult", () => {
     const text = widget.render(120).join("\n");
     assert.match(text, /^✓ reviewer/);
     assert.doesNotMatch(text, /⟳ 2|3 tool uses|1\.2k token|1\.5s/);
-    assert.match(text, /⎿  Done/);
+    assert.match(text, /^ {5}Done \(no text output\)\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
     assert.match(text, /session: \/tmp\/session\.jsonl/);
   });
 
@@ -992,7 +1001,8 @@ describe("renderSubagentResult", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /^✗ reviewer/);
-    assert.match(text, /⎿  Error: boom/);
+    assert.match(text, /Error: boom/);
+    assert.doesNotMatch(text, /⎿/);
   });
 
   it("shows live detail hints for running single subagents without leaking paths in compact mode", () => {
@@ -1040,7 +1050,12 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(compactText, new RegExp(liveDetailHint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(compactText, /active 2s ago/);
-    assert.match(compactText, /⎿  read: package\.json \| 3\.0s/);
+    assert.match(
+      compactText,
+      /^ {5}read: package\.json \| 3\.0s(?: · active 2s ago)?\s*$/m,
+      "foreground single activity must keep the exact 5-space column",
+    );
+    assert.doesNotMatch(compactText, /⎿/);
     assert.doesNotMatch(compactText, /configured-output\.md/);
     assert.doesNotMatch(compactText, /reviewer_output\.md/);
 
@@ -1051,20 +1066,11 @@ describe("renderSubagentResult", () => {
     assert.equal((expandedText.match(/Artifacts: \/tmp\/reviewer_output\.md/g) ?? []).length, 1);
   });
 
-  it("cycles the full attributed thinking pool per turn and suppresses it for active tools", () => {
-    const firstCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) => whimsicalThinkingPhrase(turn));
-    const repeatedCycle = WHIMSICAL_THINKING_PHRASES.map((_, turn) =>
-      whimsicalThinkingPhrase(turn),
-    );
-    assert.deepEqual(repeatedCycle, firstCycle);
-    assert.notDeepEqual(firstCycle, [...WHIMSICAL_THINKING_PHRASES]);
-    assert.notEqual(firstCycle[0], WHIMSICAL_THINKING_PHRASES[0]);
-    assert.equal(new Set(firstCycle).size, WHIMSICAL_THINKING_PHRASES.length);
-    assert.equal(whimsicalThinkingPhrase(WHIMSICAL_THINKING_PHRASES.length), firstCycle[0]);
-
+  it("shows a time-stable thinking phrase and suppresses it for active tools", () => {
     const snapshotNow = 10_000;
     const makeResult = (
       turnCount: number,
+      durationMs: number,
       currentTool?: string,
       activityState?: "needs_attention",
     ) => ({
@@ -1090,7 +1096,7 @@ describe("renderSubagentResult", () => {
               recentOutput: [],
               toolCount: 3,
               tokens: 1_200,
-              durationMs: 4_000,
+              durationMs,
               turnCount,
             },
           },
@@ -1098,42 +1104,210 @@ describe("renderSubagentResult", () => {
       },
     });
 
-    const compact = renderSubagentResult!(makeResult(0), { expanded: false }, theme)
+    // durationMs=4_000 → slot 0; phrase is the same regardless of turnCount.
+    const slot0Phrase = whimsicalThinkingPhrase(0, 0, 0, 0); // elapsedMs=0 → slot 0
+    const compact = renderSubagentResult!(makeResult(0, 4_000), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compact, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
-    assert.ok(compact.indexOf(whimsicalThinkingPhrase(0)) < compact.indexOf("active now"));
+    assert.match(compact, new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"));
+    assert.ok(compact.indexOf(slot0Phrase) < compact.indexOf("active now"));
     assert.doesNotMatch(compact, /3 tool uses|1\.2k token|4\.0s|⟳ 0/);
 
-    const next = renderSubagentResult!(makeResult(1), { expanded: false }, theme)
+    // Phrase stays stable when turnCount advances but durationMs stays in the same 8 s window.
+    const nextTurn = renderSubagentResult!(makeResult(1, 4_000), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(1))));
-    assert.doesNotMatch(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+    assert.match(
+      nextTurn,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "phrase must not change within the same 8 s window even if turnCount increases",
+    );
 
-    const activeTool = renderSubagentResult!(makeResult(0, "read"), { expanded: false }, theme)
+    // Phrase advances when durationMs crosses the 8 s boundary.
+    const slot1Phrase = whimsicalThinkingPhrase(0, 0, 0, PHRASE_HOLD_MS); // elapsedMs=8000 → slot 1
+    assert.notEqual(slot1Phrase, slot0Phrase, "slot 1 phrase must differ from slot 0");
+    const nextWindow = renderSubagentResult!(
+      makeResult(0, PHRASE_HOLD_MS),
+      { expanded: false },
+      theme,
+    )
       .render(120)
       .join("\n");
-    assert.match(activeTool, /⎿  read \| 4\.0s/);
+    assert.match(
+      nextWindow,
+      new RegExp(escapeRegExp(slot1Phrase)),
+      "phrase must advance when durationMs reaches the next 8 s slot",
+    );
+    assert.doesNotMatch(
+      nextWindow,
+      new RegExp(escapeRegExp(slot0Phrase)),
+      "old phrase must not appear after window boundary",
+    );
+
+    const activeTool = renderSubagentResult!(
+      makeResult(0, 4_000, "read"),
+      { expanded: false },
+      theme,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(activeTool, /^ {5}read \| 4\.0s(?: · active 2s ago)?\s*$/m);
     assert.match(activeTool, /active 2s ago/);
-    assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+    assert.doesNotMatch(activeTool, /⎿/);
+    assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(slot0Phrase)));
 
-    const expanded = renderSubagentResult!(makeResult(2), { expanded: true }, theme)
+    const expanded = renderSubagentResult!(makeResult(2, 4_000), { expanded: true }, theme)
       .render(120)
       .join("\n");
     assert.match(expanded, /3 tools, 1\.2k tok, 4\.0s/);
     assert.match(expanded, /2 turns/);
 
     const warning = renderSubagentResult!(
-      makeResult(0, undefined, "needs_attention"),
+      makeResult(0, 4_000, undefined, "needs_attention"),
       { expanded: false },
       theme,
     )
       .render(120)
       .join("\n");
-    assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
+    assert.doesNotMatch(warning, new RegExp(escapeRegExp(slot0Phrase)));
     // The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
-    assert.match(warning, /⎿  needs attention/);
+    assert.match(warning, /needs attention/);
+    assert.doesNotMatch(warning, /⎿/);
+  });
+
+  it("advances phrase via live now - startedAt clock while durationMs is unchanged", () => {
+    // Simulates the idle case: durationMs stays fixed but now advances.
+    const startedAt = 0;
+    const makeIdleResult = () => ({
+      content: [{ type: "text" as const, text: "(running...)" }],
+      details: {
+        mode: "single" as const,
+        results: [
+          {
+            agent: "idle-worker",
+            task: "idle task",
+            exitCode: 0,
+            messages: [],
+            usage: emptyUsage,
+            progress: {
+              index: 0,
+              agent: "idle-worker",
+              status: "running" as const,
+              task: "idle task",
+              lastActivityAt: startedAt,
+              recentTools: [],
+              recentOutput: [],
+              toolCount: 0,
+              tokens: 0,
+              // durationMs deliberately frozen at 0 to simulate no progress events.
+              durationMs: 0,
+              turnCount: 0,
+              startedAt,
+            },
+          },
+        ],
+      },
+    });
+
+    // Slot 0: now = 4 s (within first 8 s window).
+    const slot0Phrase = whimsicalThinkingPhrase(0, 0, 0, 0); // elapsedMs=0 → slot 0
+    const at4s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      4_000,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at4s,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "phrase must be slot 0 when now - startedAt < 8 s",
+    );
+
+    // Stable within window: same now, same phrase despite turnCount staying 0.
+    const at6s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      6_000,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at6s,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "phrase must remain slot 0 at 6 s (still within first window)",
+    );
+
+    // Advances at boundary: now = 8 s crosses into slot 1.
+    const slot1Phrase = whimsicalThinkingPhrase(0, 0, 0, PHRASE_HOLD_MS);
+    assert.notEqual(slot1Phrase, slot0Phrase, "slot 1 phrase must differ from slot 0");
+    const at8s = renderSubagentResult!(
+      makeIdleResult(),
+      { expanded: false },
+      theme,
+      undefined,
+      PHRASE_HOLD_MS,
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      at8s,
+      new RegExp(`^ {5}${escapeRegExp(slot1Phrase)}$`, "m"),
+      "phrase must advance to slot 1 when now - startedAt reaches the 8 s boundary",
+    );
+    assert.doesNotMatch(
+      at8s,
+      new RegExp(escapeRegExp(slot0Phrase)),
+      "old phrase must not appear after window boundary",
+    );
+
+    // Fallback: when startedAt is absent, durationMs is used.
+    const noStartedAt = {
+      content: [{ type: "text" as const, text: "(running...)" }],
+      details: {
+        mode: "single" as const,
+        results: [
+          {
+            agent: "idle-worker",
+            task: "idle task",
+            exitCode: 0,
+            messages: [],
+            usage: emptyUsage,
+            progress: {
+              index: 0,
+              agent: "idle-worker",
+              status: "running" as const,
+              task: "idle task",
+              lastActivityAt: startedAt,
+              recentTools: [],
+              recentOutput: [],
+              toolCount: 0,
+              tokens: 0,
+              durationMs: 0,
+              turnCount: 0,
+            },
+          },
+        ],
+      },
+    };
+    const fallback = renderSubagentResult!(
+      noStartedAt,
+      { expanded: false },
+      theme,
+      undefined,
+      PHRASE_HOLD_MS * 2, // now is far ahead but startedAt is missing → fall back to durationMs=0 → slot 0
+    )
+      .render(120)
+      .join("\n");
+    assert.match(
+      fallback,
+      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      "must fall back to durationMs when startedAt is absent",
+    );
   });
 
   it("keeps running compact result output stable when progress is unchanged", async () => {
@@ -1246,7 +1420,8 @@ describe("renderSubagentResult", () => {
     const compactSuccess = renderSubagentResult!(makeResult(0), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compactSuccess, /⎿  Done/);
+    assert.match(compactSuccess, /Done/);
+    assert.doesNotMatch(compactSuccess, /⎿/);
     assert.match(compactSuccess, /TRUNCATED: showing first 1 of 2 lines/);
     assert.doesNotMatch(compactSuccess, /configured-output\.md/);
     assert.doesNotMatch(compactSuccess, /reviewer_output\.md/);
@@ -1255,7 +1430,7 @@ describe("renderSubagentResult", () => {
     const compactFailure = renderSubagentResult!(makeResult(1), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compactFailure, /⎿  Error: \[TRUNCATED: showing first 1 of 2 lines/);
+    assert.match(compactFailure, /Error: \[TRUNCATED: showing first 1 of 2 lines/);
     assert.doesNotMatch(compactFailure, /reviewer_full_output\.md/);
 
     const expandedText = renderSubagentResult!(makeResult(0), { expanded: true }, theme)
@@ -1372,7 +1547,8 @@ describe("renderSubagentResult", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /^■ parallel/);
-    assert.match(text, /⎿  Paused/);
+    assert.match(text, /^ {7}Paused\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
   });
 
   it("keeps empty-output warnings visible in compact multi-result rendering", () => {
@@ -1397,7 +1573,8 @@ describe("renderSubagentResult", () => {
     );
 
     const text = widget.render(120).join("\n");
-    assert.match(text, /⎿  Done \(no text output\)/);
+    assert.match(text, /^ {7}Done \(no text output\)\s*$/m);
+    assert.doesNotMatch(text, /⎿/);
     assert.doesNotMatch(text, /0ms/);
   });
 

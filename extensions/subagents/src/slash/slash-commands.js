@@ -3,7 +3,7 @@ import { SLASH_TEXT_RESULT_TYPE, } from "../shared/types.js";
 function sendSlashText(pi, text) {
     pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
-function doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary) {
+function doctorReportForContext(pi, state, config, ctx) {
     let currentSessionFile = null;
     let currentSessionId = state.currentSessionId;
     let sessionError;
@@ -21,14 +21,13 @@ function doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary) {
         currentSessionFile,
         currentSessionId,
         sessionError,
-        ...(getHeartbeatSummary ? { heartbeat: getHeartbeatSummary() } : {}),
     });
 }
-export function registerSlashCommands(pi, state, config, getHeartbeatSummary) {
+export function registerSlashCommands(pi, state, config) {
     pi.registerCommand("subagents-doctor", {
         description: "Show subagent diagnostics",
         handler: async (_args, ctx) => {
-            sendSlashText(pi, doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary));
+            sendSlashText(pi, doctorReportForContext(pi, state, config, ctx));
         },
     });
 }

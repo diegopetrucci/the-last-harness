@@ -3,9 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
+const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
+const MCPORTER_EXTENSION_ID = "mcporter";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const RETIRED_DEFAULT_PACKAGE_IDENTITIES = new Set(RETIRED_TLH_DEFAULT_PACKAGE_SOURCES.map(packageIdentity).filter((value) => Boolean(value)));
@@ -75,19 +77,6 @@ function isPlainObject(value) {
 function cloneJsonObject(value) {
     return JSON.parse(JSON.stringify(value));
 }
-function packageEntryDisablesExtensions(entry) {
-    if (!isPlainObject(entry))
-        return false;
-    if (!Array.isArray(entry.extensions))
-        return false;
-    if (entry.extensions.length === 0)
-        return true;
-    const disablingPatterns = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
-    return entry.extensions
-        .filter((value) => typeof value === "string")
-        .map((value) => value.trim())
-        .some((value) => disablingPatterns.has(value));
-}
 function validateSettings(settings) {
     if (!isPlainObject(settings)) {
         throw new Error("Settings must be a JSON object");
@@ -107,9 +96,6 @@ function ensureMutableSettings(settings) {
 function settingsPackages(settings) {
     return settings.packages ?? [];
 }
-function isLegacyRtkDisabledId(id) {
-    return id === "rtk" || id === "pi-rtk";
-}
 function orderedDisabledIds(ids, defaultExtensions) {
     const knownIds = new Set(defaultExtensions.map((extension) => extension.id));
     const ordered = [];
@@ -117,9 +103,7 @@ function orderedDisabledIds(ids, defaultExtensions) {
         if (ids.has(extension.id))
             ordered.push(extension.id);
     }
-    const unknown = [...ids]
-        .filter((id) => !knownIds.has(id) && !isLegacyRtkDisabledId(id))
-        .sort((a, b) => a.localeCompare(b));
+    const unknown = [...ids].filter((id) => !knownIds.has(id)).sort((a, b) => a.localeCompare(b));
     return [...ordered, ...unknown];
 }
 function setDisabledIds(settings, ids, defaultExtensions) {
@@ -169,12 +153,7 @@ function isDefaultSourceDeferred(settings, extension) {
 function isDefaultDisabled(settings, extension, defaultExtensions) {
     if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id))
         return true;
-    if (extension.critical === true)
-        return false;
-    const index = findPackageIndex(settings, extension.source);
-    if (index === -1)
-        return false;
-    return packageEntryDisablesExtensions(settingsPackages(settings)[index]);
+    return defaultExtensionPackageFilterDisables(settings, extension);
 }
 function disablePackage(settings, extension) {
     for (const source of [extension.source, ...extension.replaces]) {
@@ -182,17 +161,59 @@ function disablePackage(settings, extension) {
     }
 }
 function enablePackage(settings, extension) {
+    const packages = settingsPackages(settings);
+    const canonicalIdentity = packageIdentity(extension.source);
+    const replacementIdentities = new Set(extension.replaces
+        .map(packageIdentity)
+        .filter((identity) => Boolean(identity && identity !== canonicalIdentity)));
+    const identities = new Set([canonicalIdentity, ...replacementIdentities].filter((identity) => Boolean(identity)));
+    // Any configured canonical identity owns its source pin, whether it is a
+    // string or an object. Only replacement objects move to the bundled source;
+    // canonical objects retain their metadata while losing the enable filter.
+    const canonicalEntry = packages.find((entry) => packageIdentity(entry) === canonicalIdentity);
+    const replacementObjectEntry = packages.find((entry) => {
+        const identity = packageIdentity(entry);
+        return isPlainObject(entry) && identity !== undefined && replacementIdentities.has(identity);
+    });
+    const retainedEntry = canonicalEntry ?? replacementObjectEntry;
+    if (retainedEntry !== undefined) {
+        const retainedCanonical = packageIdentity(retainedEntry) === canonicalIdentity;
+        let nextEntry = retainedEntry;
+        if (isPlainObject(retainedEntry)) {
+            const next = {
+                ...cloneJsonObject(retainedEntry),
+                ...(retainedCanonical ? {} : { source: extension.source }),
+            };
+            delete next.extensions;
+            nextEntry = next;
+        }
+        const nextPackages = [];
+        let keptEntry = false;
+        for (const entry of packages) {
+            const identity = packageIdentity(entry);
+            if (entry === retainedEntry && !keptEntry) {
+                nextPackages.push(nextEntry);
+                keptEntry = true;
+                continue;
+            }
+            if (identity !== undefined && identities.has(identity))
+                continue;
+            nextPackages.push(entry);
+        }
+        packages.splice(0, packages.length, ...nextPackages);
+        return;
+    }
     for (const oldSource of extension.replaces) {
         removePackage(settings, oldSource);
     }
     const identity = packageIdentity(extension.source);
     const index = findPackageIndex(settings, extension.source);
     if (index === -1) {
-        settingsPackages(settings).push(extension.source);
+        packages.push(extension.source);
         return;
     }
     removeDuplicatePackagesAfterIndex(settings, identity, index);
-    const current = settingsPackages(settings)[index];
+    const current = packages[index];
     if (!isPlainObject(current)) {
         return;
     }
@@ -202,10 +223,10 @@ function enablePackage(settings, extension) {
     };
     delete next.extensions;
     if (Object.keys(next).length === 1 && typeof next.source === "string") {
-        settingsPackages(settings)[index] = next.source;
+        packages[index] = next.source;
     }
     else {
-        settingsPackages(settings)[index] = next;
+        packages[index] = next;
     }
 }
 function defaultStatus(settings, extension, defaultExtensions) {
@@ -215,7 +236,7 @@ function defaultStatus(settings, extension, defaultExtensions) {
     const configuredSource = entry ? packageSourceOf(entry) : undefined;
     if (markerDisabled)
         return { enabled: false, reason: "disabled" };
-    if (extension.critical !== true && entry && packageEntryDisablesExtensions(entry))
+    if (defaultExtensionPackageFilterDisables(settings, extension))
         return { enabled: false, reason: "disabled by package filter" };
     if (entry && configuredSource && configuredSource !== extension.source) {
         return { enabled: true, reason: `enabled with configured package (${configuredSource})` };
@@ -248,16 +269,7 @@ function backupPathFor(settingsPath) {
 function assertNotNormalPiSettings(settingsPath) {
     assertNotInNormalPiConfig(settingsPath, `Refusing to modify normal Pi config from The Last Harness defaults command: ${settingsPath}`);
 }
-function scrubRetiredTlhSettings(settings) {
-    if (!isPlainObject(settings.tlh))
-        return false;
-    if (!Object.hasOwn(settings.tlh, "rtk"))
-        return false;
-    delete settings.tlh.rtk;
-    return true;
-}
 function writeSettings(settingsPath, value, previousRaw) {
-    scrubRetiredTlhSettings(value);
     const formatted = `${JSON.stringify(value, null, 2)}\n`;
     if (formatted === previousRaw)
         return undefined;
@@ -305,6 +317,58 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
         }
     }
 }
+function isBuiltinMcpExclusionManaged(settings) {
+    return settings.tlh?.builtinMcpExclusionManaged === true;
+}
+function markBuiltinMcpExclusionManaged(settings) {
+    settings.tlh ??= {};
+    settings.tlh.builtinMcpExclusionManaged = true;
+}
+function clearBuiltinMcpExclusionManaged(settings) {
+    if (!settings.tlh || !Object.hasOwn(settings.tlh, "builtinMcpExclusionManaged")) {
+        return false;
+    }
+    delete settings.tlh.builtinMcpExclusionManaged;
+    return true;
+}
+/**
+ * Remove only TLH-owned -builtin:mcp entries when mcporter is disabled so
+ * Pi's native builtin:mcp can own /mcp without a warning. Unmarked entries
+ * are user-owned and must remain untouched.
+ */
+function applyBuiltinMcpExclusionOnDisable(settings) {
+    if (!isBuiltinMcpExclusionManaged(settings))
+        return;
+    if (Array.isArray(settings.extensions)) {
+        const filtered = settings.extensions.filter((e) => e !== BUILTIN_MCP_EXCLUSION);
+        if (filtered.length !== settings.extensions.length) {
+            if (filtered.length === 0) {
+                delete settings.extensions;
+            }
+            else {
+                settings.extensions = filtered;
+            }
+        }
+    }
+    clearBuiltinMcpExclusionManaged(settings);
+}
+/**
+ * Restore -builtin:mcp to settings.extensions when mcporter is re-enabled so
+ * the adapter remains the sole /mcp owner without a replacement warning. A
+ * pre-existing unmarked entry is user-owned and is not claimed.
+ */
+function applyBuiltinMcpExclusionOnEnable(settings) {
+    if (Array.isArray(settings.extensions)) {
+        if (settings.extensions.includes(BUILTIN_MCP_EXCLUSION))
+            return;
+        settings.extensions = [BUILTIN_MCP_EXCLUSION, ...settings.extensions];
+        markBuiltinMcpExclusionManaged(settings);
+    }
+    else if (settings.extensions === undefined) {
+        settings.extensions = [BUILTIN_MCP_EXCLUSION];
+        markBuiltinMcpExclusionManaged(settings);
+    }
+}
 function applyAnthropicWarningOnDisable(settings) {
     const warnings = settings.warnings;
     if (!isPlainObject(warnings))
@@ -337,6 +401,9 @@ function commandDisable(settings, defaultExtensions, id) {
     disabledIds.add(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
     disablePackage(settings, extension);
+    if (extension.id === MCPORTER_EXTENSION_ID) {
+        applyBuiltinMcpExclusionOnDisable(settings);
+    }
     if (extension.id === "anthropic-auth") {
         return applyAnthropicWarningOnDisable(settings);
     }
@@ -348,7 +415,9 @@ function commandEnable(settings, defaultExtensions, id) {
     disabledIds.delete(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
     enablePackage(settings, extension);
-    repairTargetedDefaultExtensionLoadOrder(settings, defaultExtensions, disabledIds);
+    if (extension.id === MCPORTER_EXTENSION_ID) {
+        applyBuiltinMcpExclusionOnEnable(settings);
+    }
     if (extension.id === "anthropic-auth") {
         return applyAnthropicWarningOnEnable(settings);
     }
@@ -398,8 +467,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandDisable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is disabled for the tlh profile.`);
         if (warningChanged)
@@ -417,8 +485,7 @@ function main() {
         const before = JSON.stringify(settings);
         const warningChanged = commandEnable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
-        const scrubbedRetiredSettings = scrubRetiredTlhSettings(settings);
-        const changed = scrubbedRetiredSettings || before !== JSON.stringify(settings);
+        const changed = before !== JSON.stringify(settings);
         const backupPath = changed ? writeSettings(settingsPath, settings, previousRaw) : undefined;
         console.log(`${id} is enabled for the tlh profile.`);
         if (warningChanged)

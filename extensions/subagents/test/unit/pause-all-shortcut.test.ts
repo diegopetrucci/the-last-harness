@@ -183,7 +183,7 @@ describe("pause-all shortcut handler", () => {
     assertPortableInterruptRequested(asyncDir, 5252, kills);
   });
 
-  it("still pauses disk-only top-level async work when nested-root listing fails", () => {
+  it("still pauses disk-only top-level async work when the retired nested root is unavailable", () => {
     const state = createState();
     state.currentSessionId = "current-session";
     fs.mkdirSync(ASYNC_DIR, { recursive: true });
@@ -229,12 +229,12 @@ describe("pause-all shortcut handler", () => {
     syncBuiltinESMExports();
 
     const result = handlePauseAllShortcut(state, { hasUI: false } as never);
-    assert.equal(result.level, "warning");
-    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\. failed 1\.$/);
+    assert.equal(result.level, "info");
+    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
     assertPortableInterruptRequested(asyncDir, 6262, kills);
   });
 
-  it("requests pause for disk-only running nested async work after reload", () => {
+  it("ignores disk-only running nested async work after reload", () => {
     const state = createState();
     state.currentSessionId = "current-session";
     const rootRunId = `pause-all-nested-root-${Date.now().toString(36)}`;
@@ -277,9 +277,10 @@ describe("pause-all shortcut handler", () => {
     syncBuiltinESMExports();
 
     const result = handlePauseAllShortcut(state, { hasUI: false } as never);
-    assert.equal(result.level, "info");
-    assert.match(result.message, /^Pause requested for 1 subagent run \(1 async\)\.$/);
-    assertPortableInterruptRequested(asyncDir, 7272, kills);
+    assert.equal(result.level, "warning");
+    assert.equal(result.message, "No running subagent work to pause.");
+    assert.equal(fs.existsSync(interruptRequestPath(asyncDir)), false);
+    assert.deepEqual(kills, []);
   });
 
   it("ignores disk-only running nested async work from another session", () => {

@@ -1,14 +1,24 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSettledEvent,
+  ExtensionAPI,
+  ExtensionContext,
+  UIPromptKind,
+} from "@earendil-works/pi-coding-agent";
+import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
-// Re-export so existing importers of activity-tracker.ts continue to work.
-export { TLH_EFFECTIVE_ACTIVITY_EVENT };
+import {
+  isBundledSubagentRestoreProviderActive,
+  resetBundledSubagentRestoreProvider,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
+  type SubagentAsyncRestoredEvent,
+} from "../shared/subagent-restore-contract.js";
 
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const RETRY_GRACE_REASON = "primary:retry-grace";
 const DEFAULT_RETRY_GRACE_MS = 1500;
 const COMPLETED_ASYNC_TOMBSTONE_MS = 60_000;
@@ -33,8 +43,35 @@ export type TlhEffectiveActivitySnapshot = {
   inProgress: boolean;
   /** True while at least one blocking extension UI prompt is open. */
   waitingForUser: boolean;
+  /**
+   * Kind of the most recently opened blocking UI prompt that is still open.
+   * Populated only when waitingForUser is true; undefined when no prompt is open.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  waitingForUserKind?: UIPromptKind;
   primaryReasons: string[];
   activeAsyncJobIds: string[];
+  /**
+   * True while a run is active — set at before_agent_start / agent_start and
+   * cleared only at agent_settled. Keeps the OSC 7501 reporter in "working"
+   * state across the gap between agent_end and agent_settled (e.g. Pi retry
+   * delay), preventing a false "error" emission before a retry completes.
+   * This is an internal detail of the snapshot and is NOT propagated on the
+   * shared bus payload in extensions/shared/tlh-effective-activity.ts.
+   */
+  runActive?: true;
+  /**
+   * Outcome of the most recent agent run in this session.
+   * Committed at agent_settled (not at agent_end) so it is never emitted
+   * while Pi is between a retryable error and its retry.
+   * - 'aborted': user cancellation, from native agent_settled.aborted (or a
+   *   legacy agent_end stopReason fixture when no settlement metadata is supplied).
+   * - 'error': run failed (last assistant stopReason === 'error' or errorMessage present).
+   * - 'completed': run ended normally.
+   * - undefined: no run has settled yet this session.
+   * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
+   */
+  lastRunOutcome?: "completed" | "aborted" | "error";
 };
 
 type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
@@ -43,11 +80,13 @@ export type TlhEffectiveActivityTracker = {
   getSnapshot(): TlhEffectiveActivitySnapshot;
   isInProgress(): boolean;
   subscribe(listener: TlhEffectiveActivityListener): () => void;
+  beginSession(ctx: Pick<ExtensionContext, "cwd" | "sessionManager">): void;
   rehydrateFromArtifacts(ctx: Pick<ExtensionContext, "cwd" | "sessionManager">): void;
   dispose(): void;
   handleBeforeAgentStart(): void;
   handleAgentStart(): void;
   handleAgentEnd(event: { messages?: unknown[] }): void;
+  handleAgentSettled(event?: Pick<AgentSettledEvent, "aborted">): void;
   handleTurnStart(): void;
   handleToolExecutionStart(event: { toolCallId?: string }): void;
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
@@ -56,6 +95,7 @@ export type TlhEffectiveActivityTracker = {
   handleSessionCompactFailed(event?: { reason?: string; willRetry?: boolean }): void;
   handleUIPromptStart(event?: { reason?: string; kind?: string; title?: string }): void;
   handleUIPromptEnd(event?: { reason?: string; kind?: string; title?: string }): void;
+  handleAsyncRestored(data: unknown): void;
   handleAsyncStarted(data: unknown): void;
   handleAsyncComplete(data: unknown): void;
   handleAsyncControl(data: unknown): void;
@@ -109,53 +149,12 @@ type AsyncJobRecord = {
   asyncDir?: string;
   /** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
   pid?: number;
-  source: "started" | "control" | "rehydrated";
+  sessionId?: string;
+  source: "started" | "control" | "rehydrated" | "restored";
 };
 
-function sanitizeTempScopeSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return sanitized || "unknown";
-}
-
-function resolvePiSubagentsTempScopeId(): string {
-  if (typeof process.getuid === "function") {
-    return `uid-${process.getuid()}`;
-  }
-  for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
-    const value = process.env[key];
-    if (value) return `user-${sanitizeTempScopeSegment(value)}`;
-  }
-  try {
-    const username = os.userInfo().username;
-    if (username) return `user-${sanitizeTempScopeSegment(username)}`;
-  } catch {
-    // Fall through to home-directory-based scoping.
-  }
-  const homedir = process.env.USERPROFILE ?? process.env.HOME;
-  if (homedir) return `home-${sanitizeTempScopeSegment(homedir)}`;
-  try {
-    const fallbackHomedir = os.homedir();
-    if (fallbackHomedir) return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
-  } catch {
-    // Fall through to the shared scope.
-  }
-  return "shared";
-}
-
 function resolveDefaultAsyncDir(): string {
-  return path.join(
-    os.tmpdir(),
-    `pi-subagents-${resolvePiSubagentsTempScopeId()}`,
-    "async-subagent-runs",
-  );
-}
-
-function normalizeComparablePath(target: string): string {
-  const resolved = path.resolve(target);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  return path.join(resolveTempRootDir(), "async-subagent-runs");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -211,25 +210,49 @@ function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): b
   return false;
 }
 
-function readRunningAsyncJob(
+/**
+ * Derives the run outcome from the last assistant message in agent_end event.messages
+ * for a non-aborted settlement. The native agent_settled.aborted flag is authoritative
+ * for cancellation; this preserves error/completion classification for other settlements.
+ */
+function deriveAgentEndOutcome(
+  messages: readonly unknown[] | undefined,
+): "completed" | "aborted" | "error" {
+  if (Array.isArray(messages)) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (!isRecord(message) || message.role !== "assistant") {
+        continue;
+      }
+      if (message.stopReason === "aborted") return "aborted";
+      if (message.stopReason === "error" || typeof message.errorMessage === "string")
+        return "error";
+      return "completed";
+    }
+  }
+  return "completed";
+}
+
+function readRestorableAsyncJob(
   asyncDir: string,
-): { runId: string; sessionId?: string; cwd?: string } | undefined {
+): { runId: string; sessionId: string; pid?: number } | undefined {
   const statusPath = path.join(asyncDir, "status.json");
   const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as unknown;
   if (
     !isRecord(raw) ||
-    raw.state !== "running" ||
+    (raw.state !== "running" && raw.state !== "queued") ||
     typeof raw.runId !== "string" ||
-    raw.runId.length === 0
+    raw.runId.length === 0 ||
+    typeof raw.sessionId !== "string" ||
+    raw.sessionId.length === 0
   ) {
     return undefined;
   }
+  const pid = toValidPid(raw.pid);
   return {
     runId: raw.runId,
-    ...(typeof raw.sessionId === "string" && raw.sessionId.length > 0
-      ? { sessionId: raw.sessionId }
-      : {}),
-    ...(typeof raw.cwd === "string" && raw.cwd.length > 0 ? { cwd: raw.cwd } : {}),
+    sessionId: raw.sessionId,
+    ...(pid !== undefined ? { pid } : {}),
   };
 }
 
@@ -251,9 +274,24 @@ export function createTlhEffectiveActivityTracker(
   const retryGraceTimers = new Map<string, TimeoutHandle>();
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
+  let activeSessionId: string | undefined;
+  /** True from before_agent_start/agent_start until agent_settled; prevents false error during retry gap. */
+  let runActive = false;
+  /** Pending outcome set at agent_end; committed to lastRunOutcome at agent_settled. */
+  let pendingOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Outcome committed at agent_settled; undefined until the first run settles. */
+  let lastRunOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
-  let lastSnapshotKey = "0::0::::";
+  /**
+   * Depth-matched stack for currently open blocking prompts.
+   * Each element is the UIPromptKind of the corresponding open prompt, or undefined when
+   * the event had no recognisable kind. Length always equals uiPromptDepth.
+   * The last element is the most recently opened prompt still open.
+   * Cleared to empty when uiPromptDepth returns to 0.
+   */
+  const uiPromptKindStack: (UIPromptKind | undefined)[] = [];
+  let lastSnapshotKey = "0::0::0::::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
 
@@ -363,10 +401,12 @@ export function createTlhEffectiveActivityTracker(
         : undefined;
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
+    const sessionId = incoming.sessionId ?? existing?.sessionId;
     return {
       source: incoming.source,
       ...(asyncDir ? { asyncDir } : {}),
       ...(pid !== undefined ? { pid } : {}),
+      ...(sessionId ? { sessionId } : {}),
     };
   };
 
@@ -378,6 +418,44 @@ export function createTlhEffectiveActivityTracker(
     }
     activeAsyncJobs.set(runId, mergeAsyncJobRecord(activeAsyncJobs.get(runId), record));
     // Start the periodic liveness drain if it isn't already running.
+    scheduleLivenessCheck();
+  };
+
+  const isRestoredSource = (source: AsyncJobRecord["source"]): boolean =>
+    source === "rehydrated" || source === "restored";
+
+  const replaceRestoredAsyncJobs = (
+    jobs: readonly {
+      runId: string;
+      asyncDir: string;
+      sessionId?: string;
+      pid?: number;
+      source: "rehydrated" | "restored";
+    }[],
+  ): void => {
+    cleanupCompletedAsyncJobTombstones();
+    for (const [runId, record] of activeAsyncJobs) {
+      if (isRestoredSource(record.source)) activeAsyncJobs.delete(runId);
+    }
+    if (activeAsyncJobs.size === 0) stopLivenessTimer();
+
+    for (const job of jobs) {
+      if (!job.runId || !job.asyncDir) continue;
+      // A live event wins over a restore snapshot with the same id. This keeps
+      // replacement from erasing work observed after the session began.
+      const existing = activeAsyncJobs.get(job.runId);
+      if (existing && !isRestoredSource(existing.source)) continue;
+      // A completion event wins over a late restore snapshot. Keep the tombstone
+      // so the snapshot cannot revive a job that already finished.
+      if (recentlyCompletedAsyncJobs.has(job.runId)) continue;
+      const pid = toValidPid(job.pid);
+      activeAsyncJobs.set(job.runId, {
+        source: job.source,
+        asyncDir: job.asyncDir,
+        ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+        ...(pid !== undefined ? { pid } : {}),
+      });
+    }
     scheduleLivenessCheck();
   };
 
@@ -439,6 +517,11 @@ export function createTlhEffectiveActivityTracker(
         continue;
       }
       if (state === "queued") {
+        // Subagents treats a restored queued run as authoritative for its own
+        // poller, but TLH is only a best-effort activity projection. Apply the
+        // same finite startedAt bound to restored snapshots so an orphaned
+        // queue cannot suppress idle forever; this intentional limit may stop
+        // showing activity before subagents advances a long-lived queue.
         // Queued: no pid yet. Grant a short grace period bounded by startedAt
         // so the check stays stateless. This does not penalise long-running
         // work — healthy long runs are in state "running" with a live pid.
@@ -492,25 +575,45 @@ export function createTlhEffectiveActivityTracker(
   };
 
   const currentSessionId = (
-    sessionManager: { getSessionId?: (() => string | undefined) | undefined } | undefined,
+    sessionManager:
+      | {
+          getSessionFile?: (() => string | null | undefined) | undefined;
+          getSessionId?: (() => string | null | undefined) | undefined;
+        }
+      | undefined,
   ): string | undefined => {
-    const sessionId = sessionManager?.getSessionId?.();
+    // Keep the consumer's identity order aligned with subagents' restore
+    // producer: persisted session-file paths are authoritative over UUIDs.
+    const sessionId = sessionManager?.getSessionFile?.() ?? sessionManager?.getSessionId?.();
     return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
   };
 
-  const buildSnapshot = (): TlhEffectiveActivitySnapshot => ({
-    inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
-    waitingForUser: uiPromptDepth > 0,
-    primaryReasons: [...primaryReasons.keys()].sort(),
-    activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
-  });
+  const buildSnapshot = (): TlhEffectiveActivitySnapshot => {
+    const waitingForUser = uiPromptDepth > 0;
+    const topKind = waitingForUser ? uiPromptKindStack[uiPromptKindStack.length - 1] : undefined;
+    // Only propagate kind when it is a recognised UIPromptKind (not undefined).
+    const waitingForUserKind: UIPromptKind | undefined =
+      topKind !== undefined ? topKind : undefined;
+    return {
+      inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+      waitingForUser,
+      ...(runActive ? { runActive: true as const } : {}),
+      ...(waitingForUserKind !== undefined ? { waitingForUserKind } : {}),
+      primaryReasons: [...primaryReasons.keys()].sort(),
+      activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
+      ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+    };
+  };
 
   const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
     [
       snapshot.inProgress ? "1" : "0",
       snapshot.waitingForUser ? "1" : "0",
+      snapshot.runActive ? "1" : "0",
+      snapshot.waitingForUserKind ?? "",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
+      snapshot.lastRunOutcome ?? "",
     ].join("::");
 
   const notifyIfChanged = (): void => {
@@ -545,8 +648,22 @@ export function createTlhEffectiveActivityTracker(
         listeners.delete(listener);
       };
     },
+    beginSession(ctx) {
+      activeSessionId = currentSessionId(ctx.sessionManager);
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
+    },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
+      activeSessionId = currentSessionId(ctx.sessionManager);
+      const restoredJobs: Array<{
+        runId: string;
+        asyncDir: string;
+        sessionId: string;
+        pid?: number;
+        source: "rehydrated";
+      }> = [];
       const entries = (() => {
         try {
           return fs.readdirSync(asyncDir, { withFileTypes: true });
@@ -559,23 +676,29 @@ export function createTlhEffectiveActivityTracker(
           return undefined;
         }
       })();
-      if (!entries) return;
 
-      const normalizedCwd = normalizeComparablePath(ctx.cwd);
-      const sessionId = currentSessionId(ctx.sessionManager);
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const candidateAsyncDir = path.join(asyncDir, entry.name);
-        try {
-          const status = readRunningAsyncJob(candidateAsyncDir);
-          if (!status) continue;
-          if (sessionId && status.sessionId && sessionId !== status.sessionId) continue;
-          if (status.cwd && normalizeComparablePath(status.cwd) !== normalizedCwd) continue;
-          setAsyncJobActive(status.runId, { asyncDir: candidateAsyncDir, source: "rehydrated" });
-        } catch {
-          // Fail closed on malformed or partially-written async artifacts.
+      if (entries && activeSessionId) {
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const candidateAsyncDir = path.join(asyncDir, entry.name);
+          try {
+            const status = readRestorableAsyncJob(candidateAsyncDir);
+            if (!status || status.sessionId !== activeSessionId) continue;
+            restoredJobs.push({
+              runId: status.runId,
+              asyncDir: candidateAsyncDir,
+              sessionId: status.sessionId,
+              ...(status.pid !== undefined ? { pid: status.pid } : {}),
+              source: "rehydrated",
+            });
+          } catch {
+            // Fail closed on malformed or partially-written async artifacts.
+          }
         }
       }
+      // Fallback scans are also replacement snapshots, but live started/control
+      // records remain untouched by replaceRestoredAsyncJobs.
+      replaceRestoredAsyncJobs(restoredJobs);
       notifyIfChanged();
     },
     dispose() {
@@ -585,17 +708,24 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons.clear();
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
+      activeSessionId = undefined;
+      runActive = false;
+      pendingOutcome = undefined;
+      lastRunOutcome = undefined;
       uiPromptDepth = 0;
+      uiPromptKindStack.length = 0;
       notifyIfChanged();
       listeners.clear();
     },
     handleBeforeAgentStart() {
       clearRetryGrace();
+      runActive = true;
       addPrimaryReason("primary:pending-start");
       notifyIfChanged();
     },
     handleAgentStart() {
       clearRetryGrace();
+      runActive = true;
       removePrimaryReason("primary:pending-start");
       addPrimaryReason("primary:agent-loop");
       notifyIfChanged();
@@ -603,9 +733,31 @@ export function createTlhEffectiveActivityTracker(
     handleAgentEnd(event) {
       removePrimaryReason("primary:agent-loop");
       removePrimaryReason("primary:pending-start");
+      // Capture the pending outcome; it is committed to lastRunOutcome only at
+      // agent_settled so that a retryable error never surfaces as "error" in
+      // the OSC 7501 reporter while Pi is waiting to retry.
+      pendingOutcome = deriveAgentEndOutcome(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
       if (looksLikeRetryableAgentEnd(event.messages)) {
         scheduleRetryGrace("agent-end");
       }
+      notifyIfChanged();
+    },
+    handleAgentSettled(event: Pick<AgentSettledEvent, "aborted"> = { aborted: false }) {
+      // Pi emits agent_settled after retries, compaction recovery, and queued
+      // continuations finish. Its native abort flag is authoritative, including
+      // cancellation during retry backoff when no new agent_end was emitted.
+      // The default keeps older direct tracker fixtures compatible; registered Pi
+      // events always provide the required native boolean.
+      if (event.aborted) {
+        lastRunOutcome = "aborted";
+      } else if (pendingOutcome !== undefined) {
+        lastRunOutcome = pendingOutcome;
+      }
+      pendingOutcome = undefined;
+      runActive = false;
+      clearRetryGrace();
       notifyIfChanged();
     },
     handleTurnStart() {
@@ -641,14 +793,59 @@ export function createTlhEffectiveActivityTracker(
       removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
       notifyIfChanged();
     },
-    handleUIPromptStart() {
+    handleUIPromptStart(event) {
       if (disposed) return;
       uiPromptDepth += 1;
+      const kind = event?.kind;
+      // Only recognised UIPromptKind values are recorded; unknown/missing kind is stored as undefined.
+      const recordedKind: UIPromptKind | undefined =
+        kind === "select" ||
+        kind === "confirm" ||
+        kind === "input" ||
+        kind === "editor" ||
+        kind === "custom"
+          ? kind
+          : undefined;
+      uiPromptKindStack.push(recordedKind);
       notifyIfChanged();
     },
-    handleUIPromptEnd() {
+    handleUIPromptEnd(_event) {
       if (uiPromptDepth === 0) return;
       uiPromptDepth -= 1;
+      uiPromptKindStack.pop();
+      if (uiPromptDepth === 0) {
+        // Defensive: ensure stack is cleared when depth reaches 0.
+        uiPromptKindStack.length = 0;
+      }
+      notifyIfChanged();
+    },
+    handleAsyncRestored(data) {
+      if (disposed || !activeSessionId || !isRecord(data)) return;
+      const snapshot = data as Partial<SubagentAsyncRestoredEvent>;
+      if (snapshot.sessionId !== activeSessionId || !Array.isArray(snapshot.jobs)) return;
+      const restoredJobs: Array<{
+        runId: string;
+        asyncDir: string;
+        sessionId: string;
+        pid?: number;
+        source: "restored";
+      }> = [];
+      for (const candidate of snapshot.jobs) {
+        if (!isRecord(candidate)) continue;
+        const runId = readNonEmptyStringField(candidate, "runId");
+        const asyncDir = readNonEmptyStringField(candidate, "asyncDir");
+        const sessionId = readNonEmptyStringField(candidate, "sessionId");
+        if (!runId || !asyncDir || sessionId !== activeSessionId) continue;
+        const pid = toValidPid(candidate.pid);
+        restoredJobs.push({
+          runId,
+          asyncDir,
+          sessionId,
+          ...(pid !== undefined ? { pid } : {}),
+          source: "restored",
+        });
+      }
+      replaceRestoredAsyncJobs(restoredJobs);
       notifyIfChanged();
     },
     handleAsyncStarted(data) {
@@ -660,6 +857,8 @@ export function createTlhEffectiveActivityTracker(
       const record: AsyncJobRecord = { source: "started" };
       const asyncDir = readNonEmptyStringField(data, "asyncDir");
       if (asyncDir) record.asyncDir = asyncDir;
+      const sessionId = readNonEmptyStringField(data, "sessionId");
+      if (sessionId) record.sessionId = sessionId;
       const pid = toValidPid(data.pid);
       if (pid !== undefined) record.pid = pid;
       setAsyncJobActive(data.id, record);
@@ -694,6 +893,10 @@ export function createTlhEffectiveActivityTracker(
         readNonEmptyStringField(data, "asyncDir") ??
         readNonEmptyStringField(data.event, "asyncDir");
       if (asyncDir) record.asyncDir = asyncDir;
+      const sessionId =
+        readNonEmptyStringField(data, "sessionId") ??
+        readNonEmptyStringField(data.event, "sessionId");
+      if (sessionId) record.sessionId = sessionId;
       setAsyncJobActive(data.event.runId, record);
       notifyIfChanged();
     },
@@ -704,20 +907,32 @@ export function registerTlhEffectiveActivityTracker(
   pi: Pick<ExtensionAPI, "on"> & {
     events?: Pick<ExtensionAPI["events"], "on" | "emit"> | undefined;
   },
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): TlhEffectiveActivityTracker {
+  resetBundledSubagentRestoreProvider();
   const tracker = createTlhEffectiveActivityTracker();
+  const env = options.env ?? process.env;
   const unsubscribes = pi.events
     ? [
         pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) => tracker.handleAsyncStarted(data)),
         pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => tracker.handleAsyncComplete(data)),
         pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
+        pi.events.on(SUBAGENT_ASYNC_RESTORED_EVENT, (data) => tracker.handleAsyncRestored(data)),
       ]
     : [];
 
   // Publish snapshot changes on pi.events so other extensions (e.g. notify-gating)
   // can react without coupling directly to this tracker instance.
+  // runActive and lastRunOutcome are internal fields that are NOT part of the bus
+  // payload; deduplicate bus emits so that settle-only transitions (e.g. runActive
+  // clearing at agent_settled when inProgress/waitingForUser are already false) do
+  // not produce repeated identical payloads for downstream consumers.
   if (pi.events) {
+    let lastBusKey = "";
     tracker.subscribe((snapshot) => {
+      const busKey = `${snapshot.inProgress ? "1" : "0"}:${snapshot.waitingForUser ? "1" : "0"}:${snapshot.activeAsyncJobIds.join(",")}`;
+      if (busKey === lastBusKey) return;
+      lastBusKey = busKey;
       try {
         pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
           inProgress: snapshot.inProgress,
@@ -731,6 +946,13 @@ export function registerTlhEffectiveActivityTracker(
   }
 
   pi.on("session_start", (_event, ctx) => {
+    tracker.beginSession(ctx);
+    if (env[SUBAGENT_CHILD_ENV] === "1") return;
+    // The bundled producer announces synchronously during registration, before
+    // session_start. If it is absent/filtered/external, retain the legacy scan.
+    // Reporters read this earlier handler's snapshot, so the producer event can
+    // leave one handler-turn idle window before the restored jobs arrive.
+    if (pi.events && isBundledSubagentRestoreProviderActive()) return;
     tracker.rehydrateFromArtifacts(ctx);
   });
   pi.on("before_agent_start", () => {
@@ -741,6 +963,9 @@ export function registerTlhEffectiveActivityTracker(
   });
   pi.on("agent_end", (event) => {
     tracker.handleAgentEnd(event);
+  });
+  pi.on("agent_settled", (event) => {
+    tracker.handleAgentSettled(event);
   });
   pi.on("turn_start", () => {
     tracker.handleTurnStart();

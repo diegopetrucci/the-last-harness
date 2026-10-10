@@ -13,6 +13,7 @@ const {
   __setTlhUpdateCheckTestHooks,
   buildTlhUpdateNotificationMessage,
   getTlhHeaderUpdate,
+  getTlhMainTrackBehindCount,
   maybeNotifyAvailableTlhUpdate,
   persistTlhLastSeenVersion,
 } = await jiti.import("../extensions/the-last-harness/update-check.ts");
@@ -29,6 +30,15 @@ const LATEST_RELEASE = {
   releaseUrl: "https://github.com/diegopetrucci/the-last-harness/releases/tag/v9.9.9",
 };
 
+const MAIN_TRACK_INSTALL_STATE = {
+  repo: "diegopetrucci/the-last-harness",
+  track: "ref",
+  ref: "main",
+  packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+  packageSourceIsDefault: true,
+  commitSha: "a".repeat(40),
+};
+
 function writeSettings(agentDir, updateCheck = {}) {
   writeFileSync(
     join(agentDir, "settings.json"),
@@ -39,6 +49,11 @@ function writeSettings(agentDir, updateCheck = {}) {
 function writeStartupState(agentDir, state) {
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(join(agentDir, "tlh", "startup-state.json"), `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function writeInstallState(agentDir, state) {
+  mkdirSync(join(agentDir, "tlh"), { recursive: true });
+  writeFileSync(join(agentDir, "tlh", "install-state.json"), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 function readStartupState(agentDir) {
@@ -106,6 +121,7 @@ test("update checks honor every documented skip control without fetching or noti
   const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
   writeSettings(fixture.agent, {});
   writeStartupState(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
 
   for (const skipCase of [
     {
@@ -137,6 +153,10 @@ test("update checks honor every documented skip control without fetching or noti
       fetchLatestRelease: async () => {
         fetchCalls += 1;
         return LATEST_RELEASE;
+      },
+      fetchMainTrackComparison: async () => {
+        fetchCalls += 1;
+        return { status: "behind", behindBy: 1 };
       },
     });
 
@@ -385,6 +405,187 @@ test("startup header keeps the previous-version notice until deferred lastSeen p
       lastNotifiedVersion: "8.8.8",
     },
   });
+});
+
+test("official main installs compare their persisted SHA and cache the behind count", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-main-track-check-test-", {
+    cwd: true,
+    test: t,
+  });
+  writeSettings(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
+  writeStartupState(fixture.agent, {});
+
+  const now = Date.parse("2026-07-17T12:00:00.000Z");
+  let releaseFetchCalls = 0;
+  let comparisonFetchCalls = 0;
+  const behindCounts = [];
+  installUpdateCheckHooks(t, {
+    now: () => now,
+    fetchLatestRelease: async () => {
+      releaseFetchCalls += 1;
+      return undefined;
+    },
+    fetchMainTrackComparison: async (commitSha) => {
+      comparisonFetchCalls += 1;
+      assert.equal(commitSha, MAIN_TRACK_INSTALL_STATE.commitSha);
+      return { status: "behind", behindBy: 3 };
+    },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []), {
+      onMainTrackBehindCountChange: (behindCount) => behindCounts.push(behindCount),
+    });
+  });
+
+  assert.equal(releaseFetchCalls, 1);
+  assert.equal(comparisonFetchCalls, 1);
+  assert.deepEqual(behindCounts, [3]);
+  assert.deepEqual(readStartupState(fixture.agent).updateCheck, {
+    checkedAt: new Date(now).toISOString(),
+    mainTrackCommitSha: MAIN_TRACK_INSTALL_STATE.commitSha,
+    mainTrackStatus: "behind",
+    mainTrackBehindBy: 3,
+  });
+
+  // A fresh cache reuses the comparison and keeps the once-per-day cadence.
+  __resetTlhUpdateCheckForTests();
+  __setTlhUpdateCheckTestHooks({
+    now: () => now,
+    fetchLatestRelease: async () => {
+      releaseFetchCalls += 1;
+      return undefined;
+    },
+    fetchMainTrackComparison: async () => {
+      comparisonFetchCalls += 1;
+      return { status: "behind", behindBy: 9 };
+    },
+  });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    assert.equal(
+      getTlhMainTrackBehindCount(fixture.cwd),
+      3,
+      "a fresh cached comparison should be available before the deferred check",
+    );
+    await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []));
+  });
+  assert.equal(releaseFetchCalls, 1);
+  assert.equal(comparisonFetchCalls, 1);
+});
+
+test("in-flight main-track refresh preserves the prior cached behind count", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-main-track-check-test-", {
+    cwd: true,
+    test: t,
+  });
+  writeSettings(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
+  const now = Date.parse("2026-07-17T12:00:00.000Z");
+  writeStartupState(fixture.agent, {
+    updateCheck: {
+      checkedAt: new Date(now - TLH_UPDATE_CHECK_INTERVAL_MS).toISOString(),
+      mainTrackCommitSha: MAIN_TRACK_INSTALL_STATE.commitSha,
+      mainTrackStatus: "behind",
+      mainTrackBehindBy: 3,
+    },
+  });
+
+  const deferred = createDeferred();
+  installUpdateCheckHooks(t, {
+    now: () => now,
+    fetchLatestRelease: async () => undefined,
+    fetchMainTrackComparison: async () => deferred.promise,
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const refresh = maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []));
+    try {
+      assert.equal(
+        getTlhMainTrackBehindCount(fixture.cwd),
+        3,
+        "an in-flight refresh must keep the previous cached footer count visible",
+      );
+      assert.deepEqual(readStartupState(fixture.agent).updateCheck, {
+        checkedAt: new Date(now).toISOString(),
+        mainTrackCommitSha: MAIN_TRACK_INSTALL_STATE.commitSha,
+        mainTrackStatus: "behind",
+        mainTrackBehindBy: 3,
+      });
+    } finally {
+      deferred.resolve({ status: "behind", behindBy: 5 });
+      await refresh;
+      assert.equal(getTlhMainTrackBehindCount(fixture.cwd), 5);
+    }
+  });
+});
+
+test("main-track API comparison uses GitHub main as the base commit", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-main-track-api-test-", { cwd: true, test: t });
+  writeSettings(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
+  writeStartupState(fixture.agent, {});
+
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes("/compare/")) {
+      return { ok: true, json: async () => ({ status: "behind", behind_by: 2 }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  };
+
+  installUpdateCheckHooks(t, { now: () => Date.parse("2026-07-17T12:00:00.000Z") });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []));
+    assert.equal(getTlhMainTrackBehindCount(fixture.cwd), 2);
+  });
+
+  assert.ok(
+    requests.some((url) => url.endsWith(`/compare/main...${MAIN_TRACK_INSTALL_STATE.commitSha}`)),
+  );
+});
+
+test("main-track comparison failures and non-behind statuses stay quiet", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-main-track-check-test-", {
+    cwd: true,
+    test: t,
+  });
+  writeSettings(fixture.agent, {});
+  writeInstallState(fixture.agent, MAIN_TRACK_INSTALL_STATE);
+  const now = Date.parse("2026-07-17T12:00:00.000Z");
+
+  for (const comparison of [
+    { status: "ahead" },
+    { status: "identical" },
+    { status: "diverged" },
+    undefined,
+  ]) {
+    writeStartupState(fixture.agent, {});
+    installUpdateCheckHooks(t, {
+      now: () => now,
+      fetchLatestRelease: async () => undefined,
+      fetchMainTrackComparison: async () => comparison,
+    });
+
+    const behindCounts = [];
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, []), {
+        onMainTrackBehindCountChange: (behindCount) => behindCounts.push(behindCount),
+      });
+      assert.equal(getTlhMainTrackBehindCount(fixture.cwd), undefined);
+    });
+    assert.deepEqual(behindCounts, [undefined]);
+    assert.equal(
+      readStartupState(fixture.agent).updateCheck?.mainTrackStatus,
+      comparison?.status ?? "unavailable",
+    );
+  }
 });
 
 test("future checkedAt timestamps are treated as stale clock skew and force a refresh", async (t) => {

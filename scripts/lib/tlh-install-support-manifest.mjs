@@ -79,6 +79,27 @@ const BASE_SUPPORT_FILES = Object.freeze([
         installName: "",
     },
     {
+        variable: "TLH_INSTALL_RUNTIME_LIB",
+        requirement: REQUIRED,
+        relativePath: "scripts/lib/tlh-install-runtime.mjs",
+        tempPath: "lib/tlh-install-runtime.mjs",
+        installName: "",
+    },
+    {
+        variable: "PI_RUNTIME_PACKAGE_JSON",
+        requirement: REQUIRED,
+        relativePath: "config/pi-runtime/package.json",
+        tempPath: "pi-runtime-package.json",
+        installName: "",
+    },
+    {
+        variable: "PI_RUNTIME_PACKAGE_LOCK",
+        requirement: REQUIRED,
+        relativePath: "config/pi-runtime/package-lock.json",
+        tempPath: "pi-runtime-package-lock.json",
+        installName: "",
+    },
+    {
         variable: "MERGE_SCRIPT",
         requirement: REQUIRED,
         relativePath: "scripts/merge-settings.mjs",

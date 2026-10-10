@@ -4,10 +4,12 @@
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
 
+import { spawn } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createMockPi,
   createTempDir,
@@ -29,11 +31,117 @@ import {
   requestAsyncInterrupt,
   waitForAsyncResultFile,
   waitForAsyncState,
+  waitForAsyncStatusPredicate,
+  waitForMarker,
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
-describe("async execution utilities", () => {
+const MOCK_PI_SCRIPT_PATH = fileURLToPath(
+  new URL("../support/mock-pi-script.mjs", import.meta.url),
+);
+
+// Freeze publication at the final boundary. The old direct-write implementation
+// exposes a partial final file; the atomic implementation leaves only its
+// complete, non-discoverable temporary file visible until rename.
+const HOLD_PUBLICATION_PRELOAD = `
+const fs = require("node:fs");
+const path = require("node:path");
+
+const originalWriteFileSync = fs.writeFileSync;
+const originalRenameSync = fs.renameSync;
+let held = false;
+
+function isCallRecord(filePath) {
+  const name = path.basename(String(filePath));
+  return (
+    (name.startsWith("call-") || name.startsWith("stale-call-")) &&
+    name.endsWith(".json")
+  );
+}
+
+function holdPublication() {
+  if (held) return;
+  held = true;
+  originalWriteFileSync(process.env.MOCK_PI_PUBLICATION_READY, "", "utf8");
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 120_000;
+  while (!fs.existsSync(process.env.MOCK_PI_PUBLICATION_RELEASE)) {
+    if (Date.now() >= deadline) {
+      process.stderr.write(
+        "mock-pi publication preload: timed out waiting for release marker: " +
+          process.env.MOCK_PI_PUBLICATION_RELEASE +
+          "\\n",
+      );
+      process.exit(1);
+    }
+    Atomics.wait(waitBuffer, 0, 0, 10);
+  }
+}
+
+fs.writeFileSync = (filePath, data, options) => {
+  if (!isCallRecord(filePath)) return originalWriteFileSync(filePath, data, options);
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+  originalWriteFileSync(
+    filePath,
+    bytes.subarray(0, Math.max(1, Math.floor(bytes.length / 2))),
+    options,
+  );
+  holdPublication();
+  return originalWriteFileSync(filePath, data, options);
+};
+
+fs.renameSync = (sourcePath, targetPath) => {
+  if (isCallRecord(targetPath)) holdPublication();
+  return originalRenameSync(sourcePath, targetPath);
+};
+`;
+
+function sanitizedChildEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
+  }
+  delete env.NODE_TEST_CONTEXT;
+  return { ...env, ...overrides };
+}
+
+function spawnMockPiScript(
+  preloadPath: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--require", preloadPath, MOCK_PI_SCRIPT_PATH, ...args],
+      { env, stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `mock-pi publication child exited with ${signal ? `signal ${signal}` : `status ${code}`}: ${stderr.trim()}`,
+        ),
+      );
+    });
+  });
+}
+
+function isPublishedCallName(name: string): boolean {
+  return (name.startsWith("call-") || name.startsWith("stale-call-")) && name.endsWith(".json");
+}
+
+describe("async execution lifecycle interruptions", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -54,6 +162,91 @@ describe("async execution utilities", () => {
   afterEach(() => {
     removeTempDir(tempDir);
   });
+
+  it("publishes complete mock call records atomically for normal and stale invocations", async () => {
+    const preloadPath = path.join(tempDir, "hold-publication.cjs");
+    fs.writeFileSync(preloadPath, HOLD_PUBLICATION_PRELOAD, "utf8");
+
+    const runCase = async (stale: boolean): Promise<void> => {
+      mockPi.reset();
+      const label = stale ? "stale" : "normal";
+      const readyPath = path.join(tempDir, `${label}-publication-ready`);
+      const releasePath = path.join(tempDir, `${label}-publication-release`);
+      const currentGeneration = fs
+        .readFileSync(path.join(mockPi.dir, "current-generation.txt"), "utf8")
+        .trim();
+      const args = ["--mode", "json", "--model", `mock/${label}`];
+      const childDone = spawnMockPiScript(
+        preloadPath,
+        args,
+        sanitizedChildEnv({
+          MOCK_PI_QUEUE_DIR: mockPi.dir,
+          MOCK_PI_GENERATION: stale ? `${currentGeneration}-stale` : currentGeneration,
+          MOCK_PI_PUBLICATION_READY: readyPath,
+          MOCK_PI_PUBLICATION_RELEASE: releasePath,
+        }),
+      );
+
+      try {
+        await Promise.race([
+          waitForMarker(readyPath, scaleTestTimeout(5_000)),
+          childDone.then(
+            () => assert.fail("mock-pi exited before publication was held"),
+            (error: unknown) => {
+              throw error;
+            },
+          ),
+        ]);
+
+        const heldNames = fs.readdirSync(mockPi.dir);
+        assert.equal(
+          heldNames.some(isPublishedCallName),
+          false,
+          "readers must not discover a call record while publication is held",
+        );
+        assert.equal(
+          mockPi.callCount(),
+          0,
+          "callCount must not see the publication temporary file by its prefix",
+        );
+        assert.ok(
+          heldNames.some((name) => name.startsWith(".tmp-")),
+          "publication must have a same-directory temporary file while held",
+        );
+
+        fs.writeFileSync(releasePath, "", "utf8");
+        await childDone;
+
+        const completedNames = fs.readdirSync(mockPi.dir);
+        assert.equal(
+          completedNames.some((name) => name.startsWith(".tmp-")),
+          false,
+          "publication temporary files must be renamed away after completion",
+        );
+        const completedCallNames = completedNames.filter(isPublishedCallName);
+        assert.equal(completedCallNames.length, 1);
+        assert.equal(completedCallNames[0]?.startsWith(stale ? "stale-call-" : "call-"), true);
+
+        if (stale) {
+          const payload = JSON.parse(
+            fs.readFileSync(path.join(mockPi.dir, completedCallNames[0]!), "utf8"),
+          ) as { args?: string[] };
+          assert.deepEqual(payload.args, args);
+          assert.equal(mockPi.callCount(), 0, "stale records must remain outside callCount");
+        } else {
+          assert.deepEqual((await waitForMockPiCall(mockPi, 0)).args, args);
+          assert.equal(mockPi.callCount(), 1);
+        }
+      } finally {
+        fs.writeFileSync(releasePath, "", "utf8");
+        await childDone.catch(() => undefined);
+      }
+    };
+
+    await runCase(false);
+    await runCase(true);
+  });
+
   it(
     "interrupts every active async parallel child",
     {
@@ -96,7 +289,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
 
@@ -187,7 +379,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           sessionRoot,
         });
@@ -292,7 +483,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           sessionRoot,
         });
@@ -311,7 +501,7 @@ describe("async execution utilities", () => {
           source: "test",
         });
 
-        // Wait for the result artifact (state: "complete" is the persisted string).
+        // Wait for the result artifact (state: "paused" is the persisted string).
         // 30s base: spawns 2 parallel children; extra headroom for slow runners.
         const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
         const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -384,14 +574,32 @@ describe("async execution utilities", () => {
           includeMetadata: true,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
       });
 
       const payload = await readAsyncPayload(id);
       const status = JSON.parse(
         fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;
+      assert.equal(payload.timedOut, true);
+      assert.equal(status.timedOut, true);
+      assert.equal(payload.telemetry?.outcome?.state, "failed");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(status.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(payload.telemetry?.steps[0]?.outcome?.terminationReason, "timed_out");
       assert.equal(payload.results[0]?.timedOut, true);
       assert.equal(payload.results[0]?.error, "Subagent timed out after 100ms.");
       assert.equal(payload.results[1]?.timedOut, undefined);
@@ -417,6 +625,285 @@ describe("async execution utilities", () => {
         assert.equal(metadata.timeoutMs, status.steps?.[index]?.timeoutMs);
         assert.equal(metadata.deadlineAt, status.steps?.[index]?.deadlineAt);
       }
+    },
+  );
+
+  it(
+    "allows a later parallel interrupt after a step-owned timeout",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and interrupt delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const shortTimeoutMs = scaleTestTimeout(1_000);
+      const shortTimeoutHold = path.join(tempDir, "short-timeout-hold");
+      const interruptSiblingHold = path.join(tempDir, "interrupt-sibling-hold");
+      mockPi.onCall({
+        matchArgIncludes: "Short timeout sibling",
+        waitForMarker: shortTimeoutHold,
+        ignoreSigterm: true,
+      });
+      mockPi.onCall({
+        matchArgIncludes: "Long interrupt sibling",
+        waitForMarker: interruptSiblingHold,
+      });
+      const id = `async-step-timeout-then-interrupt-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "short", task: "Short timeout sibling" },
+          { agent: "long", task: "Long interrupt sibling" },
+        ],
+        concurrency: 2,
+        agents: [
+          makeAgent("short", { maxExecutionTimeMs: shortTimeoutMs }),
+          makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
+        ],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      await waitForMockPiCall(mockPi, 1);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      const timedOutStatus = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.state === "running" && status.steps?.[0]?.timedOut === true,
+        "step-owned timeout before sibling interrupt",
+      );
+      assert.equal(timedOutStatus.timedOut, undefined);
+      assert.ok(timedOutStatus.pid);
+      deliverInterruptRequest({ asyncDir, pid: timedOutStatus.pid, source: "test" });
+
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "paused");
+      assert.equal(payload.timedOut, undefined);
+      assert.equal(status.timedOut, undefined);
+      assert.equal(payload.telemetry?.outcome?.state, "paused");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "interrupted");
+      assert.equal(payload.telemetry?.steps[0]?.outcome?.terminationReason, "timed_out");
+      assert.deepEqual(
+        payload.results.map((result) => result.timedOut),
+        [true, undefined],
+      );
+      assert.deepEqual(
+        payload.results.map((result) => result.terminationReason),
+        ["timed_out", "paused"],
+      );
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.deepEqual(
+        status.steps?.map((step) => step.status),
+        ["failed", "paused"],
+      );
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.match(eventLog, /"type":"subagent.run.paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.timed_out"/);
+    },
+  );
+
+  it(
+    "pauses a surviving parallel sibling after another step times out",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and supervisor pause delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const shortTimeoutMs = scaleTestTimeout(750);
+      const timeoutSiblingHold = path.join(tempDir, "timeout-sibling-hold");
+      const supervisorPauseGate = path.join(tempDir, "supervisor-pause-after-timeout");
+      mockPi.onCall({
+        matchArgIncludes: "Timeout before supervisor pause",
+        waitForMarker: timeoutSiblingHold,
+        ignoreSigterm: true,
+      });
+      mockPi.onCall({
+        matchArgIncludes: "Supervisor pause after sibling timeout",
+        waitForMarker: supervisorPauseGate,
+        jsonl: [
+          events.toolStart("contact_supervisor", {
+            reason: "need_decision",
+            message: "Need a decision after a sibling timeout",
+          }),
+        ],
+        keepAliveAfterFinalMessageMs: scaleTestTimeout(10_000),
+      });
+      const id = `async-step-timeout-then-supervisor-pause-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "short", task: "Timeout before supervisor pause" },
+          { agent: "long", task: "Supervisor pause after sibling timeout" },
+        ],
+        concurrency: 2,
+        agents: [
+          makeAgent("short", { maxExecutionTimeMs: shortTimeoutMs }),
+          makeAgent("long", { maxExecutionTimeMs: 2_147_483_648 }),
+        ],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        maxSubagentDepth: 2,
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      await waitForMockPiCall(mockPi, 1);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.steps?.[0]?.timedOut === true,
+        "step-owned timeout before supervisor pause",
+      );
+      fs.writeFileSync(supervisorPauseGate, "", "utf-8");
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "paused");
+      assert.equal(payload.timedOut, undefined);
+      assert.equal(status.state, "paused");
+      assert.equal(status.timedOut, undefined);
+      assert.deepEqual(
+        payload.results.map((result) => result.timedOut),
+        [true, undefined],
+      );
+      assert.deepEqual(
+        payload.results.map((result) => result.terminationReason),
+        ["timed_out", "paused"],
+      );
+      assert.equal(payload.results[0]?.success, false);
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.equal(payload.results[1]?.pause?.kind, "awaiting_supervisor");
+      assert.deepEqual(
+        status.steps?.map((step) => step.status),
+        ["failed", "paused"],
+      );
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.equal(status.steps?.[1]?.pause?.kind, "awaiting_supervisor");
+      assert.equal(status.pause?.kind, "awaiting_supervisor");
+      assert.equal(status.pause?.request?.tool, "contact_supervisor");
+      assert.match(eventLog, /"type":"subagent.run.pausing"/);
+      assert.match(eventLog, /"type":"subagent.run.completed".*"status":"paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.timed_out"/);
+    },
+  );
+
+  it(
+    "keeps a single timed-out step terminal when interrupted during drain",
+    {
+      skip:
+        process.platform === "win32"
+          ? "timeout and interrupt delivery are intermittent on Windows CI"
+          : undefined,
+    },
+    async () => {
+      const timeoutMs = scaleTestTimeout(1_000);
+      const singleTimeoutHold = path.join(tempDir, "single-timeout-hold");
+      mockPi.onCall({
+        matchArgIncludes: "Single timeout then interrupt",
+        waitForMarker: singleTimeoutHold,
+        ignoreSigterm: true,
+      });
+      const id = `async-single-timeout-then-interrupt-${Date.now().toString(36)}`;
+      executeAsyncParallel(id, {
+        tasks: [{ agent: "worker", task: "Single timeout then interrupt" }],
+        concurrency: 1,
+        agents: [makeAgent("worker", { maxExecutionTimeMs: timeoutMs })],
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        maxSubagentDepth: 2,
+        controlConfig: {
+          enabled: true,
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 3,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event", "async"],
+        },
+        telemetryProvenance: {
+          tlhVersion: "test-tlh",
+          piVersion: "test-pi",
+          installGeneration: "test-generation",
+          loadedAt: 123,
+        },
+      });
+
+      await waitForMockPiCall(mockPi, 0);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      const timedOutStatus = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.state === "running" && status.steps?.[0]?.timedOut === true,
+        "single-step timeout before interrupt",
+      );
+      assert.equal(timedOutStatus.timedOut, undefined);
+      assert.ok(timedOutStatus.pid);
+      deliverInterruptRequest({ asyncDir, pid: timedOutStatus.pid, source: "test" });
+
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const status = JSON.parse(
+        fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+      ) as AsyncStatusPayload;
+      const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.timedOut, true);
+      assert.equal(payload.telemetry?.outcome?.state, "failed");
+      assert.equal(payload.telemetry?.outcome?.terminationReason, "timed_out");
+      assert.equal(payload.results[0]?.timedOut, true);
+      assert.equal(payload.results[0]?.interrupted, undefined);
+      assert.equal(payload.results[0]?.pause, undefined);
+      assert.equal(status.state, "failed");
+      assert.equal(status.timedOut, true);
+      assert.equal(status.steps?.[0]?.status, "failed");
+      assert.equal(status.steps?.[0]?.timedOut, true);
+      assert.equal(status.steps?.[0]?.pause, undefined);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.paused"/);
+      assert.doesNotMatch(eventLog, /"type":"subagent.run.pausing"/);
     },
   );
 
@@ -462,7 +949,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -515,7 +1001,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
       await waitForMockPiCall(mockPi, 0);
@@ -566,7 +1051,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         // This is the internal run-deadline seam; public callers configure it
         // through execution.maxRunTimeMs at the executor boundary.
@@ -657,7 +1141,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           maxSubagentDepth: 2,
           ...options,
         });
@@ -753,7 +1236,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
       timeoutMs,
       acceptance: {
@@ -823,7 +1305,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
         acceptance: {
           level: "verified",
@@ -897,18 +1378,11 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const elapsed = Date.now() - start;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
@@ -951,17 +1425,11 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const elapsed = Date.now() - start;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
@@ -1009,17 +1477,11 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
 
-    const deadline = Date.now() + scaleTestTimeout(10_000);
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() > deadline)
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.success, false);
@@ -1055,7 +1517,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });

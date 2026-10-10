@@ -1,16 +1,80 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {
+  createExtensionRuntime,
+  ExtensionRunner,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 
+const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await import(
+  new URL("./core/system-prompt.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+);
+
+import {
+  CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
+  setStructuredChildPromptRuntime,
+} from "../extensions/shared/subagent-child-boundary.js";
 import {
   SUBAGENT_CHILD_ENV,
   allowedSubagentsForExperimentalConfig,
   isEmbeddedSubagentTarget,
+  registerChildSubagentPrompt,
   registerTlhStartupMode,
   validateSubagentToolInput,
 } from "../extensions/the-last-harness-subagent-safety.mjs";
 
 function assertAllowed(input, options) {
   assert.equal(validateSubagentToolInput(input, options), undefined);
+}
+
+function makeStructuredPromptEvent(customPrompt = "base prompt") {
+  const systemPromptOptions = normalizeBuildSystemPromptOptions({
+    cwd: process.cwd(),
+    customPrompt,
+  });
+  return {
+    systemPrompt: buildSystemPrompt(systemPromptOptions),
+    systemPromptOptions,
+  };
+}
+
+function makePromptExtension(path, register) {
+  const handlers = new Map();
+  const pi = {
+    on(event, handler) {
+      const registered = handlers.get(event) ?? [];
+      registered.push(handler);
+      handlers.set(event, registered);
+      return () => {};
+    },
+  };
+  register(pi);
+  return {
+    path,
+    resolvedPath: path,
+    sourceInfo: { path, source: "test", scope: "temporary", origin: "top-level" },
+    handlers,
+    tools: new Map(),
+    messageRenderers: new Map(),
+    commands: new Map(),
+    flags: new Map(),
+    shortcuts: new Map(),
+  };
+}
+
+async function emitChainedBeforeAgentStart(options, registrars) {
+  const cwd = process.cwd();
+  const runtime = createExtensionRuntime();
+  const extensions = registrars.map(([path, register]) => makePromptExtension(path, register));
+  const runner = new ExtensionRunner(
+    extensions,
+    runtime,
+    cwd,
+    SessionManager.inMemory(cwd),
+    /** @type {any} */ ({}),
+  );
+  return runner.emitBeforeAgentStart("child task", undefined, options);
 }
 
 function createPiHarness() {
@@ -492,8 +556,85 @@ test("PI_SUBAGENT_CHILD=1 registers only child prompt behavior", async () => {
   assert.deepEqual(pi.commands, []);
   assert.deepEqual(pi.shortcuts, []);
 
-  const result = await pi.events[0].handler({ systemPrompt: "base prompt" });
-  assert.deepEqual(result, { systemPrompt: "base prompt\n\nchild safety prompt" });
+  const event = makeStructuredPromptEvent();
+  event.systemPromptOptions.forceSystemPrompt = "FORCED full child replacement";
+  const result = await pi.events[0].handler(event);
+  assert.equal(result, undefined);
+  assert.equal(event.systemPromptOptions.forceSystemPrompt, undefined);
+  const rendered = buildSystemPrompt(event.systemPromptOptions);
+  assert.doesNotMatch(rendered, /FORCED full child replacement/);
+  assert.match(
+    rendered,
+    /<tlh_child_root_runtime>[\s\S]*child safety prompt[\s\S]*<\/tlh_child_root_runtime>/,
+  );
+  assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  assert.equal(rendered.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1, 1);
+  assert.ok(
+    rendered.indexOf("<tlh_child_root_runtime>") < rendered.indexOf("<tlh_child_explicit_runtime>"),
+  );
+});
+
+test("root child prompt guard survives a later handler return", async () => {
+  const options = normalizeBuildSystemPromptOptions({
+    cwd: process.cwd(),
+    customPrompt: "base prompt",
+    sections: { unrelated: "Keep this unrelated section." },
+    forceSystemPrompt: "FORCED late replacement",
+  });
+  const result = await emitChainedBeforeAgentStart(options, [
+    ["root-child-runtime", (pi) => registerChildSubagentPrompt(pi, () => "child safety prompt")],
+    [
+      "later-discovered-extension",
+      (pi) =>
+        pi.on("before_agent_start", (event) => {
+          setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "explicit", [
+            "explicit replacement guidance",
+          ]);
+          return { systemPrompt: "FORCED late replacement" };
+        }),
+    ],
+  ]);
+
+  assert.equal(result.systemPromptOptions.forceSystemPrompt, undefined);
+  const rendered = buildSystemPrompt(result.systemPromptOptions);
+  assert.doesNotMatch(rendered, /FORCED late replacement/);
+  assert.match(rendered, /<tlh_child_root_runtime>[\s\S]*child safety prompt/);
+  assert.match(rendered, /<tlh_child_explicit_runtime>[\s\S]*explicit replacement guidance/);
+  assert.match(rendered, /Keep this unrelated section\./);
+  assert.match(rendered, new RegExp(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  assert.equal(rendered.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1, 1);
+  assert.ok(
+    rendered.indexOf("<tlh_child_root_runtime>") < rendered.indexOf("<tlh_child_explicit_runtime>"),
+  );
+});
+
+test("fallback child prompt preserves an explicit runtime that already exists", async () => {
+  const options = normalizeBuildSystemPromptOptions({
+    cwd: process.cwd(),
+    customPrompt: "base prompt",
+    forceSystemPrompt: "FORCED initial replacement",
+  });
+  setStructuredChildPromptRuntime(options.sections, "explicit", ["pre-existing explicit guidance"]);
+
+  const result = await emitChainedBeforeAgentStart(options, [
+    ["fallback-child-runtime", (pi) => registerChildSubagentPrompt(pi, () => "root guidance")],
+  ]);
+
+  const rendered = buildSystemPrompt(result.systemPromptOptions);
+  assert.equal(result.systemPromptOptions.forceSystemPrompt, undefined);
+  assert.doesNotMatch(rendered, /FORCED initial replacement/);
+  assert.match(rendered, /<tlh_child_root_runtime>[\s\S]*root guidance/);
+  assert.match(rendered, /<tlh_child_explicit_runtime>[\s\S]*pre-existing explicit guidance/);
+  assert.equal(rendered.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).length - 1, 1);
+  assert.ok(
+    rendered.indexOf("<tlh_child_root_runtime>") < rendered.indexOf("<tlh_child_explicit_runtime>"),
+  );
+  assert.equal(
+    result.systemPromptOptions.sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION].includes(
+      "pre-existing explicit guidance",
+    ),
+    true,
+  );
 });
 
 test("PI_SUBAGENT_CHILD=1 prefers an explicit child registrar over the prompt-only fallback", () => {

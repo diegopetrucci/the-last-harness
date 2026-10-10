@@ -55,6 +55,52 @@ describe("async execution health", () => {
     removeTempDir(tempDir);
   });
 
+  it("keeps a Pi 0.87.1 system-role message_end out of the background answer", async () => {
+    mockPi.onCall({
+      jsonl: [
+        {
+          type: "message_end",
+          message: {
+            role: "system",
+            content: [{ type: "text", text: "system diagnostic" }],
+            timestamp: 1,
+          },
+        },
+        events.assistantMessage("background final"),
+      ],
+    });
+
+    const id = `async-system-role-message-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    executeAsyncSingle(id, {
+      agent: "scout",
+      task: "Return the final answer.",
+      agentConfig: makeAgent("scout"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: id },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.equal(payload.results?.[0]?.output, "background final");
+
+    const streamedOutputPath = path.join(asyncDir, "output-0.log");
+    assert.ok(fs.existsSync(streamedOutputPath), "expected streamed child output");
+    const streamedOutput = fs.readFileSync(streamedOutputPath, "utf-8");
+    assert.match(streamedOutput, /background final/);
+    assert.doesNotMatch(streamedOutput, /system diagnostic/);
+  });
+
   it("background idle episodes recover only on validated activity and dedupe raw-noise freshness", async () => {
     const markerDir = path.join(tempDir, "async-idle-recovery-markers");
     fs.mkdirSync(markerDir, { recursive: true });
@@ -93,7 +139,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -220,7 +265,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -362,7 +406,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -477,7 +520,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -626,7 +668,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -778,7 +819,6 @@ describe("async execution health", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
         controlConfig: {
@@ -932,7 +972,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -995,7 +1034,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {
@@ -1078,7 +1116,6 @@ describe("async execution health", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
       controlConfig: {

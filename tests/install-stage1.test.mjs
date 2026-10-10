@@ -25,7 +25,7 @@ import {
   runStage1LocalPackageInstall,
   scrubInstallerEnv,
   writeFakeCommand,
-  writeFakeNpmInstaller,
+  writeFakeNpmCiInstaller,
   writeFakePi,
   writeFakeTk,
 } from "./install-stage1-core-test-helpers.mjs";
@@ -48,7 +48,7 @@ test("stage-1 hides PATH-adjustment and refresh fallback detail lines unless --v
     const runtimePiPath = join(runtimeBinDir, "pi");
     const pathNotice = `warning: ${runtimePiPath} installed but ${runtimeBinDir} is not on PATH. Added it to PATH for this install; add it to your shell profile with: export PATH="${runtimeBinDir}:$PATH"`;
     const refreshDetailPattern =
-      /Running settings-wide extension refresh from merged settings; fallback retries only 8 non-critical bundled default source\(s\) individually\./;
+      /Running settings-wide extension refresh from merged settings; fallback retries only 7 non-critical bundled default source\(s\) individually\./;
 
     assert.equal(result.status, 0, output);
     assert.deepEqual(
@@ -117,7 +117,7 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: ["pnpm"] }));
 
   const fakePiBody = [
-    'if [[ "${1:-}" == "--version" ]]; then printf "0.85.1\\n"; exit 0; fi',
+    `if [[ "\${1:-}" == "--version" ]]; then printf "${TLH_PINNED_PI_VERSION}\\n"; exit 0; fi`,
     'if [[ "${1:-}" == "install" ]]; then',
     '  if [[ -n "${GIT_INDEX_FILE+x}" ]]; then printf "%s\\n" "$GIT_INDEX_FILE" >"$PI_CHILD_ENV_LOG"; else printf "<unset>\\n" >"$PI_CHILD_ENV_LOG"; fi',
     '  rm -rf "$FOREIGN_DIR"',
@@ -137,10 +137,9 @@ test("managed Pi child gets a normal Git index namespace during a foreign clone"
     "pnpm",
     [`printf '%s\\n' "$*" >>"${pnpmLog}"`, 'mkdir -p "$PWD/node_modules/some-dep"'].join("\n"),
   );
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog: join(root, "npm.log"),
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(root, "runtime", "bin", "pi"),
   });
 
   const result = runInstaller(
@@ -247,7 +246,9 @@ test("stage-1 ignores an ancestor Git commit for a non-Git nested package source
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, output);
-  assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).commitSubject, undefined);
+  const state = readJson(join(agentDir, "tlh", "install-state.json"));
+  assert.equal(state.commitSubject, undefined);
+  assert.equal(state.commitSha, undefined);
 });
 
 test("stage-1 rejects legacy ticket integration flags", () => {
@@ -629,19 +630,6 @@ test("stage-1 leaves existing install-only TLH support files untouched during in
   }
 });
 
-test("stage-1 --no-settings preserves existing extensions/librarian.json during installer flow", (t) => {
-  const existingLibrarianConfig = { version: "1.0.0" };
-  const { result, agentDir } = runStage1LocalPackageInstall(t, {
-    existingLibrarianConfig,
-    noSettings: true,
-  });
-  const output = `${result.stdout}\n${result.stderr}`;
-  const librarianConfigPath = join(agentDir, "extensions", "librarian.json");
-
-  assert.equal(result.status, 0, output);
-  assert.equal(readJson(librarianConfigPath).version, existingLibrarianConfig.version);
-});
-
 test("stage-1 derives packageRoot from custom package source install dirs", (t) => {
   const root = makeTempDir();
   const homeDir = join(root, "home");
@@ -717,11 +705,12 @@ test("stage-1 normalizes absolute file: sources for Pi while preserving raw inst
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, output);
+  // Two --version calls (pre-swap + post-swap staging validation) precede install.
   assert.deepEqual(
     readPiLogRecords(piLog)
       .map((record) => record.command)
-      .slice(0, 3),
-    ["--version", `install ${repoRoot}`, `update ${repoRoot}`],
+      .slice(0, 4),
+    ["--version", "--version", `install ${repoRoot}`, `update ${repoRoot}`],
   );
   const state = readJson(join(agentDir, "tlh", "install-state.json"));
   assert.equal(state.packageSource, filePackageSource);
@@ -730,6 +719,11 @@ test("stage-1 normalizes absolute file: sources for Pi while preserving raw inst
     execFileSync("git", ["-C", repoRoot, "log", "-1", "--format=%s"], {
       encoding: "utf8",
     }).trim(),
+  );
+  assert.equal(
+    state.commitSha,
+    undefined,
+    "custom package sources must not persist the main-track SHA",
   );
   const settings = readJson(join(agentDir, "settings.json"));
   assert.equal(settings.packages[0], repoRoot);

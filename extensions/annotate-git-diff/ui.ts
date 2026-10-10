@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ReviewWindowData } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -27,6 +27,12 @@ interface ReviewUiAssets {
   monacoEditorCss: string;
   monacoWorkerJs: string;
   monacoBasicLanguagesJs: string;
+  // Absolute file:// URL for the Monaco min/ directory (parent of min/vs) with a
+  // trailing slash. Required so that require.toUrl() returns absolute URLs:
+  // on about:blank, new URL(require.toUrl("./assets/..."), document.baseURI) throws
+  // because document.baseURI is "about:blank". Setting an absolute baseUrl makes
+  // toUrl() return a file:// URL that AMD can resolve without touching document.baseURI.
+  monacoBaseUrl: string;
   bootstrapError: string | null;
 }
 
@@ -35,11 +41,6 @@ function safeReadResolvedAsset(specifier: string): string {
 }
 
 function resolveMonacoEditorWorkerJs(monacoBasePath: string): string {
-  const legacyWorkerPath = join(monacoBasePath, "base", "worker", "workerMain.js");
-  if (existsSync(legacyWorkerPath)) {
-    return readFileSync(legacyWorkerPath, "utf8");
-  }
-
   const assetsDir = join(monacoBasePath, "assets");
   if (existsSync(assetsDir)) {
     const editorWorkerAsset = readdirSync(assetsDir)
@@ -71,6 +72,10 @@ function resolveMonacoRuntimeJs(monacoBasePath: string, monacoEntryPath: string)
       const entryPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name === "assets") continue;
+        // nls/lang/*.js each overwrite globalThis._VSCODE_NLS_LANGUAGE and
+        // globalThis._VSCODE_NLS_MESSAGES; inlining all of them would let the last
+        // file (alphabetically zh-tw) win and display a non-English locale.
+        if (entryPath === join(monacoBasePath, "nls", "lang")) continue;
         visit(entryPath);
         continue;
       }
@@ -100,6 +105,9 @@ function resolveReviewUiAssets(): ReviewUiAssets {
       : "";
     const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
     const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath);
+    // Absolute file:// URL for the Monaco min/ directory (parent of min/vs).
+    // See the monacoBaseUrl field comment on ReviewUiAssets for why this is needed.
+    const monacoBaseUrl = pathToFileURL(dirname(monacoBasePath) + "/").href;
     return {
       tailwindBrowserJs,
       monacoLoaderJs,
@@ -107,6 +115,7 @@ function resolveReviewUiAssets(): ReviewUiAssets {
       monacoEditorCss,
       monacoWorkerJs,
       monacoBasicLanguagesJs: monacoRuntimeJs,
+      monacoBaseUrl,
       bootstrapError: null,
     };
   } catch (error) {
@@ -118,6 +127,7 @@ function resolveReviewUiAssets(): ReviewUiAssets {
       monacoEditorCss: "",
       monacoWorkerJs: "",
       monacoBasicLanguagesJs: "",
+      monacoBaseUrl: "",
       bootstrapError: `Unable to load packaged review UI assets: ${message}`,
     };
   }
@@ -168,10 +178,17 @@ export function buildReviewHtml(data: ReviewWindowData): string {
     "__INLINE_MONACO_WORKER_SOURCE_JSON__",
     escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)),
   );
+  // Emit require.config({ baseUrl }) immediately before the inlined Monaco entry
+  // module. On about:blank, new URL(require.toUrl("./assets/..."), document.baseURI)
+  // throws because document.baseURI resolves to "about:blank". Providing an absolute
+  // file:// baseUrl makes toUrl() return absolute URLs that AMD resolves safely.
+  const monacoBaseUrlConfig = assets.monacoBaseUrl
+    ? `require.config({baseUrl:${escapeForInlineScript(JSON.stringify(assets.monacoBaseUrl))}});\n`
+    : "";
   html = safeReplace(
     html,
     "__INLINE_MONACO_ENTRY_JS__",
-    escapeInlineScriptSource(assets.monacoEntryJs),
+    monacoBaseUrlConfig + escapeInlineScriptSource(assets.monacoEntryJs),
   );
   html = safeReplace(
     html,

@@ -22,7 +22,6 @@ import { clearPendingForegroundControlNotices } from "../../extension/control-no
 import type { runSync } from "./execution.ts";
 import {
   buildParallelModeError,
-  resolveToolBudget,
   runParallelPath,
   runSinglePath,
   toExecutionErrorResult,
@@ -44,7 +43,6 @@ import {
   registerForegroundMessageInbox,
   requestForegroundInterrupt,
   requestInterruptAllRunningSubagentRuns,
-  interruptNestedRun,
   projectInterruptAuthorizationResult,
   projectInterruptResolutionMismatch,
   resolveRememberedForegroundRun,
@@ -52,8 +50,6 @@ import {
   resolvedAsyncInterruptTarget,
   selectInterruptTarget,
   steerAsyncRun,
-  steerNestedRun,
-  trustedSessionRootsForStatus,
   unknownAgentMessage,
   trimRememberedForegroundRuns,
   providerFallbackModelsForTarget,
@@ -63,8 +59,6 @@ import {
 } from "./foreground-control.ts";
 import {
   hasInMemoryProjectAgentCapture,
-  hasMalformedProjectAgentControlMarker,
-  hasProjectAgentControlMarker,
   isRecordValue,
   lookupPrivateProjectActionReference,
   normalizeProjectAgentAccess,
@@ -85,7 +79,6 @@ export {
 import { pausedForegroundStatusPath } from "./foreground-pause-state.ts";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { normalizeSkillInput } from "../../agents/skills.ts";
 import {
   resolveExecutionPolicy,
   type ResolvedExecutionPolicy,
@@ -95,38 +88,23 @@ import {
   executeAsyncSingle,
   isAsyncAvailable,
 } from "../background/async-execution.ts";
-import { validateAcceptanceInput, validateDispatchAcceptanceInput } from "../shared/acceptance.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveControlConfig } from "../shared/subagent-control.ts";
-import { resolveAsyncRunLocation } from "../background/async-resume.ts";
 import { normalizeSingleOutputOverride } from "../shared/single-output.ts";
 import { readStatus } from "../../shared/utils.ts";
-
-import {
-  resolveInheritedNestedRouteFromEnv,
-  resolveNestedParentAddressFromEnv,
-  writeNestedEvent,
-} from "../shared/nested-events.ts";
+import { retiredNestedLaunchError } from "../shared/pi-args.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
-  type AcceptanceInput,
   type AsyncStatus,
-  type ControlConfig,
   type Details,
   type ExtensionConfig,
   type SubagentToolResult,
-  type MaxOutputConfig,
-  type NestedRouteInfo,
   type ResolvedArtifactConfig,
   type ResolvedControlConfig,
-  type ResolvedToolBudget,
-  type ToolBudgetConfig,
   type SubagentRunMode,
   type SubagentState,
-  ASYNC_DIR,
-  RESULTS_DIR,
   SUBAGENT_ACTIONS,
   checkSubagentDepth,
   resolveTopLevelParallelConcurrency,
@@ -144,8 +122,6 @@ interface TaskParam {
   outputMode?: "inline" | "file-only";
   model?: string;
   modelFallbackNotice?: string;
-  acceptance?: AcceptanceInput;
-  toolBudget?: ToolBudgetConfig;
 }
 
 export interface SubagentParamsLike {
@@ -153,8 +129,6 @@ export interface SubagentParamsLike {
   id?: string;
   dir?: string;
   index?: number;
-  view?: "fleet" | "transcript";
-  lines?: number;
   agent?: string;
   task?: string;
   message?: string;
@@ -162,22 +136,15 @@ export interface SubagentParamsLike {
   chain?: unknown;
   tasks?: TaskParam[];
   async?: boolean;
-  toolBudget?: ToolBudgetConfig;
   clarify?: boolean;
-  share?: boolean;
-  control?: ControlConfig;
-  sessionDir?: string;
   cwd?: string;
-  maxOutput?: MaxOutputConfig;
   artifacts?: boolean;
   model?: string;
   modelFallbackNotice?: string;
-  skill?: string | string[] | boolean;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
   agentScope?: unknown;
   chainDir?: string;
-  acceptance?: AcceptanceInput;
   schedule?: string;
   scheduleName?: string;
   chainName?: string;
@@ -239,13 +206,13 @@ export interface ExecutorDeps {
     agentDiagnostics?: AgentDiscoveryDiagnostic[];
   };
   getProjectAgentAccess?: (request: ProjectAgentAccessRequest) => ProjectAgentAccess | undefined;
+  /** Provenance captured once by the parent extension load boundary. */
+  telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
   /** Narrow functional seam for exercising continuation authorization without spawning a child. */
   executeAsyncSingle?: typeof executeAsyncSingle;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-  /** Optional: retrieve current-session heartbeat totals for the doctor action. */
-  getHeartbeatSummary?: () => import("../../extension/heartbeat-wiring.ts").HeartbeatSessionSummary;
 }
 
 interface ExecutionContextData {
@@ -258,7 +225,6 @@ interface ExecutionContextData {
   projectAgentCapability?: ProjectAgentSnapshotCapability;
   projectAgentCaptures?: readonly import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
   runId: string;
-  shareEnabled: boolean;
   sessionRoot: string;
   sessionDirForIndex: (idx?: number) => string;
   sessionFileForIndex: (idx?: number) => string | undefined;
@@ -267,10 +233,11 @@ interface ExecutionContextData {
   artifactsDir: string;
   effectiveAsync: boolean;
   controlConfig: ResolvedControlConfig;
-  nestedRoute?: NestedRouteInfo;
+  telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
+  telemetryLineage?: import("../../shared/telemetry.ts").SubagentTelemetryLineage;
+  startedAt?: number;
   timeoutMs?: number;
   deadlineAt?: number;
-  toolBudget?: ResolvedToolBudget;
   modelScope?: ModelScopeConfig;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
@@ -329,6 +296,23 @@ function retiredExecutionControlError(params: SubagentParamsLike): string | unde
       "Configure fallbackModels in the agent definition; per-call fallback selection is no longer supported.",
     includeProgress:
       "Progress is tracked automatically and is not a caller-controlled execution option.",
+    skills:
+      "Configure skills in the agent definition; per-call skill selection is no longer supported.",
+    skill:
+      "Configure skills in the agent definition; per-call skill selection is no longer supported.",
+    share: "Session publishing is retired; ordinary session persistence remains automatic.",
+    acceptance:
+      "Acceptance is inferred from the agent definition and persisted continuation contract.",
+    toolBudget:
+      "Configure toolBudget in the agent definition; per-call budgets are no longer supported.",
+    control:
+      "Configure control in the isolated extension config; per-call control is no longer supported.",
+    sessionDir:
+      "Session directories are managed internally; per-call sessionDir is no longer supported.",
+    maxOutput: "Output bounds are managed internally; per-call maxOutput is no longer supported.",
+    dir: "Run directories are resolved internally; public dir selectors are no longer supported.",
+    view: "Status views are no longer caller-selectable; use the default status output.",
+    lines: "Status line limits are no longer caller-selectable; use the default status output.",
   };
   for (const [key, guidance] of Object.entries(topLevelGuidance)) {
     if (Object.hasOwn(input, key)) return `${key} is no longer supported. ${guidance}`;
@@ -337,8 +321,33 @@ function retiredExecutionControlError(params: SubagentParamsLike): string | unde
   if (Array.isArray(input.tasks)) {
     for (const [index, rawTask] of input.tasks.entries()) {
       if (!isRecordValue(rawTask)) continue;
+      const taskPrefix = `tasks[${index}]`;
+      const taskGuidance: Record<string, string> = {
+        skills:
+          "Configure skills in the agent definition; per-task skill selection is no longer supported.",
+        skill:
+          "Configure skills in the agent definition; per-task skill selection is no longer supported.",
+        share: "Session publishing is retired; ordinary session persistence remains automatic.",
+        acceptance:
+          "Acceptance is inferred from the agent definition and persisted continuation contract.",
+        toolBudget:
+          "Configure toolBudget in the agent definition; per-task budgets are no longer supported.",
+        control:
+          "Configure control in the isolated extension config; per-task control is no longer supported.",
+        sessionDir:
+          "Session directories are managed internally; per-task sessionDir is no longer supported.",
+        maxOutput:
+          "Output bounds are managed internally; per-task maxOutput is no longer supported.",
+        dir: "Run directories are resolved internally; public dir selectors are no longer supported.",
+        view: "Status views are no longer caller-selectable; use the default status output.",
+        lines: "Status line limits are no longer caller-selectable; use the default status output.",
+      };
+      for (const [key, guidance] of Object.entries(taskGuidance)) {
+        if (Object.hasOwn(rawTask, key))
+          return `${taskPrefix}.${key} is no longer supported. ${guidance}`;
+      }
       if (Object.hasOwn(rawTask, "timeoutMs")) {
-        return `tasks[${index}].timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
+        return `${taskPrefix}.timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
       }
       if (Object.hasOwn(rawTask, "reads")) {
         return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
@@ -374,15 +383,6 @@ function validateExecutionInput(
     };
   }
 
-  const acceptanceErrors = validateExecutionAcceptance(params);
-  if (acceptanceErrors.length > 0) {
-    return {
-      content: [{ type: "text", text: acceptanceErrors.join(" ") }],
-      isError: true,
-      details: { mode: getRequestedModeLabel(params), results: [] },
-    };
-  }
-
   if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
     return {
       content: [{ type: "text", text: unknownAgentMessage(params.agent, agentDiagnostics) }],
@@ -410,17 +410,6 @@ function validateExecutionInput(
   }
 
   return null;
-}
-
-function validateExecutionAcceptance(params: SubagentParamsLike): string[] {
-  const errors: string[] = [];
-  errors.push(...validateAcceptanceInput(params.acceptance, "acceptance"));
-  errors.push(...validateDispatchAcceptanceInput(params.acceptance, "acceptance"));
-  for (const [index, task] of (params.tasks ?? []).entries()) {
-    errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
-    errors.push(...validateDispatchAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
-  }
-  return errors;
 }
 
 function buildRequestedModeError(
@@ -477,14 +466,12 @@ function runAsyncPath(
     effectiveCwd,
     agents,
     ctx,
-    shareEnabled,
     sessionRoot,
     sessionFileForTask,
     artifactConfig,
     artifactsDir,
     effectiveAsync,
     controlConfig,
-    nestedRoute,
   } = data;
   const hasTasks = (params.tasks?.length ?? 0) > 0;
   const hasSingle = !hasTasks && Boolean(params.agent);
@@ -575,8 +562,6 @@ function runAsyncPath(
           ? { output: task.output }
           : {}),
       ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-      ...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
-      ...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
     }));
     return releaseAsyncProjectRunOnError(
       executeAsyncParallel(id, {
@@ -587,19 +572,17 @@ function runAsyncPath(
         availableModels,
         modelRegistry: modelRegistrySnapshot.evidence,
         cwd: effectiveCwd,
-        maxOutput: params.maxOutput,
         artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
         artifactConfig,
-        shareEnabled,
         sessionRoot,
         sessionFilesByFlatIndex: params.tasks.map((task, index) =>
           sessionFileForTask(task.agent, index),
         ),
         maxSubagentDepth: currentMaxSubagentDepth,
         controlConfig,
-        nestedRoute,
+        telemetryProvenance: data.telemetryProvenance,
+        telemetryLineage: data.telemetryLineage,
         timeoutMs: data.timeoutMs,
-        toolBudget: data.toolBudget,
         projectAgentCaptures: data.projectAgentCaptures,
       }),
     );
@@ -617,8 +600,7 @@ function runAsyncPath(
     const rawOutput = params.output !== undefined ? params.output : a.output;
     const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
     const effectiveOutputMode = params.outputMode ?? "inline";
-    const normalizedSkills = normalizeSkillInput(params.skill);
-    const skills = normalizedSkills === false ? [] : normalizedSkills;
+    const skills = a.skills;
     const maxSubagentDepth = resolveChildMaxSubagentDepth(
       currentMaxSubagentDepth,
       a.maxSubagentDepth,
@@ -634,7 +616,7 @@ function runAsyncPath(
       },
     );
     return releaseAsyncProjectRunOnError(
-      executeAsyncSingle(id, {
+      (deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
         agent: params.agent!,
         task: params.task ?? "",
         agentConfig: a,
@@ -642,10 +624,8 @@ function runAsyncPath(
         availableModels,
         modelRegistry: modelRegistrySnapshot.evidence,
         cwd: effectiveCwd,
-        maxOutput: params.maxOutput,
         artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
         artifactConfig,
-        shareEnabled,
         sessionRoot,
         sessionFile: sessionFileForTask(params.agent!, 0),
         skills,
@@ -657,10 +637,9 @@ function runAsyncPath(
         modelFallbackNotice: params.modelFallbackNotice,
         maxSubagentDepth,
         controlConfig,
-        nestedRoute,
-        acceptance: params.acceptance,
+        telemetryProvenance: data.telemetryProvenance,
+        telemetryLineage: data.telemetryLineage,
         timeoutMs: data.timeoutMs,
-        toolBudget: data.toolBudget,
         projectAgent: data.projectAgentCaptures?.find(
           (capture) => capture.provenance.agent === params.agent,
         ),
@@ -716,12 +695,9 @@ function executeDoctorAction(
           cwd: requestCwd,
           config: deps.config,
           state: deps.state,
-          requestedSessionDir: params.sessionDir,
           currentSessionFile,
           currentSessionId,
           sessionError,
-          expandTilde: deps.expandTilde,
-          ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
         }),
       },
     ],
@@ -731,36 +707,15 @@ function executeDoctorAction(
 
 function executeStatusAction(
   params: SubagentParamsLike,
-  ctx: ExtensionContext,
+  _ctx: ExtensionContext,
   deps: ExecutorDeps,
 ): SubagentToolResult<Details> {
-  const targetRunId = params.id;
-  const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
-  if (params.view === "fleet") {
-    return inspectSubagentStatus(buildRunStatusParams(params), {
-      state: deps.state,
-      sessionRoots,
-    });
-  }
-  if (targetRunId) {
+  if (params.id) {
     try {
-      const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
+      const resolved = resolveSubagentRunId(params.id, { state: deps.state });
       if (resolved?.kind === "foreground") {
         const foreground = getForegroundControl(deps.state, resolved.id);
-        if (foreground) {
-          if (params.view === "transcript") {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Live foreground status transcript is already visible in the expanded running subagent result. The canonical session becomes inspectable after the foreground run completes when sessions are enabled; this view is not the optional _transcript.jsonl diagnostic artifact.",
-                },
-              ],
-              details: { mode: "management", results: [] },
-            };
-          }
-          return foregroundStatusResult(foreground);
-        }
+        if (foreground) return foregroundStatusResult(foreground);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -772,23 +727,9 @@ function executeStatusAction(
     }
   } else {
     const foreground = getForegroundControl(deps.state, undefined);
-    if (foreground && params.view !== "transcript") return foregroundStatusResult(foreground);
-    if (foreground && params.view === "transcript") {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Live foreground status transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background status transcript; neither view is the optional _transcript.jsonl diagnostic artifact.",
-          },
-        ],
-        details: { mode: "management", results: [] },
-      };
-    }
+    if (foreground) return foregroundStatusResult(foreground);
   }
-  return inspectSubagentStatus(buildRunStatusParams(params), {
-    state: deps.state,
-    sessionRoots,
-  });
+  return inspectSubagentStatus(buildRunStatusParams(params), { state: deps.state });
 }
 
 async function executeSteerAction(
@@ -821,45 +762,9 @@ async function executeSteerAction(
   const targetRunId = params.id;
   const retainedRunId =
     privateProjectLookup.status === "found" ? privateProjectLookup.runId : undefined;
-  if (params.dir) {
-    try {
-      const location = resolveAsyncRunLocation(
-        retainedRunId ? { ...params, id: retainedRunId } : params,
-        ASYNC_DIR,
-        RESULTS_DIR,
-      );
-      const runId =
-        retainedRunId ??
-        location.resolvedId ??
-        targetRunId ??
-        path.basename(location.asyncDir ?? params.dir);
-      await authorizeProjectSteerTarget({
-        params: { ...params, id: runId, dir: location.asyncDir ?? params.dir },
-        lookup: privateProjectLookup,
-        ctx,
-        deps,
-      });
-      return steerAsyncRun({
-        state: deps.state,
-        runId,
-        message,
-        index: params.index,
-        kill: deps.kill,
-        location,
-        projectLookup: privateProjectLookup,
-      });
-    } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      return {
-        content: [{ type: "text", text }],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
-    }
-  }
   if (!targetRunId)
     return {
-      content: [{ type: "text", text: "action='steer' requires id or dir." }],
+      content: [{ type: "text", text: "action='steer' requires id." }],
       isError: true,
       details: { mode: "management", results: [] },
     };
@@ -887,25 +792,6 @@ async function executeSteerAction(
       isError: true,
       details: { mode: "management", results: [] },
     };
-  if (resolved?.kind === "nested") {
-    if (
-      privateProjectLookup.status === "missing" &&
-      hasProjectAgentControlMarker(resolved.match.run)
-    )
-      return {
-        content: [
-          {
-            type: "text",
-            text: projectRunAuthorizationError(
-              "the nested target carries a project-agent marker, but its process-private reference is unavailable; refusing nested control fallback.",
-            ).message,
-          },
-        ],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
-    return steerNestedRun({ target: resolved, message, index: params.index });
-  }
   if (resolved?.kind === "foreground")
     return {
       content: [
@@ -1026,10 +912,9 @@ async function executeInterruptAction(
       details: { mode: "management", results: [] },
     };
   }
-  const privateProjectLookup =
-    targetRunId || params.dir
-      ? requestedProjectLookup
-      : lookupPrivateProjectActionReference(selectedParams);
+  const privateProjectLookup = targetRunId
+    ? requestedProjectLookup
+    : lookupPrivateProjectActionReference(selectedParams);
   if (privateProjectLookup.status === "ambiguous") {
     return {
       content: [
@@ -1052,42 +937,6 @@ async function executeInterruptAction(
   let asyncInterruptTarget = resolved?.kind === "async" ? resolved : undefined;
   let asyncInterruptParams = selectedParams;
   let asyncInterruptLookup: ProjectAgentRunReferenceLookup = privateProjectLookup;
-  if (resolved?.kind === "nested") {
-    if (
-      hasMalformedProjectAgentControlMarker(resolved.match.run) ||
-      (privateProjectLookup.status === "missing" &&
-        hasProjectAgentControlMarker(resolved.match.run))
-    ) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: projectRunAuthorizationError(
-              "the nested target carries a malformed or unavailable project-agent marker; refusing nested interrupt fallback.",
-            ).message,
-          },
-        ],
-        isError: true,
-        details: { mode: "management", results: [] },
-      };
-    }
-    if (privateProjectLookup.status === "found" && resolved.match.run.projectAgent) {
-      try {
-        privateProjectCaptureForTarget(privateProjectLookup, {
-          runId: resolved.id,
-          agent: resolved.match.run.agent ?? resolved.match.run.projectAgent.provenance.agent,
-          projectAgent: resolved.match.run.projectAgent,
-        });
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-          details: { mode: "management", results: [] },
-        };
-      }
-    }
-    return interruptNestedRun(resolved);
-  }
   if (resolved?.kind === "foreground") {
     const foregroundRun = deps.state.foregroundRuns?.get(resolved.id);
     const foregroundProjectChildren = (foregroundRun?.children ?? []).filter(
@@ -1280,6 +1129,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const unsupportedSavedChainDetail = unsupportedSavedChainInput(paramsWithResolvedCwd);
     if (unsupportedSavedChainDetail)
       return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);
+    const retiredNestedError = retiredNestedLaunchError(paramsWithResolvedCwd);
+    if (retiredNestedError)
+      return buildRequestedModeError(paramsWithResolvedCwd, retiredNestedError);
     const action = paramsWithResolvedCwd.action;
     if (action) {
       if (action === "doctor")
@@ -1315,7 +1167,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       return handleManagementAction(action, buildManagementActionParams(paramsWithResolvedCwd), {
         ...ctx,
         cwd: requestCwd,
-        config: deps.config,
       });
     }
 
@@ -1326,9 +1177,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
           {
             type: "text",
             text:
-              `Nested subagent call blocked (depth=${depth}, max=${maxDepth}). ` +
-              "You are running at the maximum subagent nesting depth. " +
-              "Complete your current task directly without delegating to further subagents.",
+              `Subagent dispatch blocked at the configured recursion depth (depth=${depth}, max=${maxDepth}). ` +
+              "You are running at the maximum supported child depth. " +
+              "Complete your current task directly without delegating further.",
           },
         ],
         isError: true,
@@ -1343,8 +1194,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     let effectiveParams = normalizedParams;
     const runTimeoutMs =
       executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
-    const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
-    if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
     const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -1370,12 +1219,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const modelScope = discovered.modelScope;
     const agents = discoveredAgents;
     const runId = randomUUID().slice(0, 8);
-    const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
-    const nestedParentAddress = inheritedNestedRoute
-      ? resolveNestedParentAddressFromEnv()
-      : undefined;
-    const nestedRoute = inheritedNestedRoute;
-    const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
 
@@ -1390,7 +1233,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 
     const requestedAsync = effectiveParams.async ?? false;
     const effectiveAsync = requestedAsync;
-    const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
+    const controlConfig = resolveControlConfig(deps.config.control);
 
     const artifactConfig: ResolvedArtifactConfig = {
       ...configuredArtifactConfig,
@@ -1398,13 +1241,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     };
     const artifactsDir = getArtifactsDir(parentSessionFile);
 
-    let sessionRoot: string;
-    if (effectiveParams.sessionDir) {
-      sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
-    } else {
-      const baseSessionRoot = deps.getSubagentSessionRoot(parentSessionFile);
-      sessionRoot = path.join(baseSessionRoot, runId);
-    }
+    const baseSessionRoot = deps.getSubagentSessionRoot(parentSessionFile);
+    const sessionRoot = path.join(baseSessionRoot, runId);
     try {
       fs.mkdirSync(sessionRoot, { recursive: true });
     } catch (error) {
@@ -1457,6 +1295,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const onUpdateWithContext = onUpdate;
 
     const foregroundMode: "single" | "parallel" = hasTasks ? "parallel" : "single";
+    const runStartedAt = Date.now();
 
     const execData: ExecutionContextData = {
       params: effectiveParams,
@@ -1472,7 +1311,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         ? { projectAgentCaptures: projectResolution.projectAgentCaptures }
         : {}),
       runId,
-      shareEnabled,
       sessionRoot,
       sessionDirForIndex,
       sessionFileForIndex: childSessionFileForIndex,
@@ -1481,9 +1319,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       artifactsDir,
       effectiveAsync,
       controlConfig,
-      nestedRoute,
+      telemetryProvenance: deps.telemetryProvenance,
+      startedAt: runStartedAt,
       timeoutMs: runTimeoutMs,
-      toolBudget: runToolBudget.toolBudget,
       modelScope,
       runSync: deps.runSync,
     };
@@ -1493,12 +1331,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       : {
           runId,
           mode: foregroundMode,
-          startedAt: Date.now(),
-          updatedAt: Date.now(),
+          startedAt: runStartedAt,
+          updatedAt: runStartedAt,
           currentAgent: undefined,
           currentIndex: undefined,
           currentActivityState: undefined,
-          nestedRoute,
           interrupt: undefined,
         };
     if (foregroundControl) {
@@ -1506,98 +1343,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       deps.state.lastForegroundControlId = runId;
     }
 
-    const writeNestedForegroundEvent = (
-      type: "subagent.nested.started" | "subagent.nested.completed",
-      result?: SubagentToolResult<Details>,
-    ): void => {
-      if (!inheritedNestedRoute || !nestedParentAddress) return;
-      const now = Date.now();
-      const details = result?.details;
-      const state =
-        type === "subagent.nested.started"
-          ? "running"
-          : result?.isError || details?.results.some((child) => child.exitCode !== 0)
-            ? "failed"
-            : details?.results.some((child) => child.interrupted)
-              ? "paused"
-              : "complete";
-      const errorText = result?.isError
-        ? result.content.find((item) => item.type === "text")?.text
-        : undefined;
-      const agentsForSummary =
-        hasTasks && effectiveParams.tasks
-          ? effectiveParams.tasks.map((task) => task.agent)
-          : effectiveParams.agent
-            ? [effectiveParams.agent]
-            : [];
-      try {
-        writeNestedEvent(inheritedNestedRoute, {
-          type,
-          ts: now,
-          parentRunId: nestedParentAddress.parentRunId,
-          parentStepIndex: nestedParentAddress.parentStepIndex,
-          child: {
-            id: runId,
-            parentRunId: nestedParentAddress.parentRunId,
-            parentStepIndex: nestedParentAddress.parentStepIndex,
-            depth: nestedParentAddress.depth,
-            path: nestedParentAddress.path,
-            cwd: effectiveCwd,
-            ownerState: state === "running" ? "live" : "gone",
-            mode: foregroundMode,
-            state,
-            agent: agentsForSummary[0],
-            ...(details?.results[0]?.projectAgent
-              ? { projectAgent: details.results[0].projectAgent }
-              : {}),
-            agents: agentsForSummary,
-            startedAt: foregroundControl?.startedAt ?? now,
-            ...(state !== "running" ? { endedAt: now } : {}),
-            lastUpdate: now,
-            ...(details?.totalCost ? { totalCost: details.totalCost } : {}),
-            ...(errorText ? { error: errorText } : {}),
-            ...(details?.results.length
-              ? {
-                  steps: details.results.map((child) => ({
-                    agent: child.agent,
-                    ...(child.projectAgent ? { projectAgent: child.projectAgent } : {}),
-                    status: child.interrupted
-                      ? "paused"
-                      : child.exitCode === 0
-                        ? "complete"
-                        : "failed",
-                    ...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
-                    ...(child.error ? { error: child.error } : {}),
-                    ...(child.contextUsage ? { contextUsage: child.contextUsage } : {}),
-                    ...(child.terminationReason
-                      ? { terminationReason: child.terminationReason }
-                      : {}),
-                  })),
-                }
-              : {}),
-          },
-        });
-      } catch (error) {
-        console.error("Failed to emit nested foreground status event:", error);
-      }
-    };
-
-    let nestedForegroundStarted = false;
     try {
       const asyncResult = runAsyncPath(execData, deps);
       if (asyncResult) return asyncResult;
-      if (foregroundControl) {
-        writeNestedForegroundEvent("subagent.nested.started");
-        nestedForegroundStarted = true;
-      }
       if (hasTasks && effectiveParams.tasks) {
         const result = await runParallelPath(execData, deps);
-        writeNestedForegroundEvent("subagent.nested.completed", result);
         return releaseTerminalProjectRun(result);
       }
       if (hasSingle) {
         const result = await runSinglePath(execData, deps);
-        writeNestedForegroundEvent("subagent.nested.completed", result);
         return releaseTerminalProjectRun(result);
       }
     } catch (error) {
@@ -1606,8 +1360,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         projectRunRetained = false;
       }
       const errorResult = toExecutionErrorResult(effectiveParams, error);
-      if (nestedForegroundStarted)
-        writeNestedForegroundEvent("subagent.nested.completed", errorResult);
       return errorResult;
     } finally {
       if (foregroundControl) {

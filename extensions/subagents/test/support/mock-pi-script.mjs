@@ -66,12 +66,15 @@ function appendSignalRecord(signal) {
   );
 }
 
-function spawnStubbornDescendants() {
+async function spawnStubbornDescendants() {
   const grandchildCode = [
     'import fs from "node:fs";',
     "const [recordPath, childPid] = process.argv.slice(1);",
     'process.on("SIGINT", () => {}); process.on("SIGTERM", () => {});',
-    "fs.writeFileSync(recordPath, JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid }));",
+    "const record = JSON.stringify({ childPid: Number(childPid), grandchildPid: process.pid });",
+    "const tempPath = `${recordPath}.tmp-${process.pid}`;",
+    "fs.writeFileSync(tempPath, record);",
+    "fs.renameSync(tempPath, recordPath);",
     "setInterval(() => {}, 1000);",
   ].join("");
   const childCode = [
@@ -85,6 +88,10 @@ function spawnStubbornDescendants() {
   spawn(process.execPath, ["--input-type=module", "-e", childCode, recordPath], {
     stdio: "ignore",
   });
+  // Do not publish the mock call until the process-discovery record is ready.
+  // Otherwise a supervisor pause can reap the group before the grandchild has
+  // published the metadata that the cleanup assertions use.
+  await waitForMarkerFile(recordPath);
 }
 
 function readPendingResponse(filePath) {
@@ -344,6 +351,27 @@ function writeSessionFile(args) {
   }
 }
 
+function publishCallRecord(callPrefix, args) {
+  const fileName = `${callPrefix}${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`;
+  const finalPath = path.join(queueDir, fileName);
+  const tempPath = path.join(queueDir, `.tmp-${fileName}`);
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }),
+    "utf-8",
+  );
+  try {
+    fs.renameSync(tempPath, finalPath);
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Preserve the publication error if cleanup also fails.
+    }
+    throw error;
+  }
+}
+
 function readSystemPromptRecords(args) {
   const records = [];
   for (let i = 0; i < args.length; i++) {
@@ -473,17 +501,10 @@ async function main() {
       appendSignalRecord("SIGINT");
     });
   }
-  if (response.spawnStubbornDescendants === true) spawnStubbornDescendants();
+  if (response.spawnStubbornDescendants === true) await spawnStubbornDescendants();
   writeSessionFile(args);
   const callPrefix = staleInvocation ? STALE_CALL_PREFIX : "call-";
-  fs.writeFileSync(
-    path.join(
-      queueDir,
-      `${callPrefix}${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}.json`,
-    ),
-    JSON.stringify({ args, systemPrompts: readSystemPromptRecords(args) }),
-    "utf-8",
-  );
+  publishCallRecord(callPrefix, args);
 
   if (typeof response.writeMarker === "string" && response.writeMarker.length > 0) {
     writeMarkerFile(response.writeMarker);

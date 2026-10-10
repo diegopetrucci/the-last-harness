@@ -8,21 +8,20 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
   createTempDir,
-  createEventBus,
   removeTempDir,
   makeAgentConfigs,
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
   available,
   runSync,
   createSubagentExecutor,
+  makeExecutor,
   type MockPiCallRecord,
-  type ExecutionModule,
-  type ExecuteAsyncSingleOverride,
   type ProgressSummary,
 } from "../support/single-execution-fixtures.ts";
 import { ASYNC_DIR } from "../../src/shared/types.ts";
@@ -87,33 +86,6 @@ describe(
       return readCall().args;
     }
 
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
-
     async function waitForTestMarker(
       markerPath: string,
       timeoutMs = scaleTestTimeout(10_000),
@@ -138,6 +110,35 @@ describe(
 
       const output = getFinalOutput(result.messages);
       assert.equal(output, "Hello from mock agent");
+    });
+
+    it("keeps a Pi 0.87.1 system-role message_end out of the foreground answer", async () => {
+      mockPi.onCall({
+        jsonl: [
+          {
+            type: "message_end",
+            message: {
+              role: "system",
+              content: [{ type: "text", text: "system diagnostic" }],
+              timestamp: 1,
+            },
+          },
+          mockAssistantMessage("foreground final"),
+        ],
+      });
+
+      const result = await runSync(
+        tempDir,
+        makeAgentConfigs(["echo"]),
+        "echo",
+        "Return the final answer.",
+        {},
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.usage.turns, 1);
+      assert.equal(result.messages.length, 1);
+      assert.equal(getFinalOutput(result.messages), "foreground final");
     });
 
     it("propagates the packaged child identity through a foreground single launch", async () => {
@@ -269,7 +270,7 @@ describe(
       mockPi.onCall({
         echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
       });
-      const executor = makeExecutor([makeAgent("developer"), makeAgent("code-reviewer")]);
+      const executor = makeExecutor(tempDir, [makeAgent("developer"), makeAgent("code-reviewer")]);
       const result = await executor.execute(
         "parallel-packaged-identities",
         {
@@ -571,12 +572,13 @@ describe(
           },
         ],
       });
-      const context = makeMinimalCtx(tempDir);
-      context.model = makeModel("test-model", { provider: "mock" });
-      context.modelRegistry.getAvailable = () => [
-        makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
-      ];
+      const testModel = makeModel("test-model", { provider: "mock", contextWindow: 1000 });
+      const { context } = await makeModelRegistryContext(tempDir, [
+        { provider: "mock", models: [testModel] },
+      ]);
+      context.model = testModel;
       const executor = makeExecutor(
+        tempDir,
         [makeAgent("echo", { model: "mock/test-model", completionGuard: false })],
         {},
         state,
@@ -790,7 +792,7 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor([makeAgent("echo")]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo")]);
 
         const result = await executor.execute(
           "single-alias",
@@ -812,7 +814,7 @@ describe(
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
       async () => {
-        const executor = makeExecutor([makeAgent("echo")]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo")]);
 
         const result = await executor.execute(
           "unknown-action",
@@ -830,7 +832,7 @@ describe(
 
     it("rejects duplicate concurrent subagent execution calls", async () => {
       mockPi.onCall({ output: "first call completed", delay: 100 });
-      const executor = makeExecutor([makeAgent("echo")]);
+      const executor = makeExecutor(tempDir, [makeAgent("echo")]);
       const ctx = makeMinimalCtx(tempDir);
 
       const first = executor.execute(
@@ -861,7 +863,9 @@ describe(
       try {
         mockPi.onCall({ output: "first call completed" });
         mockPi.onCall({ output: "second call completed" });
-        const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 });
+        const executor = makeExecutor(tempDir, [makeAgent("echo")], {
+          maxSubagentSpawnsPerSession: 1,
+        });
         const ctx = makeMinimalCtx(tempDir);
 
         const first = await executor.execute(
@@ -892,7 +896,7 @@ describe(
 
     it("allows management actions while an execution call is in progress", async () => {
       mockPi.onCall({ output: "first call completed", delay: 100 });
-      const executor = makeExecutor([makeAgent("echo")]);
+      const executor = makeExecutor(tempDir, [makeAgent("echo")]);
       const ctx = makeMinimalCtx(tempDir);
 
       const first = executor.execute(
@@ -923,7 +927,7 @@ describe(
     it("allows intentional parallel tasks inside one subagent execution call", async () => {
       mockPi.onCall({ output: "first parallel result" });
       mockPi.onCall({ output: "second parallel result" });
-      const executor = makeExecutor([makeAgent("echo"), makeAgent("second")]);
+      const executor = makeExecutor(tempDir, [makeAgent("echo"), makeAgent("second")]);
 
       const result = await executor.execute(
         "parallel",
@@ -954,7 +958,7 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "single result" });
-        const executor = makeExecutor([makeAgent("echo")]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo")]);
 
         const result = await executor.execute(
           "single-cost",
@@ -994,7 +998,7 @@ describe(
               { jsonl: [events.assistantMessage("single ticket done")] },
             ],
           });
-          const executor = makeExecutor([makeAgent("echo")]);
+          const executor = makeExecutor(tempDir, [makeAgent("echo")]);
           const updates: Array<{
             details?: {
               results?: Array<{
@@ -1072,7 +1076,7 @@ describe(
 
     it("does not fail advisory oracle runs that finish without edits", async () => {
       mockPi.onCall({ output: "Oracle review:\n- finding one\n- finding two" });
-      const executor = makeExecutor([makeAgent("oracle")]);
+      const executor = makeExecutor(tempDir, [makeAgent("oracle")]);
 
       const result = await executor.execute(
         "failed-single-output",

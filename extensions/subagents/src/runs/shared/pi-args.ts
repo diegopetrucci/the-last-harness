@@ -45,6 +45,46 @@ export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 /** Parent-owned validated developer ticket assignment for the child runtime. */
 export const SUBAGENT_TK_TICKET_ID_ENV = "PI_SUBAGENT_TK_TICKET_ID";
 
+/**
+ * Route metadata from the retired nested orchestration protocol is rejected,
+ * rather than ignored, so stale launch envelopes cannot redirect a supported
+ * run into legacy nested storage.
+ */
+export const RETIRED_NESTED_ROUTE_ENV_VARS = [
+  SUBAGENT_PARENT_EVENT_SINK_ENV,
+  SUBAGENT_PARENT_CONTROL_INBOX_ENV,
+  SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
+  SUBAGENT_PARENT_RUN_ID_ENV,
+  SUBAGENT_PARENT_CHILD_INDEX_ENV,
+  SUBAGENT_PARENT_DEPTH_ENV,
+  SUBAGENT_PARENT_PATH_ENV,
+  SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
+] as const;
+export const RETIRED_NESTED_ORCHESTRATION_ERROR =
+  "Nested subagent orchestration is retired; start a direct single or parallel run without legacy nested route metadata.";
+
+export function hasRetiredNestedRouteEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return RETIRED_NESTED_ROUTE_ENV_VARS.some((name) => Object.hasOwn(env, name));
+}
+
+/** Direct child runtimes cannot dispatch grandchildren after nested orchestration retirement. */
+function isRetiredNestedChildRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[SUBAGENT_CHILD_ENV] === "1";
+}
+
+export function retiredNestedLaunchError(value?: unknown): string | undefined {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    (Object.hasOwn(value, "nestedRoute") || Object.hasOwn(value, "nestedSelf"))
+  ) {
+    return RETIRED_NESTED_ORCHESTRATION_ERROR;
+  }
+  return hasRetiredNestedRouteEnv() || isRetiredNestedChildRuntime()
+    ? RETIRED_NESTED_ORCHESTRATION_ERROR
+    : undefined;
+}
+
 interface BuildPiArgsInput {
   parentSessionId?: string;
   baseArgs: string[];
@@ -99,6 +139,27 @@ interface ResolvedToolPolicy {
 
 function isExtensionToolPath(tool: string): boolean {
   return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+
+function canonicalChildExtensionPath(extensionPath: string, cwd: string): string {
+  const resolvedPath = path.resolve(cwd, extensionPath);
+  try {
+    return fs.realpathSync(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
+}
+
+function appendUniqueChildExtensionPath(
+  extensionPaths: string[],
+  seenCanonicalPaths: Set<string>,
+  extensionPath: string,
+  cwd: string,
+): void {
+  const canonicalPath = canonicalChildExtensionPath(extensionPath, cwd);
+  if (seenCanonicalPaths.has(canonicalPath)) return;
+  seenCanonicalPaths.add(canonicalPath);
+  extensionPaths.push(extensionPath);
 }
 
 function resolveToolPolicy(
@@ -273,25 +334,33 @@ function buildPiArgsInternal(
     args.push("--exclude-tools", CONTACT_SUPERVISOR_TOOL_NAME);
   }
 
-  const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
+  const extensionPaths: string[] = [];
+  const seenCanonicalExtensionPaths = new Set<string>();
+  const childCwd = input.cwd ?? process.cwd();
+  for (const extPath of [
+    ...toolExtensionPaths,
+    ...(input.extensions ?? []),
+    ...(input.subagentOnlyExtensions ?? []),
+  ]) {
+    // Keep the first spelling and position while matching Pi's realpath-based
+    // extension identity for aliases and symlinked paths.
+    appendUniqueChildExtensionPath(extensionPaths, seenCanonicalExtensionPaths, extPath, childCwd);
+  }
+  // Keep the prompt runtime final among CLI child extensions; its durable
+  // forceSystemPrompt guard also survives later discovered handlers.
+  const runtimeCanonicalPath = canonicalChildExtensionPath(PROMPT_RUNTIME_EXTENSION_PATH, childCwd);
+  const runtimeIndex = extensionPaths.findIndex(
+    (extPath) => canonicalChildExtensionPath(extPath, childCwd) === runtimeCanonicalPath,
+  );
+  const runtimeExtensionPath =
+    runtimeIndex === -1 ? PROMPT_RUNTIME_EXTENSION_PATH : extensionPaths[runtimeIndex];
+  if (runtimeIndex !== -1) extensionPaths.splice(runtimeIndex, 1);
+  extensionPaths.push(runtimeExtensionPath);
   if (input.extensions !== undefined) {
     args.push("--no-extensions");
-    for (const extPath of new Set([
-      ...runtimeExtensions,
-      ...toolExtensionPaths,
-      ...input.extensions,
-      ...(input.subagentOnlyExtensions ?? []),
-    ])) {
-      args.push("--extension", extPath);
-    }
-  } else {
-    for (const extPath of new Set([
-      ...runtimeExtensions,
-      ...toolExtensionPaths,
-      ...(input.subagentOnlyExtensions ?? []),
-    ])) {
-      args.push("--extension", extPath);
-    }
+  }
+  for (const extPath of extensionPaths) {
+    args.push("--extension", extPath);
   }
 
   if (!input.inheritSkills) {

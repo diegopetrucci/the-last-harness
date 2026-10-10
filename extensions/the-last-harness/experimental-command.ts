@@ -70,6 +70,16 @@ function ensureMutableExperimentalSettings(
   settings.tlh.experimental ??= {};
 }
 
+function nextSessionActivationNotice(
+  feature: NonNullable<ReturnType<typeof getExperimentalFeature>>,
+  enabled: boolean,
+): string {
+  if (!feature.nextSessionOnly) return "";
+  return enabled
+    ? " Enabling takes effect on the next session; this session keeps its current activation."
+    : " Disabling takes effect on the next session; a currently enabled session retains activation until a new session (not immediate revocation).";
+}
+
 function formatExperimentalFeatureStatus(
   featureId: TlhExperimentalFeatureId,
   enabled: boolean,
@@ -82,7 +92,8 @@ function formatExperimentalFeatureStatus(
   const nextStep = enabled
     ? `Disable with /experimental disable ${feature.id}.`
     : `Enable with /experimental enable ${feature.id}.`;
-  return `- ${feature.id}: ${enabledLabel}. ${feature.description} ${nextStep}`;
+  const activationNotice = nextSessionActivationNotice(feature, enabled);
+  return `- ${feature.id}: ${enabledLabel}. ${feature.description}${activationNotice} ${nextStep}`;
 }
 
 function formatExperimentalStatusMessage(
@@ -137,13 +148,16 @@ function notifyExperimentalWriteResult(
   const undoLabel = result.enabled
     ? `Undo with /experimental disable ${featureId}.`
     : `Undo with /experimental enable ${featureId}.`;
+  const feature = getExperimentalFeature(featureId);
+  const description = feature ? ` ${feature.description}` : "";
+  const activationNotice = feature ? nextSessionActivationNotice(feature, result.enabled) : "";
   pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
     cwd: ctx.cwd,
     enabled: result.enabled,
     featureId,
   });
   ctx.ui.notify(
-    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`,
+    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}.${description}${activationNotice} ${undoLabel}${backupLabel}`,
     "info",
   );
 }

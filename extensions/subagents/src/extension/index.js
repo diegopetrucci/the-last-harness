@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,33 +11,29 @@ import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
-import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
+import { CLEANUP_MARKER_FRESH_WINDOW_MS, CLEANUP_MARKER_LEASE_OFFSET_MS, RUNTIME_CLEANUP_MARKER_NAME, } from "./runtime-cleanup-constants.js";
+import { resolveRunnerModulePath, resolveRunnerNodeCommand, } from "../runs/background/async-execution.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
 import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
-import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.js";
-import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.js";
 import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
-import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
+import registerSubagentNotify, { boundedReference, isSubagentCompletionBatchDetails, isSubagentNotifyDetails, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
+import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
-import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
+import { registerCacheWarmingDecision } from "./cache-warming-decision.js";
+import { announceBundledSubagentRestoreProvider } from "../../../shared/subagent-restore-contract.js";
 export { loadConfig } from "./config.js";
-function isCurrentHeartbeatEvent(data, currentSessionId) {
-    if (!data || typeof data !== "object" || Array.isArray(data))
-        return false;
-    return (typeof currentSessionId !== "string" ||
-        ("sessionId" in data && data.sessionId === currentSessionId));
-}
 export function createSubagentToolResultBridge() {
     const failedResults = new Map();
     return {
@@ -84,6 +81,49 @@ function ensureAccessibleDir(dirPath) {
         }
         fs.mkdirSync(dirPath, { recursive: true });
         fs.accessSync(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+    }
+}
+export function scheduleDetachedRuntimeCleanup(deps = {}) {
+    const nowMs = deps.now?.() ?? Date.now();
+    const markerPath = deps.markerPath ?? path.join(TEMP_ROOT_DIR, RUNTIME_CLEANUP_MARKER_NAME);
+    try {
+        const stat = fs.statSync(markerPath);
+        const age = nowMs - stat.mtimeMs;
+        if (age >= 0 && age < CLEANUP_MARKER_FRESH_WINDOW_MS)
+            return;
+    }
+    catch {
+    }
+    const leaseDate = new Date(nowMs - CLEANUP_MARKER_LEASE_OFFSET_MS);
+    try {
+        fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+        try {
+            fs.utimesSync(markerPath, leaseDate, leaseDate);
+        }
+        catch {
+            fs.writeFileSync(markerPath, "");
+            fs.utimesSync(markerPath, leaseDate, leaseDate);
+        }
+    }
+    catch {
+    }
+    const runner = resolveRunnerModulePath(import.meta.url, "runtime-cleanup-runner");
+    const nodeCommand = resolveRunnerNodeCommand();
+    const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner] : [runner];
+    const spawnFn = deps.spawnFn ?? ((cmd, args, opts) => spawn(cmd, args, opts));
+    try {
+        const proc = spawnFn(nodeCommand, runnerArgs, {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: true,
+            env: process.env,
+        });
+        proc.on("error", (err) => {
+            void err;
+        });
+        proc.unref();
+    }
+    catch {
     }
 }
 function subagentResultIsRunning(result) {
@@ -221,15 +261,11 @@ export default function registerSubagentExtension(pi) {
     }
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
-    cleanupRuntimeDirs();
+    scheduleDetachedRuntimeCleanup();
+    const telemetryProvenance = captureSubagentTelemetryProvenance();
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);
     const executionPolicy = resolveExecutionPolicy(config.execution);
-    const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
-    let heartbeatSessionCtx = null;
-    const hbWiring = createHeartbeatWiring(pi, config, {
-        getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
-    });
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(artifactConfig.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
@@ -287,8 +323,6 @@ export default function registerSubagentExtension(pi) {
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
-        hbWiring.disarm();
-        hbWiring.destroy();
         removeLiveDetailTerminalInput();
         liveDetailController.clearToolRows();
         toolResultBridge.clear();
@@ -312,7 +346,7 @@ export default function registerSubagentExtension(pi) {
         getSubagentSessionRoot,
         expandTilde,
         discoverAgents,
-        getHeartbeatSummary: () => hbWiring.getSessionSummary(),
+        telemetryProvenance,
         getProjectAgentAccess: (request) => normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
     });
     pi.registerMessageRenderer(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -327,7 +361,12 @@ export default function registerSubagentExtension(pi) {
     pi.registerMessageRenderer("subagent-notify", (message, options, theme) => {
         const content = typeof message.content === "string" ? message.content : "";
         const parsedContent = parseSubagentNotifyContent(content);
-        const structuredDetails = message.details;
+        const rawStructuredDetails = message.details;
+        const structuredDetails = isSubagentCompletionBatchDetails(rawStructuredDetails)
+            ? undefined
+            : isSubagentNotifyDetails(rawStructuredDetails)
+                ? rawStructuredDetails
+                : undefined;
         const parsedSession = parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
             ? {
                 sessionLabel: parsedContent.details.sessionLabel,
@@ -380,7 +419,7 @@ export default function registerSubagentExtension(pi) {
             ? trimmedPreview.split("\n").filter((line) => line.trim())
             : [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
         for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-            text += `\n  ${theme.fg("dim", `⎿  ${line}`)}`;
+            text += `\n  ${theme.fg("dim", `   ${line}`)}`;
         }
         if (options.expanded) {
             for (const line of referenceLines) {
@@ -445,7 +484,7 @@ export default function registerSubagentExtension(pi) {
             }
             const frame = context.state?.frame ?? 0;
             const expanded = isLiveToolRow ? liveDetailController.isExpanded() : options.expanded;
-            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame);
+            return renderSubagentResult({ ...result, ...(context.isError ? { isError: true } : {}) }, { expanded }, theme, frame, Date.now());
         },
     });
     pi.registerTool(tool);
@@ -459,28 +498,8 @@ export default function registerSubagentExtension(pi) {
             handlePauseAllShortcut(state, ctx);
         },
     });
-    registerSlashCommands(pi, state, config, () => hbWiring.getSessionSummary());
-    if (resolvedHbConfig.enabled) {
-        pi.on("before_provider_request", (event, ctx) => {
-            if (ctx.model) {
-                hbWiring.onProviderRequest(event.payload, ctx.model);
-            }
-        });
-        pi.on("before_agent_start", () => {
-            hbWiring.onIdle(false);
-            hbWiring.disarm();
-        });
-        pi.on("agent_settled", () => {
-            hbWiring.onIdle(true);
-            hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-        });
-        pi.on("model_select", () => {
-            hbWiring.disarm();
-        });
-        pi.on("thinking_level_select", () => {
-            hbWiring.disarm();
-        });
-    }
+    registerSlashCommands(pi, state, config);
+    registerCacheWarmingDecision(pi, state);
     const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
     const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
     const previousEventUnsubscribes = globalStore[eventUnsubscribeStoreKey];
@@ -495,27 +514,6 @@ export default function registerSubagentExtension(pi) {
             }
         }
     }
-    const hbCompleteHandler = (data) => {
-        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
-            return;
-        const id = data.id;
-        if (typeof id !== "string" || id.length === 0)
-            return;
-        hbWiring.notifyAsyncComplete(id, state.asyncJobs);
-    };
-    const hbStartedHandler = (data) => {
-        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
-            return;
-        const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
-        hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
-    };
-    const noop = () => { };
-    const hbCompleteUnsub = resolvedHbConfig.enabled
-        ? pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, hbCompleteHandler)
-        : noop;
-    const hbStartedUnsub = resolvedHbConfig.enabled
-        ? pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, hbStartedHandler)
-        : noop;
     registerSubagentNotify(pi, state, {});
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set
@@ -534,8 +532,6 @@ export default function registerSubagentExtension(pi) {
         });
     };
     const eventUnsubscribes = [
-        hbCompleteUnsub,
-        hbStartedUnsub,
         pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
         pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
         pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
@@ -564,57 +560,59 @@ export default function registerSubagentExtension(pi) {
         catch {
         }
     };
-    const resetSessionState = (ctx) => {
-        toolResultBridge.clear();
-        state.baseCwd = ctx.cwd;
-        state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        if (!process.env[SUBAGENT_CHILD_ENV]) {
-            const sessionId = ctx.sessionManager.getSessionId();
-            if (sessionId) {
-                process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
-            }
+    const emitRestoreFailureSnapshot = () => {
+        const sessionId = state.currentSessionId;
+        if (!sessionId)
+            return;
+        try {
+            pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, { sessionId, jobs: [] });
         }
-        state.lastUiContext = ctx;
-        cleanupSessionArtifacts(ctx);
-        clearPendingForegroundControlNotices(state);
-        liveDetailController.clearToolRows();
-        resetJobs(ctx);
-        restoreActiveJobs(ctx);
-        primeExistingResults();
+        catch (error) {
+            console.error("Failed to publish the async restore failure snapshot:", error);
+        }
+    };
+    const resetSessionState = (ctx) => {
+        let restoreAttempted = false;
+        try {
+            toolResultBridge.clear();
+            state.baseCwd = ctx.cwd;
+            state.currentSessionId = null;
+            state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+            if (!process.env[SUBAGENT_CHILD_ENV]) {
+                const sessionId = ctx.sessionManager.getSessionId();
+                if (sessionId) {
+                    process.env[SUBAGENT_PARENT_SESSION_ENV] = sessionId;
+                }
+            }
+            state.lastUiContext = ctx;
+            cleanupSessionArtifacts(ctx);
+            clearPendingForegroundControlNotices(state);
+            liveDetailController.clearToolRows();
+            resetJobs(ctx);
+            restoreAttempted = true;
+            restoreActiveJobs(ctx);
+            primeExistingResults();
+        }
+        catch (error) {
+            if (!restoreAttempted)
+                emitRestoreFailureSnapshot();
+            throw error;
+        }
     };
     pi.on("session_start", (_event, ctx) => {
-        if (resolvedHbConfig.enabled) {
-            hbWiring.resetSession();
-            heartbeatSessionCtx = ctx;
-            hbWiring.onIdle(ctx.isIdle?.() ?? true);
-        }
         controlNoticeSessionContext = ctx;
         removeLiveDetailTerminalInput();
         resetSessionState(ctx);
-        if (resolvedHbConfig.enabled) {
-            hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
-        }
         installLiveDetailTerminalInput(ctx);
         supervisorChannel.start();
     });
-    if (resolvedHbConfig.enabled) {
-        pi.on("session_before_switch", () => {
-            hbWiring.disarm();
-        });
-        pi.on("session_before_fork", () => {
-            hbWiring.disarm();
-        });
-    }
     pi.on("session_tree", () => {
-        hbWiring.disarm();
         liveDetailController.clearToolRows();
     });
     pi.on("session_compact", () => {
-        hbWiring.disarm();
         liveDetailController.clearToolRows();
     });
     pi.on("session_shutdown", () => {
-        hbWiring.destroy();
         removeLiveDetailTerminalInput();
         toolResultBridge.clear();
         delete process.env[SUBAGENT_PARENT_SESSION_ENV];
@@ -653,4 +651,5 @@ export default function registerSubagentExtension(pi) {
                 throw error;
         }
     });
+    announceBundledSubagentRestoreProvider();
 }

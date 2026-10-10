@@ -6,11 +6,44 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  createTlhEffectiveActivityTracker,
-  registerTlhEffectiveActivityTracker,
-  TLH_EFFECTIVE_ACTIVITY_EVENT,
-} = await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } =
+  await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { TLH_EFFECTIVE_ACTIVITY_EVENT } = await jiti.import(
+  "../extensions/shared/tlh-effective-activity.ts",
+);
+const { announceBundledSubagentRestoreProvider } = await jiti.import(
+  "../extensions/shared/subagent-restore-contract.ts",
+);
+
+function createEventPiHarness() {
+  const eventHandlers = new Map();
+  const channelHandlers = new Map();
+  const pi = {
+    on(event, handler) {
+      eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+    },
+    events: {
+      on(channel, handler) {
+        channelHandlers.set(channel, [...(channelHandlers.get(channel) ?? []), handler]);
+        return () => {
+          channelHandlers.set(
+            channel,
+            (channelHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler),
+          );
+        };
+      },
+      emit(channel, payload) {
+        for (const handler of channelHandlers.get(channel) ?? []) handler(payload);
+      },
+    },
+  };
+  return {
+    pi,
+    fire(event, payload = {}, ctx) {
+      for (const handler of eventHandlers.get(event) ?? []) handler(payload, ctx);
+    },
+  };
+}
 
 function createFakeTimers() {
   let now = 0;
@@ -152,6 +185,7 @@ test("tracker tracks nested Pi UI prompts separately from primary activity", () 
   assert.deepEqual(tracker.getSnapshot(), {
     inProgress: false,
     waitingForUser: true,
+    waitingForUserKind: "confirm",
     primaryReasons: [],
     activeAsyncJobIds: [],
   });
@@ -347,7 +381,7 @@ test("tracker ignores foreground control notices and only tracks safe async cont
   }
 });
 
-test("tracker rehydrates only matching running async jobs and ignores malformed artifacts", () => {
+test("tracker rehydrates only matching-session active jobs and ignores malformed artifacts", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-activity-tracker-"));
   const asyncDir = join(tempDir, "async-subagent-runs");
   mkdirSync(asyncDir, { recursive: true });
@@ -358,24 +392,26 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
   };
 
   try {
+    const sessionFile = "/sessions/session-1.jsonl";
     // run-1: the only job that should be rehydrated. Includes pid so the drain can
-    // verify it is alive via the injected checkPidLiveness.
+    // verify it is alive via the injected checkPidLiveness. The session file must
+    // win over the different UUID, matching subagents' restore identity.
     writeStatus("run-1", {
       runId: "run-1",
       state: "running",
       pid: 12300,
       cwd: "/repo",
-      sessionId: "session-1",
+      sessionId: sessionFile,
       mode: "single",
       startedAt: 1,
     });
-    // run-2: wrong cwd, excluded by rehydrate filter.
+    // run-2: cwd differs, but exact-session restore intentionally ignores cwd.
     writeStatus("run-2", {
       runId: "run-2",
       state: "running",
       pid: 12301,
       cwd: "/elsewhere",
-      sessionId: "session-1",
+      sessionId: sessionFile,
       mode: "single",
       startedAt: 1,
     });
@@ -385,11 +421,11 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
       state: "running",
       pid: 12302,
       cwd: "/repo",
-      sessionId: "session-2",
+      sessionId: "/sessions/session-2.jsonl",
       mode: "single",
       startedAt: 1,
     });
-    // run-4: terminal state, excluded by readRunningAsyncJob filter.
+    // run-4: terminal state, excluded by the active-state filter.
     writeStatus("run-4", {
       runId: "run-4",
       state: "complete",
@@ -410,11 +446,349 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
     });
     tracker.rehydrateFromArtifacts({
       cwd: "/repo",
-      sessionManager: { getSessionId: () => "session-1" },
+      sessionManager: {
+        getSessionFile: () => sessionFile,
+        getSessionId: () => "session-1-uuid",
+      },
     });
-    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-1"]);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-1", "run-2"]);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("tracker rehydrates from the PI_SUBAGENTS_TEMP_ROOT override by default", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-tracker-override-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = `  ${tempRoot}  `;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "run-override");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      `${JSON.stringify(
+        {
+          runId: "run-override",
+          state: "running",
+          pid: process.pid,
+          cwd: process.cwd(),
+          sessionId: "session-override-uuid",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+    tracker.rehydrateFromArtifacts({
+      cwd: process.cwd(),
+      sessionManager: {
+        getSessionFile: () => null,
+        getSessionId: () => "session-override-uuid",
+      },
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-override"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker skips artifact rehydration in child processes", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-child-activity-tracker-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let childTracker;
+  let parentTracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "run-1");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      `${JSON.stringify(
+        {
+          runId: "run-1",
+          state: "running",
+          pid: process.pid,
+          cwd: process.cwd(),
+          sessionId: "session-1",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const makePi = () => {
+      const eventHandlers = new Map();
+      return {
+        pi: {
+          on(event, handler) {
+            eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+          },
+        },
+        fireSessionStart() {
+          for (const handler of eventHandlers.get("session_start") ?? []) {
+            handler(
+              {},
+              {
+                cwd: process.cwd(),
+                sessionManager: { getSessionId: () => "session-1" },
+              },
+            );
+          }
+        },
+      };
+    };
+
+    const childPi = makePi();
+    childTracker = registerTlhEffectiveActivityTracker(childPi.pi, {
+      env: { PI_SUBAGENT_CHILD: "1" },
+    });
+    childPi.fireSessionStart();
+    assert.deepEqual(childTracker.getSnapshot().activeAsyncJobIds, []);
+
+    const parentPi = makePi();
+    parentTracker = registerTlhEffectiveActivityTracker(parentPi.pi, { env: {} });
+    parentPi.fireSessionStart();
+    assert.deepEqual(parentTracker.getSnapshot().activeAsyncJobIds, ["run-1"]);
+  } finally {
+    childTracker?.dispose();
+    parentTracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker falls back to one exact-session scan when bundled restore is absent", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-fallback-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "fallback-run");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: "fallback-run",
+        state: "running",
+        pid: process.pid,
+        cwd: "/not-the-session-cwd",
+        sessionId: "fallback-session",
+      }),
+    );
+
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    harness.fire(
+      "session_start",
+      {},
+      {
+        cwd: "/repo",
+        sessionManager: { getSessionId: () => "fallback-session" },
+      },
+    );
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["fallback-run"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("registered tracker loading first waits for bundled restore and applies its snapshot", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "tlh-activity-restored-event-"));
+  const previousTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  let tracker;
+  try {
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;
+    const asyncDir = join(tempRoot, "async-subagent-runs", "restored-run");
+    mkdirSync(asyncDir, { recursive: true });
+    writeFileSync(
+      join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: "restored-run",
+        state: "running",
+        pid: process.pid,
+        sessionId: "restored-session",
+      }),
+    );
+
+    const harness = createEventPiHarness();
+    // Register TLH first, then let the bundled producer announce at registration.
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    announceBundledSubagentRestoreProvider();
+    harness.fire(
+      "session_start",
+      {},
+      {
+        cwd: "/repo",
+        sessionManager: { getSessionId: () => "restored-session" },
+      },
+    );
+    assert.deepEqual(
+      tracker.getSnapshot().activeAsyncJobIds,
+      [],
+      "producer presence must suppress TLH's fallback scan",
+    );
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "restored-session",
+      jobs: [{ runId: "restored-run", asyncDir, pid: process.pid, sessionId: "restored-session" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["restored-run"]);
+  } finally {
+    tracker?.dispose();
+    if (previousTempRoot === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT;
+    else process.env.PI_SUBAGENTS_TEMP_ROOT = previousTempRoot;
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("restored snapshots replace old restored jobs without erasing live jobs or emptying late", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-replace-"));
+  let tracker;
+  try {
+    const oldDir = makeAsyncDir(root, "old-run", {
+      runId: "old-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const liveDir = makeAsyncDir(root, "live-run", {
+      runId: "live-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const newDir = makeAsyncDir(root, "new-run", {
+      runId: "new-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    announceBundledSubagentRestoreProvider();
+    const session = (id) => ({
+      cwd: "/repo",
+      sessionManager: { getSessionId: () => id },
+    });
+    harness.fire("session_start", {}, session("session-1"));
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-1",
+      jobs: [{ runId: "old-run", asyncDir: oldDir, sessionId: "session-1" }],
+    });
+    harness.pi.events.emit("subagent:async-started", {
+      id: "live-run",
+      asyncDir: liveDir,
+      pid: process.pid,
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run", "old-run"]);
+
+    harness.fire("session_start", {}, session("session-2"));
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-2",
+      jobs: [{ runId: "new-run", asyncDir: newDir, sessionId: "session-2" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run", "new-run"]);
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-2",
+      jobs: [],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["live-run"]);
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("late restored snapshots do not revive completed async jobs", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-tombstone-"));
+  let tracker;
+  try {
+    const asyncDir = makeAsyncDir(root, "completed-run", {
+      runId: "completed-run",
+      state: "running",
+      pid: process.pid,
+    });
+    const harness = createEventPiHarness();
+    tracker = registerTlhEffectiveActivityTracker(harness.pi, { env: {} });
+    tracker.beginSession({
+      cwd: "/repo",
+      sessionManager: { getSessionId: () => "session-1" },
+    });
+
+    harness.pi.events.emit("subagent:async-started", {
+      id: "completed-run",
+      asyncDir,
+      pid: process.pid,
+      sessionId: "session-1",
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["completed-run"]);
+
+    harness.pi.events.emit("subagent:async-complete", { id: "completed-run" });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
+
+    harness.pi.events.emit("subagent:async-restored", {
+      sessionId: "session-1",
+      jobs: [{ runId: "completed-run", asyncDir, sessionId: "session-1", pid: process.pid }],
+    });
+    assert.deepEqual(
+      tracker.getSnapshot().activeAsyncJobIds,
+      [],
+      "a late restore snapshot must not revive a completed job",
+    );
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("restored queued jobs are bounded even when subagents keeps them authoritative", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-activity-restored-queued-"));
+  const timers = createFakeTimers();
+  let tracker;
+  try {
+    const asyncDir = makeAsyncDir(root, "queued-run", {
+      runId: "queued-run",
+      state: "queued",
+      startedAt: 0,
+      sessionId: "queued-session",
+    });
+    tracker = createTlhEffectiveActivityTracker({
+      now: timers.now,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+      livenessIntervalMs: 5_000,
+    });
+    tracker.beginSession({
+      cwd: "/repo",
+      sessionManager: {
+        getSessionFile: () => "queued-session-file",
+        getSessionId: () => "queued-session-uuid",
+      },
+    });
+    tracker.handleAsyncRestored({
+      sessionId: "queued-session-file",
+      jobs: [{ runId: "queued-run", asyncDir, sessionId: "queued-session-file" }],
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["queued-run"]);
+
+    // TLH intentionally bounds its activity projection independently of the
+    // subagents restore poller, which may continue treating this queue as live.
+    timers.advance(30_000);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["queued-run"]);
+    timers.advance(1);
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, []);
+  } finally {
+    tracker?.dispose();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -437,26 +811,38 @@ test("tracker notifies snapshot listeners only when effective state changes", ()
   unsubscribe();
   tracker.handleAsyncStarted({ id: "job-1" });
 
+  // With settle-based outcomes: runActive=true from before_agent_start until
+  // agent_settled. lastRunOutcome is only committed at agent_settled (not called
+  // here), so all snapshots show lastRunOutcome=undefined.
   assert.deepEqual(snapshots, [
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:pending-start"],
       activeAsyncJobIds: [],
     },
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:agent-loop", "primary:pending-start"],
       activeAsyncJobIds: [],
     },
     {
       inProgress: true,
       waitingForUser: false,
+      runActive: true,
       primaryReasons: ["primary:retry-grace"],
       activeAsyncJobIds: [],
     },
-    { inProgress: false, waitingForUser: false, primaryReasons: [], activeAsyncJobIds: [] },
+    {
+      inProgress: false,
+      waitingForUser: false,
+      runActive: true,
+      primaryReasons: [],
+      activeAsyncJobIds: [],
+    },
   ]);
 });
 
@@ -1027,17 +1413,21 @@ test("registered tracker emits tlh:effective-activity on pi.events when snapshot
   fire("agent_start");
   fire("agent_end", { messages: [] });
 
-  // There should be exactly 3 emissions corresponding to the 3 state changes.
+  // Bus payload only includes inProgress/waitingForUser/activeAsyncJobIds.
+  // agent_start changes inProgress from pending-start→agent-loop but the bus
+  // payload is identical (inProgress=true in both). Deduplication suppresses
+  // the redundant emission, so 2 distinct bus payloads are emitted:
+  // before_agent_start (inProgress=true) and agent_end (inProgress=false).
   const activityEmits = emitted.filter((e) => e.channel === TLH_EFFECTIVE_ACTIVITY_EVENT);
-  assert.equal(activityEmits.length, 3);
+  assert.equal(activityEmits.length, 2);
 
   // First emission: inProgress=true (before_agent_start).
   assert.equal(activityEmits[0].payload.inProgress, true);
   assert.deepEqual(activityEmits[0].payload.activeAsyncJobIds, []);
 
   // Last emission: inProgress=false (agent_end with no retry).
-  assert.equal(activityEmits[2].payload.inProgress, false);
-  assert.deepEqual(activityEmits[2].payload.activeAsyncJobIds, []);
+  assert.equal(activityEmits[1].payload.inProgress, false);
+  assert.deepEqual(activityEmits[1].payload.activeAsyncJobIds, []);
 });
 
 test("registered tracker handles Pi 0.84.4 compaction and UI prompt event order", () => {
@@ -1110,6 +1500,12 @@ test("registered tracker handles Pi 0.84.4 compaction and UI prompt event order"
   assert.equal(tracker.getSnapshot().waitingForUser, false);
 
   const activityEmits = emitted.filter((entry) => entry.channel === TLH_EFFECTIVE_ACTIVITY_EVENT);
+  // Bus deduplication suppresses payloads identical to the previous emit.
+  // Nested prompt kind changes (confirm→custom→confirm) mutate the internal snapshot
+  // key but do not change the bus payload (waitingForUser=true in all three), so only
+  // the first transition to waitingForUser=true is emitted. 4 distinct bus payloads:
+  //   compaction start (inProgress=true), compact_failed (inProgress=false),
+  //   first ui_prompt_start (waitingForUser=true), last ui_prompt_end (waitingForUser=false).
   assert.equal(activityEmits.length, 4);
   assert.equal(activityEmits[0].payload.inProgress, true);
   assert.equal(activityEmits[0].payload.waitingForUser, false);
@@ -1238,4 +1634,283 @@ test("periodic drain timer is cleared on dispose", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── waitingForUserKind tracking ─────────────────────────────────────────────
+
+test("tracker exposes waitingForUserKind from ui_prompt_start event.kind", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+
+  // No prompt open → waitingForUserKind is absent.
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+});
+
+test("tracker tracks all recognised UIPromptKind values", () => {
+  for (const kind of ["select", "confirm", "input", "editor", "custom"]) {
+    const tracker = createTlhEffectiveActivityTracker();
+    tracker.handleUIPromptStart({ kind });
+    assert.equal(tracker.getSnapshot().waitingForUserKind, kind, `kind=${kind} should be tracked`);
+    tracker.handleUIPromptEnd({});
+    assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+  }
+});
+
+test("tracker stores undefined waitingForUserKind for unrecognised kind values", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "unknown-future-kind" });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    undefined,
+    "unrecognised kind → undefined",
+  );
+  tracker.handleUIPromptEnd({});
+});
+
+test("tracker stores undefined waitingForUserKind when event.kind is absent", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({});
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined, "missing kind → undefined");
+  tracker.handleUIPromptEnd({});
+});
+
+test("tracker uses the most recently opened prompt kind for nested prompts", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+
+  // Open outer prompt (confirm)
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+
+  // Open inner prompt (select) on top
+  tracker.handleUIPromptStart({ kind: "select" });
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    "select",
+    "inner prompt kind takes precedence",
+  );
+
+  // Close inner → back to outer
+  tracker.handleUIPromptEnd({});
+  assert.equal(
+    tracker.getSnapshot().waitingForUserKind,
+    "confirm",
+    "returns to outer prompt kind after inner closes",
+  );
+
+  // Close outer → no prompt
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined);
+});
+
+test("tracker clears waitingForUserKind when depth returns to 0", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "input" });
+  tracker.handleUIPromptStart({ kind: "editor" });
+  tracker.handleUIPromptEnd({});
+  tracker.handleUIPromptEnd({});
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  assert.equal(tracker.getSnapshot().waitingForUserKind, undefined, "kind cleared at depth 0");
+});
+
+test("tracker includes waitingForUserKind in snapshot change detection", () => {
+  const snapshots = [];
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.subscribe((s) => snapshots.push({ ...s }));
+
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  tracker.handleUIPromptStart({ kind: "select" });
+  tracker.handleUIPromptEnd({});
+  tracker.handleUIPromptEnd({});
+
+  // Expect: confirm open, select open (kind change), back to confirm, closed.
+  assert.equal(snapshots.length, 4, "each depth or kind change should emit a new snapshot");
+  assert.equal(snapshots[0].waitingForUserKind, "confirm");
+  assert.equal(snapshots[1].waitingForUserKind, "select");
+  assert.equal(snapshots[2].waitingForUserKind, "confirm");
+  assert.equal(snapshots[3].waitingForUserKind, undefined);
+});
+
+test("tracker resets waitingForUserKind on dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleUIPromptStart({ kind: "confirm" });
+  assert.equal(tracker.getSnapshot().waitingForUserKind, "confirm");
+  tracker.dispose();
+  // After dispose getSnapshot still works (drains eagerly)
+  const snap = tracker.getSnapshot();
+  assert.equal(snap.waitingForUser, false);
+  assert.equal(snap.waitingForUserKind, undefined);
+});
+
+// ─── lastRunOutcome derivation ───────────────────────────────────────────────
+
+test("tracker lastRunOutcome is undefined before any agent_end", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleBeforeAgentStart();
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome is completed after normal agent_end + agent_settled", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  // lastRunOutcome is only committed at agent_settled, not at agent_end.
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined, "not committed before settle");
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is aborted when last assistant stopReason is aborted", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+});
+
+test("tracker lastRunOutcome is error when last assistant stopReason is error", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "error" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "error");
+});
+
+test("tracker lastRunOutcome is error when last assistant has errorMessage", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({
+    messages: [{ role: "assistant", stopReason: "stop", errorMessage: "something went wrong" }],
+  });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "error");
+});
+
+test("tracker lastRunOutcome is completed when messages is empty array", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is completed when no messages field", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({});
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome reflects the last run's outcome after agent_settled", () => {
+  const timers = createFakeTimers();
+  const tracker = createTlhEffectiveActivityTracker({
+    now: timers.now,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    retryGraceMs: 25,
+  });
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "error" }] });
+  // lastRunOutcome is not committed until agent_settled.
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined, "not committed before settle");
+  // Retry: a second agent_end (success) overwrites the pending outcome.
+  tracker.handleTurnStart();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  assert.equal(
+    tracker.getSnapshot().lastRunOutcome,
+    undefined,
+    "still not committed before settle",
+  );
+  // agent_settled commits the most recent pending outcome.
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "completed");
+});
+
+test("tracker lastRunOutcome is reset by beginSession", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s1" };
+  tracker.beginSession({ sessionManager: sm });
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+  tracker.beginSession({
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s2" },
+  });
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome is reset by dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "aborted" }] });
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, "aborted");
+  tracker.dispose();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+});
+
+test("tracker lastRunOutcome change triggers snapshot notification at agent_settled", () => {
+  const snapshots = [];
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.subscribe((s) => snapshots.push(s.lastRunOutcome));
+  tracker.handleAgentStart();
+  tracker.handleAgentEnd({ messages: [{ role: "assistant", stopReason: "stop" }] });
+  // lastRunOutcome is not committed until agent_settled; ensure no premature notification.
+  assert.ok(!snapshots.includes("completed"), "notification must not fire before agent_settled");
+  tracker.handleAgentSettled();
+  assert.ok(
+    snapshots.includes("completed"),
+    "notification must fire with lastRunOutcome=completed after agent_settled",
+  );
+});
+
+// ─── runActive + handleAgentSettled ──────────────────────────────────────────
+
+test("tracker runActive is set on before_agent_start and cleared at agent_settled", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "not set initially");
+  tracker.handleBeforeAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true, "set by before_agent_start");
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true, "still set after agent_start");
+  tracker.handleAgentEnd({ messages: [] });
+  assert.equal(tracker.getSnapshot().runActive, true, "still set after agent_end");
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "cleared by agent_settled");
+});
+
+test("tracker runActive is reset by beginSession and dispose", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  tracker.handleBeforeAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true);
+  tracker.beginSession({ sessionManager: sm });
+  assert.equal(tracker.getSnapshot().runActive, undefined, "reset by beginSession");
+  tracker.handleAgentStart();
+  assert.equal(tracker.getSnapshot().runActive, true);
+  tracker.dispose();
+  assert.equal(tracker.getSnapshot().runActive, undefined, "reset by dispose");
+});
+
+test("tracker agent_settled with no preceding agent_end leaves lastRunOutcome unchanged", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+  tracker.handleBeforeAgentStart();
+  tracker.handleAgentStart();
+  // No agent_end; pendingOutcome is undefined.
+  tracker.handleAgentSettled();
+  assert.equal(tracker.getSnapshot().lastRunOutcome, undefined);
+  assert.equal(tracker.getSnapshot().runActive, undefined);
 });

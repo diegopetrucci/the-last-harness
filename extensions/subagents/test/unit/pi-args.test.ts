@@ -15,6 +15,7 @@ import {
   SUBAGENT_TK_TICKET_ID_ENV,
   applyThinkingSuffix,
   buildPiArgs,
+  cleanupTempDir,
   getThinkingLevelDropNote,
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
@@ -535,7 +536,7 @@ describe("buildPiArgs model wiring", () => {
 
 describe("buildPiArgs system prompt mode wiring", () => {
   it("uses --append-system-prompt by default", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -543,13 +544,16 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--append-system-prompt"));
-    assert.ok(!args.includes("--system-prompt"));
+    try {
+      assert.ok(result.args.includes("--append-system-prompt"));
+      assert.ok(!result.args.includes("--system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("uses --system-prompt when systemPromptMode=replace", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -558,9 +562,12 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--system-prompt"));
-    assert.ok(!args.includes("--append-system-prompt"));
+    try {
+      assert.ok(result.args.includes("--system-prompt"));
+      assert.ok(!result.args.includes("--append-system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("injects the subagent prompt runtime extension and env flags", () => {
@@ -581,6 +588,116 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(env.PI_SUBAGENT_CHILD, "1");
     assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
     assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
+  });
+
+  it("loads the prompt runtime after tool, custom, and subagent-only extensions", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["./tool-override.ts"],
+      extensions: ["./custom-override.ts"],
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+    assert.deepEqual(extensionArgs.slice(0, -1), [
+      "./tool-override.ts",
+      "./custom-override.ts",
+      "./child-override.ts",
+    ]);
+    assert.match(extensionArgs.at(-1) ?? "", /subagent-prompt-runtime\.ts$/);
+  });
+
+  it("deduplicates canonical child extension aliases while retaining first spelling and order", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-extension-alias-"));
+    const toolPath = path.join(cwd, "tool-override.ts");
+    const customPath = path.join(cwd, "custom-override.ts");
+    fs.writeFileSync(toolPath, "export default () => {};", "utf8");
+    fs.writeFileSync(customPath, "export default () => {};", "utf8");
+
+    try {
+      const toolSpelling = `.${path.sep}${path.basename(toolPath)}`;
+      const customSpelling = `.${path.sep}${path.basename(customPath)}`;
+      const runtimeProbe = buildPiArgs({
+        baseArgs: [],
+        task: "probe",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+      });
+      const runtimePath = runtimeProbe.args.find(
+        (_arg, index) => runtimeProbe.args[index - 1] === "--extension",
+      );
+      assert.ok(runtimePath);
+      const runtimeSpelling = `${path.dirname(runtimePath)}${path.sep}.${path.sep}${path.basename(runtimePath)}`;
+      const { args } = buildPiArgs({
+        baseArgs: ["-p"],
+        task: "hello",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        cwd,
+        tools: [toolSpelling],
+        extensions: [toolPath, customSpelling, runtimeSpelling],
+        subagentOnlyExtensions: [customPath],
+      });
+
+      const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+      assert.deepEqual(extensionArgs.slice(0, -1), [toolSpelling, customSpelling]);
+      assert.equal(extensionArgs.at(-1), runtimeSpelling);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("retains normal extension discovery when no explicit extension list is supplied", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      subagentOnlyExtensions: ["./child-override.ts"],
+    });
+
+    assert.equal(args.includes("--no-extensions"), false);
+  });
+
+  // Pi 0.99.2: --no-extensions now also disables built-in providers (builtin:mcp, builtin:codemode,
+  // builtin:tool-search). An explicit extensions policy still emits --no-extensions, but a
+  // builtin:<name> entry in the list must be passed through via --extension so the child can
+  // selectively re-enable one built-in extension.
+  it("emits --no-extensions and passes through an explicit builtin:<name> extension", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      extensions: ["builtin:mcp", "./custom-ext.ts"],
+    });
+
+    // With an explicit extensions list, --no-extensions must be emitted (disables all extensions
+    // including built-ins in Pi 0.99.2).
+    assert.ok(args.includes("--no-extensions"));
+
+    const loadedExtensions = args.filter((_arg, index) => args[index - 1] === "--extension");
+    // The builtin:<name> identifier must be passed through as-is so Pi can re-enable it.
+    assert.ok(
+      loadedExtensions.includes("builtin:mcp"),
+      `expected --extension builtin:mcp in args; got: ${JSON.stringify(loadedExtensions)}`,
+    );
+    // The regular extension path must also be present.
+    assert.ok(
+      loadedExtensions.includes("./custom-ext.ts"),
+      `expected --extension ./custom-ext.ts in args; got: ${JSON.stringify(loadedExtensions)}`,
+    );
+    // The runtime must remain last.
+    assert.match(loadedExtensions.at(-1) ?? "", /subagent-prompt-runtime\.ts$/);
   });
 
   it("passes tool budget through env", () => {
@@ -757,6 +874,25 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     assert.equal(args[args.indexOf("--tools") + 1], "bash,mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
+    assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
+  });
+
+  it("keeps the generic MCP gateway for MCP-only declarations while direct tools stay filtered", () => {
+    const { args, env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      supervisorBridge: false,
+      tools: ["mcp", "mcp:server/lookup"],
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "mcp");
+    assert.equal(args.includes("--no-tools"), false);
+    assert.equal(args.includes("mcp:server/lookup"), false);
     assert.equal(env.MCP_DIRECT_TOOLS, "__none__");
   });
 
@@ -822,7 +958,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
   });
 
   it("emits an empty prompt file when replace mode is used with an empty prompt", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -831,8 +967,11 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--system-prompt"));
+    try {
+      assert.ok(result.args.includes("--system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 });
 
@@ -862,7 +1001,7 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
   });
 
   it("omits contact_supervisor runtime injection for an explicit supervisor opt-out", () => {
-    const { args, env } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -872,10 +1011,13 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       supervisorBridge: false,
       systemPrompt: "Prompt prose mentions contact_supervisor but is not a capability signal.",
     });
-
-    assert.equal(toolsFlag(args), "bash");
-    assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
-    assert.equal(env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
+    try {
+      assert.equal(toolsFlag(result.args), "bash");
+      assert.equal(result.args[result.args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+      assert.equal(result.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("does not create a native supervisor channel for an explicit supervisor opt-out", () => {

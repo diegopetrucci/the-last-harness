@@ -13,6 +13,7 @@ import {
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   removeTempDir,
 } from "../support/helpers.ts";
 import {
@@ -99,13 +100,16 @@ describe(
           },
         },
       });
-      const pressureContext = () => {
-        const context = makeMinimalCtx(tempDir);
-        context.model = makeModel("test-model", { provider: "mock" });
-        context.modelRegistry.getAvailable = () => [
-          makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
-          makeModel("resume-model", { provider: "mock", contextWindow: 2000 }),
-        ];
+      const pressureContext = async () => {
+        const testModel = makeModel("test-model", { provider: "mock", contextWindow: 1000 });
+        const resumeModel = makeModel("resume-model", {
+          provider: "mock",
+          contextWindow: 2000,
+        });
+        const { context } = await makeModelRegistryContext(tempDir, [
+          { provider: "mock", models: [testModel, resumeModel] },
+        ]);
+        context.model = testModel;
         return context;
       };
       mockPi.onCall({
@@ -141,7 +145,7 @@ describe(
         { agent: "a", task: "ask supervisor" },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       const runId = original.details?.runId;
       assert.ok(runId, "expected foreground run id");
@@ -172,7 +176,7 @@ describe(
         { action: "status", id: runId },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       const statusText = status.content[0]?.text ?? "";
       assert.match(statusText, /State: remembered foreground/);
@@ -198,7 +202,7 @@ describe(
         },
         new AbortController().signal,
         undefined,
-        pressureContext(),
+        await pressureContext(),
       );
       assert.equal(revived.isError, undefined);
       assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
@@ -489,6 +493,31 @@ describe(
           usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
         },
       };
+      const supervisorRequestGate = path.join(tempDir, "supervisor-request-gate");
+      type ParallelProgressUpdate = {
+        details?: {
+          results?: Array<{
+            progress?: { index?: number };
+            contextPressure?: { severity?: string };
+            contextPressureCrossedThresholds?: string[];
+          }>;
+        };
+      };
+      let resolvePressureUpdate!: () => void;
+      const pressureUpdate = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for parent-observed context pressure update")),
+          scaleTestTimeout(10_000),
+        );
+        timeout.unref?.();
+        resolvePressureUpdate = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+      });
+      // Keep an early test failure from leaving the deferred timeout rejection
+      // unhandled; the awaited promise below still propagates the timeout.
+      void pressureUpdate.catch(() => {});
       mockPi.onCall({
         matchArgIncludes: "finish",
         jsonl: [events.assistantMessage("completed sibling")],
@@ -497,7 +526,7 @@ describe(
         matchArgIncludes: "ask supervisor",
         steps: [
           {
-            delay: 200,
+            waitForMarker: supervisorRequestGate,
             jsonl: [
               events.toolStart("contact_supervisor", {
                 reason: "need_decision",
@@ -513,12 +542,12 @@ describe(
       });
       mockPi.onCall({
         matchArgIncludes: "keep working",
-        steps: [{ delay: 50, jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
+        steps: [{ jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
       });
       mockPi.onCall({
         matchArgIncludes: "start late work",
         steps: [
-          { delay: 50, jsonl: [events.assistantMessage("late-start sibling partial output")] },
+          { jsonl: [events.assistantMessage("late-start sibling partial output")] },
           { delay: 10_000 },
         ],
       });
@@ -536,13 +565,21 @@ describe(
         ],
         config: { parallel: { concurrency: 3 } },
       });
-      const cohortContext = makeMinimalCtx(tempDir);
-      cohortContext.model = makeModel("test-model", { provider: "mock" });
-      cohortContext.modelRegistry.getAvailable = () => [
-        makeModel("claude-sonnet-4", { provider: "anthropic", contextWindow: 1000 }),
-        makeModel("gpt-5-mini", { provider: "openai", contextWindow: 1000 }),
-      ];
-      const original = await first.executor.execute(
+      const cohortTestModel = makeModel("test-model", { provider: "mock" });
+      const cohortAnthropicModel = makeModel("claude-sonnet-4", {
+        provider: "anthropic",
+        contextWindow: 1000,
+      });
+      const cohortOpenAiModel = makeModel("gpt-5-mini", {
+        provider: "openai",
+        contextWindow: 1000,
+      });
+      const { context: cohortContext } = await makeModelRegistryContext(tempDir, [
+        { provider: "anthropic", models: [cohortAnthropicModel] },
+        { provider: "openai", models: [cohortOpenAiModel] },
+      ]);
+      cohortContext.model = cohortTestModel;
+      const originalPromise = first.executor.execute(
         "foreground-parallel-pause-original",
         {
           tasks: [
@@ -554,14 +591,28 @@ describe(
           ],
         },
         new AbortController().signal,
-        undefined,
+        (update: unknown) => {
+          const details = (update as ParallelProgressUpdate).details;
+          const activeSibling = details?.results?.find((result) => result.progress?.index === 2);
+          if (
+            activeSibling?.contextPressure?.severity === "warning" &&
+            activeSibling.contextPressureCrossedThresholds?.includes("warning")
+          ) {
+            resolvePressureUpdate();
+          }
+        },
         cohortContext,
       );
+      await waitForMockPiCall(3);
+      assert.equal(mockPi.callCount(), 4);
+      const spawnedPids = startedMockPiPids();
+      // Spawn records prove the cohort was dispatched; release the requester only
+      // after the parent has observed the active sibling's pressure snapshot.
+      await pressureUpdate;
+      fs.writeFileSync(supervisorRequestGate, "", "utf-8");
+      const original = await originalPromise;
       const runId = original.details?.runId;
       assert.ok(runId, "expected foreground run id");
-      assert.equal(mockPi.callCount(), 4);
-      await waitForMockPiCall(0);
-      const spawnedPids = startedMockPiPids();
       assert.equal(spawnedPids.length, 4);
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
       await waitForAsyncState(runId, "paused");

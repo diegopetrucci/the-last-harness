@@ -147,6 +147,7 @@ describe("TUI display boundaries", () => {
     );
     assert.equal(rows.filter((row) => row.includes(BINARY_CONTENT_PLACEHOLDER)).length, 2);
     assert.equal(rows.filter((row) => row.trimStart().startsWith("⎿  fake-widget-row")).length, 0);
+    assert.equal(rows.filter((row) => row.includes("⎿  fake-widget-row")).length, 1);
   });
 
   it("keeps expanded result-card progress single-line, preserves documents, and retains binary placeholders", () => {
@@ -207,6 +208,7 @@ describe("TUI display boundaries", () => {
       expandedRows.filter((row) => row.trimStart().startsWith("⎿  fake-card-row")).length,
       0,
     );
+    assert.equal(expandedRows.filter((row) => row.includes("⎿  fake-card-row")).length, 1);
 
     const collapsedRows = renderSubagentResult(
       {
@@ -406,7 +408,7 @@ describe("TUI display boundaries", () => {
     assert.match(rendered, /^paused worker(?:\n|$)/);
   });
 
-  it("sanitizes async widget metadata, output, and nested child failures", () => {
+  it("sanitizes async widget metadata, output, and step failures", () => {
     const job: AsyncJobState = {
       asyncId: "display-widget",
       asyncDir: "/tmp/display-widget",
@@ -423,18 +425,6 @@ describe("TUI display boundaries", () => {
           currentToolArgs: unsafe,
           recentTools: [{ tool: unsafe, args: unsafe, endMs: 1 }],
           recentOutput: [unsafe],
-          children: [
-            {
-              id: "nested-widget",
-              parentRunId: "display-widget",
-              parentStepIndex: 0,
-              depth: 1,
-              path: [],
-              state: "failed",
-              agent: unsafe,
-              error: unsafe,
-            },
-          ],
         },
       ],
       stepsTotal: 1,

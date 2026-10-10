@@ -105,7 +105,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(run.details.asyncId, id);
@@ -216,7 +215,6 @@ describe("async execution model restoration and fallback", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         maxSubagentDepth: 2,
       });
 
@@ -387,7 +385,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       sessionFilesByFlatIndex: sessionFiles,
       maxSubagentDepth: 2,
@@ -481,20 +478,13 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot,
       maxSubagentDepth: 2,
     });
 
     assert.equal(run.details.asyncId, id);
 
-    const started = Date.now();
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() - started > scaleTestTimeout(15_000)) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
     assert.equal(payload.lifecycleArtifactVersion, 1);
@@ -585,7 +575,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -652,7 +641,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -709,7 +697,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -750,7 +737,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -817,7 +803,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -890,7 +875,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -974,7 +958,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1024,7 +1007,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1074,7 +1056,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1126,18 +1107,11 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
 
-    const started = Date.now();
-    while (!fs.existsSync(resultPath)) {
-      if (Date.now() - started > scaleTestTimeout(15_000)) {
-        assert.fail(`Timed out waiting for async result file: ${resultPath}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
@@ -1190,7 +1164,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1244,7 +1217,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -1352,7 +1324,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -1450,7 +1421,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -1495,7 +1465,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -1543,7 +1512,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 
@@ -1595,7 +1563,6 @@ describe("async execution model restoration and fallback", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
 

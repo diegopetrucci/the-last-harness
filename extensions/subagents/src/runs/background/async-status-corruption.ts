@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export type AsyncStatusCorruptionKind = "json_parse" | "persisted_validation";
+export type AsyncStatusUnsafeReason = "non_regular" | "oversized";
 
 export interface AsyncStatusCorruptionFingerprint {
   readonly algorithm: "sha256";
@@ -57,6 +58,47 @@ export function fingerprintAsyncStatusFile(
 
 export function isAsyncStatusCorruptionError(error: unknown): error is AsyncStatusCorruptionError {
   return error instanceof AsyncStatusCorruptionError;
+}
+
+export class AsyncStatusUnsafeError extends Error {
+  readonly name = "AsyncStatusUnsafeError";
+  readonly reason: AsyncStatusUnsafeReason;
+  readonly asyncDir: string;
+  readonly statusPath: string;
+
+  constructor(input: {
+    message: string;
+    reason: AsyncStatusUnsafeReason;
+    asyncDir: string;
+    statusPath?: string;
+    cause?: Error;
+  }) {
+    super(input.message, input.cause ? { cause: input.cause } : undefined);
+    this.reason = input.reason;
+    this.asyncDir = input.asyncDir;
+    this.statusPath = input.statusPath ?? path.join(input.asyncDir, "status.json");
+  }
+}
+
+export function isAsyncStatusUnsafeError(error: unknown): error is AsyncStatusUnsafeError {
+  return error instanceof AsyncStatusUnsafeError;
+}
+
+export function createAsyncStatusUnsafeError(input: {
+  asyncDir: string;
+  statusPath?: string;
+  reason: AsyncStatusUnsafeReason;
+  message: string;
+  cause?: unknown;
+}): AsyncStatusUnsafeError {
+  const cause = input.cause instanceof Error ? input.cause : undefined;
+  return new AsyncStatusUnsafeError({
+    message: input.message,
+    reason: input.reason,
+    asyncDir: input.asyncDir,
+    statusPath: input.statusPath,
+    ...(cause ? { cause } : {}),
+  });
 }
 
 export function createAsyncStatusJsonParseError(input: {

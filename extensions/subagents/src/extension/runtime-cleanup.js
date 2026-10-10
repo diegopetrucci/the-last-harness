@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkPidLiveness } from "../runs/background/stale-run-reconciler.js";
+import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.js";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.js";
 import { ASYNC_DIR, TEMP_ROOT_DIR } from "../shared/types.js";
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -90,8 +91,15 @@ function readAsyncStatus(asyncDir) {
         return { status: null, invalid: true };
     }
     try {
+        const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+        if (parsed === null) {
+            return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
+        }
+        if (typeof parsed !== "object" || Array.isArray(parsed)) {
+            return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+        }
         return {
-            status: JSON.parse(fs.readFileSync(statusPath, "utf-8")),
+            status: parsed,
             statusMtimeMs: stat.mtimeMs,
             invalid: false,
         };
@@ -126,17 +134,74 @@ function newestTreeMtimeMs(dirPath) {
 function isSignalSafePid(pid) {
     return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
 }
-function isActiveOrLive(status, kill) {
-    if (status.activityState === "needs_attention")
-        return true;
-    if (status.state === "queued" || status.state === "running" || status.state === "paused")
-        return true;
+function pidRetentionState(status, kill) {
     if (!isSignalSafePid(status.pid))
-        return false;
-    return checkPidLiveness(status.pid, kill) !== "dead";
+        return "ownerless";
+    return checkPidLiveness(status.pid, kill);
 }
-function terminalReferenceMs(status, statusMtimeMs, dirMtimeMs) {
-    return Math.max(dirMtimeMs, statusMtimeMs ?? 0, status.endedAt ?? 0, status.lastUpdate ?? 0, status.startedAt ?? 0);
+function lifecycleTimestamp(value) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function retentionReferenceMs(status, statusMtimeMs, dirMtimeMs) {
+    return Math.max(dirMtimeMs, statusMtimeMs ?? 0, lifecycleTimestamp(status.endedAt), lifecycleTimestamp(status.lastUpdate), lifecycleTimestamp(status.startedAt));
+}
+function isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now) {
+    return (now - retentionReferenceMs(status, statusMtimeMs, dirMtimeMs) < TERMINAL_ASYNC_DIR_MAX_AGE_MS);
+}
+function inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill) {
+    switch (status.state) {
+        case "complete":
+        case "failed":
+        case "cancelled":
+        case "continued":
+            return {
+                keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+                activeOrLive: false,
+            };
+        case "paused":
+            return { keep: true, activeOrLive: true };
+        case "queued":
+        case "running": {
+            const pidState = pidRetentionState(status, kill);
+            if (pidState === "alive" || pidState === "unknown") {
+                return { keep: true, activeOrLive: true };
+            }
+            return {
+                keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+                activeOrLive: false,
+            };
+        }
+        case "pausing": {
+            let pidState;
+            if (isSignalSafePid(status.pid)) {
+                try {
+                    const recovered = recoverStoppedLifecycleOwnership(status, {
+                        kill,
+                        now: () => now,
+                    });
+                    if (recovered.repaired) {
+                        return { keep: true, activeOrLive: true };
+                    }
+                    pidState = recovered.pidLiveness ?? "ownerless";
+                }
+                catch {
+                    pidState = pidRetentionState(status, kill);
+                }
+            }
+            else {
+                pidState = "ownerless";
+            }
+            if (pidState === "alive" || pidState === "unknown") {
+                return { keep: true, activeOrLive: true };
+            }
+            return {
+                keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+                activeOrLive: false,
+            };
+        }
+        default:
+            return { keep: true, activeOrLive: false };
+    }
 }
 function inspectAsyncDir(entry, now, kill) {
     const dirMtimeMs = newestTreeMtimeMs(entry.asyncDir);
@@ -158,28 +223,10 @@ function inspectAsyncDir(entry, now, kill) {
         };
     }
     const rootRunId = entry.nested ? entry.rootRunId : status.runId || entry.rootRunId;
-    if (isActiveOrLive(status, kill)) {
-        return {
-            entry,
-            rootRunId,
-            keep: true,
-            activeOrLive: true,
-        };
-    }
-    if (status.state === "complete" || status.state === "failed") {
-        return {
-            entry,
-            rootRunId,
-            keep: now - terminalReferenceMs(status, statusMtimeMs, dirMtimeMs) <
-                TERMINAL_ASYNC_DIR_MAX_AGE_MS,
-            activeOrLive: false,
-        };
-    }
     return {
         entry,
         rootRunId,
-        keep: true,
-        activeOrLive: false,
+        ...inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill),
     };
 }
 function removeDir(dirPath) {
@@ -253,6 +300,11 @@ export function cleanupRuntimeDirs(paths, deps = {}) {
     for (const entry of inspection.asyncDirs) {
         if (entry.keep) {
             retainedRootRunIds.add(entry.rootRunId);
+            continue;
+        }
+        const latest = inspectAsyncDir(entry.entry, now, kill);
+        if (latest.keep) {
+            retainedRootRunIds.add(latest.rootRunId);
             continue;
         }
         if (!removeDir(entry.entry.asyncDir)) {

@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
-import { mergeAgentsForScope } from "./agent-selection.js";
 import { mergeProjectAgentSnapshot, projectAgentSnapshotDiscoveryMetadata, ProjectAgentSnapshotCapabilityError, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
@@ -254,13 +253,13 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
         if (input.toolBudget === false) {
             override.toolBudget = false;
         }
-        else if (input.toolBudget &&
-            typeof input.toolBudget === "object" &&
-            !Array.isArray(input.toolBudget)) {
-            override.toolBudget = input.toolBudget;
-        }
         else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`);
+            const normalizedToolBudget = validateToolBudgetConfig(input.toolBudget);
+            if (normalizedToolBudget.error || normalizedToolBudget.budget === undefined) {
+                const detail = normalizedToolBudget.error ? ` ${normalizedToolBudget.error}` : "";
+                throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.${detail}`);
+            }
+            override.toolBudget = normalizedToolBudget.budget;
         }
     }
     if (Object.hasOwn(input, "maxExecutionTimeMs")) {
@@ -273,12 +272,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
                 throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'maxExecutionTimeMs'; expected a positive safe integer or false.`);
             override.maxExecutionTimeMs = parsed;
         }
-    }
-    if (Object.hasOwn(input, "systemPrompt")) {
-        if (typeof input.systemPrompt === "string")
-            override.systemPrompt = input.systemPrompt;
-        else
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`);
     }
     const fallbackModels = parseOverrideStringArrayOrFalse(Object.hasOwn(input, "fallbackModels") ? input.fallbackModels : undefined, {
         filePath,
@@ -638,7 +631,6 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                 output: frontmatter.output,
                 defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
                 defaultProgress: frontmatter.defaultProgress === "true",
-                interactive: frontmatter.interactive === "true",
                 maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
                     ? parsedMaxSubagentDepth
                     : undefined,
@@ -673,7 +665,6 @@ function resolveNearestProjectAgentDirs(cwd) {
         return { preferredDir: null };
     return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
-export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 function loadCanonicalPackagedAgents(agentDiagnostics) {
     const canonicalDir = path.resolve(getAgentDir(), "tlh", "agents", "subagents");
     const byName = new Map();
@@ -694,7 +685,7 @@ function loadCanonicalPackagedAgents(agentDiagnostics) {
         return next;
     });
 }
-export function discoverAgents(cwd, scope, _options = {}) {
+export function discoverAgents(cwd, scope) {
     const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
@@ -704,7 +695,7 @@ export function discoverAgents(cwd, scope, _options = {}) {
     const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
     const agentDiagnostics = [];
     const canonicalAgents = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter((agent) => agent.disabled !== true);
+    const agents = canonicalAgents.filter((agent) => agent.disabled !== true);
     return { agents, projectAgentsDir, modelScope, agentDiagnostics };
 }
 export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
@@ -722,7 +713,7 @@ export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
     if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
         throw new ProjectAgentSnapshotCapabilityError();
     }
-    const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+    const discovered = discoverAgents(cwd, "user");
     const userSettings = readSubagentSettings(getUserAgentSettingsPath());
     for (const entry of manifest.entries) {
         agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));

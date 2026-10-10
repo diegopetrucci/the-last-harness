@@ -14,31 +14,31 @@ On interactive startup, TLH may also show one quiet hand-curated random tip line
 
 These commands are provided by the upstream Pi runtime. They are available in every TLH session unless noted otherwise.
 
-| Command | Description |
-|---------|-------------|
-| `/changelog` | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position |
-| `/compact` | Manually compact the session context |
-| `/copy` | Copy the last agent message to the clipboard |
-| `/export` | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format) |
-| `/fork` | Create a new fork from a previous user message |
-| `/hotkeys` | Show all keyboard shortcuts |
-| `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
-| `/login` | Configure provider authentication |
-| `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model selection](models.md#model-selection)) |
-| `/name` | Set the session display name |
-| `/new` | Start a new session |
-| `/quit` | Quit the TLH TUI |
-| `/reload` | Reload keybindings, extensions, skills, prompts, and themes; also recapture TLH experimental-flag state for the active session |
-| `/resume` | Resume a different session |
-| `/scoped-models` | Enable or disable models for Ctrl+P cycling — **hidden from TLH autocomplete** |
-| `/session` | Show session info and stats |
-| `/settings` | Open the settings menu |
-| `/share` | Share the session as a secret GitHub gist |
-| `/thinking` | Select the model thinking level with Pi's native picker and controls |
-| `/tree` | Navigate the session tree and switch branches |
-| `/trust` | Save the current project trust decision for future sessions |
+| Command          | Description                                                                                                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/changelog`     | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes                                                                                         |
+| `/clone`         | Duplicate the current session at the current position                                                                                                                                                     |
+| `/compact`       | Manually compact the session context                                                                                                                                                                      |
+| `/copy`          | Copy the last agent message to the clipboard                                                                                                                                                              |
+| `/export`        | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format)                                                                                                                   |
+| `/fork`          | Create a new fork from a previous user message                                                                                                                                                            |
+| `/hotkeys`       | Show all keyboard shortcuts                                                                                                                                                                               |
+| `/import`        | Import and resume a session from a JSONL file — **hidden from TLH autocomplete**                                                                                                                          |
+| `/login`         | Configure provider authentication                                                                                                                                                                         |
+| `/logout`        | Remove provider authentication                                                                                                                                                                            |
+| `/model`         | Select the active model (opens the native selector; Enter is session-only and the save key (Ctrl+S by default, `app.models.save`) saves the default; see [model selection](models.md#model-selection))    |
+| `/name`          | Set the session display name                                                                                                                                                                              |
+| `/new`           | Start a new session                                                                                                                                                                                       |
+| `/quit`          | Quit the TLH TUI                                                                                                                                                                                          |
+| `/reload`        | Reload keybindings, extensions, skills, prompts, and themes; prompt-only experiment flags keep their per-turn behavior, while next-session observer activation remains bound to this conversation session |
+| `/resume`        | Resume a different session                                                                                                                                                                                |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling — **hidden from TLH autocomplete**                                                                                                                            |
+| `/session`       | Show session info and stats                                                                                                                                                                               |
+| `/settings`      | Open the settings menu                                                                                                                                                                                    |
+| `/share`         | Share the session as a secret GitHub gist                                                                                                                                                                 |
+| `/thinking`      | Select the model thinking level with Pi's native picker and controls                                                                                                                                      |
+| `/tree`          | Navigate the session tree and switch branches                                                                                                                                                             |
+| `/trust`         | Save the current project trust decision for future sessions                                                                                                                                               |
 
 ---
 
@@ -46,26 +46,26 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 
 These commands are registered by the TLH extension bundled with this profile.
 
-| Command | Description |
-|---------|-------------|
-| `/effort` | TLH behavioral alias for Pi's native thinking-level picker |
-| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews` and `ci-failure-investigation` are currently registered) |
-| `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
-| `/review` | Open an interactive code-review mode picker (available with the architect or disabled primary agent) |
-| `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
-| `/reconcile` | Review and resolve model/effort override drift from TLH packaged defaults |
-| `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
-| `/tlh-changelog` | Show TLH release notes from the packaged `CHANGELOG.md` |
-| `/tokens` | Generate and open a single no-flags local HTML token-spend report for the current session |
-| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions |
-| `/toggle-context-cap` | Toggle the 200k effective context-window cap for auto-compaction |
-| `/toggle-tlh-git-attribution` | Toggle the TLH commit attribution footer for agent-created git commits |
-| `/usage` | Show or change TLH subscription usage-limit footer preferences |
-| `/version` | Show the installed TLH version and the upstream Pi runtime version |
+| Command                                      | Description                                                                                                                                                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/effort`                                    | TLH behavioral alias for Pi's native thinking-level picker                                                                                                                                                                      |
+| `/experimental`                              | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`session-mirror-observer` is currently registered)                                                             |
+| `/session-mirror-observer`                   | Show bounded aggregate observer status, or request a deferred snapshot with `status`/`snapshot`                                                                                                                                 |
+| `/tickets`                                   | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree                                                                                                                                          |
+| `/switch-primary-agent`                      | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`)                                                                                                                          |
+| `/reconcile`                                 | Review and resolve model/effort override drift from TLH packaged defaults                                                                                                                                                       |
+| `/subagent-settings`                         | Show or edit persisted TLH bundled minor-agent model and effort overrides                                                                                                                                                       |
+| `/tlh-changelog`                             | Show TLH release notes from the packaged `CHANGELOG.md`                                                                                                                                                                         |
+| `/tokens`                                    | Generate and open a single no-flags local HTML token-spend report for the current session                                                                                                                                       |
+| `/what-consumed-my-session-limit-and-tokens` | Generate and open a local HTML session-limit usage report across all in-window TLH sessions                                                                                                                                     |
+| `/toggle-context-cap`                        | Toggle the 300k effective context-window cap for auto-compaction                                                                                                                                                                |
+| `/toggle-tlh-git-attribution`                | Toggle the TLH commit attribution footer for agent-created git commits                                                                                                                                                          |
+| `/usage`                                     | Show or change TLH subscription usage-limit footer preferences                                                                                                                                                                  |
+| `/version`                                   | Show the installed TLH version and the upstream Pi runtime version                                                                                                                                                              |
 
 ### `/thinking` (native) and `/effort` (TLH alias)
 
-`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.85.1's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
+`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses the pinned Pi runtime's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
 
 With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
 
@@ -81,11 +81,11 @@ Use `/switch-primary-agent disabled` to disable the primary persona for the curr
 
 Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
 
-`/review` is available while architect or disabled is active (and requires the interactive TUI); rush, product, and bug-hunter remain blocked. It gathers the selected review target, sends a `[/review]` handoff, and the active primary delegates it to `code-reviewer` in a fresh isolated context, digests findings, and keeps the request review-only. Disabled mode does not regain architect planning, approval, ticket, or implementation orchestration.
-
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews` and `ci-failure-investigation`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. Both flags are disabled by default. These prompt-only flags are re-read from settings on each agent turn, so enabling or disabling one applies on the next agent turn; no new session or `/reload` is required. Project custom subagents use the exact direct Git-root `.tlh/agents/custom/<UPPERCASE-SLUG>.md` path and persisted project trust rather than an `/experimental` flag; see [custom-subagents.md](custom-subagents.md). Stale `run-tests-last` and `embedded-subagents` values in `tlh.experimental.enabledFeatures` are inert and do not re-enable retired behavior. Users upgrading to stable custom subagents do not need to edit the stale `embedded-subagents` value; if you choose to clean it up manually, remove only that value and preserve every other `enabledFeatures` entry.
+`/experimental` currently registers only `session-mirror-observer`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. Project custom subagents use the exact direct Git-root `.tlh/agents/custom/<UPPERCASE-SLUG>.md` path and persisted project trust rather than an `/experimental` flag; see [custom-subagents.md](custom-subagents.md). Stale values in `tlh.experimental.enabledFeatures` are inert and do not re-enable retired behavior; users do not need to edit them, and enabling or disabling the current feature preserves unrelated values.
+
+`session-mirror-observer` is disabled by default and has no flag on a fresh profile. It is opt-in only for the next conversation session: use `/experimental enable session-mirror-observer`, `/experimental status session-mirror-observer`, `/session-mirror-observer status`, and `/experimental disable session-mirror-observer`. Enabling or toggling it tells the next session to mirror bounded TLH session state to a paired iPhone companion; that paired companion can submit bounded plain-text user-message replies while the feature is active. The preference is preserved in the isolated TLH profile alongside unrelated settings, and no companion is automatically installed or paired. Disabling also takes effect on the next session: a currently enabled session retains its activation until a new session, so this is not immediate revocation. `/reload` keeps the current conversation session's activation snapshot; `/new`, `/resume`, and `/fork` recapture it. `/session-mirror-observer snapshot` is explicitly deferred and nonblocking. When enabled, the observer captures bounded in-process source data and, when the installed local companion is present, attempts one bounded fail-open Unix-socket publication; a successful bridge connection remains open until observer/session shutdown and carries no durable transcript storage. If a complete snapshot exceeds protocol bounds, fallback publishes only the newest bounded section of the active branch, replacing over-bound entries or compactions outside the window with unsupported placeholders; it never truncates completed text or fabricates compaction summaries. The local bridge is a same-user trust boundary only: its Unix socket is not encrypted and provides no cross-user or cryptographic confidentiality or same-UID peer authentication/authorization. A missing, unsafe, unavailable, or timed-out bridge never blocks the agent. This does **not** prove helper recovery, cross-process backpressure, Mac/iOS behavior, notifications, or server behavior. The `/session-mirror-observer` status remains aggregate-only and omits transcript text, paths, session/entry IDs, source metadata, provider/tool details, arbitrary errors, and exact unbounded timings.
 
 ### `/subagent-settings`
 
@@ -145,7 +145,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", view: "fleet" })` shows active dispatch status; neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status" })` shows active direct dispatch status; pass `id` to inspect one run. Neither command changes these overrides.
 
 ### `/reconcile`
 
@@ -228,11 +228,11 @@ Custom subagents are not a slash command. Project-owned agents use the exact dir
 
 These commands ship inside the TLH package itself rather than through separately managed default-extension installs.
 
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
-| `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
-| `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
+| Command                  | Extension           | Description                                                                                                                                         |
+| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/annotate-last-message` | `the-last-harness`  | Open a native annotation window for the latest assistant message and send submitted feedback to the agent                                           |
+| `/annotate-git-diff`     | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
+| `/subagents-doctor`      | `subagents`         | Show first-party subagent runtime diagnostics                                                                                                       |
 
 ### `/annotate-last-message`
 
@@ -304,12 +304,12 @@ TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extens
 
 These slash commands come from prompt templates bundled inside TLH. They insert canned prompt text into the editor for you to review and send.
 
-| Command | Description |
-|---------|-------------|
-| `/analyse-tlh-sessions` | Analyse the past week of tlh sessions for notable issues without changing files. |
-| `/investigate-pr-comments` | Check PR comments and verify whether each one is valid. |
-| `/merge-origin-main-into-this-branch` | Merge `origin/main` into this branch. |
-| `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`. |
+| Command                                | Description                                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `/analyse-tlh-sessions`                | Analyse the past week of tlh sessions for notable issues without changing files. |
+| `/investigate-pr-comments`             | Check PR comments and verify whether each one is valid.                          |
+| `/merge-origin-main-into-this-branch`  | Merge `origin/main` into this branch.                                            |
+| `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`.                                           |
 
 ---
 
@@ -317,17 +317,12 @@ These slash commands come from prompt templates bundled inside TLH. They insert 
 
 These commands are provided by bundled default extensions and are visible in TLH autocomplete. They are available when the relevant extension is installed and active.
 
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
-| `/mcp` | `pi-mcp-adapter` | Show MCP server status |
-| `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
-| `/transcribe` | `pi-transcribe` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
-
-### `/transcribe` and `Ctrl+Alt+Z`
-
-Run `/transcribe` once to choose and confirm a local model; pi-transcribe downloads the model after confirmation. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
+| Command     | Extension              | Description                                                                                 |
+| ----------- | ---------------------- | ------------------------------------------------------------------------------------------- |
+| `/context`  | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going                        |
+| `/fast`     | `pi-fast`              | Toggle Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models |
+| `/mcp`      | `pi-mcp-adapter`       | Show MCP server status                                                                      |
+| `/mcp-auth` | `pi-mcp-adapter`       | Authenticate with an MCP server (OAuth)                                                     |
 
 ---
 
@@ -335,12 +330,12 @@ Run `/transcribe` once to choose and confirm a local model; pi-transcribe downlo
 
 These bundled skills ship with TLH and remain visible in TLH autocomplete.
 
-| Command | Description |
-|---------|-------------|
-| `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows |
-| `/skill:herdr` | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control |
-| `/skill:show-me` | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts |
-| `/skill:tmux` | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring |
+| Command           | Description                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows             |
+| `/skill:herdr`    | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control              |
+| `/skill:show-me`  | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts |
+| `/skill:tmux`     | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring   |
 
 ---
 
@@ -350,25 +345,11 @@ These commands are registered and fully functional, but deliberately excluded fr
 
 ### Hidden upstream Pi built-ins
 
-| Command | Description |
-|---------|-------------|
-| `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
-| `/import` | Import and resume a session from a JSONL file |
-| `/scoped-models` | Enable or disable models for Ctrl+P cycling |
-
-### Hidden skill commands
-
-| Command | Description |
-|---------|-------------|
-| `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-
-### Hidden bundled extension commands
-
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/curator` | `pi-web-access` | Toggle or configure the search curator workflow |
-| `/search` | `pi-web-access` | Browse stored web search results |
-| `/websearch` | `pi-web-access` | Open the web search curator |
+| Command          | Description                                                                    |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `/changelog`     | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
+| `/import`        | Import and resume a session from a JSONL file                                  |
+| `/scoped-models` | Enable or disable models for Ctrl+P cycling                                    |
 
 ---
 
@@ -378,7 +359,7 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 ### `tlh sessions`
 
-`tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, or `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions. Raw paths, cwd values, and project labels are omitted by default; pass `--include-paths` only when you need them for concrete evidence. `tlh sessions` never reads `run-history.jsonl` and never writes to session files.
+`tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions, or `tlh sessions --mode subagents` for a schema-v1 summary of locally persisted subagent telemetry, including foreground/async runs, usage, runtime, operation coverage, lineage, and synthetic wakeups. Coverage includes bounded correlation-evidence failure counters (`scanCaptureOverflow`, `rescanCaptureOverflow`, `digestMismatch`, and `generationMismatch`); a failed evidence join is omitted rather than trusted. Raw paths, cwd values, project labels, prompts, tasks, outputs, arguments, and raw run identifiers are omitted from the default report; bounded metadata such as roles, models, usage, and costs may still be present. Pass `--include-paths` only when you need local profile and session-directory provenance. The command reads the active isolated profile's session JSONL files, never reads `run-history.jsonl`, does not contact remote telemetry services, and never writes to session or profile files.
 
 ---
 
@@ -413,10 +394,10 @@ Example to disable notifications entirely:
 
 Key config fields (see [`extensions/notify/README.md`](../extensions/notify/README.md) for the full list):
 
-| Field | Default | Description |
-|---|---|---|
-| `enabled` | `true` | Master on/off switch |
-| `onlyWhenInteractive` | `true` | Skip notifications in non-UI (print) mode |
-| `suppressWhileActive` | `true` | Hold all notification channels while background subagent work is still running; a notification fires only once the session is genuinely waiting on you, not merely between turns. Set to `false` to notify on every turn completion regardless. Has no effect when the TLH activity tracker is absent. |
-| `title` | `"tlh"` | Notification title |
-| `body` | `"Ready for input"` | Notification body |
+| Field                 | Default             | Description                                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `enabled`             | `true`              | Master on/off switch                                                                                                                                                                                                                                                                                   |
+| `onlyWhenInteractive` | `true`              | Skip notifications in non-UI (print) mode                                                                                                                                                                                                                                                              |
+| `suppressWhileActive` | `true`              | Hold all notification channels while background subagent work is still running; a notification fires only once the session is genuinely waiting on you, not merely between turns. Set to `false` to notify on every turn completion regardless. Has no effect when the TLH activity tracker is absent. |
+| `title`               | `"tlh"`             | Notification title                                                                                                                                                                                                                                                                                     |
+| `body`                | `"Ready for input"` | Notification body                                                                                                                                                                                                                                                                                      |

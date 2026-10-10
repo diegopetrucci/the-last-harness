@@ -1,4 +1,6 @@
+import * as path from "node:path";
 import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
+import { resolveExecutionAgentScope } from "./agent-scope.js";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 function result(text, isError = false) {
     return {
@@ -10,13 +12,6 @@ function result(text, isError = false) {
 const SAVED_CHAIN_UNSUPPORTED = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
 function unsupportedSavedChainResult(detail) {
     return result(`${SAVED_CHAIN_UNSUPPORTED} ${detail}`, true);
-}
-function normalizeListScope(scope) {
-    if (scope === undefined)
-        return "both";
-    if (scope === "user" || scope === "project" || scope === "both")
-        return scope;
-    return undefined;
 }
 function sanitizeName(name) {
     return name
@@ -30,8 +25,23 @@ function sanitizeName(name) {
 function allAgents(d) {
     return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
-function isSourceVisibleInScope(source, scope) {
-    return scope === "both" || source === "builtin" || source === "package" || source === scope;
+function isVisibleInScope(entry, scope) {
+    if (scope === "both" ||
+        entry.source === "builtin" ||
+        entry.source === "package" ||
+        entry.source === scope) {
+        return true;
+    }
+    if (scope !== "project")
+        return false;
+    if (isCanonicalPackagedMinorAgent(entry))
+        return true;
+    if (typeof entry.filePath !== "string")
+        return false;
+    const role = path.basename(entry.filePath, ".md");
+    if (!role || role === path.basename(entry.filePath))
+        return false;
+    return isCanonicalPackagedMinorAgent({ name: role, filePath: entry.filePath });
 }
 function availableNames(cwd) {
     return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
@@ -96,14 +106,10 @@ function formatAgentDetail(agent) {
     return lines.join("\n");
 }
 export function handleList(params, ctx) {
-    const scope = normalizeListScope(params.agentScope) ?? "both";
+    const scope = resolveExecutionAgentScope(params.agentScope);
     const d = discoverAgentsAll(ctx.cwd);
     const scopedAgents = allAgents(d)
-        .filter((a) => scope === "both" ||
-        a.source === "builtin" ||
-        a.source === "package" ||
-        a.source === scope ||
-        (scope === "project" && isCanonicalPackagedMinorAgent(a)))
+        .filter((a) => isVisibleInScope(a, scope))
         .sort((a, b) => a.name.localeCompare(b.name));
     const agents = scopedAgents.filter((a) => !a.disabled);
     const lines = [
@@ -112,7 +118,7 @@ export function handleList(params, ctx) {
             ? agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`)
             : ["- (none)"]),
     ];
-    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isSourceVisibleInScope(diagnostic.source, scope));
+    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isVisibleInScope(diagnostic, scope));
     if (visibleDiagnostics.length > 0) {
         lines.push("", "Agent load warnings:", ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`));
     }

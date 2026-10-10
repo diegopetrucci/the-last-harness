@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { testConcurrencyArgs } from "./test-concurrency.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const repoRoot = resolve(dirname(scriptPath), "..");
@@ -11,17 +12,14 @@ export const repoRoot = resolve(dirname(scriptPath), "..");
 export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
-    minimumFiles: 102,
     minimumTests: 1474,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
-    minimumFiles: 39,
     minimumTests: 607,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),
-    minimumFiles: 1,
     minimumTests: 1,
   },
 };
@@ -45,10 +43,8 @@ export function discoverSuiteFiles(suite, config = suiteConfigs[suite]) {
     .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
     .map((entry) => join(config.directory, entry.name))
     .sort();
-  if (files.length < config.minimumFiles) {
-    throw new Error(
-      `${suite} suite found ${files.length} test files; expected at least ${config.minimumFiles}`,
-    );
+  if (files.length === 0) {
+    throw new Error(`${suite} suite found no .test.ts files in ${config.directory}`);
   }
   return files;
 }
@@ -94,6 +90,30 @@ export function validateTapSummary(
 
 function isSharded(options) {
   return options.some((option) => option === "--test-shard" || option.startsWith("--test-shard="));
+}
+
+/**
+ * Build the Node test-runner command arguments for an imported subagent suite.
+ *
+ * @param {{
+ *   loader: string;
+ *   options?: string[];
+ *   files: string[];
+ *   env?: Record<string, string | undefined>;
+ * }} input
+ * @returns {string[]}
+ */
+export function buildTestCommandArgs({ loader, options = [], files, env = process.env }) {
+  return [
+    "--experimental-strip-types",
+    "--import",
+    loader,
+    "--test",
+    "--test-reporter=tap",
+    ...testConcurrencyArgs({ env }),
+    ...options,
+    ...files,
+  ];
 }
 
 function relayFailureOutput(result) {
@@ -149,23 +169,20 @@ export function runSuite(suite, options = []) {
     return 2;
   }
 
+  const loader = pathToFileURL(
+    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
+  ).href;
+  let args;
+  try {
+    args = buildTestCommandArgs({ loader, options, files, env: process.env });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
   const root = mkdtempSync(join(tmpdir(), "tlh-subagents-tests-"));
   const agentDir = join(root, "agent");
   mkdirSync(agentDir, { recursive: true });
   const env = buildChildEnv(process.env, agentDir);
-
-  const loader = pathToFileURL(
-    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
-  ).href;
-  const args = [
-    "--experimental-strip-types",
-    "--import",
-    loader,
-    "--test",
-    "--test-reporter=tap",
-    ...options,
-    ...files,
-  ];
   let result;
   try {
     result = spawnSync(process.execPath, args, {

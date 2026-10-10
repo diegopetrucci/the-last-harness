@@ -333,6 +333,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         tokens: 0,
         durationMs: 0,
         lastActivityAt: startTime,
+        startedAt: startTime,
     };
     applyHealthProgressProjection(progress, shared.healthState.value);
     const applyHealthTransition = (action) => transitionHealthForProgress(shared.healthState, progress, action);
@@ -352,7 +353,23 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             tokens: progress.tokens,
             durationMs: progress.durationMs,
         };
-        return result;
+        cleanupTempDir(tempDir);
+        return finalizeSingleAttempt({
+            result,
+            progress,
+            startTime,
+            agent,
+            task,
+            options,
+            originalTask: shared.originalTask,
+            outputSnapshot: shared.outputSnapshot,
+            supervisorPauseRequested: false,
+            interruptedByControl: false,
+            observedMutationAttempt: false,
+            allControlEvents,
+            emitControlEvent,
+            healthState: shared.healthState,
+        });
     }
     const spawnEnv = buildSubagentSpawnEnv(process.env, sharedEnv, getSubagentDepthEnv(options.maxSubagentDepth));
     let observedMutationAttempt = false;
@@ -984,7 +1001,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                             tokens: progress.tokens,
                             durationMs: progress.durationMs,
                         };
-                        resolveResultSessionFile(result, options, shared.sessionEnabled);
+                        resolveResultSessionFile(result, options);
                         try {
                             options.onSupervisorPauseTransition?.({
                                 stage: "paused",
@@ -1109,7 +1126,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         agent,
         task,
         options,
-        sessionEnabled: shared.sessionEnabled,
         originalTask: shared.originalTask,
         outputSnapshot: shared.outputSnapshot,
         supervisorPauseRequested,
@@ -1165,7 +1181,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             error: outputModeValidationError,
         };
     }
-    const shareEnabled = options.share === true;
     const effectiveAcceptance = resolveEffectiveAcceptance({
         explicit: options.acceptance,
         agentName,
@@ -1176,7 +1191,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     });
     const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
     const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
-    const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
+    const sessionEnabled = Boolean(options.sessionFile || options.sessionDir);
     const restoredSession = hasUsableSessionArtifact(options.sessionFile);
     const skillNames = options.skills ?? agent.skills ?? [];
     const skillCwd = options.cwd ?? runtimeCwd;
@@ -1350,7 +1365,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     prepareForegroundRunFinalization({
         result,
         options,
-        shareEnabled,
         artifactPathsResult,
         transcriptWriter,
     });

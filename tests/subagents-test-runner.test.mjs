@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   buildChildEnv,
+  buildTestCommandArgs,
   discoverSuiteFiles,
   parseTapSummary,
   repoRoot,
@@ -13,6 +14,38 @@ import {
 } from "../scripts/run-subagents-tests.mjs";
 
 const runnerPath = join(repoRoot, "scripts/run-subagents-tests.mjs");
+
+test("subagents runner projects the shared concurrency policy into Node args", () => {
+  const args = buildTestCommandArgs({
+    loader: "file:///tmp/register-loader.mjs",
+    files: ["suite.test.ts"],
+    env: { GITHUB_ACTIONS: "true", TLH_TEST_CONCURRENCY: "6" },
+  });
+  assert.ok(args.includes("--test-concurrency=6"));
+  assert.ok(args.indexOf("--test-concurrency=6") < args.indexOf("suite.test.ts"));
+
+  const githubArgs = buildTestCommandArgs({
+    loader: "file:///tmp/register-loader.mjs",
+    files: ["suite.test.ts"],
+    env: { GITHUB_ACTIONS: "true" },
+  });
+  assert.ok(!githubArgs.some((arg) => arg.startsWith("--test-concurrency=")));
+});
+
+test("subagents runner reports invalid concurrency overrides without a stack", () => {
+  const result = spawnSync(process.execPath, [runnerPath, "e2e"], {
+    cwd: repoRoot,
+    env: { ...process.env, TLH_TEST_CONCURRENCY: "invalid" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(
+    result.stderr,
+    'TLH_TEST_CONCURRENCY must be a positive integer or unset it; received "invalid".\n',
+  );
+  assert.doesNotMatch(result.stderr, /\bat /u);
+});
 
 function tapSummary(overrides = {}) {
   const values = {
@@ -51,14 +84,14 @@ test("subagents runner rejects missing and zero-file suites before spawning Node
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   assert.throws(
-    () => discoverSuiteFiles("unit", { directory: join(root, "missing"), minimumFiles: 93 }),
+    () => discoverSuiteFiles("unit", { directory: join(root, "missing") }),
     /Could not read unit test directory/,
   );
   const emptyDir = join(root, "empty");
   mkdirSync(emptyDir);
   assert.throws(
-    () => discoverSuiteFiles("unit", { directory: emptyDir, minimumFiles: 93 }),
-    /unit suite found 0 test files; expected at least 93/,
+    () => discoverSuiteFiles("unit", { directory: emptyDir }),
+    /unit suite found no \.test\.ts files/,
   );
 });
 

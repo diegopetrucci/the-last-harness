@@ -1,0 +1,66 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-e0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-e3",
+    "revision": 3,
+    "cursor": "opaque-cursor-e3",
+    "operation": "replace",
+    "replaces": {
+      "snapshotId": "opaque-snapshot-e2",
+      "revision": 2,
+      "cursor": "opaque-cursor-e2"
+    },
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-e3",
+      "status": "idle",
+      "tree": {
+        "activeLeafId": "entry-e3",
+        "entries": [
+          {
+            "id": "entry-e1",
+            "parentId": null,
+            "kind": "user-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic replacement user turn"
+              }
+            }
+          },
+          {
+            "id": "entry-e3",
+            "parentId": "entry-e1",
+            "kind": "assistant-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic replacement assistant turn"
+              }
+            }
+          }
+        ],
+        "rootIds": ["entry-e1"]
+      }
+    }
+  }
+}

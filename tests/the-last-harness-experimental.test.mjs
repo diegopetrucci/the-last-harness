@@ -8,12 +8,17 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const RETIRED_RUN_TESTS_LAST_FEATURE = "run-tests-last";
+const RETIRED_DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
+const RETIRED_CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
+const RETIRED_EXPERIMENTAL_FEATURES = [
+  RETIRED_DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  RETIRED_CI_FAILURE_INVESTIGATION_FEATURE,
+];
 const LEGACY_UNKNOWN_FEATURE = "legacy-flag";
 const SERIAL_TEST = { concurrency: false };
 const jiti = createJiti(import.meta.url);
 const {
-  CI_FAILURE_INVESTIGATION_FEATURE,
-  DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  SESSION_MIRROR_OBSERVER_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -74,24 +79,22 @@ function registeredExperimentalCommand() {
 }
 
 test(
-  "experimental command registers only the active delta follow-up review and ci failure investigation flags",
+  "experimental command exposes the companion mirroring feature as a default-off picker entry",
   SERIAL_TEST,
   async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
 
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      assert.equal(existsSync(settingsPath), false, "fresh profiles do not auto-add feature flags");
       const command = registeredExperimentalCommand();
       assert.deepEqual(
         (await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-        [`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+        [`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`],
       );
       assert.deepEqual(
         (await command.getArgumentCompletions("status ")).map((completion) => completion.value),
-        [
-          "status",
-          `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
-          `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-        ],
+        ["status", `status ${SESSION_MIRROR_OBSERVER_FEATURE}`],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
 
@@ -101,18 +104,18 @@ test(
       assert.equal(notifications.at(-1)?.type, "info");
       assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /contrarian/);
-      assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
-      assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.match(notifications.at(-1)?.message ?? "", /iPhone companion session mirroring/i);
       assert.match(
         notifications.at(-1)?.message ?? "",
-        /\/experimental enable delta-follow-up-reviews/,
+        /paired companion can submit .*user-message replies/i,
       );
-      assert.match(notifications.at(-1)?.message ?? "", /ci-failure-investigation/);
-      assert.match(notifications.at(-1)?.message ?? "", /architect-only guidance/i);
-      assert.match(
-        notifications.at(-1)?.message ?? "",
-        /\/experimental enable ci-failure-investigation/,
-      );
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /aggregate-only/i);
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /session-mirror-replies/);
+      assert.match(notifications.at(-1)?.message ?? "", /next session/i);
+      assert.equal(existsSync(settingsPath), false, "listing does not auto-add the feature flag");
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /embedded-subagents/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 
@@ -122,6 +125,41 @@ test(
         staleStatus.notifications.at(-1)?.message ?? "",
         /unknown tlh experimental feature/i,
       );
+    });
+  },
+);
+
+test(
+  "session-mirror observer enable warns about paired replies and defers activation",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      assert.equal(notifications.at(-1)?.type, "info");
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /paired companion can submit .*user-message replies/i,
+      );
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /enabling takes effect on the next session/i,
+      );
+      assert.match(notifications.at(-1)?.message ?? "", /current activation/i);
+
+      await command.handler(`disable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /disabling takes effect on the next session/i,
+      );
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /currently enabled session retains activation until a new session/i,
+      );
+      assert.match(notifications.at(-1)?.message ?? "", /not immediate revocation/i);
     });
   },
 );
@@ -147,20 +185,26 @@ test(
 
       assert.equal(selectCalls.length, 2);
       assert.match(selectCalls[0].prompt, /toggle tlh experimental features/i);
-      assert.match(selectCalls[0].options[0], new RegExp(DELTA_FOLLOW_UP_REVIEWS_FEATURE));
+      assert.match(selectCalls[0].options[0], new RegExp(SESSION_MIRROR_OBSERVER_FEATURE));
       assert.match(selectCalls[0].options[0], /disabled \(default\)/i);
-      assert.equal(
-        JSON.parse(readFileSync(settingsPath, "utf8")).tlh.experimental.enabledFeatures[0],
-        DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+      const observerOption = selectCalls[0].options.find((option) =>
+        option.includes(SESSION_MIRROR_OBSERVER_FEATURE),
+      );
+      assert.match(observerOption ?? "", /iPhone companion session mirroring/i);
+      assert.match(observerOption ?? "", /paired companion can submit .*user-message replies/i);
+      assert.match(observerOption ?? "", /disabled \(default\)/i);
+      assert.deepEqual(
+        JSON.parse(readFileSync(settingsPath, "utf8")).tlh.experimental.enabledFeatures,
+        [SESSION_MIRROR_OBSERVER_FEATURE],
       );
       assert.match(selectCalls[1].options[0], /enabled/i);
       assert.match(
         notifications.at(-1)?.message ?? "",
-        /Updated TLH experimental feature delta-follow-up-reviews/,
+        /Updated TLH experimental feature session-mirror-observer/,
       );
       assert.deepEqual(pi.emittedEvents.at(-1), {
         name: "tlh:experimental-feature-changed",
-        payload: { cwd: fixture.dir, enabled: true, featureId: DELTA_FOLLOW_UP_REVIEWS_FEATURE },
+        payload: { cwd: fixture.dir, enabled: true, featureId: SESSION_MIRROR_OBSERVER_FEATURE },
       });
     });
   },
@@ -183,7 +227,11 @@ test(
       assert.equal(selectCalls.length, 0);
       assert.equal(notifications.at(-1)?.type, "info");
       assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
-      assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.doesNotMatch(
+        notifications.at(-1)?.message ?? "",
+        /delta-follow-up-reviews|ci-failure-investigation/,
+      );
     });
   },
 );
@@ -206,7 +254,11 @@ test(
       assert.equal(selectCalls.length, 0);
       assert.equal(notifications.at(-1)?.type, "info");
       assert.match(notifications.at(-1)?.message ?? "", /TLH experimental features:/);
-      assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.doesNotMatch(
+        notifications.at(-1)?.message ?? "",
+        /delta-follow-up-reviews|ci-failure-investigation/,
+      );
     });
   },
 );
@@ -223,19 +275,14 @@ test("contrarian experimental settings stay harmless and no longer inject primar
   assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, legacyConfig), undefined);
 });
 
-test("ci failure investigation prompt injection stays default-off and only enables architect read-only investigation guidance", () => {
+test("retired experimental flags stay inert and do not inject primary prompts", () => {
   assert.equal(buildPrimaryExperimentalPrompt({ name: "architect" }, undefined), undefined);
   assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, undefined), undefined);
 
-  const enabledConfig = { enabledFeatures: [CI_FAILURE_INVESTIGATION_FEATURE] };
-  assert.match(
-    buildPrimaryExperimentalPrompt({ name: "architect" }, enabledConfig) ?? "",
-    /## TLH Experimental Feature: ci-failure-investigation/,
-  );
-  assert.equal(buildPrimaryExperimentalPrompt({ name: "rush" }, enabledConfig), undefined);
-  assert.equal(buildPrimaryExperimentalPrompt({ name: "product" }, enabledConfig), undefined);
-  assert.equal(buildPrimaryExperimentalPrompt({ name: "bug-hunter" }, enabledConfig), undefined);
-  assert.equal(buildPrimaryExperimentalPrompt({ name: "developer" }, enabledConfig), undefined);
+  const retiredConfig = { enabledFeatures: RETIRED_EXPERIMENTAL_FEATURES };
+  for (const primary of ["architect", "rush", "product", "bug-hunter", "developer"]) {
+    assert.equal(buildPrimaryExperimentalPrompt({ name: primary }, retiredConfig), undefined);
+  }
 });
 
 test(
@@ -296,7 +343,14 @@ test(
   "experimental stale settings fail closed and do not rebuild retired or promoted guidance",
   SERIAL_TEST,
   async (t) => {
-    for (const enabledFeatures of [true, [123], [RETIRED_RUN_TESTS_LAST_FEATURE], ["contrarian"]]) {
+    for (const enabledFeatures of [
+      true,
+      [123],
+      [RETIRED_RUN_TESTS_LAST_FEATURE],
+      ...RETIRED_EXPERIMENTAL_FEATURES.map((feature) => [feature]),
+      ["contrarian"],
+      ["session-mirror-replies"],
+    ]) {
       const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
       const settingsPath = join(fixture.agent, "settings.json");
       const malformedOrStaleSettings = `${JSON.stringify({ tlh: { experimental: { enabledFeatures } } }, null, 2)}\n`;
@@ -322,8 +376,12 @@ test(
         let { ctx, notifications } = createCommandContext(fixture.dir);
         await command.handler("", ctx);
         assert.equal(notifications.at(-1)?.type, "info");
-        assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+        assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
         assert.match(notifications.at(-1)?.message ?? "", /disabled \(default\)/);
+        assert.doesNotMatch(
+          notifications.at(-1)?.message ?? "",
+          /delta-follow-up-reviews|ci-failure-investigation/,
+        );
         assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 
         ({ ctx, notifications } = createCommandContext(fixture.dir));
@@ -331,7 +389,11 @@ test(
         assert.equal(notifications.at(-1)?.type, "info");
         assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
         assert.match(notifications.at(-1)?.message ?? "", /run-tests-last/);
-        assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
+        assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+        assert.doesNotMatch(
+          notifications.at(-1)?.message ?? "",
+          /delta-follow-up-reviews|ci-failure-investigation/,
+        );
 
         for (const action of ["enable", "disable", "toggle"]) {
           ({ ctx, notifications } = createCommandContext(fixture.dir));
@@ -361,6 +423,64 @@ test(
 );
 
 test(
+  "persisted retired experimental flags are inert without rewriting settings",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const legacySettings = `${JSON.stringify(
+      {
+        tlh: {
+          experimental: {
+            enabledFeatures: [
+              "session-mirror-replies",
+              ...RETIRED_EXPERIMENTAL_FEATURES,
+              SESSION_MIRROR_OBSERVER_FEATURE,
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+    writeFileSync(settingsPath, legacySettings);
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const config = getTlhExperimentalConfig(fixture.dir);
+
+      // Retired and legacy flags are treated as unknown/ignored.
+      assert.equal(isTlhExperimentalFeatureEnabled(config, "session-mirror-replies"), false);
+      for (const retiredFeature of RETIRED_EXPERIMENTAL_FEATURES) {
+        assert.equal(isTlhExperimentalFeatureEnabled(config, retiredFeature), false);
+      }
+      // Known flag in the same array still works.
+      assert.equal(isTlhExperimentalFeatureEnabled(config, SESSION_MIRROR_OBSERVER_FEATURE), true);
+
+      // List shows only the registered feature, with no error output or stale flags.
+      let { ctx, notifications } = createCommandContext(fixture.dir);
+      await command.handler("list", ctx);
+      assert.equal(notifications.at(-1)?.type, "info");
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.doesNotMatch(
+        notifications.at(-1)?.message ?? "",
+        /session-mirror-replies|delta-follow-up-reviews|ci-failure-investigation/,
+      );
+
+      for (const retiredFeature of RETIRED_EXPERIMENTAL_FEATURES) {
+        ({ ctx, notifications } = createCommandContext(fixture.dir));
+        await command.handler(`enable ${retiredFeature}`, ctx);
+        assert.equal(notifications.at(-1)?.type, "error");
+        assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+      }
+
+      // Settings are not rewritten.
+      assert.equal(readFileSync(settingsPath, "utf8"), legacySettings);
+    });
+  },
+);
+
+test(
   "experimental enable is idempotent, preserves settings, and does not clobber other enabled features",
   SERIAL_TEST,
   async (t) => {
@@ -382,18 +502,18 @@ test(
       const command = registeredExperimentalCommand();
       const { ctx, notifications } = createCommandContext(fixture.dir);
 
-      await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
 
       const writtenAfterFirst = JSON.parse(readFileSync(settingsPath, "utf8"));
       assert.deepEqual(writtenAfterFirst.tlh.primaryAgent, { selected: "architect" });
       assert.deepEqual(writtenAfterFirst.tlh.experimental.enabledFeatures, [
-        DELTA_FOLLOW_UP_REVIEWS_FEATURE,
         LEGACY_UNKNOWN_FEATURE,
+        SESSION_MIRROR_OBSERVER_FEATURE,
       ]);
       assert.equal(
         isTlhExperimentalFeatureEnabled(
           getTlhExperimentalConfig(fixture.dir),
-          DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+          SESSION_MIRROR_OBSERVER_FEATURE,
         ),
         true,
       );
@@ -415,15 +535,15 @@ test(
       );
       assert.match(
         notifications.at(-1)?.message ?? "",
-        /Updated TLH experimental feature delta-follow-up-reviews/,
+        /Updated TLH experimental feature session-mirror-observer/,
       );
       assert.match(
         notifications.at(-1)?.message ?? "",
-        /Undo with \/experimental disable delta-follow-up-reviews/,
+        /Undo with \/experimental disable session-mirror-observer/,
       );
       assert.match(notifications.at(-1)?.message ?? "", /Backup:/);
 
-      await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
 
       assert.deepEqual(
         readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
@@ -431,9 +551,77 @@ test(
       );
       assert.match(
         notifications.at(-1)?.message ?? "",
-        /No change to TLH experimental feature delta-follow-up-reviews/,
+        /No change to TLH experimental feature session-mirror-observer/,
       );
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
+    });
+  },
+);
+
+test(
+  "session-mirror enable, disable, and toggle preserve unrelated settings",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+    const settingsPath = join(fixture.agent, "settings.json");
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          defaultThinkingLevel: "medium",
+          tlh: {
+            primaryAgent: { selected: "architect" },
+            experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE] },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      let settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      assert.equal(settings.defaultThinkingLevel, "medium");
+      assert.deepEqual(settings.tlh.primaryAgent, { selected: "architect" });
+      assert.equal(
+        settings.tlh.experimental.enabledFeatures.includes(LEGACY_UNKNOWN_FEATURE),
+        true,
+      );
+      assert.equal(
+        settings.tlh.experimental.enabledFeatures.includes(SESSION_MIRROR_OBSERVER_FEATURE),
+        true,
+      );
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /paired companion can submit .*user-message replies/i,
+      );
+
+      await command.handler(`toggle ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      assert.equal(settings.defaultThinkingLevel, "medium");
+      assert.deepEqual(settings.tlh.primaryAgent, { selected: "architect" });
+      assert.deepEqual(settings.tlh.experimental.enabledFeatures, [LEGACY_UNKNOWN_FEATURE]);
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /disabling takes effect on the next session/i,
+      );
+      assert.match(
+        notifications.at(-1)?.message ?? "",
+        /currently enabled session retains activation until a new session/i,
+      );
+
+      await command.handler(`toggle ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      assert.equal(settings.defaultThinkingLevel, "medium");
+      assert.deepEqual(settings.tlh.primaryAgent, { selected: "architect" });
+      assert.equal(
+        settings.tlh.experimental.enabledFeatures.includes(SESSION_MIRROR_OBSERVER_FEATURE),
+        true,
+      );
     });
   },
 );
@@ -466,14 +654,14 @@ test(
       const command = registeredExperimentalCommand();
 
       let { ctx, notifications } = createCommandContext(fixture.dir);
-      await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
       assert.match(
         notifications.at(-1)?.message ?? "",
         /settings\.json\.bak-2026-07-19T16-17-18-901Z/,
       );
 
       ({ ctx, notifications } = createCommandContext(fixture.dir));
-      await command.handler(`disable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+      await command.handler(`disable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
       assert.match(
         notifications.at(-1)?.message ?? "",
         /settings\.json\.bak-2026-07-19T16-17-18-901Z-1/,
@@ -493,7 +681,7 @@ test(
     assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
     assert.equal(
       readFileSync(join(fixture.agent, backups[1]), "utf8"),
-      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE, LEGACY_UNKNOWN_FEATURE] } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [LEGACY_UNKNOWN_FEATURE, SESSION_MIRROR_OBSERVER_FEATURE] } } }, null, 2)}\n`,
     );
   },
 );
@@ -506,7 +694,7 @@ test(
     const disableSettingsPath = join(disableFixture.agent, "settings.json");
     writeFileSync(
       disableSettingsPath,
-      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } }, null, 2)}\n`,
+      `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [SESSION_MIRROR_OBSERVER_FEATURE] } } }, null, 2)}\n`,
     );
 
     await withEnv(
@@ -515,14 +703,14 @@ test(
         const command = registeredExperimentalCommand();
         const { ctx, notifications } = createCommandContext(disableFixture.dir);
 
-        await command.handler(`disable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+        await command.handler(`disable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
 
         const written = JSON.parse(readFileSync(disableSettingsPath, "utf8"));
         assert.deepEqual(written.tlh.experimental.enabledFeatures, []);
         assert.match(notifications.at(-1)?.message ?? "", /It is now disabled/);
         assert.match(
           notifications.at(-1)?.message ?? "",
-          /Undo with \/experimental enable delta-follow-up-reviews/,
+          /Undo with \/experimental enable session-mirror-observer/,
         );
       },
     );
@@ -534,7 +722,7 @@ test(
       const command = registeredExperimentalCommand();
       const { ctx, notifications } = createCommandContext(normalFixture.dir);
 
-      await command.handler(`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, ctx);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
 
       assert.equal(existsSync(join(normalAgent, "settings.json")), false);
       assert.equal(notifications.at(-1)?.type, "error");
@@ -552,18 +740,30 @@ test(
 
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
       const command = registeredExperimentalCommand();
-      const { ctx, notifications } = createCommandContext(fixture.dir);
+      for (const retiredFeature of [
+        RETIRED_RUN_TESTS_LAST_FEATURE,
+        ...RETIRED_EXPERIMENTAL_FEATURES,
+      ]) {
+        for (const action of ["enable", "disable", "toggle"]) {
+          const { ctx, notifications } = createCommandContext(fixture.dir);
+          await command.handler(`${action} ${retiredFeature}`, ctx);
 
-      await command.handler(`enable ${RETIRED_RUN_TESTS_LAST_FEATURE}`, ctx);
+          assert.equal(notifications.at(-1)?.type, "error");
+          assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+          assert.match(notifications.at(-1)?.message ?? "", new RegExp(retiredFeature));
+        }
+
+        const { ctx, notifications } = createCommandContext(fixture.dir);
+        await command.handler(`status ${retiredFeature}`, ctx);
+        assert.equal(notifications.at(-1)?.type, "info");
+        assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
+      }
 
       assert.equal(existsSync(settingsPath), false);
       assert.deepEqual(
         readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
         [],
       );
-      assert.equal(notifications.at(-1)?.type, "error");
-      assert.match(notifications.at(-1)?.message ?? "", /unknown tlh experimental feature/i);
-      assert.match(notifications.at(-1)?.message ?? "", /delta-follow-up-reviews/);
     });
   },
 );

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +13,9 @@ const { __testing, default: theLastHarness } = await jiti.import(
 );
 const { TLH_STARTUP_TIPS } = await jiti.import("../extensions/the-last-harness/startup-tip.ts");
 const { getTlhVersion } = await jiti.import("../extensions/the-last-harness/package-version.ts");
+const { __resetTlhUpdateCheckForTests, __setTlhUpdateCheckTestHooks } = await jiti.import(
+  "../extensions/the-last-harness/update-check.js",
+);
 
 const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
 
@@ -107,14 +111,18 @@ ${name} content
 function createCtx({
   cwd,
   notifications,
+  mode = "tui",
   hasUI = true,
+  onSetTitle,
   onSetHeader,
   onSetFooter,
   projectTrusted,
   model,
   systemPrompt = "",
+  getSessionName = () => undefined,
 }) {
   return {
+    mode,
     hasUI,
     cwd,
     model,
@@ -127,12 +135,15 @@ function createCtx({
     sessionManager: {
       getEntries: () => [],
       getCwd: () => cwd,
-      getSessionName: () => undefined,
+      getSessionName,
       getBranch: () => undefined,
     },
     getContextUsage: () => undefined,
     getSystemPrompt: () => systemPrompt,
     ui: {
+      setTitle(title) {
+        onSetTitle?.(title);
+      },
       addAutocompleteProvider() {},
       setFooter(factory) {
         onSetFooter?.(factory);
@@ -174,11 +185,21 @@ function withProcessPath(path, callback) {
   }
 }
 
-function writeProfileFixture(agentDir, installState) {
+function writeProfileFixture(agentDir, installState, updateCheckEnabled = false) {
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(
     join(agentDir, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, telemetry: { enabled: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        tlh: {
+          primaryAgent: { enabled: false, selected: "disabled" },
+          telemetry: { enabled: false },
+          updateCheck: updateCheckEnabled ? {} : { enabled: false },
+        },
+      },
+      null,
+      2,
+    )}\n`,
   );
   writeFileSync(
     join(agentDir, "tlh", "install-state.json"),
@@ -203,11 +224,30 @@ async function createExtensionHarness({
   setupWorkspace,
   startupResourceCollector,
   deferredStartupTaskScheduler,
+  terminalTitleScheduler,
+  afterSessionStartHandler,
+  updateCheckEnabled = false,
 }) {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
   const emptyBinDir = join(tempDir, "empty-bin");
+  // Capture all terminal-integration env keys that activity-reporters.ts reads so
+  // tests cannot accidentally send real Herdr/cmux traffic when run from a live pane.
+  const HERDR_KEYS = [
+    "HERDR_ENV",
+    "HERDR_SOCKET_PATH",
+    "HERDR_PANE_ID",
+    "HERDR_TLH_HEARTBEAT_MS",
+    "HERDR_TLH_IDLE_DEBOUNCE_MS",
+  ];
+  const CMUX_KEYS = [
+    "CMUX_WORKSPACE_ID",
+    "CMUX_SURFACE_ID",
+    "CMUX_PI_CMUX_BIN",
+    "CMUX_BUNDLED_CLI_PATH",
+    "CMUX_BIN",
+  ];
   const previousEnv = {
     PATH: process.env.PATH,
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
@@ -215,26 +255,42 @@ async function createExtensionHarness({
     TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
     TLH_SKIP_TELEMETRY: process.env.TLH_SKIP_TELEMETRY,
   };
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    previousEnv[key] = process.env[key];
+  }
 
   delete process.env.PI_SUBAGENT_CHILD;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  if (updateCheckEnabled) {
+    delete process.env.TLH_SKIP_UPDATE_CHECK;
+  } else {
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  }
   process.env.TLH_SKIP_TELEMETRY = "1";
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    delete process.env[key];
+  }
   mkdirSync(cwd, { recursive: true });
   mkdirSync(emptyBinDir, { recursive: true });
   setupWorkspace?.(cwd);
-  writeProfileFixture(agentDir, installState);
+  writeProfileFixture(agentDir, installState, updateCheckEnabled);
   __testing.reset();
   const scheduleDeferredTask = deferredStartupTaskScheduler ?? ((task) => setImmediate(task));
   __testing.setDeferredStartupTaskSchedulerForTests((task) => {
     scheduleDeferredTask(() => withProcessPath(emptyBinDir, task));
   });
+  if (terminalTitleScheduler) {
+    __testing.setTerminalTitleSchedulerForTests(terminalTitleScheduler);
+  }
   if (startupResourceCollector) {
     __testing.setStartupResourceCollectorForTests(startupResourceCollector);
   }
 
   const pi = createPi();
   withProcessPath(emptyBinDir, () => theLastHarness(pi));
+  if (afterSessionStartHandler) {
+    pi.on("session_start", afterSessionStartHandler);
+  }
   const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
   const sessionShutdownHandlers = pi.handlers.get("session_shutdown") ?? [];
   assert.ok(
@@ -247,23 +303,40 @@ async function createExtensionHarness({
     cwd,
     emptyBinDir,
     shortcuts: pi.shortcuts,
+    sessionStartHandlers,
     async shutdownSession(ctx) {
       for (const handler of sessionShutdownHandlers) {
         await handler({}, ctx);
       }
     },
-    async startSession({ reason, hasUI = true, projectTrusted, model, systemPrompt } = {}) {
+    async startSession({
+      reason,
+      mode = "tui",
+      hasUI = true,
+      cwd: sessionCwd = cwd,
+      projectTrusted,
+      model,
+      systemPrompt,
+      getSessionName,
+    } = {}) {
       const notifications = [];
+      let title;
       let headerFactory;
       let footerFactory;
       let requestRenderCalls = 0;
+      let footerRequestRenderCalls = 0;
       const ctx = createCtx({
-        cwd,
+        cwd: sessionCwd,
         notifications,
+        mode,
         hasUI,
+        onSetTitle(value) {
+          title = value;
+        },
         projectTrusted,
         model,
         systemPrompt,
+        getSessionName,
         onSetHeader(factory) {
           headerFactory = factory;
         },
@@ -277,6 +350,8 @@ async function createExtensionHarness({
       return {
         ctx,
         notifications,
+        title,
+        getTitle: () => title,
         headerFactory,
         footerFactory,
         buildHeader() {
@@ -293,11 +368,23 @@ async function createExtensionHarness({
         },
         buildFooter() {
           return footerFactory
-            ? footerFactory({ requestRender() {} }, theme, undefined)
+            ? footerFactory(
+                {
+                  requestRender() {
+                    footerRequestRenderCalls += 1;
+                  },
+                },
+                theme,
+                undefined,
+              )
             : undefined;
         },
         requestRenderCalls: () => requestRenderCalls,
+        footerRequestRenderCalls: () => footerRequestRenderCalls,
       };
+    },
+    emit(event, payload, ctx) {
+      return Promise.all((pi.handlers.get(event) ?? []).map((handler) => handler(payload, ctx)));
     },
     cleanup() {
       __testing.reset();
@@ -310,28 +397,34 @@ async function createExtensionHarness({
 async function runSessionStart({
   reason,
   installState,
+  mode = "tui",
   hasUI = true,
   projectTrusted,
   setupWorkspace,
   startupResourceCollector,
   deferredStartupTaskScheduler,
+  terminalTitleScheduler,
   model,
   systemPrompt,
+  getSessionName,
 }) {
   const harness = await createExtensionHarness({
     installState,
     setupWorkspace,
     startupResourceCollector,
     deferredStartupTaskScheduler,
+    terminalTitleScheduler,
   });
 
   try {
     const session = await harness.startSession({
       reason,
+      mode,
       hasUI,
       projectTrusted,
       model,
       systemPrompt,
+      getSessionName,
     });
     await new Promise((resolve) => setImmediate(resolve));
     const header = session.buildHeader();
@@ -341,6 +434,7 @@ async function runSessionStart({
     footer?.dispose?.();
     return {
       notifications: session.notifications,
+      title: session.title,
       header,
       headerLines,
       footer,
@@ -363,6 +457,246 @@ function createDeferred() {
   });
   return { promise, resolve, reject };
 }
+
+test("interactive startup brands the terminal title without touching headless contexts", async () => {
+  const interactive = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+  });
+  assert.equal(interactive.title, "tlh - workspace");
+
+  const rootHarness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+  try {
+    const root = await rootHarness.startSession({ reason: "restore", cwd: "/" });
+    assert.equal(root.title, "tlh - /");
+  } finally {
+    rootHarness.cleanup();
+  }
+
+  const headless = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    hasUI: false,
+  });
+  assert.equal(headless.title, undefined);
+
+  const rpc = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    mode: "rpc",
+  });
+  assert.equal(rpc.title, undefined);
+});
+
+test("spaced bounded title reassertion heals yielding startup work and interaction events", async () => {
+  const deferredTitles = [];
+  const lateHandlerStarted = createDeferred();
+  const releaseLateHandler = createDeferred();
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler(task, delayMs) {
+      deferredTitles.push({ task, delayMs });
+    },
+    afterSessionStartHandler: async () => {
+      lateHandlerStarted.resolve();
+      await releaseLateHandler.promise;
+    },
+  });
+
+  const startPromise = harness.startSession({ reason: "restore" });
+  let lateHandlerReleased = false;
+  try {
+    // A later startup handler is still yielding when the first bounded
+    // callback runs. It must reassert safely and schedule another pass.
+    await lateHandlerStarted.promise;
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [0],
+      "the immediate startup pass should be scheduled first",
+    );
+    deferredTitles.shift().task();
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [250],
+      "the next pass should be spaced beyond another check phase",
+    );
+
+    releaseLateHandler.resolve();
+    lateHandlerReleased = true;
+    const session = await startPromise;
+    assert.equal(session.getTitle(), "tlh - workspace");
+
+    // Pi's rebindCurrentSession writes its title after all session_start
+    // handlers have returned; the later delayed pass restores TLH branding.
+    session.ctx.ui.setTitle("Pi - workspace");
+    assert.equal(session.getTitle(), "Pi - workspace");
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [250],
+    );
+    deferredTitles.shift().task();
+    assert.equal(session.getTitle(), "tlh - workspace");
+    assert.deepEqual(
+      deferredTitles.map(({ delayMs }) => delayMs),
+      [1000],
+    );
+
+    // The finite schedule is bounded even when the title is already correct.
+    deferredTitles.shift().task();
+    assert.equal(session.getTitle(), "tlh - workspace");
+    assert.equal(deferredTitles.length, 0);
+
+    // Each supported post-start interaction event can heal a later Pi title
+    // write without relying on the delayed startup schedule.
+    for (const eventName of ["session_info_changed", "turn_start", "turn_end"]) {
+      session.ctx.ui.setTitle(`Pi - ${eventName}`);
+      await harness.emit(eventName, { type: eventName }, session.ctx);
+      assert.equal(session.getTitle(), "tlh - workspace");
+    }
+  } finally {
+    if (!lateHandlerReleased) releaseLateHandler.resolve();
+    await startPromise.catch(() => undefined);
+    harness.cleanup();
+  }
+});
+
+test("queued title reassertions stop after session replacement and shutdown", async () => {
+  const scheduledTitles = [];
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler(task, delayMs) {
+      scheduledTitles.push({ task, delayMs });
+    },
+  });
+
+  try {
+    const firstSession = await harness.startSession({ reason: "restore" });
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [0],
+      "expected the first reassertion pass to be queued",
+    );
+    scheduledTitles.shift().task();
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250],
+    );
+    const staleReplacementPass = scheduledTitles[0];
+
+    const replacementSession = await harness.startSession({ reason: "restore" });
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 0],
+      "expected the replacement session to queue its own first pass",
+    );
+    firstSession.ctx.ui.setTitle("Pi - replaced");
+    staleReplacementPass.task();
+    assert.equal(firstSession.getTitle(), "Pi - replaced");
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 0],
+      "an invalidated replacement callback must not schedule another pass",
+    );
+
+    scheduledTitles.pop().task();
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 250],
+    );
+    await harness.shutdownSession(replacementSession.ctx);
+    replacementSession.ctx.ui.setTitle("Pi - shutdown");
+    for (const queuedPass of scheduledTitles) queuedPass.task();
+    assert.equal(replacementSession.getTitle(), "Pi - shutdown");
+    assert.deepEqual(
+      scheduledTitles.map(({ delayMs }) => delayMs),
+      [250, 250],
+      "an invalidated shutdown callback must not schedule another pass",
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("named session title includes session name between brand and cwd", async () => {
+  const interactive = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "my-session",
+  });
+  assert.equal(interactive.title, "tlh - my-session - workspace");
+});
+
+test("unnamed session title falls back to brand and cwd only", async () => {
+  const noName = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "",
+  });
+  assert.equal(noName.title, "tlh - workspace");
+
+  const whitespace = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => "   ",
+  });
+  assert.equal(whitespace.title, "tlh - workspace");
+
+  const undef = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    getSessionName: () => undefined,
+  });
+  assert.equal(undef.title, "tlh - workspace");
+});
+
+test("rename via session_info_changed picks up new session name immediately", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    let currentName = "";
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => currentName,
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
+
+    currentName = "renamed-session";
+    await harness.emit("session_info_changed", { type: "session_info_changed" }, session.ctx);
+    assert.equal(session.getTitle(), "tlh - renamed-session - workspace");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("getSessionName that throws falls back to unnamed title format", async () => {
+  const harness = await createExtensionHarness({
+    installState: LATEST_STABLE_INSTALL_STATE,
+    deferredStartupTaskScheduler: () => {},
+    terminalTitleScheduler: () => {},
+  });
+
+  try {
+    const session = await harness.startSession({
+      reason: "restore",
+      getSessionName: () => {
+        throw new Error("sessionManager unavailable");
+      },
+    });
+    assert.equal(session.getTitle(), "tlh - workspace");
+  } finally {
+    harness.cleanup();
+  }
+});
 
 test("interactive startup omits the non-latest track warning from the TLH header", async () => {
   const { notifications, headerLines } = await runSessionStart({
@@ -927,6 +1261,43 @@ test("production footer wiring appends the persisted subject for a main ref inst
   assert.equal(footerLines.at(-1), "TLH main • Add the main footer subject");
 });
 
+test("production footer wiring hydrates main-track status and renders only after a useful change", async () => {
+  const scheduledTasks = [];
+  const harness = await createExtensionHarness({
+    installState: {
+      ...REF_INSTALL_STATE,
+      commitSha: "a".repeat(40),
+    },
+    updateCheckEnabled: true,
+    deferredStartupTaskScheduler: (task) => scheduledTasks.push(task),
+    startupResourceCollector: () => new Promise(() => {}),
+  });
+  __resetTlhUpdateCheckForTests();
+  __setTlhUpdateCheckTestHooks({
+    now: () => Date.parse("2026-07-17T12:00:00.000Z"),
+    fetchLatestRelease: async () => undefined,
+    fetchMainTrackComparison: async () => ({ status: "behind", behindBy: 2 }),
+  });
+
+  let footer;
+  try {
+    const session = await harness.startSession({ reason: "startup" });
+    footer = session.buildFooter();
+    assert.equal(footer?.render(200).at(-1), "TLH main");
+    assert.equal(scheduledTasks.length, 1);
+
+    scheduledTasks[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+    assert.equal(session.footerRequestRenderCalls(), 1);
+    assert.equal(footer?.render(200).at(-1), "TLH main • 2 commits behind origin/main");
+  } finally {
+    __resetTlhUpdateCheckForTests();
+    footer?.dispose?.();
+    harness.cleanup();
+  }
+});
+
 test("production footer wiring: footer remains visible on non-startup session reasons", async () => {
   const { footerLines, headerLines } = await runSessionStart({
     reason: "resume",
@@ -948,4 +1319,72 @@ test("production footer wiring: footer remains visible on non-startup session re
     false,
     "header must not show the install-track warning",
   );
+});
+
+test("session_start sends zero Herdr requests even when HERDR_* env is set in the outer process", async () => {
+  // Regression: the harness must scrub HERDR_* so tests run from a live Herdr
+  // pane never send real pane.report_agent / pane.report_metadata traffic.
+  // Keep the Unix socket path short even when CI supplies a deeply nested TMPDIR.
+  const tmpSocketDir = mkdtempSync(join("/tmp", "tlh-herdr-smoke-"));
+  const socketPath = join(tmpSocketDir, "herdr.sock");
+  let connectionCount = 0;
+  const server = net.createServer(() => {
+    connectionCount += 1;
+  });
+  await new Promise((resolve, reject) =>
+    server.listen(socketPath, (err) => (err ? reject(err) : resolve())),
+  );
+
+  // Save originals so we can restore them after the test (handles the case
+  // where the outer process already has HERDR_* set).
+  const origHerdrEnv = process.env.HERDR_ENV;
+  const origHerdrSocketPath = process.env.HERDR_SOCKET_PATH;
+  const origHerdrPaneId = process.env.HERDR_PANE_ID;
+
+  // Simulate being invoked from inside a Herdr-managed pane.
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = socketPath;
+  process.env.HERDR_PANE_ID = "FAKE";
+
+  let harness;
+  try {
+    // createExtensionHarness captures and clears HERDR_* before the extension runs.
+    harness = await createExtensionHarness({
+      installState: LATEST_STABLE_INSTALL_STATE,
+    });
+    await harness.startSession({ reason: "start" });
+    // Allow any in-flight async socket attempts to complete.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(
+      connectionCount,
+      0,
+      "extension must not contact the Herdr socket when HERDR_* env is scrubbed by the harness",
+    );
+  } finally {
+    try {
+      harness?.cleanup();
+    } finally {
+      // cleanup() restores the env to what was captured at harness creation time
+      // (i.e. the fake values we set above). Restore originals now so they
+      // don't bleed into subsequent tests, and so we don't clobber any
+      // pre-existing outer values.
+      if (origHerdrEnv === undefined) {
+        delete process.env.HERDR_ENV;
+      } else {
+        process.env.HERDR_ENV = origHerdrEnv;
+      }
+      if (origHerdrSocketPath === undefined) {
+        delete process.env.HERDR_SOCKET_PATH;
+      } else {
+        process.env.HERDR_SOCKET_PATH = origHerdrSocketPath;
+      }
+      if (origHerdrPaneId === undefined) {
+        delete process.env.HERDR_PANE_ID;
+      } else {
+        process.env.HERDR_PANE_ID = origHerdrPaneId;
+      }
+      await new Promise((resolve) => server.close(resolve));
+      rmSync(tmpSocketDir, { recursive: true, force: true });
+    }
+  }
 });

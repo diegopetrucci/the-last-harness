@@ -4,12 +4,12 @@
     "aliases": ["openai-fast"],
     "replaces": ["npm:@diegopetrucci/pi-openai-fast"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-fast@0.1.2",
-    "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions."
+    "source": "npm:@diegopetrucci/pi-fast@0.1.6",
+    "description": "Enable optional Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models."
   },
   {
     "id": "anthropic-auth",
-    "source": "npm:@gotgenes/pi-anthropic-auth@2.0.8",
+    "source": "npm:@gotgenes/pi-anthropic-auth@3.4.2",
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
@@ -17,14 +17,14 @@
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.11.0",
+    "source": "npm:@diegopetrucci/pi-mcp-adapter@2.36.0",
     "description": "Connect tlh to MCP servers with the upstream adapter."
   },
   {
     "id": "pi-web-access",
     "replaces": ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1"],
     "migrateReplacements": true,
-    "source": "npm:@diegopetrucci/pi-web-access@0.10.10",
+    "source": "npm:@diegopetrucci/pi-web-access@0.29.2",
     "description": "Exa-backed web search and URL fetch tools (web_search, fetch_content, get_search_content) used by the web-scout subagent."
   },
   {
@@ -34,17 +34,12 @@
   },
   {
     "id": "context-inspector",
-    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.13",
+    "source": "npm:@diegopetrucci/pi-context-inspector@0.1.15",
     "description": "Open a local HTML dashboard explaining where the current session context is going."
   },
   {
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.11",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
-  },
-  {
-    "id": "pi-transcribe",
-    "source": "git:github.com/earendil-works/pi-transcribe@f673cad478885c81fdaa5c7977eb4d291fd87816",
-    "description": "Local speech-to-text dictation with /transcribe, Ctrl+Alt+Z, and the transcribe_file tool."
   }
 ]

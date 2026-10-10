@@ -1,0 +1,235 @@
+{
+  "manifestVersion": 1,
+  "profile": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "fixtures": [
+    {
+      "id": "valid-empty-session",
+      "path": "fixtures/valid-empty-session.json",
+      "valid": true,
+      "covers": ["empty-session", "snapshot-replace", "cursor", "coarse-status"]
+    },
+    {
+      "id": "valid-branched-session",
+      "path": "fixtures/valid-branched-session.json",
+      "valid": true,
+      "covers": ["branched-session", "active-leaf", "interior-active", "completed-assistant-turn"]
+    },
+    {
+      "id": "valid-source-placeholders",
+      "path": "fixtures/valid-source-placeholders.json",
+      "valid": true,
+      "covers": [
+        "multi-root",
+        "non-empty-null-active",
+        "source-placeholder-tool",
+        "source-placeholder-provider",
+        "source-placeholder-image",
+        "source-placeholder-custom",
+        "source-placeholder-unsupported"
+      ]
+    },
+    {
+      "id": "valid-active-leaf-change",
+      "path": "fixtures/valid-active-leaf-change.json",
+      "valid": true,
+      "covers": ["active-leaf-change", "active-leaf-from-null", "event-append", "revision-cursor"]
+    },
+    {
+      "id": "valid-active-leaf-cleared",
+      "path": "fixtures/valid-active-leaf-cleared.json",
+      "valid": true,
+      "covers": ["active-leaf-null", "active-leaf-clear", "event-append"]
+    },
+    {
+      "id": "valid-assistant-turn-completed",
+      "path": "fixtures/valid-assistant-turn-completed.json",
+      "valid": true,
+      "covers": ["completed-assistant-turn", "turn-completed-event"]
+    },
+    {
+      "id": "valid-snapshot-replacement",
+      "path": "fixtures/valid-snapshot-replacement.json",
+      "valid": true,
+      "covers": [
+        "snapshot-replacement",
+        "revision-replacement",
+        "cursor-replacement",
+        "cursor-recovery"
+      ]
+    },
+    {
+      "id": "valid-compaction-summary",
+      "path": "fixtures/valid-compaction-summary.json",
+      "valid": true,
+      "covers": ["compaction", "inline-summary", "first-kept-entry", "snapshot-tree"]
+    },
+    {
+      "id": "valid-custom-entry",
+      "path": "fixtures/valid-custom-entry.json",
+      "valid": true,
+      "covers": [
+        "unknown-custom-entry",
+        "opaque-payload-preservation",
+        "unknown-envelope-metadata",
+        "unknown-known-entry-field"
+      ]
+    },
+    {
+      "id": "valid-summary-update",
+      "path": "fixtures/valid-summary-update.json",
+      "valid": true,
+      "covers": ["summary-event", "summary", "event-append"]
+    },
+    {
+      "id": "valid-status-update",
+      "path": "fixtures/valid-status-update.json",
+      "valid": true,
+      "covers": ["coarse-status", "status-event"]
+    },
+    {
+      "id": "valid-compaction-event",
+      "path": "fixtures/valid-compaction-event.json",
+      "valid": true,
+      "covers": ["compaction-event", "completed-compaction", "inline-summary"]
+    },
+    {
+      "id": "invalid-malformed-envelope",
+      "path": "fixtures/invalid-malformed-envelope.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["malformed-envelope"]
+    },
+    {
+      "id": "invalid-compaction-bounds",
+      "path": "fixtures/invalid-compaction-bounds.json",
+      "valid": false,
+      "expectedFailureCategory": "bounds-exceeded",
+      "covers": ["compaction-summary-bound"]
+    },
+    {
+      "id": "invalid-compaction-structure",
+      "path": "fixtures/invalid-compaction-structure.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["compaction-structure"]
+    },
+    {
+      "id": "invalid-malformed-root-ids",
+      "path": "fixtures/invalid-malformed-root-ids.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["malformed-root-ids"]
+    },
+    {
+      "id": "invalid-active-leaf-reference",
+      "path": "fixtures/invalid-active-leaf-reference.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["invalid-active-reference"]
+    },
+    {
+      "id": "invalid-source-placeholder-field",
+      "path": "fixtures/invalid-source-placeholder-field.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["unsafe-placeholder-fields"]
+    },
+    {
+      "id": "invalid-source-placeholder-category",
+      "path": "fixtures/invalid-source-placeholder-category.json",
+      "valid": false,
+      "expectedFailureCategory": "malformed-envelope",
+      "covers": ["unsafe-placeholder-category"]
+    },
+    {
+      "id": "invalid-bounds-exceeded",
+      "path": "fixtures/invalid-bounds-exceeded.json",
+      "valid": false,
+      "expectedFailureCategory": "bounds-exceeded",
+      "covers": ["cursor-bound"]
+    },
+    {
+      "id": "invalid-incompatible-protocol",
+      "path": "fixtures/invalid-incompatible-protocol.json",
+      "valid": false,
+      "expectedFailureCategory": "incompatible-protocol",
+      "covers": ["unsupported-protocol-major"]
+    },
+    {
+      "id": "invalid-incompatible-capability",
+      "path": "fixtures/invalid-incompatible-capability.json",
+      "valid": false,
+      "expectedFailureCategory": "incompatible-capability",
+      "covers": ["missing-required-capability"]
+    },
+    {
+      "id": "invalid-future-protocol-shape",
+      "path": "fixtures/invalid-future-protocol-shape.json",
+      "valid": false,
+      "expectedFailureCategory": "incompatible-protocol",
+      "covers": ["unsupported-future-protocol-shape"]
+    },
+    {
+      "id": "invalid-incompatible-message",
+      "path": "fixtures/invalid-incompatible-message.json",
+      "valid": false,
+      "expectedFailureCategory": "incompatible-message-kind",
+      "covers": ["unknown-message-kind"]
+    },
+    {
+      "id": "invalid-forbidden-streaming-capability",
+      "path": "fixtures/invalid-forbidden-streaming-capability.json",
+      "valid": false,
+      "expectedFailureCategory": "forbidden-streaming",
+      "covers": ["forbidden-streaming-capability"]
+    },
+    {
+      "id": "invalid-forbidden-assistant-content",
+      "path": "fixtures/invalid-forbidden-assistant-content.json",
+      "valid": false,
+      "expectedFailureCategory": "forbidden-streaming",
+      "covers": ["forbidden-assistant-content"]
+    },
+    {
+      "id": "invalid-forbidden-assistant-delta",
+      "path": "fixtures/invalid-forbidden-assistant-delta.json",
+      "valid": false,
+      "expectedFailureCategory": "forbidden-streaming",
+      "covers": ["forbidden-assistant-delta"]
+    },
+    {
+      "id": "invalid-forbidden-assistant-token",
+      "path": "fixtures/invalid-forbidden-assistant-token.json",
+      "valid": false,
+      "expectedFailureCategory": "forbidden-streaming",
+      "covers": ["forbidden-assistant-token"]
+    },
+    {
+      "id": "invalid-incomplete-assistant-turn",
+      "path": "fixtures/invalid-incomplete-assistant-turn.json",
+      "valid": false,
+      "expectedFailureCategory": "incomplete-turn",
+      "covers": ["completed-turn-only"]
+    },
+    {
+      "id": "invalid-conflicting-duplicate",
+      "path": "fixtures/invalid-conflicting-duplicate.json",
+      "valid": false,
+      "expectedFailureCategory": "conflicting-duplicate",
+      "applyAfter": "valid-status-update",
+      "covers": ["conflicting-duplicate"]
+    },
+    {
+      "id": "invalid-revision-gap",
+      "path": "fixtures/invalid-revision-gap.json",
+      "valid": false,
+      "expectedFailureCategory": "revision-gap",
+      "applyAfter": "valid-status-update",
+      "covers": ["revision-gap"]
+    }
+  ]
+}

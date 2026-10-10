@@ -3,10 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import registerSubagentNotify from "../../src/runs/background/notify.ts";
+import registerSubagentNotify, {
+  MAX_GROUPED_ENTRIES,
+  type SubagentCompletionBatchDetails,
+} from "../../src/runs/background/notify.ts";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+import { buildSubagentRunTelemetry } from "../../src/shared/telemetry.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 function createState(sessionId: string): SubagentState {
@@ -47,14 +51,35 @@ function createNotifyHarness(): {
       emit: (event: string, data: unknown) => void;
     };
     on: (_event: string, _handler: (...args: unknown[]) => void) => void;
-    sendMessage: (message: { content?: string }) => void;
+    sendMessage: (message: {
+      customType?: string;
+      content?: string;
+      display?: boolean;
+      details?: unknown;
+    }) => void;
     sendUserMessage: (content: string, options?: { deliverAs?: string }) => void;
   };
   sent: string[];
+  sentMessages: Array<{
+    message: {
+      customType?: string;
+      content?: string;
+      display?: boolean;
+      details?: unknown;
+    };
+  }>;
   sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }>;
 } {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const sent: string[] = [];
+  const sentMessages: Array<{
+    message: {
+      customType?: string;
+      content?: string;
+      display?: boolean;
+      details?: unknown;
+    };
+  }> = [];
   const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
   return {
     pi: {
@@ -70,14 +95,21 @@ function createNotifyHarness(): {
         },
       },
       on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { content?: string }) {
+      sendMessage(message: {
+        customType?: string;
+        content?: string;
+        display?: boolean;
+        details?: unknown;
+      }) {
         sent.push(message.content ?? "");
+        sentMessages.push({ message });
       },
       sendUserMessage(content: string, options?: { deliverAs?: string }) {
         sentUserMessages.push({ content, options });
       },
     },
     sent,
+    sentMessages,
     sentUserMessages,
   };
 }
@@ -303,6 +335,134 @@ describe("result watcher to native notify", () => {
     );
     assert.equal(fs.existsSync(path.join(resultsDir, "05-foreign.json")), true);
     fs.rmSync(resultsDir, { recursive: true, force: true });
+  });
+
+  it("delivers watcher batches with mixed telemetry in order and wakes once", async () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-grouped-notify-"));
+    const { pi, sentMessages, sent, sentUserMessages } = createNotifyHarness();
+    const state = createState("session-owner");
+    registerSubagentNotify(pi as never, state);
+    const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
+    const telemetryFor = (runId: string) => ({
+      schemaVersion: 1,
+      run: { id: runId, execution: "async", mode: "single" },
+      steps: [{ index: 0, agent: "worker", outcome: { state: "completed" } }],
+      provenance: { tlhVersion: "0.41.0", piVersion: "0.85.1", loadedAt: 123 },
+      controls: {
+        needsAttentionAfterMs: 10_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["async"],
+      },
+    });
+
+    try {
+      for (let index = 0; index < MAX_GROUPED_ENTRIES + 1; index++) {
+        fs.writeFileSync(
+          path.join(resultsDir, `${String(index).padStart(2, "0")}-completion.json`),
+          JSON.stringify({
+            id: `watcher-${index}`,
+            agent: `watcher-worker-${index}`,
+            success: true,
+            state: "complete",
+            summary: `watcher-${index} done`,
+            sessionId: "session-owner",
+            ...(index === 0 ? { telemetry: telemetryFor("watcher-telemetry-0") } : {}),
+            ...(index === 0
+              ? {
+                  prompt: "prompt-secret",
+                  output: "output-secret",
+                  cwd: "/private/watcher-cwd",
+                  arguments: ["arguments-secret"],
+                  error: "error-secret",
+                }
+              : {}),
+          }),
+          "utf-8",
+        );
+      }
+      watcher.primeExistingResults();
+      await waitUntil(() => sentMessages.length === 2);
+    } finally {
+      watcher.stopResultWatcher();
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+
+    assert.equal(sent.length, 2);
+    assert.equal(sentUserMessages.length, 1);
+    const batches = sentMessages.map(
+      ({ message }) => message.details as SubagentCompletionBatchDetails,
+    );
+    assert.deepEqual(
+      batches.map((details) => ({
+        batchId: details.batchId,
+        batchIndex: details.batchIndex,
+        batchCount: details.batchCount,
+        triggersTurn: details.triggersTurn,
+      })),
+      [
+        {
+          batchId: batches[0]!.batchId,
+          batchIndex: 0,
+          batchCount: 2,
+          triggersTurn: false,
+        },
+        {
+          batchId: batches[0]!.batchId,
+          batchIndex: 1,
+          batchCount: 2,
+          triggersTurn: true,
+        },
+      ],
+    );
+    assert.equal(sentMessages[0]!.message.display, true);
+    assert.equal(sentMessages[1]!.message.display, false);
+    assert.equal(sentMessages[1]!.message.content, "");
+    const completions = batches.flatMap((details) => details.completions);
+    assert.deepEqual(
+      completions.map(({ agent, asyncId }) => ({ agent, asyncId })),
+      Array.from({ length: MAX_GROUPED_ENTRIES + 1 }, (_, index) => ({
+        agent: `watcher-worker-${index}`,
+        asyncId: `watcher-${index}`,
+      })),
+    );
+    assert.equal(completions[0]!.telemetry?.run.id, "watcher-telemetry-0");
+    assert.equal(completions[1]!.telemetry, undefined);
+    const allowedFields = new Set(["agent", "status", "durationMs", "asyncId", "telemetry"]);
+    const forbiddenFields = [
+      "taskInfo",
+      "resultPreview",
+      "resumeTarget",
+      "sessionLabel",
+      "sessionValue",
+      "awaitingSupervisor",
+      "_reformatPreview",
+      "prompt",
+      "output",
+      "cwd",
+      "path",
+      "arguments",
+      "error",
+    ];
+    for (const completion of completions) {
+      assert.ok(Object.keys(completion).every((field) => allowedFields.has(field)));
+      for (const forbiddenField of forbiddenFields) {
+        assert.equal(
+          forbiddenField in completion,
+          false,
+          `${forbiddenField} must stay out of every watcher batch chunk`,
+        );
+      }
+    }
+    const serialized = JSON.stringify(sentMessages);
+    assert.doesNotMatch(
+      serialized,
+      /prompt-secret|output-secret|\/private\/watcher-cwd|arguments-secret|error-secret/,
+    );
+    assert.deepEqual(sentUserMessages[0], {
+      content: "[tlh] Background subagent completed — see notification above.",
+      options: { deliverAs: "followUp" },
+    });
   });
 
   it("notifies an awaiting_supervisor paused result exactly once across repeated scans", async () => {
@@ -954,6 +1114,76 @@ describe("result watcher to native notify", () => {
     }
   });
 
+  it("finalizes a running status telemetry envelope when a terminal result has no telemetry", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-telemetry-repair-"));
+    const resultsDir = path.join(root, "results");
+    const asyncDir = path.join(root, "async", "telemetry-repair");
+    fs.mkdirSync(resultsDir, { recursive: true });
+    fs.mkdirSync(asyncDir, { recursive: true });
+    const telemetry = buildSubagentRunTelemetry({
+      runId: "telemetry-repair",
+      execution: "async",
+      mode: "single",
+      steps: [{ index: 0, agent: "worker", outcome: { state: "running" } }],
+      provenance: {
+        tlhVersion: "test-tlh",
+        piVersion: "test-pi",
+        installGeneration: "test-generation",
+        loadedAt: 1,
+      },
+      controls: {
+        enabled: true,
+        needsAttentionAfterMs: 2_000,
+        failedToolAttemptsBeforeAttention: 3,
+        notifyOn: ["needs_attention"],
+        notifyChannels: ["event", "async"],
+      },
+      startedAt: 1_000,
+      outcome: { state: "running" },
+    });
+    fs.writeFileSync(
+      path.join(asyncDir, "status.json"),
+      JSON.stringify({
+        runId: "telemetry-repair",
+        mode: "single",
+        state: "running",
+        startedAt: 1_000,
+        lastUpdate: 1_500,
+        telemetry,
+        steps: [{ agent: "worker", status: "running", startedAt: 1_000 }],
+      }),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(resultsDir, "telemetry-repair.json"),
+      JSON.stringify({
+        id: "telemetry-repair",
+        agent: "worker",
+        mode: "single",
+        success: true,
+        state: "complete",
+        summary: "done",
+        results: [{ agent: "worker", output: "done", success: true }],
+        timestamp: 2_000,
+        durationMs: 1_000,
+      }),
+      "utf8",
+    );
+    try {
+      const repaired = reconcileAsyncRun(asyncDir, { resultsDir, now: () => 2_000 });
+      assert.equal(repaired.repaired, true);
+      const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8")) as {
+        state: string;
+        telemetry: { outcome?: { state?: string }; steps: Array<{ outcome?: { state?: string } }> };
+      };
+      assert.equal(status.state, "complete");
+      assert.equal(status.telemetry.outcome?.state, "completed");
+      assert.equal(status.telemetry.steps[0]?.outcome?.state, "completed");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("delivers an exact all-completed-child stale repair immediately while success remains batchable", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-stale-notify-"));
     const resultsDir = path.join(root, "results");
@@ -971,6 +1201,30 @@ describe("result watcher to native notify", () => {
           pid: 424242,
           startedAt: 1_000,
           lastUpdate: 1_500,
+          telemetry: buildSubagentRunTelemetry({
+            runId: "stale-completed-children",
+            execution: "async",
+            mode: "parallel",
+            steps: [
+              { index: 0, agent: "alpha", outcome: { state: "running" } },
+              { index: 1, agent: "beta", outcome: { state: "running" } },
+            ],
+            provenance: {
+              tlhVersion: "test-tlh",
+              piVersion: "test-pi",
+              installGeneration: "test-generation",
+              loadedAt: 1,
+            },
+            controls: {
+              enabled: true,
+              needsAttentionAfterMs: 2_000,
+              failedToolAttemptsBeforeAttention: 3,
+              notifyOn: ["needs_attention"],
+              notifyChannels: ["event", "async"],
+            },
+            startedAt: 1_000,
+            outcome: { state: "running" },
+          }),
           steps: [
             { agent: "alpha", status: "complete", startedAt: 1_000, endedAt: 1_200, exitCode: 0 },
             { agent: "beta", status: "complete", startedAt: 1_000, endedAt: 1_300, exitCode: 0 },
@@ -1054,6 +1308,13 @@ describe("result watcher to native notify", () => {
       );
       assert.equal(repairedResult.success, false);
       assert.equal(repairedResult.state, "failed");
+      assert.equal(repairedResult.telemetry.outcome.state, "failed");
+      assert.deepEqual(
+        repairedResult.telemetry.steps.map(
+          (step: { outcome?: { state?: string } }) => step.outcome?.state,
+        ),
+        ["completed", "completed"],
+      );
       assert.equal(
         repairedResult.summary,
         "Async runner process 424242 exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.",

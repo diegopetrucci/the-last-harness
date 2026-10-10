@@ -2,8 +2,8 @@
  * Type definitions for the subagent extension
  */
 
-import * as os from "node:os";
 import * as path from "node:path";
+import { resolveTempRootDir } from "../../../shared/subagent-temp-root.ts";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import type { FSWatcher } from "node:fs";
@@ -12,6 +12,7 @@ import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
+import type { SubagentRunTelemetry } from "./telemetry.ts";
 
 // ============================================================================
 // Basic Types
@@ -150,8 +151,6 @@ export interface ControlEvent {
   agent: string;
   index?: number;
   runId: string;
-  nestedRunId?: string;
-  nestingPath?: NestedRunAddress["path"];
   message: string;
   /** Context-pressure diagnostics are carried through every control channel. */
   contextPressureSeverity?: ContextPressureSeverity;
@@ -264,78 +263,10 @@ interface AsyncLifecycleMetadata {
   continuationsByIndex?: Record<string, AsyncLifecycleContinuationMetadata>;
 }
 
-type PublicNestedStepSummary = Pick<
-  NestedStepSummary,
-  | "agent"
-  | "status"
-  | "sessionFile"
-  | "transcriptPath"
-  | "transcriptError"
-  | "activityState"
-  | "lastActivityAt"
-  | "currentTool"
-  | "currentToolStartedAt"
-  | "currentPath"
-  | "turnCount"
-  | "toolCount"
-  | "toolBudget"
-  | "toolBudgetBlocked"
-  | "startedAt"
-  | "endedAt"
-  | "error"
-  | "timedOut"
-  | "terminationReason"
-  | "contextUsage"
-  | "contextPressure"
-  | "contextPressureCrossedThresholds"
-> & {
-  children?: PublicNestedRunSummary[];
-};
-
 export type CostSummary = {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
-};
-
-export type PublicNestedRunSummary = Pick<
-  NestedRunSummary,
-  | "id"
-  | "parentRunId"
-  | "parentStepIndex"
-  | "parentAgent"
-  | "depth"
-  | "path"
-  | "asyncDir"
-  | "sessionId"
-  | "sessionFile"
-  | "ownerState"
-  | "mode"
-  | "state"
-  | "agent"
-  | "agents"
-  | "currentStep"
-  | "activityState"
-  | "lastActivityAt"
-  | "currentTool"
-  | "currentToolStartedAt"
-  | "currentPath"
-  | "turnCount"
-  | "toolCount"
-  | "toolBudget"
-  | "toolBudgetBlocked"
-  | "totalTokens"
-  | "totalCost"
-  | "startedAt"
-  | "endedAt"
-  | "lastUpdate"
-  | "error"
-  | "timeoutMs"
-  | "deadlineAt"
-  | "timedOut"
-> & {
-  steps?: PublicNestedStepSummary[];
-  children?: PublicNestedRunSummary[];
 };
 
 export interface SubagentResultChild {
@@ -345,7 +276,6 @@ export interface SubagentResultChild {
   index?: number;
   artifactPath?: string;
   sessionPath?: string;
-  children?: PublicNestedRunSummary[];
 }
 
 // ============================================================================
@@ -376,6 +306,8 @@ export interface AgentProgress {
   turnCount?: number;
   tokens: number;
   durationMs: number;
+  /** Wall-clock ms when this execution started; used for live-clock phrase selection. */
+  startedAt?: number;
   error?: string;
   failedTool?: string;
 }
@@ -646,13 +578,14 @@ export interface SingleResult {
    * absent (undefined) for same-cwd runs. Never mutated after initial set.
    */
   childLocation?: ChildLocationSnapshot;
-  children?: NestedRunSummary[];
 }
 
 export interface Details {
   mode: SubagentRunMode | "management";
   runId?: string;
   results: SingleResult[];
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   controlEvents?: ControlEvent[];
   asyncId?: string;
   asyncDir?: string;
@@ -727,100 +660,6 @@ export interface ExtensionArtifactConfig {
 // Async Execution
 // ============================================================================
 
-export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
-type NestedOwnerState = "live" | "gone" | "unknown";
-
-interface NestedRunAddress {
-  id: string;
-  parentRunId: string;
-  parentStepIndex?: number;
-  parentAgent?: string;
-  depth: number;
-  path: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-}
-
-export interface NestedStepSummary {
-  agent: string;
-  projectAgent?: ProjectAgentRunCapture;
-  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
-  projectAgentMarker?: true;
-  status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
-  terminationReason?: SubagentTerminationReason;
-  sessionFile?: string;
-  transcriptPath?: string;
-  transcriptError?: string;
-  activityState?: ActivityState;
-  lastActivityAt?: number;
-  currentTool?: string;
-  currentToolStartedAt?: number;
-  currentPath?: string;
-  turnCount?: number;
-  toolCount?: number;
-  startedAt?: number;
-  endedAt?: number;
-  activeRuntimeMs?: number;
-  /** Timestamp of the last authoritative active-runtime checkpoint. */
-  activeRuntimeCheckpointAt?: number;
-  error?: string;
-  timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
-  contextUsage?: ContextUsageDiagnostics;
-  contextPressure?: ContextPressureProjection;
-  contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  children?: NestedRunSummary[];
-}
-
-export interface NestedRunSummary extends NestedRunAddress {
-  projectAgent?: ProjectAgentRunCapture;
-  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
-  projectAgentMarker?: true;
-  /** Persisted execution cwd used to validate a process-starting revival. */
-  cwd?: string;
-  asyncDir?: string;
-  pid?: number;
-  sessionId?: string;
-  sessionFile?: string;
-  ownerState?: NestedOwnerState;
-  controlInbox?: string;
-  capabilityToken?: string;
-  mode?: SubagentRunMode;
-  state: NestedRunState;
-  agent?: string;
-  agents?: string[];
-  currentStep?: number;
-  steps?: NestedStepSummary[];
-  children?: NestedRunSummary[];
-  activityState?: ActivityState;
-  lastActivityAt?: number;
-  currentTool?: string;
-  currentToolStartedAt?: number;
-  currentPath?: string;
-  turnCount?: number;
-  toolCount?: number;
-  totalTokens?: TokenUsage;
-  totalCost?: CostSummary;
-  startedAt?: number;
-  endedAt?: number;
-  lastUpdate?: number;
-  activeRuntimeMs?: number;
-  /** Last authoritative active-runtime checkpoint written for this run. */
-  activeRuntimeCheckpointAt?: number;
-  timeoutMs?: number;
-  deadlineAt?: number;
-  timedOut?: boolean;
-  toolBudget?: ToolBudgetState;
-  toolBudgetBlocked?: boolean;
-  error?: string;
-}
-
-export interface NestedRouteInfo {
-  rootRunId: string;
-  eventSink: string;
-  controlInbox: string;
-  capabilityToken: string;
-}
-
 export interface TkTicketMetadata {
   id: string;
   title: string;
@@ -843,6 +682,7 @@ export interface SubagentModelResolution {
 
 export interface AsyncStartedEvent {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   /** Safe per-child project-agent captures; no opaque capability crosses this event. */
   projectAgents?: ProjectAgentRunCapture[];
   id?: string;
@@ -854,12 +694,13 @@ export interface AsyncStartedEvent {
   agents?: string[];
   timeoutMs?: number;
   deadlineAt?: number;
-  nestedRoute?: NestedRouteInfo;
   tkTicket?: TkTicketMetadata;
 }
 
 export interface AsyncStatus {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   runId: string;
   sessionId?: string;
   mode: SubagentRunMode;
@@ -904,7 +745,6 @@ export interface AsyncStatus {
       | "paused"
       | "continued"
       | "cancelled";
-    children?: NestedRunSummary[];
     sessionFile?: string;
     transcriptPath?: string;
     transcriptError?: string;
@@ -971,6 +811,13 @@ export interface AsyncStatus {
      * child cwd differs from the parent session cwd; absent for same-cwd steps.
      */
     childLocation?: ChildLocationSnapshot;
+    /**
+     * Fully resolved per-child dispatch cwd. Written by the status owner from
+     * the plan task cwd at run start. Preferred over childLocation.childCwd and
+     * run-level cwd on revival; absent in artifacts written before this field
+     * was introduced.
+     */
+    cwd?: string;
   }>;
   sessionDir?: string;
   outputFile?: string;
@@ -1040,6 +887,12 @@ export interface AsyncResultArtifactResultItem {
   activeRuntimeCheckpointAt?: number;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
+  /**
+   * Fully resolved per-child dispatch cwd. Written by the runner from the plan
+   * task cwd so result-only revival (status.json absent) uses the correct child
+   * working directory instead of falling back to the run-level cwd.
+   */
+  cwd?: string;
 }
 
 /**
@@ -1054,6 +907,8 @@ export interface AsyncResultArtifactResultItem {
  */
 export interface AsyncResultArtifact {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   id: string;
   agent: string;
   mode: SubagentRunMode;
@@ -1093,6 +948,8 @@ export interface AsyncResultArtifact {
 }
 
 export interface AsyncJobState {
+  /** Optional privacy-safe run-level telemetry restored with the lifecycle. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   asyncId: string;
   asyncDir: string;
   status: AsyncLifecycleState;
@@ -1134,8 +991,6 @@ export interface AsyncJobState {
   controlEventSkippingOversizedLine?: boolean;
   /** Device/inode identity of the events file at the cursor. */
   controlEventFileIdentity?: string;
-  nestedRoute?: NestedRouteInfo;
-  nestedChildren?: NestedRunSummary[];
   tkTicket?: TkTicketMetadata;
   /** Safe per-child captures retained for the run lifecycle. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -1173,6 +1028,18 @@ export interface ForegroundResumeChild {
   activeRuntimeCheckpointAt?: number;
   /** Validated per-child developer ticket assignment, when applicable. */
   tkTicketId?: string;
+  /**
+   * Resolved dispatch cwd for this specific child. Present when the per-child
+   * cwd differs from the run-level cwd; absent for same-cwd children (legacy).
+   * Used by resolveForegroundResumeTarget to prefer the child cwd on revival.
+   */
+  cwd?: string;
+  /**
+   * Dispatch-time child-location snapshot retained from SingleResult.childLocation.
+   * Used as a fallback when `cwd` is absent: resolveForegroundResumeTarget
+   * resolves revival cwd as child.cwd ?? child.childLocation?.childCwd ?? run.cwd.
+   */
+  childLocation?: ChildLocationSnapshot;
   updatedAt?: number;
 }
 
@@ -1181,6 +1048,8 @@ export interface ForegroundResumeRun {
   mode: SubagentRunMode;
   cwd: string;
   updatedAt: number;
+  /** Optional privacy-safe run-level telemetry retained for continuation. */
+  telemetry?: SubagentRunTelemetry;
   children: ForegroundResumeChild[];
 }
 
@@ -1205,8 +1074,6 @@ export interface ForegroundRunControl {
   turnCount?: number;
   tokens?: number;
   toolCount?: number;
-  nestedRoute?: NestedRouteInfo;
-  nestedChildren?: NestedRunSummary[];
   interrupt?: () => boolean;
   activeInterrupts?: Map<number, () => boolean>;
   messageInboxRoot?: string;
@@ -1262,6 +1129,21 @@ export interface SubagentEventBus {
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+// Keep this literal local to the subagents shared types module so detached
+// runtime imports never cross out of the generated subagents source root.
+export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
+
+export type SubagentAsyncRestoredJob = {
+  runId: string;
+  asyncDir: string;
+  sessionId: string;
+  pid?: number;
+};
+
+export type SubagentAsyncRestoredEvent = {
+  sessionId: string;
+  jobs: readonly SubagentAsyncRestoredJob[];
+};
 
 // ============================================================================
 // Execution Options
@@ -1270,6 +1152,14 @@ export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export interface RunSyncOptions {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
+  /** Parent-captured provenance forwarded unchanged to foreground finalization. */
+  telemetryProvenance?: import("./telemetry.ts").SubagentTelemetryProvenance;
+  /** Canonical run start timestamp captured at dispatch. */
+  startedAt?: number;
+  /** Envelope mode for this child when runSync is used by a parallel parent. */
+  telemetryMode?: SubagentRunMode;
+  /** Existing lineage metadata, when this execution is a continuation/nested run. */
+  telemetryLineage?: import("./telemetry.ts").SubagentTelemetryLineage;
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentRunCapture;
   tkTicket?: TkTicketMetadata;
@@ -1300,11 +1190,9 @@ export interface RunSyncOptions {
   index?: number;
   sessionDir?: string;
   sessionFile?: string;
-  share?: boolean;
   outputPath?: string;
   outputMode?: OutputMode;
   maxSubagentDepth?: number;
-  nestedRoute?: NestedRouteInfo;
   /** Override the agent's default model (format: "provider/id" or just "id") */
   modelOverride?: string;
   /** Durable explanation for a restored or explicitly overridden model selection. */
@@ -1325,7 +1213,7 @@ export interface RunSyncOptions {
   preferredModelProvider?: string;
   /** Optional subagent model-scope enforcement for fallback candidates */
   modelScope?: ModelScopeConfig;
-  /** Skills to make available (overrides agent default if provided) */
+  /** Resolved skills selected from the agent definition by the trusted dispatcher. */
   skills?: string[];
   steerInboxDir?: string;
   acceptance?: AcceptanceInput;
@@ -1350,7 +1238,6 @@ export interface ExtensionConfig {
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
-  heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
   artifacts?: ExtensionArtifactConfig;
   /** External execution settings remain unknown until the policy boundary validates them. */
   execution?: unknown;
@@ -1379,82 +1266,10 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   cleanupDays: 7,
 };
 
-function sanitizeTempScopeSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return sanitized || "unknown";
-}
-
-function resolveTempScopeId(options?: {
-  env?: NodeJS.ProcessEnv;
-  getuid?: (() => number) | undefined;
-  userInfo?: (() => { username?: string | null }) | undefined;
-  homedir?: (() => string) | undefined;
-}): string {
-  const env = options?.env ?? process.env;
-  const getuid =
-    options && Object.hasOwn(options, "getuid") ? options.getuid : process.getuid?.bind(process);
-  if (typeof getuid === "function") {
-    return `uid-${getuid()}`;
-  }
-
-  for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
-    const value = env[key];
-    if (value) return `user-${sanitizeTempScopeSegment(value)}`;
-  }
-
-  const userInfo = options && Object.hasOwn(options, "userInfo") ? options.userInfo : os.userInfo;
-  try {
-    const username = userInfo?.().username;
-    if (username) return `user-${sanitizeTempScopeSegment(username)}`;
-  } catch {
-    // Fall through to home-directory-based scoping.
-  }
-
-  const homedir = env.USERPROFILE ?? env.HOME;
-  if (homedir) return `home-${sanitizeTempScopeSegment(homedir)}`;
-
-  const resolveHomedir =
-    options && Object.hasOwn(options, "homedir") ? options.homedir : os.homedir;
-  try {
-    const fallbackHomedir = resolveHomedir?.();
-    if (fallbackHomedir) return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
-  } catch {
-    // Fall through to the last-resort shared scope.
-  }
-
-  return "shared";
-}
-
 const MAX_PARALLEL = 8;
 const MAX_CONCURRENCY = 4;
 
-/**
- * Resolve the temp root directory used for async run state.
- *
- * Fork delta (GitHub issue #45): integration tests previously shared the
- * uid-scoped temp root with live sessions, causing ghost notifications when
- * test runs left stale async/result files behind. Setting
- * PI_SUBAGENTS_TEMP_ROOT to a non-empty (trimmed) path redirects the temp
- * root (and all directories derived from it) away from the shared
- * os.tmpdir()+scope-id location, without changing default behavior when the
- * variable is unset or blank.
- */
-export function resolveTempRootDir(options?: {
-  env?: NodeJS.ProcessEnv;
-  getuid?: (() => number) | undefined;
-  userInfo?: (() => { username?: string | null }) | undefined;
-  homedir?: (() => string) | undefined;
-}): string {
-  const env = options?.env ?? process.env;
-  const override = env.PI_SUBAGENTS_TEMP_ROOT?.trim();
-  if (override) {
-    return override;
-  }
-  return path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId(options)}`);
-}
+export { resolveTempRootDir };
 
 export const TEMP_ROOT_DIR = resolveTempRootDir();
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");

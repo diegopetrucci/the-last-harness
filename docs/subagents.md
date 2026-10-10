@@ -8,9 +8,21 @@ Most users should delegate in natural language to the active primary agent. The 
 
 The managed wrapper sets `PI_CODING_AGENT_DIR` to the isolated TLH profile before the upstream Pi runtime starts. Subagent settings, copied agent definitions, child sessions, and runtime state therefore stay under that active profile instead of normal `~/.pi/agent`. Child processes resolve the same private Pi runtime as their parent; an unusable resolved runtime fails clearly instead of silently falling back to an ambient global `pi`.
 
+At `session_start`, the bundled runtime synchronously reconciles its current-session queued/running async jobs and emits one `subagent:async-restored` snapshot with `{ sessionId, jobs }`; each job carries `runId`, `asyncDir`, `sessionId`, and an optional known `pid`. The snapshot is emitted even when empty or restoration fails, so TLH can reuse the producer's scan without a second directory scan. TLH applies exact session replacement for restored jobs while preserving live started/control events. If the bundled producer is absent, disabled, filtered, or bypassed for an external package, TLH falls back to its own exact-session artifact scan.
+
 TLH copies its nine canonical minor-agent definitions to `<agent-dir>/tlh/agents/subagents/<role>.md` and loads them through that installer-managed path. No `subagents.agentDirs` default is installed or required for these first-party roles. For primary-agent delegation, TLH forces canonical minor agents to the isolated user scope, except that a mixed dispatch containing an embedded target is resolved in project scope. Every child starts a fresh session and never inherits the primary session transcript. This prevents unrelated project, package, legacy-profile, or extra-directory definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child.
 
 The canonical packaged TLH roles are thirteen roles: the four primaries `architect`, `rush`, `product`, and `bug-hunter`, plus nine bundled minors — `developer` for implementation, `test-runner` for exact final-validation shell/MCP steps, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright. Stable, always-available project custom `embedded.<slug>` agents are a separate exact-root contract available to the architect or disabled primary mode; see [custom-subagents.md](custom-subagents.md).
+
+### MCP gateway contracts
+
+All thirteen packaged roles declare the generic `mcp` gateway alongside their existing tools. The declaration provides the same proxy capability without enabling direct `mcp:*` child tools:
+
+- Primary agents and `developer` may use the gateway within their authorized task or ticket scope and existing role boundaries.
+- Read-only minors are instructed to use it only for read-only work, avoid mutations, and escalate uncertain side effects. Those restrictions are prompt guidance, not gateway enforcement; a gateway call is not a security boundary.
+- `test-runner` is the intentional unrestricted exception. It may invoke assigned generic MCP validation steps that change external server state, but only in the exact order and shape supplied by its final-validation ticket.
+
+The proxy gateway comes from the bundled `mcporter` adapter. Disabling `mcporter` removes the adapter-provided proxy `mcp` contract for packaged agents; native `builtin:mcp` does not recreate that proxy surface. Native MCP migration tracked in [#705](https://github.com/diegopetrucci/the-last-harness/issues/705) is a separate non-goal. To roll back an opt-out and restore the gateway, run `tlh defaults enable mcporter` and reload or restart TLH. See [mcp.md](mcp.md) for adapter configuration and the warning/rollback details.
 
 ### Malformed custom-agent handling
 
@@ -30,11 +42,11 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 - **Parallel:** a `tasks` array. Each task accepts `agent`, `task`, optional `cwd`, `count`, `output`, `outputMode`, and `model`; parallel limits are configured in `<agent-dir>/extensions/subagent/config.json`.
 - **Synchronous by default:** the tool waits for the child result.
 - **Asynchronous when requested:** `async: true` starts TLH-tracked background work in a detached OS child process managed by TLH and returns an ID and runtime directory so the parent can continue useful work.
-- **Execution controls:** `cwd` and `artifacts`; single runs also accept `output`, `outputMode`, and `model`. Agent definitions own `defaultReads`, `defaultProgress`, and `fallbackModels`; every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted. Execution deadlines are human-owned: models and callers cannot provide a model-facing root `timeoutMs` or public `tasks[].timeoutMs`.
+- **Execution controls:** `cwd` and `artifacts`; single runs also accept `output`, `outputMode`, and `model`. Agent definitions own skills, `toolBudget`, `defaultReads`, `defaultProgress`, and `fallbackModels`; acceptance is inferred from the agent/task policy and carried across persisted continuations. Every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted. Execution deadlines are human-owned: models and callers cannot provide a model-facing root `timeoutMs` or public `tasks[].timeoutMs`.
 
 `single` and `parallel` are the only execution forms; each is available in the foreground or as a TLH-tracked async run. This is a fresh-only contract: `context` is not an execution input, `defaultContext` is not a supported definition or settings field, and no parent transcript is inherited. A child receives its task and explicitly configured definition; project-instruction and skill settings remain explicit child configuration, not transcript inheritance. Persisted direct plans containing the retired `structuredOutput` or `structuredOutputSchema` task properties fail closed before a child launches; remove those properties and start a new direct single or parallel run. An executable async-runner envelope/config with its own root `timeoutMs`, or a persisted plan with plan-root `timeoutMs`, also fails closed before launch. By contrast, TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values are trusted role-ceiling metadata and remain valid; do not remove them. Historical records remain readable and are not rewritten. `async: true` is TLH's internal tracked background runner, using the detached OS child process described above; it is not the removed external pi-intercom detach request/result/control integration or a separate control-channel API.
 
-`toolBudget` is a separate per-child tool-call limit whose `hard` threshold is required and whose `soft` threshold and block list are optional. An agent's `maxExecutionTimeMs` is a hard per-child upper bound; the human-owned run-level policy and role ceiling are enforced together. There is no `turnBudget` or turn-count control in the reduced contract.
+An agent definition's `toolBudget` is a separate per-child tool-call limit whose `hard` threshold is required and whose `soft` threshold and block list are optional. An agent's `maxExecutionTimeMs` is a hard per-child upper bound; the human-owned run-level policy and role ceiling are enforced together. There is no `turnBudget` or turn-count control in the reduced contract, and callers cannot select per-call skills, budgets, acceptance, sharing, session directories, or status selectors.
 
 ### Timeout ownership and execution ceilings
 
@@ -72,7 +84,7 @@ A direct single run has one shared run deadline. A parallel batch has one shared
 
 The cumulative active-runtime ledger belongs to an unfinished logical child/job and its role ceiling. The same job accumulates active time across foreground, async, fallback, retry, pause, and resume continuations. Durable paused/offline wall time, when no child process is running, is excluded. Only successful completion resets the ledger; every other resumable outcome carries its consumed time forward, and an exhausted continuation fails before launching a child. Detached runners persist checkpoints at roughly 30-second intervals, so hard-kill recovery can conservatively undercount active time by up to one interval. The shared `maxRunTimeMs` setting remains the current direct-batch deadline; it is distinct from this cumulative per-role ledger.
 
-This policy covers execution ownership only. Do not migrate unrelated timeout fields into it: provider/network timeouts, control and supervisor limits, heartbeat `maxDurationMs`, acceptance-command fields such as `verify[].timeoutMs`, and timeout metadata used by status, artifacts, or historical readers remain separate. Historical files are readable as-is and are not rewritten.
+This policy covers execution ownership only. Do not migrate unrelated timeout fields into it: provider/network timeouts, control and supervisor limits, acceptance-command fields such as `verify[].timeoutMs`, and timeout metadata used by status, artifacts, or historical readers remain separate. Historical files are readable as-is and are not rewritten.
 
 ### Migration and rollback
 
@@ -92,7 +104,9 @@ The optional `tools` declaration has three distinct states, and the child CLI is
 
 An agent may declare `supervisorBridge: false` to opt out of generic native-supervisor prompt guidance and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
 
-A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
+A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). The generic `mcp` entry is retained in an explicit child `--tools` allowlist, while `mcp:*` entries are filtered and never registered as direct child tools; `MCP_DIRECT_TOOLS=__none__` keeps direct MCP bootstrap disabled.
+
+**Pi 0.99.2 note — `--no-extensions` and built-in providers:** When a custom agent declares an explicit `extensions` list, TLH emits `--no-extensions` for the child process. In Pi 0.99.2, `--no-extensions` disables **all** built-in extensions: `builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and `builtin:llama.cpp` (the llama.cpp provider). The `DefaultResourceLoader` achieves this by limiting the resolved extension paths to only CLI-passed sources when `noExtensions` is set, which excludes the settings-enabled built-in paths (`resource-loader.js` ~403). If a custom agent with an explicit extension list needs one of these built-ins, add `builtin:<name>` (for example `"builtin:mcp"`) as an entry in the agent definition's `extensions` field. TLH passes it through as `--extension builtin:<name>`, which causes the package manager's `resolveExtensionSources` to include it in the CLI-enabled paths and restore that specific built-in even after `--no-extensions` (`resource-loader.js` ~750).
 
 The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. TLH does not execute, rewrite, or delete saved-chain artifacts; existing `.chain.md` and `.chain.json` files are left untouched. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
 
@@ -163,15 +177,10 @@ When a run starts, the runtime walks the following locations and collects all sk
 | 300 | `user` | `<agent-dir>/skills/` |
 | 250 | `user-settings` | Paths listed under `skills` in `<agent-dir>/settings.json` |
 | 200 | `user-package` | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root |
-| 180 | `project-claude` | `.claude/skills/` in the project root ² |
-| 170 | `user-claude` | `~/.claude/skills/` ² |
-| 150 | `extension` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
-| 100 | `builtin` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
-| 0 | `unknown` | Anything that does not match a known root |
+| 180 | `project-claude` | `.claude/skills/` in the project root ¹ |
+| 170 | `user-claude` | `~/.claude/skills/` ¹ |
 
-¹ `extension` and `builtin` are defined in `SOURCE_PRIORITY` and appear in the doctor's per-source breakdown, but `buildSkillPaths` never emits them and `inferSkillSource` never infers them. No current runtime caller passes either as a `sourceHint`; they are reserved for future use.
-
-² Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where extension-provided paths are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
+¹ Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where these lower-priority roots are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
 
 Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
 
@@ -195,7 +204,7 @@ Skills not found after the first pass are retried against the runtime cwd in the
 
 ### What injection looks like
 
-For each resolved skill, the runtime reads the `SKILL.md` file (stripping any YAML frontmatter) and appends an `<available_skills>` block to the child's system prompt via `buildSkillInjection`:
+For each resolved skill, the runtime appends an `<available_skills>` block containing its name, description, and `SKILL.md` location to the child's system prompt via `buildSkillInjection`. The child reads the full file on demand with the read tool:
 
 ```text
 The following configured skills are available to this subagent.
@@ -257,9 +266,29 @@ The report's **Discovery** section includes a `skills:` line with the total coun
 
 The `pi-subagents` skill is filtered out of discovery output by design — it will not appear in the list even if a matching file exists on disk.
 
+## Read-only session analysis
+
+The contributor-facing `tlh sessions` command can summarize subagent activity without changing the profile or starting a run:
+
+```sh
+tlh sessions --mode subagents
+```
+
+Use `--agent-dir <dir>` to inspect a specific isolated profile. The command streams `.jsonl` session files below the active profile's `sessions/` directory, skips `run-history.jsonl`, and tolerates files that are still being written. It does not read async artifact directories or make network requests. A live-file size change, malformed line, missing result, or unavailable field is reported as a coverage gap rather than treated as complete evidence.
+
+The `subagents` JSON mode reports privacy-safe run summaries and aggregates by role, provider/model, foreground versus async execution, and outcome. It includes validated usage/cost and runtime when available, launch and management-operation counts, structured continuation/nested lineage, and synthetic wakeup records. Structured telemetry and structured completion/control details are preferred; legacy result fields and notification prose are only compatibility evidence and remain visible through coverage counters. Repeated telemetry snapshots are deduplicated by run and step identity. Run/global usage prefers the canonical envelope-level `telemetry.usage` exactly once; step usage is summed only when that aggregate is absent. Multi-attempt usage remains in run/global totals, but the provider/model usage aggregates omit attribution when a step's usage spans fallback attempts. Nested edges include the child run identity, so sibling children remain distinct.
+
+Only a paired assistant `subagent` call may authorize telemetry, result, or control details from a tool result. Orphan results and details attached to other tools are skipped and counted as unmatched evidence; recognized structured custom completion/control notifications remain an independent evidence source. Structured run IDs are opaque, bounded report inputs (including ordinary spaces or slashes), while legacy/tool-argument IDs use the stricter path-safe grammar.
+
+A synthetic wakeup is attributed only when a structured or recognized legacy completion/control source is followed by its exact user nudge and the immediate next assistant turn is present. Intervening non-turn custom or tool-result records may be skipped. Only that assistant turn's parseable usage and management calls targeting the same run are attached to the wakeup. Human input, a missing assistant turn, a mismatched or missing nudge, or a missing run ID remains explicitly unattributed.
+
+The scanner retains only bounded allowlisted projections needed for pairing, operation counts, and immediate-next-turn attribution; it does not retain full raw session messages across the corpus. Default output contains no raw paths, cwd values, tasks, prompts, child output, tool arguments, settings, or run identifiers. Run references are stable opaque values scoped to the report. `--include-paths` is an explicit opt-in that adds the inspected profile and sessions directory to provenance; it does not expose task, output, or identifier text. Coverage also reports bounded correlation-evidence failure counters for scan/rescan overflow and digest/generation mismatches; untrusted joins are omitted. This local diagnostic report is separate from the remote release telemetry described in [telemetry.md](telemetry.md).
+
 ## Async control, pause, and resume
 
-An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status", view: "fleet" })` for the read-only fleet view or `subagent({ action: "status", id: "..." })` for a specific model-facing status path.
+An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status", id: "..." })` for a specific model-facing status path, or omit `id` to inspect the current session's direct runs.
+
+Nested subagent orchestration is retired. Supported direct single and parallel runs do not create nested routes or events, and a child runtime rejects a request to dispatch a grandchild before spawning it. Historical nested artifacts are left untouched; the retained runtime janitor only performs its existing age-based cleanup of legacy directories. Historical telemetry and read-only session analysis may still report lineage, but status, control, resume, and rendering do not revive nested artifacts.
 
 The runtime distinguishes these controls:
 
@@ -268,7 +297,7 @@ The runtime distinguishes these controls:
 - `interrupt` is a soft, resumable interruption for active work. Applied to an already durable paused child, it cancels that continuation.
 - A blocking supervisor decision pauses durably. No child process remains alive while paused; persisted lifecycle/session data is used when the parent later chooses unchanged resume, guided resume, or cancellation.
 
-Only `needs_attention` is emitted as a current health/control state. The retired `active_long_running` marker was non-waking/dead bookkeeping: it persisted status/UI state but had no delivery path, so it never woke the parent and did not affect prompt-cache heartbeat. Historical records may still contain it and remain readable. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. Both async completion notifications and actionable async `needs_attention` notifications can synthetically wake an idle parent: the completion nudge is `[tlh] Background subagent completed — see notification above.`, while the control-notice nudge is `[tlh] Subagent run needs attention — see notice above.`. The resulting parent turn can end or disarm an active prompt-cache heartbeat gap. This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
+Only `needs_attention` is emitted as a current health/control state. The retired `active_long_running` marker was non-waking/dead bookkeeping: it persisted status/UI state but had no delivery path, so it never woke the parent. Historical records may still contain it and remain readable. A child inside an in-flight tool call is not marked idle merely because the tool is quiet. Needs-attention and failure/pause events surface immediately; successful async completions may be batched to avoid notification spam. Both async completion notifications and actionable async `needs_attention` notifications can synthetically wake an idle parent: the completion nudge is `[tlh] Background subagent completed — see notification above.`, while the control-notice nudge is `[tlh] Subagent run needs attention — see notice above.`. This is an interim workaround for an upstream Pi issue where extension-triggered turns skip system-prompt injection ([#470](https://github.com/diegopetrucci/the-last-harness/issues/470)); it will be removed when upstream is fixed.
 
 **Current health versus history.** An idle `needs_attention` projection describes the child’s current health and is cleared by validated activity; that recovery rearms idle detection for a later, distinct episode. Compaction and in-flight tools are active operations, not idle recovery notices. Durable causes such as context pressure, tool failures, or a completion guard retain their own notification policy and are not erased when idle health recovers. Historical control notices remain historical records. Older status records without episode or durable-reason metadata are kept compatible, but their timestamps do not invent a new legacy reason.
 
@@ -276,11 +305,13 @@ Only `needs_attention` is emitted as a current health/control state. The retired
 
 **Pointer-survival invariant.** `formatSingleCompletion` emits the artifact path and session reference lines last, and the send-time cap in `sendCompletion` truncates from the end. An overflow therefore destroys the recovery pointer before it destroys summary text, turning *truncated but recoverable* into *truncated and unrecoverable*. The invariant is enforced across six sites with no single home: `resolvePerChildSummaryBudget` and the non-summary cost computation in `formatResultPreview` perform the primary reservation by subtracting all fixed scaffold costs before dividing the remainder among child summaries; `fitPreviewWithinCeiling` and `joinedLineCost` enforce the per-entry ceiling in grouped messages; and the per-entry bound in `formatGroupedCompletion` and the send-time cap in `sendCompletion` provide final guardrails. The failure mode is under-reservation — reserving too little space for scaffolding, so the assembled message quietly overshoots the ceiling and the end-cut eats the pointer. Over-reservation is always safe and is the deliberate choice here: `joinedLineCost` over-counts by one character per line for exactly this reason. If you are editing header lines, formatting, or constants in `notify.ts`, keep the arithmetic erring towards reserving more space, never less.
 
-Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's effective acceptance contract and provenance, and a resume-time override may only strengthen it. A later follow-up from a completed or failed run does not inherit the old contract.
+Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's persisted effective acceptance contract and provenance. A later follow-up from a completed or failed run does not inherit the old contract.
 
 ### Migration caveat
 
-Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, turn-budget behavior, or a retired execution timeout at an async-runner envelope/config root or plan root cannot be resumed under the reduced runtime. Remove only that retired envelope/plan-root timeout field and start a new direct single or parallel run instead. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Normal direct-plan durable pause/resume remains supported when the plan uses the current contract.
+Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired nested routing, retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, turn-budget behavior, or a retired execution timeout at an async-runner envelope/config root or plan root cannot be resumed under the reduced runtime. Remove only that retired envelope/plan-root timeout field and start a new direct single or parallel run instead. TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` values remain valid trusted role-ceiling metadata and must not be removed. Normal direct-plan durable pause/resume remains supported when the plan uses the current contract.
+
+If compatibility with the retired nested readers, runner behavior, or publishing path is required, return to a TLH release from before this cleanup. This rollback changes the release rather than migrating artifacts or rewriting settings; it does not restore generic agent sources that were already unsupported before this cleanup.
 
 ### Context diagnostics are not inheritance
 
@@ -290,9 +321,9 @@ The fixed pressure bands (hardcoded, not configurable) are a warning at **80%** 
 
 ### Child context-window policy
 
-The **200,000-token effective context cap** applies to primary and other non-child TLH sessions. A child process is identified by TLH's child-runtime signal (`PI_SUBAGENT_CHILD=1`; the child-agent marker is accepted when that signal is absent). An explicit `PI_SUBAGENT_CHILD=0` keeps the process non-child even if a stale marker is present. The canonical developer policy additionally requires `PI_SUBAGENT_CHILD_AGENT=developer` and `PI_SUBAGENT_PROJECT_AGENT_GUIDANCE=1`, which is the parent-verified packaged-agent provenance. Child startup bypasses the primary cap instead of copying the parent's in-process window, and the policy is selected independently in the child without carrying the parent's transcript or context diagnostics into the fresh session.
+The **300,000-token effective context cap** applies to primary and other non-child TLH sessions. A child process is identified by TLH's child-runtime signal (`PI_SUBAGENT_CHILD=1`; the child-agent marker is accepted when that signal is absent). An explicit `PI_SUBAGENT_CHILD=0` keeps the process non-child even if a stale marker is present. The canonical developer policy additionally requires `PI_SUBAGENT_CHILD_AGENT=developer` and `PI_SUBAGENT_PROJECT_AGENT_GUIDANCE=1`, which is the parent-verified packaged-agent provenance. Child startup bypasses the primary cap instead of copying the parent's in-process window, and the policy is selected independently in the child without carrying the parent's transcript or context diagnostics into the fresh session.
 
-For an enabled canonical packaged developer child, TLH sets each model's in-process `contextWindow` to `min(native context window, 272,000)`, uniformly across providers and model IDs. This applies the same ceiling to native windows such as 372k, 450k, and 1M while preserving smaller native windows unchanged. Other child roles retain their native context windows. Parent foreground and background pressure/resume diagnostics select the matching role policy rather than the parent's mutated 200,000 registry value; canonical developer diagnostics therefore use the same 272,000 ceiling, while non-developer diagnostics retain native windows. When `tlh.contextCap.disabled` is `true`, canonical developer children and their diagnostics use native windows instead. The child override is process-local: TLH does not write `models.json` or profile settings, and restores any temporarily changed model windows during session shutdown. `/toggle-context-cap` applies or restores the matching policy in the current session.
+For an enabled canonical packaged developer child, TLH sets each model's in-process `contextWindow` to `min(native context window, 272,000)`, uniformly across providers and model IDs. This applies the same ceiling to native windows such as 372k, 450k, and 1M while preserving smaller native windows unchanged. Other child roles retain their native context windows. Parent foreground and background pressure/resume diagnostics select the matching role policy rather than the parent's mutated 300,000 registry value; canonical developer diagnostics therefore use the same 272,000 ceiling, while non-developer diagnostics retain native windows. When `tlh.contextCap.disabled` is `true`, canonical developer children and their diagnostics use native windows instead. The child override is process-local: TLH does not write `models.json` or profile settings, and restores any temporarily changed model windows during session shutdown. `/toggle-context-cap` applies or restores the matching policy in the current session.
 
 ### Native supervisor coordination
 
@@ -302,7 +333,7 @@ A child that needs a decision, structured interview, or meaningful progress upda
 
 Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state. The optional debug artifact profile retains those protocol observations in the diagnostic child transcript for investigation. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail. Foreground compact failures retain only that tail; async runs always stream raw stderr to `output-N.log` regardless of artifact profile, and debug mode additionally records it in the diagnostic child transcript. An oversized stderr line is diagnostic overflow, not a second control protocol.
 
-Terminal controls are removed only when child-derived text crosses a display boundary. Single-line TUI rows and status/fleet or transcript/result fields that must remain one row use `safeTerminalText`, which normalizes CR/LF to spaces and strips terminal control sequences; binary-looking leaf values are replaced by a short placeholder. Legitimate multiline display content uses `safeTerminalDocument` for composed text whose leaves have already crossed a display boundary, or `safeTerminalDocumentLeaf` for a raw child-derived leaf when its newlines must remain while retaining the binary-placeholder policy. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
+Terminal controls are removed only when child-derived text crosses a display boundary. Single-line TUI rows and status/result fields that must remain one row use `safeTerminalText`, which normalizes CR/LF to spaces and strips terminal control sequences; binary-looking leaf values are replaced by a short placeholder. Legitimate multiline display content uses `safeTerminalDocument` for composed text whose leaves have already crossed a display boundary, or `safeTerminalDocumentLeaf` for a raw child-derived leaf when its newlines must remain while retaining the binary-placeholder policy. Async `output-N.log` files retain raw stderr regardless of profile. Debug child transcripts, output artifacts, metadata, and event records are not rewritten for display, so inspect those artifacts when exact retained child bytes are required.
 
 ### Child location line
 
@@ -326,147 +357,41 @@ Parts are ordered broad to narrow: the working directory first, then the reposit
 
 **Known limitation:** the snapshot is written to the status step when a step starts. A queued run, or a task still waiting behind a concurrency limit, shows no location line until the step actually begins.
 
-## Prompt-cache heartbeat
+## Prompt-cache warming
 
-When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
+Pi-native prompt-cache warming sends a one-token provider refresh when Pi estimates at least $0.05 in avoided cache-miss cost. Refresh usage is recorded as `cache_warm` entries and counted toward session totals; it does not enter model context. `/session` shows Pi's current warm mode and next decision.
 
-### Why default-off
+TLH ships `cacheWarming: "idle"` as a packaged default in `config/settings.defaults.json`. Install and update apply this value using an append-if-missing merge: when `cacheWarming` is absent from the isolated profile's `settings.json` it is written as `"idle"`; an existing user value is preserved untouched. To revert to Pi's native `streaming` mode (warm while a run is active) or to disable warming, set `cacheWarming` to `streaming` or `off` in `/settings` or directly in `~/.the-last-harness/agent/settings.json`. The packaged default does **not** re-apply after you set your own value.
 
-Heartbeat sends real provider requests that spend tokens even when the parent's next turn never benefits from them. During the current trial phase the default is `enabled: false`; you opt in knowing that beats cost money and the break-even depends on your gap length and context size.
+TLH also registers a `cache_warming_decision` hook in the subagent extension. While async children are live, the hook substitutes P=1 for Pi's idle prior of 0.15, returning `warm` when missCost − warmCost ≥ $0.05; otherwise it abstains and lets Pi's own decision stand. A prior extension returning a stop decision can be overridden by this warm response; a later extension that returns a stop decision will still win. The hook does not generate new provider requests — it returns an action during Pi's existing cache-warming gate.
 
-### How to enable
+### Limits and accepted regressions
 
-Add a `heartbeat` block to the subagent extension config in the isolated profile:
+- **Anthropic models only**: Pi's `promptCache` lifetime metadata is declared only for Anthropic models. OpenAI/Codex and other models lack prompt-cache lifetime declarations and are never eligible for cache warming; there is no warming path for those models.
+- **Adaptive-thinking models only**: When reasoning is enabled, Claude models using budget-based (non-adaptive) thinking are not replayable for cache warming and are skipped. Claude models with `forceAdaptiveThinking` (adaptive thinking) are replayable and remain eligible.
+- **30-minute idle ceiling**: Pi's idle warmer tracks each session's most recent real provider request. A child session idle for longer than ~30 minutes (the `short`-tier TTL ceiling) goes cold; approximately 6 refreshes at ~4.5-minute intervals are achievable within that window. Children idle longer than that are uncovered.
+- **`PI_CACHE_RETENTION=long` sessions**: When the `long` retention tier is active, Pi's idle warmer fires its first refresh at ~54 minutes. The idle ceiling is the same, so those sessions receive no idle refresh and remain at risk of a cold cache on the next real turn.
+- **Per-refresh gate, not cumulative**: Pi's $0.05 expected-savings gate is evaluated independently on each potential refresh decision, not accumulated across refreshes.
 
-File: `~/.the-last-harness/agent/extensions/subagent/config.json`
+### Observable evidence
 
-```json
-{
-  "heartbeat": {
-    "enabled": true,
-    "intervalMs": 255000,
-    "maxDurationMs": 3600000,
-    "maxBeatsPerGap": 11
-  }
-}
-```
+- `/session` shows the current warming mode and Pi's next economic decision.
+- `Cache warmed ...` transcript notices appear by default (`showCacheMissNotices: true` in TLH unless disabled).
+- `cache_warm` entries appear in `/tokens` usage.
 
-Only `enabled: true` is required; the other three knobs default to the values shown. Their meanings:
+### Legacy heartbeat key
 
-| Key | Default | Description |
-|---|---|---|
-| `enabled` | `false` | Master switch. Must be set to `true` to activate. |
-| `intervalMs` | `255000` | Beat interval in ms (~4m15s). |
-| `maxDurationMs` | `3600000` | Hard ceiling per gap (1h). |
-| `maxBeatsPerGap` | `11` | Maximum beats per gap (~break-even limit). |
+TLH's async-parent prompt-cache heartbeat has been retired and its code removed. A `heartbeat` key in `~/.the-last-harness/agent/extensions/subagent/config.json` is silently ignored at runtime. The file `~/.the-last-harness/agent/subagents/heartbeat.jsonl`, if present, is left in place as a historical record and is not deleted.
 
-Install and update do **not** provision `heartbeat` keys. A `heartbeat` block added manually is preserved untouched on subsequent installs and updates.
-
-### Cost model
-
-Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and recorded as `generation_cutoff`, not `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded generation cutoffs can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
-
-Block-start content is not a stable generation signal because the provider exposes `partial` as a mutable, shared response-so-far object. At a text, thinking, or tool-call block start, `cacheRead > 0` is therefore classified from cache evidence even when that partial already contains text, redacted thinking, or tool-call arguments; the partial content itself is not used as the generation boundary. A zero-cache start, or a provider whose first usable evidence arrives with a delta, end, or generated `done` event, remains `generation_cutoff` unless cache-write mismatch takes precedence, because later usage is not awaited.
-
-A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
-
-### How to read `heartbeat.jsonl`
-
-The heartbeat log is at:
-
-```
-~/.the-last-harness/agent/subagents/heartbeat.jsonl
-```
-
-Each line is a JSON record. There are two record shapes:
-
-**Per-beat records** (one per ghost request or loggable skip):
-
-| Field | Description |
-|---|---|
-| `ts` | Unix timestamp (ms) when the beat started. |
-| `sessionId` | Parent session ID. |
-| `gapId` | Identifier for the current gap (one gap = one continuous stretch of live async runs). |
-| `beatIndex` | Zero-based beat count within the gap. |
-| `model` | Model ID used for the ghost request. |
-| `provider` | Provider name. |
-| `outcome` | See outcome table below. |
-| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present when usage was reported; omitted when no usage arrived before a cutoff or error. |
-| `estCostUsd` | Estimated USD cost — present when usage and model cost rates are available. |
-| `latencyMs` | Round-trip latency for the ghost stream request. |
-
-Outcome values:
-
-| Outcome | Meaning |
-|---|---|
-| `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
-| `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
-| `error` | Genuine stream or auth/provider failure. Three consecutive `error` or `generation_cutoff` outcomes disable heartbeat for the session. |
-| `generation_cutoff` | Generation began before usable cache-usage evidence was observed, so the beat was aborted without waiting for later usage. It is distinct from a genuine provider/stream error but counts toward the same three-failure session breaker. |
-| `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
-| `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
-| `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |
-
-**Per-gap summary records** (one per closed gap, identified by `"type": "gap_summary"`):
-
-| Field | Description |
-|---|---|
-| `type` | Always `"gap_summary"`. |
-| `ts` | Unix timestamp when the gap closed. |
-| `sessionId`, `gapId` | Same as per-beat records. |
-| `beats` | Total ghost-stream requests sent in this gap. |
-| `beatCostUsd` | Total estimated USD spent on beats. |
-| `avoidedCostUsd` | Estimated USD avoided on cache miss, computed from cache-read tokens × (input rate − cache-read rate). |
-| `verdict` | `saved`, `wasted`, `lost`, or `unneeded` — see below. |
-
-Verdict meanings:
-
-| Verdict | Meaning |
-|---|---|
-| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the live prompt-cache TTL. |
-| `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
-| `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
-| `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
-
-### Circuit breakers
-
-Two automatic circuit breakers limit runaway spending:
-
-1. **Failure breaker**: Three consecutive `error` or `generation_cutoff` outcomes permanently disable heartbeat for the session (`disabled` state). The failure count resets on any successful `cache_read`. Once disabled, later async starts and idle rearms do not open new gaps or write zero-beat summaries; `/subagents-doctor` continues to report the enabled trial and `breakerDisabled` state.
-2. **Mismatch breaker**: A single `cache_write_mismatch` outcome (more than 256 cache-write tokens) closes the current gap to avoid further beat spend when the replay is causing a cache rewrite rather than the expected cache read. The session continues and the next gap (if one opens) starts fresh; this is the safeguard for the trial's unverified aborted-request TTL-refresh assumption.
-
-### Doctor output
-
-`/subagents-doctor` includes a heartbeat section. When enabled:
-
-```text
-- heartbeat: enabled
-- beats this session: 7
-- cache-read tokens: 84000
-- $0.00012 total beat cost
-- gaps: 3 saved, 1 wasted, 12 unneeded
-- circuit breaker: closed
-```
-
-When disabled:
-
-```text
-- heartbeat: disabled (enabled: false in config)
-```
-
-### How to undo
-
-Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
-
-To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
+`/subagents-doctor` prints a Notices section when a legacy `heartbeat` key is present in the isolated config. The key is silently ignored at runtime and can be removed manually; TLH never edits it.
 
 ## Acceptance and artifacts
 
-TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. An explicit fresh-run contract is authoritative: its level, criteria, and evidence replace conflicting inference, so task-appropriate contracts can omit gates such as `tests-added` or `no-staged-files`. Omitted or `auto` acceptance keeps the inferred policy, and continuation/resume can only retain or strengthen the established contract. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.
+TLH resolves self-contained acceptance from the selected agent definition and task. The definition-owned `acceptanceRole` may be `"read-only"` or `"writer"`; it affects inference only, while explicit task intent wins and omission preserves the agent-name/task heuristics. Read-only work normally receives attested acceptance, while write-capable or risky work normally receives checked acceptance. The model-facing dispatch schema has no per-call acceptance or verification controls, and definitions do not declare an `acceptance` or `verify` configuration.
 
-Acceptance evaluates and strips the same report candidate; malformed or invalid candidates remain in output. Blank or whitespace-only entries in report evidence arrays are ignored. An explicitly present empty `testsAddedOrUpdated` array declares that no test files changed; inferred `tests-added` evidence is advisory, while an explicit `tests-added` gate still requires the report field. Persisted acceptance provenance is structurally checked for malformed or internally inconsistent contracts, but is not authenticated against a same-privilege writer; coherent rewriting of a complete local contract is outside this boundary. Review wording such as `must-fix` or `no-fix` does not by itself imply a write task. When a saved deliverable is rejected by acceptance, its saved-output reference remains visible, including in `file-only` mode; ordinary failures, timeouts, and interruptions do not gain that reference. Rejection reasons remain attached even when child diagnostics must be bounded.
+Acceptance evaluates and strips the same report candidate; malformed or invalid candidates remain in output. Blank or whitespace-only entries in report evidence arrays are ignored. An explicitly present empty `testsAddedOrUpdated` array declares that no test files changed; inferred `tests-added` evidence is advisory, while an explicit `tests-added` gate retained in persisted/internal metadata still requires the report field. Persisted acceptance provenance is structurally checked for malformed or internally inconsistent contracts, but is not authenticated against a same-privilege writer; coherent rewriting of a complete local contract is outside this boundary. Any explicit acceptance gates or verification commands are persisted/internal contract metadata, not caller-facing dispatch controls or definition fields. Review wording such as `must-fix` or `no-fix` does not by itself imply a write task. When a saved deliverable is rejected by acceptance, its saved-output reference remains visible, including in `file-only` mode; ordinary failures, timeouts, and interruptions do not gain that reference. Rejection reasons remain attached even when child diagnostics must be bounded.
 
-The nine canonical packaged minor roles are the exception to normal frontmatter precedence for `acceptanceRole`: `subagents.agentOverrides.<role>.acceptanceRole` may override their declared default. The selected project entry wins the isolated profile entry, and `false` clears the role so legacy inference resumes. Other fields still let explicit frontmatter win, while project custom/embedded roles remain isolated from these settings.
+The nine canonical packaged minor roles have an acceptance-role settings exception: `subagents.agentOverrides.<role>.acceptanceRole` may replace the definition's declared role. The selected project entry wins the isolated profile entry, and `false` clears the role so task/name inference resumes. Other definition fields retain normal frontmatter precedence, while project custom/embedded roles remain isolated from these settings.
 
 ### Fallback filtering and retry classification
 
@@ -482,9 +407,7 @@ Per-child run artifacts are written by default using the **compact** profile. Th
 - **Omitted:** task input (`*_input.md`), the diagnostic child transcript (`*_transcript.jsonl`), and high-volume child-event projections. Compact `events.jsonl` can still contain bounded runner diagnostics such as stderr truncation/overflow notices or protocol-limit records, but it omits ordinary per-line stderr events; its existence is not a promise that a full child transcript was retained.
 - **Foreground failures:** only the bounded stderr tail is retained in result/status diagnostics. Compact foreground mode does not retain exact child protocol or raw stderr in the diagnostic transcript. Async `output-N.log` retains raw stderr for every profile; debug additionally provides the diagnostic child transcript.
 
-`subagent({ action: "status", id: "...", view: "transcript" })` is a **status transcript view**, not a read of the optional `_transcript.jsonl` diagnostic artifact. It renders retained output, recent status output, or the canonical session tail. The view can remain useful when compact mode has no diagnostic transcript. The canonical child session is the ordinary recovery record; use the status/session pointers to inspect or resume a paused or failed run.
-
-For a failure that requires the diagnostic child transcript or surrounding child protocol, set the human-owned profile before reproducing it. Compact foreground results retain only a bounded stderr tail; async `output-N.log` already retains raw stderr regardless of profile.
+The historical model-facing transcript status view is retired. Status returns bounded lifecycle diagnostics and recovery/session references; inspect the retained output, canonical child session, or debug artifacts directly when a failure needs more context. Compact foreground results retain only a bounded stderr tail; async `output-N.log` already retains raw stderr regardless of profile.
 
 ```json
 {
@@ -494,7 +417,7 @@ For a failure that requires the diagnostic child transcript or surrounding child
 }
 ```
 
-Merge this block into the existing config; do not replace the file or remove existing `control`, `heartbeat`, or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update preserve this human-owned value and other unrelated config keys while enforcing the managed attention policy documented below.
+Merge this block into the existing config; do not replace the file or remove existing `control` or other keys. Debug restores the task-input file, the bounded diagnostic `_transcript.jsonl`, and high-volume child-event projections; output, metadata, and canonical sessions remain available as usual. The `artifacts.mode` value is not a model-facing tool parameter. Install and update preserve this human-owned value and other unrelated config keys while enforcing the managed attention policy documented below.
 
 After editing `<agent-dir>/extensions/subagent/config.json`, reload the extension with `/reload` or stop and restart the `tlh` process before starting a new run. A run already underway retains its resolved policy. To undo the opt-in, remove the `artifacts` block (compact is the absent-key default) or set `"mode": "compact"`, then reload or restart. Existing files are not deleted by this change; inspect them first and remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
 
@@ -508,7 +431,7 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The installer-managed attention policy in this file sets `control.needsAttentionAfterMs` to exactly `180000` ms (3 minutes), removes the retired `control.activeNoticeAfterMs`, `control.activeNoticeAfterTurns`, and `control.activeNoticeAfterTokens` keys, and scrubs `active_long_running` entries from `control.notifyOn`, even when customized. Specifically, `control.notifyOn: ["active_long_running"]` becomes `control.notifyOn: []`, preserving its effective disabled-notification behavior; when other entries are present, only the retired entry is removed. It applies only to persistent isolated-profile configuration; per-dispatch runtime overrides remain available. A changed valid existing config is backed up to `config.json.backup-*` before writing; a missing config and an already-converged config create no backup. These backups (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed; inspect them and remove only matching files in `<agent-dir>/extensions/subagent/`, not the active `config.json` or the whole profile. `--dry-run` reports the planned migration without writing or backing up. `tlh doctor` is read-only, while `tlh doctor --repair` applies the same guarded migration and backs up changed configs. Malformed, unreadable, non-object, or structurally unsafe config is preserved with an actionable warning. Unrelated top-level/control keys and human-owned `execution.maxRunTimeMs`, `artifacts.mode`, and heartbeat settings are preserved. To roll back, inspect a chosen backup in `<agent-dir>/extensions/subagent/`, copy it over only that directory's `config.json`, and reload/restart; this is temporary because a later install or update re-enforces `180000` and removes retired keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. The installer-managed attention policy in this file sets `control.needsAttentionAfterMs` to exactly `180000` ms (3 minutes), removes the retired `control.activeNoticeAfterMs`, `control.activeNoticeAfterTurns`, and `control.activeNoticeAfterTokens` keys, and scrubs `active_long_running` entries from `control.notifyOn`, even when customized. Specifically, `control.notifyOn: ["active_long_running"]` becomes `control.notifyOn: []`, preserving its effective disabled-notification behavior; when other entries are present, only the retired entry is removed. It applies only to persistent isolated-profile configuration; callers cannot override control behavior per dispatch. A changed valid existing config is backed up to `config.json.backup-*` before writing; a missing config and an already-converged config create no backup. These backups (`extensions/subagent/config.json.backup-*`) are not covered by root-profile backup pruning and are retained until manually removed; inspect them and remove only matching files in `<agent-dir>/extensions/subagent/`, not the active `config.json` or the whole profile. `--dry-run` reports the planned migration without writing or backing up. `tlh doctor` is read-only, while `tlh doctor --repair` applies the same guarded migration and backs up changed configs. Malformed, unreadable, non-object, or structurally unsafe config is preserved with an actionable warning. Unrelated top-level/control keys and human-owned `execution.maxRunTimeMs` and `artifacts.mode` are preserved. To roll back, inspect a chosen backup in `<agent-dir>/extensions/subagent/`, copy it over only that directory's `config.json`, and reload/restart; this is temporary because a later install or update re-enforces `180000` and removes retired keys. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
 Parallel limits are configured here: `parallel.maxTasks` caps tasks per call (default `8`), and `parallel.concurrency` caps simultaneously running children (default `4`).
 
@@ -517,7 +440,7 @@ Useful diagnostics:
 - `tlh doctor` checks installer-owned profile resources without writing.
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics.
-- `subagent({ action: "status", view: "fleet" })` reports active runs and transcript commands.
+- `subagent({ action: "status" })` reports direct active runs; pass `id` for one run.
 - When parallel work is rejected or queued, inspect `parallel.maxTasks` and `parallel.concurrency` in the active config.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.

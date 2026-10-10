@@ -9,7 +9,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -47,13 +48,18 @@ const { registerTlhPrimaryAgentRuntime } = await jiti.import(
 // must seed the global keybindings so that model-picker handleInput and rendered
 // hints (e.g. app.models.save / Ctrl+S) behave correctly without a live TUI
 // session.  Use file-URL dynamic imports to reach pi-coding-agent's internal
-// deep paths (not in the package exports map) and pi-coding-agent's own nested
-// pi-tui instance (which has a separate module singleton from the repo-level one).
+// deep paths (not in the package exports map) and pi-coding-agent's pi-tui
+// instance.  createRequire anchored at pi-coding-agent's package.json resolves
+// pi-tui from the same location pi-coding-agent uses
+//
+// preserving the singleton intent even when pi-tui is hoisted.
 {
   const piPkg = getPackageDir();
   const piKeybindingsUrl = pathToFileURL(join(piPkg, "dist", "core", "keybindings.js")).href;
+  const req = createRequire(join(piPkg, "package.json"));
+  const piTuiPkgPath = req.resolve("@earendil-works/pi-tui/package.json");
   const piTuiKeybindingsUrl = pathToFileURL(
-    join(piPkg, "node_modules", "@earendil-works", "pi-tui", "dist", "keybindings.js"),
+    join(dirname(piTuiPkgPath), "dist", "keybindings.js"),
   ).href;
   const { KeybindingsManager: PiKeybindingsManager } = await import(piKeybindingsUrl);
   const { setKeybindings: setPiKeybindings } = await import(piTuiKeybindingsUrl);
@@ -89,11 +95,13 @@ function copyPublishedPiPackage(t, suffix) {
   // Pi 0.85.1 introduced @earendil-works/chord as a runtime bundle dependency.
   // Copy it into the temp package's node_modules so the isolated dist/bundle
   // chunks can resolve it without access to the repo-level node_modules.
-  cpSync(
-    join(getPackageDir(), "node_modules", "@earendil-works", "chord"),
-    join(packageDir, "node_modules", "@earendil-works", "chord"),
-    { recursive: true },
-  );
+  // Use createRequire anchored at pi-coding-agent's package.json to resolve chord
+  // from the same location pi-coding-agent uses (works whether chord is nested or hoisted).
+  const req = createRequire(join(getPackageDir(), "package.json"));
+  const chordDir = dirname(req.resolve("@earendil-works/chord/package.json"));
+  cpSync(chordDir, join(packageDir, "node_modules", "@earendil-works", "chord"), {
+    recursive: true,
+  });
   t.after(() => rmSync(packageDir, { recursive: true, force: true }));
   return packageDir;
 }
@@ -965,7 +973,7 @@ test("bundled Node and modular AgentSession constructors share one exact public 
     assert.notEqual(
       ModularAgentSession,
       BundledAgentSession,
-      "Pi 0.85.1 must expose distinct modular and bundled AgentSession constructors",
+      "Pi 1.0.0 must expose distinct modular and bundled AgentSession constructors",
     );
 
     // The extension loader resolves this module through the normal package root,

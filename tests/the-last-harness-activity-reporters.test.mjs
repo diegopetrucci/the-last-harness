@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { createHerdrActivityReporter, createCmuxActivityReporter } = await jiti.import(
-  "../extensions/the-last-harness/activity-reporters.ts",
-);
+const {
+  createHerdrActivityReporter,
+  createCmuxActivityReporter,
+  createProgramStatusActivityReporter,
+} = await jiti.import("../extensions/the-last-harness/activity-reporters.ts");
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 function createFakeTimers() {
   let now = 0;
@@ -73,6 +80,15 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+function createDeferredStateRequestSender(deliveries) {
+  return (request) => {
+    if (request.method === "pane.report_metadata") return Promise.resolve();
+    const deferred = createDeferred();
+    deliveries.push({ request, deferred });
+    return deferred.promise;
+  };
+}
+
 test("Herdr reporter no-ops without required env and when official reporter is installed", async () => {
   const calls = [];
   const noopReporter = createHerdrActivityReporter({
@@ -94,6 +110,7 @@ test("Herdr reporter no-ops without required env and when official reporter is i
   assert.deepEqual(calls, []);
 
   const agentDir = mkdtempSync(join(tmpdir(), "tlh-herdr-agent-dir-"));
+  _tmpDirs.push(agentDir);
   mkdirSync(join(agentDir, "extensions"), { recursive: true });
   writeFileSync(join(agentDir, "extensions", "herdr-agent-state.ts"), "// installed by herdr\n");
   const singleWriterCalls = [];
@@ -145,35 +162,47 @@ test("Herdr reporter retries timed out activity socket delivery once", async () 
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
+  assert.equal(sockets.length, 2);
+
+  // Metadata is a separate best-effort request. Settle it first so this test
+  // can continue to focus on activity-socket backoff.
+  sockets[0].emit("connect");
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
+  sockets[0].emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
   assert.deepEqual(timers.getPendingDelays(), [500]);
 
-  sockets[0].emit("connect");
-  assert.equal(sockets[0].writes.length, 1);
+  const firstActivitySocket = sockets[1];
+  firstActivitySocket.emit("connect");
+  assert.equal(firstActivitySocket.writes.length, 1);
 
   timers.advance(499);
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.equal(sockets[0].destroyCalls, 0);
+  assert.equal(sockets.length, 2);
+  assert.equal(firstActivitySocket.destroyCalls, 0);
 
   timers.advance(1);
   await flushAsyncWork();
-  assert.equal(sockets[0].destroyCalls, 1);
-  assert.equal(sockets.length, 2);
+  assert.equal(firstActivitySocket.destroyCalls, 1);
+  assert.equal(sockets.length, 3);
   assert.deepEqual(timers.getPendingDelays(), [1500]);
 
-  sockets[1].emit("connect");
-  assert.equal(sockets[1].writes.length, 1);
-  assert.equal(JSON.parse(sockets[1].writes[0]).method, "pane.report_agent");
-  sockets[1].emit("data", Buffer.from("ok"));
+  const secondActivitySocket = sockets[2];
+  secondActivitySocket.emit("connect");
+  assert.equal(secondActivitySocket.writes.length, 1);
+  assert.equal(JSON.parse(secondActivitySocket.writes[0]).method, "pane.report_agent");
+  secondActivitySocket.emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(sockets[1].destroyCalls, 1);
+  assert.equal(secondActivitySocket.destroyCalls, 1);
   // Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
   assert.deepEqual(
     timers.getPendingDelays().filter((d) => d <= 2000),
     [],
   );
-  assert.deepEqual(JSON.parse(sockets[0].writes[0]), JSON.parse(sockets[1].writes[0]));
+  assert.deepEqual(
+    JSON.parse(firstActivitySocket.writes[0]),
+    JSON.parse(secondActivitySocket.writes[0]),
+  );
 });
 
 test("Herdr reporter starts heartbeat recovery after exhausted socket retries", async () => {
@@ -204,24 +233,28 @@ test("Herdr reporter starts heartbeat recovery after exhausted socket retries", 
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
+  assert.equal(sockets.length, 2);
+  sockets[0].emit("connect");
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
+  sockets[0].emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
 
   // Exhaust both default socket attempts. The desired state must still start
   // a heartbeat so a later socket availability can recover without a new edge.
   timers.advance(500);
   await flushAsyncWork();
-  assert.equal(sockets.length, 2);
+  assert.equal(sockets.length, 3);
   timers.advance(1500);
   await flushAsyncWork();
   assert.deepEqual(timers.getPendingDelays(), [1000]);
 
   timers.advance(1000);
   await flushAsyncWork();
-  assert.equal(sockets.length, 3);
-  sockets[2].emit("connect");
-  sockets[2].emit("data", Buffer.from("ok"));
+  assert.equal(sockets.length, 4);
+  sockets[3].emit("connect");
+  sockets[3].emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(JSON.parse(sockets[2].writes[0]).params.state, "working");
+  assert.equal(JSON.parse(sockets[3].writes[0]).params.state, "working");
   reporter.dispose();
 });
 
@@ -367,14 +400,19 @@ test("Herdr reporter does not retry after first activity socket response", async
     activeAsyncJobIds: [],
   });
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.deepEqual(timers.getPendingDelays(), [500]);
-
+  assert.equal(sockets.length, 2);
   sockets[0].emit("connect");
-  assert.equal(sockets[0].writes.length, 1);
+  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_metadata");
   sockets[0].emit("data", Buffer.from("ok"));
   await flushAsyncWork();
-  assert.equal(sockets[0].destroyCalls, 1);
+
+  const activitySocket = sockets[1];
+  assert.deepEqual(timers.getPendingDelays(), [500]);
+  activitySocket.emit("connect");
+  assert.equal(activitySocket.writes.length, 1);
+  activitySocket.emit("data", Buffer.from("ok"));
+  await flushAsyncWork();
+  assert.equal(activitySocket.destroyCalls, 1);
   // Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
   assert.deepEqual(
     timers.getPendingDelays().filter((d) => d <= 2000),
@@ -383,8 +421,8 @@ test("Herdr reporter does not retry after first activity socket response", async
 
   timers.advance(5000);
   await flushAsyncWork();
-  assert.equal(sockets.length, 1);
-  assert.equal(JSON.parse(sockets[0].writes[0]).method, "pane.report_agent");
+  assert.equal(sockets.length, 2);
+  assert.equal(JSON.parse(activitySocket.writes[0]).method, "pane.report_agent");
 });
 
 test("Herdr reporter sends monotonic working/idle state with session refs", async () => {
@@ -407,6 +445,16 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
   await flushAsyncWork();
   assert.equal(calls[0].method, "pane.report_agent_session");
   assert.equal(calls[0].params.agent_session_path, "/tmp/session.jsonl");
+  const metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 1);
+  assert.deepEqual(metadataCalls[0].params, {
+    pane_id: "pane-1",
+    source: "user:tlh-display",
+    agent: "pi",
+    applies_to_source: "herdr:tlh",
+    display_agent: "tlh",
+    clear_title: true,
+  });
 
   const workingSnapshot = {
     inProgress: true,
@@ -441,6 +489,61 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
     calls.every((call) => call.method !== "pane.release_agent"),
     "handleSessionShutdown must not emit pane.release_agent",
   );
+});
+
+test("Herdr metadata sends without a session ref and retries on heartbeat", async () => {
+  const timers = createFakeTimers();
+  const calls = [];
+  let metadataAttempts = 0;
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_TLH_HEARTBEAT_MS: "1000",
+    },
+    sendRequest: async (request) => {
+      calls.push(request);
+      if (request.method === "pane.report_metadata") {
+        metadataAttempts += 1;
+        if (metadataAttempts === 1) throw new Error("Herdr is starting");
+      }
+    },
+    now: timers.now,
+    timers,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+  });
+  await flushAsyncWork();
+  let metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 1);
+  assert.equal(metadataCalls[0].params.display_agent, "tlh");
+  assert.equal("agent_session_id" in metadataCalls[0].params, false);
+  assert.equal("agent_session_path" in metadataCalls[0].params, false);
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent_session").length, 0);
+
+  reporter.handleSnapshot({
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  });
+  await flushAsyncWork();
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
+
+  timers.advance(1000);
+  await flushAsyncWork();
+  metadataCalls = calls.filter((call) => call.method === "pane.report_metadata");
+  assert.equal(metadataCalls.length, 2, "heartbeat should retry metadata after startup failure");
+  assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 2);
+
+  // Metadata is reasserted on later heartbeats as well, so a Herdr server
+  // restart after an initially successful report can recover the display name.
+  timers.advance(1000);
+  await flushAsyncWork();
+  assert.equal(calls.filter((call) => call.method === "pane.report_metadata").length, 3);
+  reporter.dispose();
 });
 
 test("Herdr reporter maps UI-prompt waiting to Herdr blocked state", async () => {
@@ -633,11 +736,7 @@ test("Herdr heartbeat followed by an idle transition preserves final state order
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -689,11 +788,7 @@ test("queued Herdr transition resolves the latest committed state behind a heart
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -796,11 +891,7 @@ test("queued Herdr heartbeat reads idle after a real send settles", async () => 
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -850,11 +941,7 @@ test("queued Herdr state is a no-op after shutdown", async () => {
   const deliveries = [];
   const reporter = createHerdrActivityReporter({
     env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -889,11 +976,7 @@ test("queued Herdr heartbeat is a no-op after shutdown and snapshots cannot rest
       HERDR_PANE_ID: "pane-1",
       HERDR_TLH_HEARTBEAT_MS: "1000",
     },
-    sendRequest: (request) => {
-      const deferred = createDeferred();
-      deliveries.push({ request, deferred });
-      return deferred.promise;
-    },
+    sendRequest: createDeferredStateRequestSender(deliveries),
     now: timers.now,
     timers,
     idleDebounceMs: 10,
@@ -1337,6 +1420,124 @@ test("cmux reporter no-ops without workspace env", async () => {
   assert.deepEqual(commands, []);
 });
 
+test("Herdr reporter nextReportSeq is strictly monotonic even when now() does not advance", async () => {
+  // Verifies criterion (a): seq strictly increases across reports when time is frozen.
+  // now() is pinned to 0 for the entire test; fake timers are used only to flush
+  // the idle-debounce setTimeout(fn, 0) that guards non-working transitions.
+  // Alternating working/idle snapshots produce distinct state transitions that
+  // bypass the same-state deduplication guard, so multiple pane.report_agent
+  // messages are actually emitted.
+  const fakeTimers = createFakeTimers();
+  const seqs = [];
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_TLH_HEARTBEAT_MS: "0", // disable heartbeat so it doesn't interfere
+    },
+    now: () => 0, // completely frozen — never advances
+    timers: fakeTimers,
+    idleDebounceMs: 0, // idle transitions are immediate (no real-time delay)
+    sendRequest: async (request) => {
+      if (request.method === "pane.report_agent") {
+        seqs.push(request.params.seq);
+      }
+    },
+  });
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" },
+  });
+
+  const workingSnapshot = {
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  };
+  const idleSnapshot = { inProgress: false, primaryReasons: [], activeAsyncJobIds: [] };
+
+  // Alternate working/idle three times. Each transition is a distinct state so
+  // the queued-reporter deduplication does not suppress any report. now() stays
+  // at 0 throughout: seq monotonicity must come from reportSeq + 1 alone.
+  for (let i = 0; i < 3; i++) {
+    reporter.handleSnapshot(workingSnapshot);
+    await flushAsyncWork();
+    reporter.handleSnapshot(idleSnapshot);
+    fakeTimers.advance(0); // fires the idle-debounce setTimeout(fn, 0)
+    await flushAsyncWork();
+  }
+
+  reporter.dispose();
+
+  assert.ok(
+    seqs.length >= 3,
+    `Expected at least 3 reports, got ${seqs.length}: ${JSON.stringify(seqs)}`,
+  );
+  for (let i = 1; i < seqs.length; i++) {
+    assert.ok(
+      seqs[i] > seqs[i - 1],
+      `seq must strictly increase: seqs[${i - 1}]=${seqs[i - 1]}, seqs[${i}]=${seqs[i]}`,
+    );
+  }
+});
+
+test("Herdr reporter seq reclaims authority when now() advances past a competing reporter", async () => {
+  // Verifies criterion (b): after now() jumps forward (simulating a competing reporter
+  // that ran while this session was paused), the next report seq is >= now()*1000.
+  const fakeTimers = createFakeTimers();
+  let nowMs = 1000; // start at t=1s so initial reportSeq = 1000*1000 = 1_000_000
+  const nowFn = () => nowMs;
+
+  const seqs = [];
+  const reporter = createHerdrActivityReporter({
+    env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
+    now: nowFn,
+    timers: fakeTimers,
+    idleDebounceMs: 0, // skip debounce so idle reports are sent immediately
+    sendRequest: async (request) => {
+      if (request.method === "pane.report_agent") {
+        seqs.push(request.params.seq);
+      }
+    },
+  });
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" },
+  });
+
+  // First report at t=1s: working state.
+  reporter.handleSnapshot({
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  });
+  await flushAsyncWork();
+
+  // Simulate time advancing to t=5s (a competing process ran reports up to
+  // seq ~5000*1000=5_000_000 while this session was paused).
+  nowMs = 5000;
+
+  // Send an idle snapshot to transition to a different state and emit a
+  // new report. With idleDebounceMs=0 it fires synchronously via timer.
+  reporter.handleSnapshot({
+    inProgress: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  fakeTimers.advance(0);
+  await flushAsyncWork();
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+
+  assert.ok(seqs.length >= 2, `Expected at least 2 reports, got ${seqs.length}`);
+  const seqAfterAdvance = seqs[seqs.length - 1];
+  assert.ok(
+    seqAfterAdvance >= nowMs * 1000,
+    `seq after time advance (${seqAfterAdvance}) must be >= now()*1000 (${nowMs * 1000}) to reclaim authority`,
+  );
+});
+
 test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc, print)", async () => {
   const sessionManager = { getSessionFile: () => "/tmp/s.jsonl", getSessionId: () => "s" };
 
@@ -1379,4 +1580,419 @@ test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc
     await flushAsyncWork();
     assert.deepEqual(cmuxCommands, [], `cmux reporter should not clear-status for mode=${mode}`);
   }
+});
+
+// ─── OSC 7501 program-status reporter ───────────────────────────────────────
+
+function createFakeOutput() {
+  return {
+    isTTY: true,
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+}
+
+const workingSeq = "\x1b]7501;state=working:app=tlh\x1b\\";
+const blockedSeq = "\x1b]7501;state=blocked:app=tlh\x1b\\";
+const doneSeq = "\x1b]7501;state=done:app=tlh\x1b\\";
+const idleSeq = "\x1b]7501;state=idle:app=tlh\x1b\\";
+const clearSeq = "\x1b]7501;state=clear\x1b\\";
+
+test("program-status reporter emits working, idle, done, blocked sequences", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 25,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+
+  // working
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  // idle (no prior working → idle)
+  // reset to check idle vs done
+  output.writes.length = 0;
+  const freshOutput = createFakeOutput();
+  const freshTimers = createFakeTimers();
+  const freshReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: freshOutput,
+    timers: freshTimers,
+    idleDebounceMs: 25,
+  });
+  freshReporter.handleSessionStart({ mode: "tui", sessionManager });
+  freshReporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  freshTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(freshOutput.writes, [idleSeq], "no prior working → idle");
+  freshReporter.dispose();
+
+  // done: first emit working, then idle-like
+  const doneOutput = createFakeOutput();
+  const doneTimers = createFakeTimers();
+  const doneReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: doneOutput,
+    timers: doneTimers,
+    idleDebounceMs: 25,
+  });
+  doneReporter.handleSessionStart({ mode: "tui", sessionManager });
+  doneReporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  doneReporter.handleSnapshot({
+    inProgress: false,
+    lastRunOutcome: "completed",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  doneTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(doneOutput.writes, [workingSeq, doneSeq], "after working → done, not idle");
+  doneReporter.dispose();
+
+  // blocked
+  const blockedOutput = createFakeOutput();
+  const blockedTimers = createFakeTimers();
+  const blockedReporter = createProgramStatusActivityReporter({
+    env: {},
+    output: blockedOutput,
+    timers: blockedTimers,
+    idleDebounceMs: 25,
+  });
+  blockedReporter.handleSessionStart({ mode: "tui", sessionManager });
+  blockedReporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  blockedTimers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(blockedOutput.writes, [blockedSeq]);
+  blockedReporter.dispose();
+});
+
+test("program-status reporter emits clear on session shutdown after queued report drains", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  // clear is sent after the queued report drains
+  assert.ok(
+    output.writes.includes(clearSeq),
+    `expected clear in writes: ${JSON.stringify(output.writes)}`,
+  );
+  assert.equal(output.writes.at(-1), clearSeq, "clear must be the last write");
+});
+
+test("program-status reporter emits clear on dispose when session was active", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+
+  reporter.dispose();
+  await flushAsyncWork();
+  assert.equal(output.writes.at(-1), clearSeq, "clear must be sent on dispose");
+});
+
+test("program-status reporter is a no-op when TLH_PROGRAM_STATUS=0", async () => {
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: { TLH_PROGRAM_STATUS: "0" },
+    output,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when TLH_PROGRAM_STATUS=0");
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, []);
+});
+
+test("program-status reporter is a no-op when output is not a TTY", async () => {
+  const output = {
+    isTTY: false,
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({ env: {}, output });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when output is not TTY");
+});
+
+test("program-status reporter is a no-op when output.isTTY is undefined", async () => {
+  const output = {
+    writes: [],
+    write(data) {
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({ env: {}, output });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [], "must not write when isTTY is undefined");
+});
+
+test("program-status reporter is a no-op for non-tui modes", async () => {
+  for (const mode of ["json", "rpc", "print"]) {
+    const output = createFakeOutput();
+    const reporter = createProgramStatusActivityReporter({ env: {}, output });
+    const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+    reporter.handleSessionStart({ mode, sessionManager });
+    reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+    await flushAsyncWork();
+    assert.deepEqual(output.writes, [], `must not write for mode=${mode}`);
+    reporter.handleSessionShutdown();
+    await flushAsyncWork();
+    assert.deepEqual(output.writes, [], `must not send clear for mode=${mode}`);
+  }
+});
+
+test("program-status reporter ignores PI_PROGRAM_STATUS env variable", async () => {
+  const output = createFakeOutput();
+  const timers = createFakeTimers();
+  // PI_PROGRAM_STATUS=0 must NOT disable this reporter (only TLH_PROGRAM_STATUS does)
+  const reporter = createProgramStatusActivityReporter({
+    env: { PI_PROGRAM_STATUS: "0" },
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(
+    output.writes,
+    [workingSeq],
+    "PI_PROGRAM_STATUS=0 must not disable the reporter",
+  );
+  reporter.dispose();
+});
+
+test("program-status reporter swallows write failures without crashing", async () => {
+  const timers = createFakeTimers();
+  let throwOnWrite = false;
+  const output = {
+    isTTY: true,
+    writes: [],
+    write(data) {
+      if (throwOnWrite) throw new Error("simulated write failure");
+      this.writes.push(data);
+    },
+  };
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+
+  // First snapshot should succeed
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq]);
+
+  // Enable write failure; reporter must not throw or crash
+  throwOnWrite = true;
+  reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  timers.advance(0);
+  await flushAsyncWork();
+  // No assertion on writes content; just verify no exception was thrown
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+  // Reached here without error = write failure was swallowed
+});
+
+test("program-status reporter deduplicates consecutive identical states", async () => {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq], "duplicate working snapshots must be deduplicated");
+  reporter.dispose();
+});
+
+test("program-status reporter starts idle (not done) on a fresh reporter instance", async () => {
+  // Fresh session: lastRunOutcome is undefined, so quiescent state is idle (not done).
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  reporter.handleSessionStart({ mode: "tui", sessionManager });
+  reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(
+    output.writes,
+    [idleSeq],
+    "fresh reporter without prior working → idle, not done",
+  );
+  reporter.dispose();
+});
+
+// ─── OSC 7501 kind mapping and waitingForUser precedence ─────────────────────
+
+const blockedPermissionSeq = "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+const blockedQuestionSeq = "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+
+function makeKindReporter() {
+  const timers = createFakeTimers();
+  const output = createFakeOutput();
+  const sm = { getSessionFile: () => undefined, getSessionId: () => "s" };
+  const reporter = createProgramStatusActivityReporter({
+    env: {},
+    output,
+    timers,
+    idleDebounceMs: 0,
+  });
+  reporter.handleSessionStart({ mode: "tui", sessionManager: sm });
+  return { reporter, output, timers };
+}
+
+test("program-status reporter kind mapping: confirm=permission, select/input/editor/custom=question, absent=plain", async () => {
+  const cases = [
+    ["confirm", blockedPermissionSeq],
+    ["select", blockedQuestionSeq],
+    ["input", blockedQuestionSeq],
+    ["editor", blockedQuestionSeq],
+    ["custom", blockedQuestionSeq],
+    [undefined, blockedSeq],
+  ];
+  for (const [kind, expected] of cases) {
+    const { reporter, output, timers } = makeKindReporter();
+    reporter.handleSnapshot({
+      inProgress: false,
+      waitingForUser: true,
+      ...(kind !== undefined ? { waitingForUserKind: kind } : {}),
+      primaryReasons: [],
+      activeAsyncJobIds: [],
+    });
+    timers.advance(0);
+    await flushAsyncWork();
+    assert.deepEqual(
+      output.writes,
+      [expected],
+      `kind=${kind} should emit correct blocked sequence`,
+    );
+    reporter.dispose();
+  }
+});
+
+test("program-status reporter emits blocked when both inProgress and waitingForUser are true", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    waitingForUserKind: "confirm",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq, blockedPermissionSeq]);
+  reporter.dispose();
+});
+
+test("program-status reporter returns to working when prompt closes with inProgress still true", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    waitingForUserKind: "select",
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [workingSeq, blockedQuestionSeq, workingSeq]);
+  reporter.dispose();
+});
+
+test("program-status reporter re-emits blocked with updated kind when nested prompt kind changes", async () => {
+  const { reporter, output, timers } = makeKindReporter();
+  const snap = (kind) => ({
+    inProgress: false,
+    waitingForUser: true,
+    ...(kind ? { waitingForUserKind: kind } : {}),
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  reporter.handleSnapshot(snap("confirm"));
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot(snap("select"));
+  timers.advance(0);
+  await flushAsyncWork();
+  reporter.handleSnapshot(snap("confirm"));
+  timers.advance(0);
+  await flushAsyncWork();
+  assert.deepEqual(output.writes, [blockedPermissionSeq, blockedQuestionSeq, blockedPermissionSeq]);
+  reporter.dispose();
 });

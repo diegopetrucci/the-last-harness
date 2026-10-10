@@ -387,16 +387,6 @@ export function loadSubagentMetadata() {
     }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
-const REVIEW_HANDOFF_PROMPT = `
-## /review handoff
-
-When the incoming user turn's first line is exactly \`[/review]\`, treat it as a review-only request.
-
-- Delegate the review immediately to the \`code-reviewer\` subagent in a **fresh (isolated) context**, passing the full envelope contents as the task input. Never resume an existing run for this request.
-- Do not relay raw subagent findings back to the user.
-- Critically evaluate the reviewer's findings, then present a concise digested summary with your own assessment.
-- Keep this handoff review-only; do not perform implementation work as part of this request.
-`;
 function formatAllowedSubagents(primary, subagents, options = {}) {
     const allowed = new Set(allowedSubagentsForExperimentalConfig());
     const lines = subagents
@@ -426,7 +416,6 @@ export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, project
     }
     else {
         prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true }));
-        prompts.push(REVIEW_HANDOFF_PROMPT.trim());
     }
     return prompts.filter(Boolean).join("\n\n");
 }

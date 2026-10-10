@@ -117,6 +117,7 @@ function gitIdentity(source: string): string {
   return `git:${value.toLowerCase()}`;
 }
 
+// Retirement window and tier rules: see CONTRIBUTING.md#retiring-installer-migrations.
 // These sources were previously managed by TLH's external subagent default.
 // Keep this list separate from the active manifest: migration code must still
 // recognize old npm/git spellings after the manifest entry is retired.
@@ -127,12 +128,29 @@ export const RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES = Object.freeze([
   "git:github.com/diegopetrucci/pi-subagents",
 ]);
 
-export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+// These sources were retired from TLH defaults. Profiles without provenance
+// predate ownership tracking, so their presence is conservatively inferred as
+// TLH-managed; profiles with provenance still require a recorded identity.
+export const LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
   "npm:@plannotator/pi-extension",
   "npm:@diegopetrucci/pi-librarian",
   "npm:@diegopetrucci/pi-triage-comments",
   "npm:@ff-labs/pi-fff",
   ...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
+]);
+
+// These defaults were retired with provenance tracking in place. Only an
+// explicit recorded identity proves TLH ownership; profiles lacking provenance
+// (or lacking these identities) must preserve the package.
+export const PROVENANCE_GATED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+  "npm:@earendil-works/pi-voice",
+  "git:github.com/earendil-works/pi-transcribe",
+  "npm:@earendil-works/pi-transcribe",
+]);
+
+export const RETIRED_TLH_DEFAULT_PACKAGE_SOURCES = Object.freeze([
+  ...LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
+  ...PROVENANCE_GATED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 ]);
 
 // Sources of retired default extensions that TLH now removes unconditionally
@@ -161,7 +179,17 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
   "npm:@diegopetrucci/pi-compact-bash",
 ]);
 
-const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;
+const WHOLE_EXTENSION_DISABLING_FILTERS = new Set(["-index.ts", "!index.ts", "-*", "!*"]);
+
+export function packageEntryDisablesExtensions(entry: unknown): boolean {
+  if (!isPlainObject(entry) || !Array.isArray(entry.extensions)) return false;
+  if (entry.extensions.length === 0) return true;
+
+  return entry.extensions
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .some((value) => WHOLE_EXTENSION_DISABLING_FILTERS.has(value));
+}
 
 export function packageSourceOf(entry: unknown): string | undefined {
   if (typeof entry === "string") return entry;
@@ -296,6 +324,44 @@ export function defaultExtensionPackageIdentities(extension: DefaultExtensionEnt
     .filter((value): value is string => Boolean(value));
 }
 
+export function defaultExtensionPackageFilterDisables(
+  settings: unknown,
+  extension: DefaultExtensionEntry,
+): boolean {
+  if (
+    extension.critical === true ||
+    !isPlainObject(settings) ||
+    !Array.isArray(settings.packages)
+  ) {
+    return false;
+  }
+
+  const canonicalIdentity = packageIdentity(extension.source);
+  if (!canonicalIdentity) return false;
+
+  const canonicalEntries = settings.packages.filter(
+    (entry) => packageIdentity(entry) === canonicalIdentity,
+  );
+  if (canonicalEntries.some(packageEntryDisablesExtensions)) return true;
+  if (canonicalEntries.length > 0) return false;
+
+  const replacementIdentities = new Set(
+    extension.replaces
+      .map(packageIdentity)
+      .filter((identity): identity is string =>
+        Boolean(identity && identity !== canonicalIdentity),
+      ),
+  );
+  return settings.packages.some((entry) => {
+    const identity = packageIdentity(entry);
+    return (
+      identity !== undefined &&
+      replacementIdentities.has(identity) &&
+      packageEntryDisablesExtensions(entry)
+    );
+  });
+}
+
 export function readDefaultExtensionProvenance(settings: unknown): DefaultExtensionProvenance {
   const { exists, value } = rawDefaultExtensionProvenance(settings);
   const managedPackageIdentities = new Set(
@@ -335,7 +401,7 @@ export function setDefaultExtensionProvenance(
 export function withLegacyRetiredDefaultPackageIdentities(
   settings: unknown,
   managedPackageIdentities = new Set<string>(),
-  retiredPackageSources: readonly string[] = RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
+  retiredPackageSources: readonly string[] = LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 ): Set<string> {
   const nextManagedPackageIdentities = new Set(managedPackageIdentities);
   const { exists } = rawDefaultExtensionProvenance(settings);
@@ -375,55 +441,4 @@ export function managedDefaultExtensionPackageIdentities(
   }
 
   return managedIdentities;
-}
-
-export function repairTargetedDefaultExtensionLoadOrder(
-  settings: unknown,
-  defaultExtensions: readonly DefaultExtensionEntry[],
-  disabledIds = new Set<string>(),
-): { previous: string[]; next: string[] } | undefined {
-  if (!isPlainObject(settings) || !Array.isArray((settings as RawSettings).packages))
-    return undefined;
-
-  const packages = (settings as RawSettings).packages as unknown[];
-  const identityOrder = new Map<string, number>();
-  const identityLabels = new Map<string, string>();
-  for (const [order, targetedId] of TARGETED_DEFAULT_EXTENSION_LOAD_ORDER.entries()) {
-    const extension = defaultExtensions.find(({ id }) => id === targetedId);
-    if (!extension || disabledIds.has(extension.id)) continue;
-    for (const identity of defaultExtensionPackageIdentities(extension)) {
-      if (identityOrder.has(identity)) continue;
-      identityOrder.set(identity, order);
-      identityLabels.set(identity, extension.id);
-    }
-  }
-
-  const matchedEntries: Array<{ index: number; order: number; entry: unknown; label: string }> = [];
-  for (const [index, entry] of packages.entries()) {
-    const identity = packageIdentity(entry);
-    if (!identity) continue;
-    const order = identityOrder.get(identity);
-    if (order === undefined) continue;
-    matchedEntries.push({
-      index,
-      order,
-      entry,
-      label: identityLabels.get(identity) || identity,
-    });
-  }
-  if (matchedEntries.length < 2) return undefined;
-
-  const reorderedEntries = [...matchedEntries].sort(
-    (left, right) => left.order - right.order || left.index - right.index,
-  );
-  if (matchedEntries.every((entry, index) => entry === reorderedEntries[index])) return undefined;
-
-  for (let index = 0; index < matchedEntries.length; index += 1) {
-    packages[matchedEntries[index].index] = reorderedEntries[index].entry;
-  }
-
-  return {
-    previous: matchedEntries.map(({ label }) => label),
-    next: reorderedEntries.map(({ label }) => label),
-  };
 }

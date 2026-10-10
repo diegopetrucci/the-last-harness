@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename } from "node:path";
-import { getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, parseArgs, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
@@ -18,7 +18,7 @@ import { followsOpenrouterSession, formatProviderModelReference, listAgentModelD
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionPersistenceSession, claimTlhModelSelectionDefaults, endTlhModelSelectionPersistenceSession, installTlhModelSelectionPersistenceOverride, isTlhPersistedModelSelection, updateTlhModelSelectionPersistenceContext, } from "./model-selection-scope.js";
 import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, } from "./thinking.js";
-import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import { blockForcedSystemPrompt, setStructuredChildPromptRuntime, } from "../shared/subagent-child-boundary.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
@@ -39,6 +39,7 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         activateTlhTicketSessionScope(ctx.cwd);
     });
     pi.on("before_agent_start", async (event, ctx) => {
+        blockForcedSystemPrompt(event.systemPromptOptions);
         const settings = getTlhGlobalSettings(ctx.cwd);
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
@@ -49,9 +50,8 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         ]
             .filter(Boolean)
             .join("\n\n");
-        return {
-            systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
-        };
+        setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "root", [additions]);
+        return undefined;
     });
     pi.on("tool_call", async (event, ctx) => {
         if (event.toolName !== "bash") {
@@ -67,6 +67,8 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
 }
 function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runtimeOptions = {}) {
     const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
+    const argv = runtimeOptions.argv ?? process.argv;
+    const parsedLaunchArgs = parseArgs(argv.slice(2));
     const warned = new Set();
     const noticed = new Set();
     const primaryToolState = createPrimaryToolState();
@@ -558,9 +560,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 projectEffort = projectEntry.effort;
             }
         }
-        if (sessionOnlyModel && !preservesSessionOnlyModel) {
-            updateSessionOnlyModel(undefined);
-        }
         if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
             return;
         const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel
@@ -791,17 +790,19 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             },
         });
     }
-    async function applySessionStart(ctx) {
+    async function applySessionStart(ctx, reason) {
         const sessionStartOperation = projectAgentLifecycle.beginSessionStart();
         noticed.clear();
         beginModelSelectionSession(ctx);
         updateSessionOnlyModel(undefined);
+        if (reason === "startup") {
+            if (parsedLaunchArgs.model !== undefined && ctx.model) {
+                updateSessionOnlyModel(ctx.model);
+            }
+        }
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         clearSessionThinkingOverride();
-        if (!isCurrentSessionStartOperation(sessionStartOperation))
-            return;
-        noticed.clear();
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         activateTlhTicketSessionScope(ctx.cwd);
@@ -809,6 +810,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         syncPrimaryAgentState(ctx);
+        if (reason === "startup" && parsedLaunchArgs.thinking !== undefined) {
+            const level = ctx.thinkingLevel;
+            if (level !== undefined && isThinkingLevel(level)) {
+                recordUserThinkingLevel(level);
+            }
+        }
         if (!isCurrentSessionStartOperation(sessionStartOperation))
             return;
         await applyPrimaryDefaults(ctx, {
@@ -1093,6 +1100,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
         projectAgentLoader: options.projectAgentLoader,
         projectDefaultsLoader: options.projectDefaultsLoader,
         now: options.now,
+        argv: options.argv,
     });
     runtime.registerCommands();
     runtime.registerLifecycleHooks();

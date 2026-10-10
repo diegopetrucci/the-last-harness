@@ -12,7 +12,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Packaged resources: `extensions/`, `prompts/`, `skills/`, and `themes/` are published package resources. First-party subagent orchestration lives under `extensions/subagents/`; its `.ts` files are authoritative and same-layout `.js` files are generated, while imported tests stay in the repository/CI and are excluded from publication. `skills/` contains the pinned Herdr, cmux-cli, and tmux runtime closures; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded, and the consolidated terminal-skill notice lives in `licenses/terminal-skills.txt`.
 - Agent definitions: `agents/primary/` and `agents/subagents/` hold packaged primary-agent and subagent prompt specs used by tlh.
 - Tests and evals: `tests/` contains the automated test suite and fixture helpers, while `tests/evals/` contains deterministic workflow/trace-policy checks plus opt-in live-eval tooling.
-- Contributor automation: `.github/workflows/` defines CI, release, startup-performance, and Claude automation; `.github/PULL_REQUEST_TEMPLATE.md` provides PR guidance.
+- Contributor automation: `.github/workflows/` defines CI, release, and startup-performance; `.github/PULL_REQUEST_TEMPLATE.md` provides PR guidance.
 - Contributor-local tooling: `.pi/` stores repo-local prompts and skills for contributors, `.gnosis/entries.jsonl` stores repo-local Gnosis memory, and `.symphony/setup` contains local dependency setup automation.
 - Repository illustrations: `assets/` stores documentation and workflow illustrations used in the repository and is not shipped in the npm package.
 - Contributor docs: `README.md` covers install/update/uninstall and security, `CONTRIBUTING.md` explains contribution workflow, `VALIDATING.md` and `npm run validate` define the standard validation pass, `CHANGELOG.md` tracks releases, and `VISION.md` captures product direction.
@@ -86,9 +86,10 @@ git diff --cached
 
 ## Miscellaneous
 
+- Contributor-only TelemetryDeck MCP access is governed by [docs/local-development.md#telemetrydeck-mcp-contributors-only](docs/local-development.md#telemetrydeck-mcp-contributors-only): keep queries aggregate-only with at least 10 distinct `clientUser` values; never use `Tlh.User.mark`, individual identifiers, or cross-system linking.
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
 - For TypeScript boundary parsing or open-object decisions, load `.pi/skills/tlh-typescript-boundaries/SKILL.md`.
 - This project uses a CLI ticket system for task management. Run `tk help` when you need to use it.
 - If the human links you a PR comments, or pastes you one, do not take it at face value — instead, investigate if valid and report back first. Do not start fixing it immediately.
-- If the human asks you to open a PR, after creating it check CI/status checks and investigate PR comments/review comments. Address valid findings; resolve or dismiss invalid or non-actionable comments with rationale.
+- If the human asks you to open a PR, once it's opened, check CI and comments after 5 minutes. Do not delegate this check to subagents. If there are comments, or CI fails, investigate them immediately and report your findings. Do not start any work to address them without approval.

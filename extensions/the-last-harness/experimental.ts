@@ -11,9 +11,7 @@ import type {
   TlhSettings,
 } from "./types.js";
 
-export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
-export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
-  "ci-failure-investigation";
+export const SESSION_MIRROR_OBSERVER_FEATURE: TlhExperimentalFeatureId = "session-mirror-observer";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -21,52 +19,16 @@ export const EXPERIMENTAL_COMMAND_HELP = [
   "With no argument, /experimental opens the TLH experimental feature picker when UI is available, otherwise it lists feature status.",
 ].join(" ");
 
-const DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT = `
-## TLH Experimental Feature: delta-follow-up-reviews
-
-This TLH experiment is enabled for the architect primary agent.
-
-When a \`code-reviewer\` finding leads to a developer fix round:
-
-1. Default the follow-up \`code-reviewer\` request to the delta since the last reviewed checkpoint instead of rereading the full branch diff.
-2. In every follow-up review request, pass the prior findings plus the exact delta baseline, git range or checkpoint, or explicit changed-file list to review.
-3. Keep or expand to targeted wider review or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the delta cannot be validated safely without wider context.
-`;
-
-const DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT = `
-## TLH Experimental Feature: delta-follow-up-reviews
-
-This TLH experiment is enabled for the \`code-reviewer\` child agent.
-
-For follow-up review after fixes:
-
-1. Expect prior findings plus an exact delta baseline, git range or checkpoint, or explicit changed-file list from the delegating primary agent. Do not assume every follow-up review includes the full branch diff.
-2. Default to the requested delta and prior findings: verify the reported fixes, check touched areas for regressions, and avoid rereading the full branch diff unless wider context is needed.
-3. You may read adjacent code or other targeted context when needed for safety or correctness, and should widen to targeted or full re-review for installer or other destructive-path changes, trust-boundary changes, auth or execution changes, unresolved reviewer disagreement, or whenever the requested delta cannot be validated safely without wider context.
-`;
-
-const CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT = `
-## TLH Experimental Feature: ci-failure-investigation
-
-This TLH experiment is enabled for the architect primary agent.
-
-This experiment overrides the default post-PR monitor-and-ask-only step for this specific case.
-
-After TLH opens a PR and CI/status checks fail:
-
-1. You may do a read-only investigation before asking the user whether to proceed.
-2. Keep that investigation read-only: inspect failed checks, logs, workflow/config files, diffs, and relevant code or tests as needed to understand the failure.
-3. Do not edit files, commit, push, rerun jobs, change the PR, or take any other follow-up action during this investigation.
-4. After the investigation, summarize the failure and likely cause, then ask the user whether to proceed.
-5. Before any edits, commits, pushes, reruns, PR changes, or other follow-up changes, ask for explicit user approval.
-`;
-
-type TlhExperimentalFeature = {
+export type TlhExperimentalFeature = {
   id: TlhExperimentalFeatureId;
   description: string;
   primaryAgentPrompt?: string;
   primaryAgentPrompts?: Partial<Record<string, string>>;
   codeReviewerPrompt?: string;
+  /** Whether this feature contributes a launch-telemetry key. */
+  telemetry?: boolean;
+  /** Whether preference changes are intentionally deferred to the next session. */
+  nextSessionOnly?: boolean;
 };
 
 type TlhExperimentalSlashAction =
@@ -77,21 +39,11 @@ type TlhExperimentalSlashAction =
 
 export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
   {
-    id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+    id: SESSION_MIRROR_OBSERVER_FEATURE,
     description:
-      "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
-    primaryAgentPrompts: {
-      architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
-    },
-    codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
-  },
-  {
-    id: CI_FAILURE_INVESTIGATION_FEATURE,
-    description:
-      "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
-    primaryAgentPrompts: {
-      architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
-    },
+      "Opt-in iPhone companion session mirroring and replies; a paired companion can submit bounded plain-text user-message replies. Changes take effect on the next session.",
+    telemetry: false,
+    nextSessionOnly: true,
   },
 ];
 
@@ -137,7 +89,7 @@ export function buildExperimentalFeatureTelemetryPayload(
 ): Record<string, "on" | "off"> {
   const enabledFeatures = new Set(readEnabledFeatures(config));
   return Object.fromEntries(
-    TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+    TLH_EXPERIMENTAL_FEATURES.filter((feature) => feature.telemetry !== false).map((feature) => [
       telemetryExperimentalFeatureKey(feature.id),
       enabledFeatures.has(feature.id) ? "on" : "off",
     ]),

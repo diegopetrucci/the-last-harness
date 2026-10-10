@@ -3,14 +3,27 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import {
   attachPostExitStdioGuard,
   trySignalChild,
 } from "../../src/shared/post-exit-stdio-guard.ts";
 
+const _scriptDirs: string[] = [];
+
+after(() => {
+  for (const dir of _scriptDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+});
+
 function writeScript(name: string, lines: string[]): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-close-grace-"));
+  _scriptDirs.push(dir);
   const script = path.join(dir, name);
   fs.writeFileSync(script, lines.join("\n"), { mode: 0o755 });
   return script;

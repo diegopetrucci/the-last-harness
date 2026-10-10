@@ -6,13 +6,6 @@ import {
   formatAsyncRunProgressLabel,
   listAsyncRuns,
 } from "./async-status.ts";
-import {
-  formatAsyncResultTranscript,
-  formatAsyncRunTranscript,
-  formatNestedRunTranscript,
-  inspectSubagentFleet,
-} from "./fleet-view.ts";
-import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
@@ -21,21 +14,14 @@ import {
   type AsyncStatus,
   type Details,
   type ForegroundResumeRun,
-  type NestedRunSummary,
   type SubagentState,
   type SubagentToolResult,
   normalizeSubagentRunMode,
 } from "../../shared/types.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
-import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.ts";
-import {
-  attachRootChildrenToSteps,
-  findNestedRouteForRootId,
-  projectNestedRegistryForRoot,
-  type NestedRunResolutionScope,
-} from "../shared/nested-events.ts";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.ts";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.ts";
 import {
@@ -55,9 +41,8 @@ interface RunStatusParams {
   action?: "status";
   id?: string;
   dir?: string;
+  /** Select a direct async child for pause/continuation guidance. */
   index?: number;
-  view?: "fleet" | "transcript";
-  lines?: number;
 }
 
 interface RunStatusDeps {
@@ -66,8 +51,6 @@ interface RunStatusDeps {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
   state?: SubagentState;
-  nested?: NestedRunResolutionScope;
-  sessionRoots?: string[];
 }
 
 type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
@@ -162,12 +145,6 @@ function stepLineLabel(status: AsyncStatus, index: number): string {
   return status.mode === "parallel"
     ? `Agent ${index + 1}/${steps.length || 1}`
     : `Step ${index + 1}`;
-}
-
-function nestedRunDisplayName(run: NestedRunSummary): string {
-  if (run.agent) return run.agent;
-  if (run.agents?.length) return run.agents.join(", ");
-  return run.id;
 }
 
 function formatSteeringSummary(input: {
@@ -266,14 +243,6 @@ function formatAsyncStepStatusLines(
       for (const warning of step.processCleanup.warnings ?? [])
         lines.push(`  Cleanup warning: ${safeTerminalText(warning)}`);
   }
-  lines.push(
-    ...formatNestedRunStatusLines(step.children, {
-      indent: "  ",
-      commandHints: true,
-      maxLines: 20,
-      redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
-    }),
-  );
   const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
   if (
     !privacySafeAwaitingSupervisorLifecycle &&
@@ -352,14 +321,6 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
     }
   }
   lines.push("", `Status: subagent({ action: "status", id: "${runId}" })`);
-  if (run.children.length === 1)
-    lines.push(
-      `Status transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`,
-    );
-  else
-    lines.push(
-      `Status transcript: subagent({ action: "status", id: "${runId}", index: 0, view: "transcript" })`,
-    );
   const resumable = run.children.find(
     (child) => !child.cancel?.cancelledAt && hasExistingSessionFile(child.sessionFile),
   );
@@ -382,102 +343,11 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
   return safeTerminalDocument(lines.join("\n"));
 }
 
-function formatRememberedForegroundTranscript(
-  run: ForegroundResumeRun,
-  options: { index?: number; lines?: number },
-): string {
-  let index = options.index;
-  if (index !== undefined && !Number.isInteger(index))
-    throw new Error("Status transcript index must be an integer.");
-  if (index === undefined && run.children.length === 1) index = 0;
-  if (index === undefined)
-    return `Status transcript view requires index for foreground run '${safeTerminalText(run.runId)}' with ${run.children.length} children.`;
-  if (index < 0 || index >= run.children.length)
-    throw new Error(
-      `Status transcript index ${index} is out of range for ${run.children.length} foreground children.`,
-    );
-  const child = run.children[index]!;
-  const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
-  const outputLines = safeTerminalDocumentLeaf(rememberedForegroundChildOutput(child))
-    .split(/\r?\n/)
-    .filter((line) => line.trim())
-    .slice(-lineLimit);
-  const lines = [
-    `Run: ${safeTerminalText(run.runId)}`,
-    `State: ${safeTerminalText(child.cancel?.cancelledAt ? "cancelled" : child.status)}`,
-    `Child: ${index} (${safeTerminalText(child.agent)})`,
-    child.transcriptPath
-      ? `Diagnostic transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`
-      : undefined,
-    child.artifactPaths?.outputPath
-      ? `Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`
-      : undefined,
-  ].filter((line): line is string => Boolean(line));
-  lines.push("Status transcript tail (retained output/session; not _transcript.jsonl):");
-  if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");
-  else for (const line of outputLines) lines.push(`  ${safeTerminalText(line)}`);
-  return safeTerminalDocument(lines.join("\n"));
-}
-
-function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): string {
-  const runId = safeTerminalText(run.id);
-  const safeRootRunId = safeTerminalText(rootRunId);
-  const lines = [
-    `Nested run: ${runId}`,
-    `Root: ${safeRootRunId}`,
-    `Parent: ${safeTerminalText(run.parentRunId)}${run.parentStepIndex !== undefined ? ` step ${run.parentStepIndex + 1}` : ""}`,
-    `State: ${safeTerminalText(run.state)}`,
-    run.activityState || run.lastActivityAt
-      ? `Activity: ${formatActivityLabel(run.lastActivityAt, run.activityState)}`
-      : undefined,
-    run.mode ? `Mode: ${safeTerminalText(normalizeSubagentRunMode(run.mode))}` : undefined,
-    `Agent: ${safeTerminalText(nestedRunDisplayName(run))}`,
-    run.currentStep !== undefined
-      ? `Progress: step ${run.currentStep + 1}/${run.steps?.length ?? 1}`
-      : undefined,
-    run.asyncDir ? `Dir: ${safeTerminalText(run.asyncDir)}` : undefined,
-    run.sessionFile ? `Session: ${safeTerminalText(run.sessionFile)}` : undefined,
-    run.error ? `Error: ${safeTerminalText(run.error)}` : undefined,
-  ].filter((line): line is string => Boolean(line));
-  if (run.path.length) {
-    lines.push(
-      `Path: ${safeTerminalText(run.path.map((part) => `${part.runId}${part.stepIndex !== undefined ? `:${part.stepIndex + 1}` : ""}${part.agent ? `:${part.agent}` : ""}`).join(" > "))} > ${runId}`,
-    );
-  }
-  if (run.steps?.length) {
-    lines.push("Steps:");
-    for (const [index, step] of run.steps.entries()) {
-      const activity =
-        step.status === "running"
-          ? formatActivityLabel(step.lastActivityAt, step.activityState)
-          : undefined;
-      lines.push(
-        `  ${index + 1}. ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${activity ? `, ${activity}` : ""}${step.error ? `, error: ${safeTerminalText(step.error)}` : ""}`,
-      );
-      lines.push(
-        ...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true }),
-      );
-    }
-  }
-  lines.push(...formatNestedRunStatusLines(run.children, { indent: "  ", commandHints: true }));
-  lines.push(
-    "Commands:",
-    `  Status: subagent({ action: "status", id: "${runId}" })`,
-    `  Interrupt: subagent({ action: "interrupt", id: "${runId}" })`,
-    `  Resume: subagent({ action: "resume", id: "${runId}", message: "..." })`,
-    `  Steer: subagent({ action: "steer", id: "${runId}", message: "..." })`,
-    `  Root status: subagent({ action: "status", id: "${safeRootRunId}" })`,
-  );
-  return safeTerminalDocument(lines.join("\n"));
-}
-
 function formatDetailedAsyncStatus(
   status: AsyncStatus,
   asyncDir: string,
   outputPath: string | undefined,
   reconciliation: ReturnType<typeof reconcileAsyncRun>,
-  nestedChildren: NestedRunSummary[],
-  nestedWarning: string | undefined,
   requestedIndex: number | undefined,
   logPath: string,
   eventsPath: string,
@@ -545,22 +415,6 @@ function formatDetailedAsyncStatus(
         privacySafeAwaitingSupervisorLifecycle,
       ),
     );
-  const attached = new Set(
-    (status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []),
-  );
-  const unattached = nestedChildren.filter((child) => !attached.has(child.id));
-  lines.push(
-    ...formatNestedRunStatusLines(unattached, {
-      indent: "",
-      commandHints: true,
-      maxLines: 20,
-      redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
-    }),
-  );
-  if (nestedWarning)
-    lines.push(
-      `Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : safeTerminalText(nestedWarning)}`,
-    );
   if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
     lines.push(`Session: ${safeTerminalText(status.sessionFile)}`);
   if (status.state === "running")
@@ -577,8 +431,9 @@ function formatDetailedAsyncStatus(
           ? safeTerminalText(status.pause.summary)
           : status.pause?.summary,
         claimUnavailable:
-          typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" &&
-          lifecycleContinuationForIndex(status, 0)!.claimToken!.length > 0,
+          typeof lifecycleContinuationForIndex(status, requestedIndex ?? 0)?.claimToken ===
+            "string" &&
+          lifecycleContinuationForIndex(status, requestedIndex ?? 0)!.claimToken!.length > 0,
         index: requestedIndex,
       }).split("\n"),
     );
@@ -604,35 +459,11 @@ function formatDetailedAsyncStatus(
 
 function inspectAsyncResultFile(
   resultPath: string,
-  params: RunStatusParams,
   resolvedId: string | undefined,
 ): SubagentToolResult<Details> {
   try {
     const raw = fs.readFileSync(resultPath, "utf-8");
     const data = JSON.parse(raw) as AsyncResultStatusData;
-    if (params.view === "transcript") {
-      try {
-        return {
-          content: [
-            {
-              type: "text",
-              text: formatAsyncResultTranscript(data, resultPath, {
-                index: params.index,
-                lines: params.lines,
-              }),
-            },
-          ],
-          details: { mode: "single", results: [] },
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text", text: message }],
-          isError: true,
-          details: { mode: "single", results: [] },
-        };
-      }
-    }
     const status = data.success
       ? "complete"
       : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
@@ -682,38 +513,7 @@ export function inspectSubagentStatus(
   const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
   const resultsDir = deps.resultsDir ?? RESULTS_DIR;
   const currentSessionId = deps.state?.currentSessionId ?? undefined;
-  if (params.view && params.view !== "fleet" && params.view !== "transcript") {
-    return {
-      content: [
-        { type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` },
-      ],
-      isError: true,
-      details: { mode: "single", results: [] },
-    };
-  }
-  if (params.view === "fleet") {
-    return inspectSubagentFleet(params, {
-      asyncDirRoot,
-      resultsDir,
-      kill: deps.kill,
-      now: deps.now,
-      state: deps.state,
-      childSafe: Boolean(deps.nested),
-    });
-  }
   if (!params.id && !params.dir) {
-    if (deps.nested) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Child-safe subagent status requires an id when no foreground run is active.",
-          },
-        ],
-        isError: true,
-        details: { mode: "single", results: [] },
-      };
-    }
     try {
       const runs = listAsyncRuns(asyncDirRoot, {
         states: ["queued", "running"],
@@ -722,22 +522,6 @@ export function inspectSubagentStatus(
         kill: deps.kill,
         now: deps.now,
       });
-      if (params.view === "transcript") {
-        if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                runs.length === 0
-                  ? "No active async run status transcript is available."
-                  : `Status transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.`,
-            },
-          ],
-          isError: true,
-          details: { mode: "single", results: [] },
-        };
-      }
       return {
         content: [{ type: "text", text: formatAsyncRunList(runs) }],
         details: { mode: "single", results: [] },
@@ -752,7 +536,11 @@ export function inspectSubagentStatus(
     }
   }
 
-  let location;
+  let location: {
+    asyncDir: string | null;
+    resultPath: string | null;
+    resolvedId?: string;
+  };
   try {
     const requestedId = params.id;
     if (!params.dir && requestedId) {
@@ -760,83 +548,15 @@ export function inspectSubagentStatus(
         asyncDirRoot,
         resultsDir,
         state: deps.state,
-        nested: deps.nested,
       });
       if (resolved?.kind === "foreground") {
         const run = deps.state?.foregroundRuns?.get(resolved.id);
         if (run) {
-          try {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    params.view === "transcript"
-                      ? formatRememberedForegroundTranscript(run, {
-                          index: params.index,
-                          lines: params.lines,
-                        })
-                      : formatRememberedForegroundStatus(run),
-                },
-              ],
-              details: { mode: "single", results: [] },
-            };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text", text: message }],
-              isError: true,
-              details: { mode: "single", results: [] },
-            };
-          }
+          return {
+            content: [{ type: "text", text: formatRememberedForegroundStatus(run) }],
+            details: { mode: "single", results: [] },
+          };
         }
-      }
-      if (resolved?.kind === "nested") {
-        reconcileNestedAsyncDescendants(resolved.match.route, {
-          resultsDir,
-          kill: deps.kill,
-          now: deps.now,
-        });
-        const refreshed = resolveSubagentRunId(requestedId, {
-          asyncDirRoot,
-          resultsDir,
-          state: deps.state,
-          nested: deps.nested,
-        });
-        const nested = refreshed?.kind === "nested" ? refreshed : resolved;
-        if (params.view === "transcript") {
-          try {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: formatNestedRunTranscript(nested.match.run, {
-                    index: params.index,
-                    lines: params.lines,
-                    sessionRoots: deps.sessionRoots,
-                  }),
-                },
-              ],
-              details: { mode: "single", results: [] },
-            };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text", text: message }],
-              isError: true,
-              details: { mode: "single", results: [] },
-            };
-          }
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run),
-            },
-          ],
-          details: { mode: "single", results: [] },
-        };
       }
       if (resolved?.kind === "async") location = resolved.location;
       else location = { asyncDir: null, resultPath: null, resolvedId: requestedId };
@@ -878,57 +598,6 @@ export function inspectSubagentStatus(
     const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
     const eventsPath = path.join(asyncDir, "events.jsonl");
     if (status) {
-      if (params.view === "transcript") {
-        if (currentSessionId && status.sessionId !== currentSessionId) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Status transcript view is only available for async runs owned by the current session.",
-              },
-            ],
-            isError: true,
-            details: { mode: "single", results: [] },
-          };
-        }
-        try {
-          return {
-            content: [
-              {
-                type: "text",
-                text: formatAsyncRunTranscript(status, asyncDir, {
-                  index: params.index,
-                  lines: params.lines,
-                  sessionRoots: deps.sessionRoots,
-                }),
-              },
-            ],
-            details: { mode: "single", results: [] },
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: "text", text: message }],
-            isError: true,
-            details: { mode: "single", results: [] },
-          };
-        }
-      }
-      let nestedChildren: NestedRunSummary[] = [];
-      let nestedWarning: string | undefined;
-      try {
-        const nestedRoute = findNestedRouteForRootId(status.runId);
-        if (nestedRoute)
-          reconcileNestedAsyncDescendants(nestedRoute, {
-            resultsDir,
-            kill: deps.kill,
-            now: deps.now,
-          });
-        nestedChildren = projectNestedRegistryForRoot(status.runId)?.children ?? [];
-        attachRootChildrenToSteps(status.runId, status.steps, nestedChildren);
-      } catch (error) {
-        nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
-      }
       const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
       return {
         content: [
@@ -939,8 +608,6 @@ export function inspectSubagentStatus(
               asyncDir,
               outputPath,
               reconciliation,
-              nestedChildren,
-              nestedWarning,
               params.index,
               logPath,
               eventsPath,
@@ -952,7 +619,7 @@ export function inspectSubagentStatus(
     }
   }
 
-  if (resultPath) return inspectAsyncResultFile(resultPath, params, resolvedId);
+  if (resultPath) return inspectAsyncResultFile(resultPath, resolvedId);
 
   return {
     content: [{ type: "text", text: "Status file not found." }],

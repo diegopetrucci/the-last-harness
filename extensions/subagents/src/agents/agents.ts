@@ -8,7 +8,6 @@ import * as path from "node:path";
 import type { AcceptanceRole, ToolBudgetConfig } from "../shared/types.ts";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
-import { mergeAgentsForScope } from "./agent-selection.ts";
 import {
   mergeProjectAgentSnapshot,
   projectAgentSnapshotDiscoveryMetadata,
@@ -62,6 +61,7 @@ const KNOWN_FIELDS = new Set([
   "output",
   "defaultReads",
   "defaultProgress",
+  // Accepted as a retired definition field but deliberately not stored or executed.
   "interactive",
   "maxSubagentDepth",
   "maxExecutionTimeMs",
@@ -98,7 +98,6 @@ interface BuiltinAgentOverrideConfig {
   inheritSkills?: boolean;
   acceptanceRole?: AcceptanceRole | false;
   disabled?: boolean;
-  systemPrompt?: string;
   skills?: string[] | false;
   tools?: string[] | false;
   subagentOnlyExtensions?: string[] | false;
@@ -148,7 +147,6 @@ export interface AgentConfig {
   output?: string;
   defaultReads?: string[];
   defaultProgress?: boolean;
-  interactive?: boolean;
   maxSubagentDepth?: number;
   completionGuard?: boolean;
   /** When false, omit generic native supervisor guidance and contact_supervisor runtime support. */
@@ -440,16 +438,15 @@ function parseBuiltinOverrideEntry(
   if (Object.hasOwn(input, "toolBudget")) {
     if (input.toolBudget === false) {
       override.toolBudget = false;
-    } else if (
-      input.toolBudget &&
-      typeof input.toolBudget === "object" &&
-      !Array.isArray(input.toolBudget)
-    ) {
-      override.toolBudget = input.toolBudget as ToolBudgetConfig;
     } else {
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.`,
-      );
+      const normalizedToolBudget = validateToolBudgetConfig(input.toolBudget);
+      if (normalizedToolBudget.error || normalizedToolBudget.budget === undefined) {
+        const detail = normalizedToolBudget.error ? ` ${normalizedToolBudget.error}` : "";
+        throw new Error(
+          `Builtin override '${name}' in '${filePath}' has invalid 'toolBudget'; expected an object or false.${detail}`,
+        );
+      }
+      override.toolBudget = normalizedToolBudget.budget;
     }
   }
 
@@ -464,14 +461,6 @@ function parseBuiltinOverrideEntry(
         );
       override.maxExecutionTimeMs = parsed;
     }
-  }
-
-  if (Object.hasOwn(input, "systemPrompt")) {
-    if (typeof input.systemPrompt === "string") override.systemPrompt = input.systemPrompt;
-    else
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'systemPrompt'; expected a string.`,
-      );
   }
 
   const fallbackModels = parseOverrideStringArrayOrFalse(
@@ -941,7 +930,6 @@ function loadAgentsFromDir(
         output: frontmatter.output,
         defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
         defaultProgress: frontmatter.defaultProgress === "true",
-        interactive: frontmatter.interactive === "true",
         maxSubagentDepth:
           Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
             ? parsedMaxSubagentDepth
@@ -979,12 +967,6 @@ function resolveNearestProjectAgentDirs(cwd: string): { preferredDir: string | n
 }
 
 /**
- * @deprecated Retained only for callers that clear the retired generic source.
- * TLH does not read this environment variable for agent discovery.
- */
-export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
-
-/**
  * The installer-managed TLH role files are the only supported user/extra
  * definitions. Generic profile, legacy, configured, and extra-dir files are
  * intentionally not part of TLH's active discovery surface.
@@ -1012,13 +994,7 @@ function loadCanonicalPackagedAgents(agentDiagnostics: AgentDiscoveryDiagnostic[
   });
 }
 
-// `excludeProjectPackages` remains accepted for the snapshot seam's call shape; generic package
-// roots are no longer loaded, so there is nothing else to exclude here.
-export function discoverAgents(
-  cwd: string,
-  scope: AgentScope,
-  _options: { excludeProjectPackages?: boolean } = {},
-): AgentDiscoveryResult {
+export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
   const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
   const userSettingsPath = getUserAgentSettingsPath();
   const projectSettingsPath = getProjectAgentSettingsPath(cwd);
@@ -1043,9 +1019,9 @@ export function discoverAgents(
     projectSettingsPath,
   );
 
-  const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter(
-    (agent) => agent.disabled !== true,
-  );
+  // Canonical definitions are already loaded in deterministic inventory order. Scope
+  // controls settings precedence above; it must not reintroduce generic source merging.
+  const agents = canonicalAgents.filter((agent) => agent.disabled !== true);
 
   return { agents, projectAgentsDir, modelScope, agentDiagnostics };
 }
@@ -1073,7 +1049,7 @@ export function discoverAgentsWithProjectSnapshot(
   if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
     throw new ProjectAgentSnapshotCapabilityError();
   }
-  const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+  const discovered = discoverAgents(cwd, "user");
   const userSettings = readSubagentSettings(getUserAgentSettingsPath());
   for (const entry of manifest.entries) {
     agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));

@@ -98,11 +98,15 @@ function assertReviewedRejection(text: string): void {
 }
 
 describe("reviewed dispatch route preflight", () => {
-  it("rejects reviewed acceptance through supported foreground single and parallel routes", async () => {
+  it("rejects retired acceptance through supported foreground single and parallel routes", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-reviewed-foreground-"));
     tempDirs.push(root);
-    const { executor } = createExecutor(root);
-    const cases: Array<{ label: string; params: Record<string, unknown> }> = [
+    const { executor, events } = createExecutor(root);
+    const cases: Array<{
+      label: string;
+      params: Record<string, unknown>;
+      retirement: RegExp;
+    }> = [
       {
         label: "single",
         params: {
@@ -110,10 +114,12 @@ describe("reviewed dispatch route preflight", () => {
           task: "Implement fix",
           acceptance: { level: "reviewed", review: false },
         },
+        retirement: /^acceptance is no longer supported\./,
       },
       {
         label: "parallel",
         params: { tasks: [{ agent: "worker", task: "Implement fix", acceptance: "reviewed" }] },
+        retirement: /^tasks\[0\]\.acceptance is no longer supported\./,
       },
     ];
 
@@ -127,7 +133,12 @@ describe("reviewed dispatch route preflight", () => {
       );
       assert.equal(result.isError, true, testCase.label);
       // The executor always returns TextContent for rejection results; ImageContent is not possible here.
-      assertReviewedRejection((result.content[0] as TextContent | undefined)?.text ?? "");
+      assert.match((result.content[0] as TextContent | undefined)?.text ?? "", testCase.retirement);
+      assert.equal(
+        events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT),
+        false,
+        testCase.label,
+      );
     }
   });
 
@@ -178,7 +189,6 @@ describe("reviewed dispatch route preflight", () => {
       agentConfig: makeAgent("worker"),
       ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
       artifactConfig,
-      shareEnabled: false,
       maxSubagentDepth: 2,
       acceptance: { level: "reviewed", review: false },
     });
@@ -193,7 +203,6 @@ describe("reviewed dispatch route preflight", () => {
       agents: [makeAgent("worker")],
       ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
       artifactConfig,
-      shareEnabled: false,
       maxSubagentDepth: 2,
     });
     assert.equal(parallel.isError, true, parallelId);

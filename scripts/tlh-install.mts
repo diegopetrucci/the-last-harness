@@ -26,19 +26,15 @@ import {
   copySafeProfileFile,
   ensureSafeProfileDir,
   isSymlink,
-  realpathForCompare,
   validateInstallerTargets,
 } from "./lib/tlh-install-paths.mjs";
 import {
   LEGACY_MANAGED_PROFILE_ARTIFACTS,
-  RETIRED_PROFILE_DIRECTORIES,
-  RETIRED_PROFILE_FILES,
   cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl,
   cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl,
-  cleanupRetiredProfileDirectories as cleanupRetiredProfileDirectoriesImpl,
-  cleanupRetiredProfileFiles as cleanupRetiredProfileFilesImpl,
   backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl,
   reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl,
+  pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache,
 } from "./lib/tlh-install-profile-cleanup.mjs";
 import type { ProfileCleanupConfig, ProfileCleanupIo } from "./lib/tlh-install-profile-cleanup.mjs";
 import {
@@ -80,12 +76,12 @@ import {
   supportFileManifest,
   type SupportFileDescriptor,
 } from "./lib/tlh-install-support-manifest.mjs";
+import { provisionPiRuntime } from "./lib/tlh-install-runtime.mjs";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.85.1";
-const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
+const PINNED_PI_VERSION = "1.1.0";
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
 const DEFAULT_GNOSIS_REPO = "skorokithakis/gnosis";
@@ -108,14 +104,18 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"] as
 //                  | "migrated" (provenance-gated: piInstalledByTlh=true in install-state)
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
-// npm 11.x --prefix layout; empirically confirmed: npm 11.19.0 +
-// @earendil-works/pi-coding-agent@0.85.1.  Mirrors the advisory exclusivity
-// tripwire in uninstall.sh (demoted from gate): the only top-level entries a
-// TLH-owned runtime prefix should contain are those created by
-// npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
+// Runtime prefix layout after lockfile-based provisioning (npm ci staged swap):
+// the only top-level entries a TLH-owned runtime prefix should contain are
+// those created by TLH's staged npm-ci swap plus the TLH runtime ownership
 // marker.  Authoritative ownership is carried by the marker file
 // (.tlh-runtime-owned), not by directory shape; this set is used only as an
 // advisory defense-in-depth check that can downgrade a removal to a skip.
+// Dot-prefixed staging/previous/failed dirs
+//   .tlh-runtime-staging-*, .tlh-runtime-previous-*, .tlh-runtime-failed-*
+// are transient and should not appear in a clean prefix; they are explicitly
+// allowed in the uninstall tripwire (see RUNTIME_*_DIR_PREFIX in
+// scripts/lib/tlh-install-runtime.mts and the case statement in uninstall.sh)
+// to avoid false-positive tripwires during crash recovery.
 const RUNTIME_OWNED_TOPLEVEL = new Set([
   "bin",
   "lib",
@@ -123,7 +123,6 @@ const RUNTIME_OWNED_TOPLEVEL = new Set([
   RUNTIME_MARKER_FILENAME,
 ]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
-
 type RuntimeMarkerOrigin = "created" | "migrated";
 type UpdateTrack = (typeof VALID_UPDATE_TRACKS)[number];
 type CommandArgs = readonly string[];
@@ -223,10 +222,10 @@ interface PreferBinDirOptions {
   addMessage: string;
   prependMessage: string;
 }
-
 interface PiInstallResult {
   installed: boolean;
   piCmd: string;
+  runtimePrefix: string;
 }
 
 function spawnErrorCode(error: unknown): string | number | undefined {
@@ -715,35 +714,6 @@ function spawnCapture(
   return result;
 }
 
-function readInstalledCommitSubject(config: InstallConfig): string | undefined {
-  if (config.dryRun) return undefined;
-
-  const topLevelResult = spawnCapture(
-    config,
-    ["git", "-C", config.packageRoot, "rev-parse", "--show-toplevel"],
-    { allowFailure: true },
-  );
-  if (topLevelResult.error || topLevelResult.status !== 0) return undefined;
-
-  const topLevel = topLevelResult.stdout.trim();
-  if (!topLevel) return undefined;
-  try {
-    if (realpathForCompare(topLevel) !== realpathForCompare(config.packageRoot)) return undefined;
-  } catch {
-    return undefined;
-  }
-
-  const result = spawnCapture(
-    config,
-    ["git", "-C", config.packageRoot, "log", "-1", "--format=%s"],
-    { allowFailure: true },
-  );
-  if (result.error || result.status !== 0) return undefined;
-
-  const subject = result.stdout.trim();
-  return subject || undefined;
-}
-
 function runNodeScript(
   config: InstallConfig,
   scriptPath: string,
@@ -839,12 +809,8 @@ function gitCheckoutIo(config: InstallConfig) {
   };
 }
 
-function pinnedPiInstallCommand(config: InstallConfig): string {
-  return `npm install -g --ignore-scripts --prefix "${piInstallPrefix(config)}" ${PI_PACKAGE_SPEC}`;
-}
-
-function pinnedPiInstallGuidance(config: InstallConfig): string {
-  return `Install the pinned TLH runtime with: ${pinnedPiInstallCommand(config)}`;
+function pinnedPiInstallGuidance(_config: InstallConfig): string {
+  return `re-run the TLH installer (\`tlh update\` or the install.sh script) to provision the private runtime`;
 }
 
 function readPiInstalledByTlhPreference(config: InstallConfig): boolean | undefined {
@@ -951,7 +917,7 @@ function assertSupportedPiVersion(
     versionCommandDisplay = "pi --version",
   }: SupportedPiVersionOptions = {},
 ): void {
-  // `pi --version` prints a bare semver (e.g. "0.85.1") on stdout. Older builds may
+  // `pi --version` prints a bare semver (e.g. "1.0.0") on stdout. Older builds may
   // differ, so we extract the first semver-shaped substring rather than match strictly.
   const result = spawnCapture(config, [piCommand, "--version"], {
     allowFailure: true,
@@ -976,7 +942,7 @@ function assertSupportedPiVersion(
   const currentVersion = match[0];
   if (currentVersion !== PINNED_PI_VERSION) {
     throw new Error(
-      `${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance}`,
+      `${requiredVersionDescription} is required (found ${currentVersion}). ${installGuidance[0].toUpperCase()}${installGuidance.slice(1)}.`,
     );
   }
   verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
@@ -1013,7 +979,7 @@ function runtimePrefix(config: InstallConfig): string {
 
 function piInstallPrefix(config: InstallConfig): string {
   // Always install the pinned pi into the private TLH runtime prefix (no ~/.local).
-  // Per-user, no sudo: npm install -g --ignore-scripts --prefix <runtimePrefix>.
+  // Uses staged npm ci from the shipped lockfile under config/pi-runtime/.
   return runtimePrefix(config);
 }
 
@@ -1087,85 +1053,60 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
   const prefix = piInstallPrefix(config);
   const piBinDir = join(prefix, "bin");
   const piBin = join(piBinDir, "pi");
+  // Shipped lock files: resolved from supportFilePaths (set by preflightRuntimeSupportFiles).
+  // In a local-repo run these resolve to <localRepoCandidate>/config/pi-runtime/{...};
+  // in a remote stage-1 run they resolve to <tmpDir>/pi-runtime-package{.json,-lock.json}.
+  //
+  // preflightRuntimeSupportFiles is skipped in dry-run mode, so supportFilePaths may
+  // be empty; fall back to the local-repo path for the reuse-check and dry-run log.
+  // provisionPiRuntime validates real paths before touching anything.
+  const localPiRuntimeDir = join(config.localRepoCandidate, "config", "pi-runtime");
+  const shippedPackageJsonPath =
+    config.supportFilePaths.PI_RUNTIME_PACKAGE_JSON || join(localPiRuntimeDir, "package.json");
+  const shippedLockPath =
+    config.supportFilePaths.PI_RUNTIME_PACKAGE_LOCK || join(localPiRuntimeDir, "package-lock.json");
 
-  // Always ensure the private TLH runtime exists and is the pinned version.
-  // Never borrow a global or PATH pi; never fall through to ~/.local.
-  if (existsSync(piBin)) {
-    let needsRepair = false;
-    try {
-      assertSupportedPiVersion(config, {
-        piCommand: piBin,
-        sourceDescription: `TLH private runtime at ${piBin}`,
-        versionCommandDisplay: `${piBin} --version`,
-      });
-      verboseLog(config, `TLH private Pi runtime is valid: ${piBin}`);
-      // Prepend the private runtime's bin dir to PATH for the remainder of this
-      // process so downstream pi commands resolve the validated private binary.
-      preferBinDirOnPathForCurrentInstall(config, piBinDir, {
-        addMessage: `TLH private Pi runtime ${piBin} is not on PATH.`,
-        prependMessage: `Using TLH private Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install.`,
-      });
-    } catch (error) {
-      // Private runtime exists but is the wrong version — repair it.
-      needsRepair = true;
-      verboseLog(
-        config,
-        `TLH private Pi runtime needs repair: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      log(config, `Pinning local Pi runtime to ${PINNED_PI_VERSION}...`);
-      verboseLog(
-        config,
-        `Repairing TLH private Pi runtime to pinned ${PINNED_PI_VERSION} at ${prefix} (per-user, no sudo)...`,
-      );
-    }
-    if (!needsRepair) {
-      // Ensure/refresh the ownership marker on reuse so existing users gain it
-      // on their next run (marker was introduced after initial deployments).
-      writeRuntimeMarker(config, prefix, origin);
-      if (config.dryRun) return { installed: false, piCmd: "" };
-      return { installed: false, piCmd: piBin };
-    }
-  } else {
-    log(config, `Pinning local Pi runtime to ${PINNED_PI_VERSION}...`);
-    verboseLog(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
+  verboseLog(config, `Installing TLH private Pi runtime from lockfile: ${shippedLockPath}`);
+
+  const { installed } = provisionPiRuntime(
+    {
+      prefix,
+      shippedPackageJsonPath,
+      shippedLockPath,
+      pinnedVersion: PINNED_PI_VERSION,
+      dryRun: config.dryRun,
+      origin,
+    },
+    {
+      log: (msg) => log(config, msg),
+      verboseLog: (msg) => verboseLog(config, msg),
+      printCommand: (args) => printCommand(args),
+      runCommand: (args, opts) => runCommand(config, args, opts),
+      checkVersion: (piCmd, desc) =>
+        assertSupportedPiVersion(config, {
+          piCommand: piCmd,
+          sourceDescription: desc,
+          versionCommandDisplay: `${piCmd} --version`,
+        }),
+    },
+  );
+
+  // Prepend the private runtime's bin dir to PATH for downstream pi commands.
+  if (!config.dryRun && existsSync(piBin)) {
+    preferBinDirOnPathForCurrentInstall(config, piBinDir, {
+      addMessage: installed
+        ? `${piBin} installed but ${piBinDir} is not on PATH.`
+        : `TLH private Pi runtime ${piBin} is not on PATH.`,
+      prependMessage: `Using TLH private Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install.`,
+    });
   }
 
-  verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
-  runCommand(config, [
-    "npm",
-    "install",
-    "-g",
-    "--ignore-scripts",
-    "--prefix",
-    prefix,
-    PI_PACKAGE_SPEC,
-  ]);
-  if (config.dryRun) {
-    // Log marker intent in dry-run; the prefix may not exist yet.
-    writeRuntimeMarker(config, prefix, origin);
-    return { installed: true, piCmd: "" };
-  }
-  if (!existsSync(piBin)) {
-    throw new Error(`Pi install completed, but ${piBin} does not exist`);
-  }
-  // Validate the freshly installed binary before proceeding — a broken or wrong-version
-  // npm install must throw here, before any legacy cleanup runs.
-  assertSupportedPiVersion(config, {
-    piCommand: piBin,
-    sourceDescription: `freshly installed TLH private runtime at ${piBin}`,
-    versionCommandDisplay: `${piBin} --version`,
-  });
-  // Prepend the private runtime's bin dir for the remainder of this process so
-  // downstream steps (pi install, pi update, …) resolve the new binary.
-  preferBinDirOnPathForCurrentInstall(config, piBinDir, {
-    addMessage: `${piBin} installed but ${piBinDir} is not on PATH.`,
-    prependMessage: `Using TLH private Pi runtime ${piBin}. Prepended ${piBinDir} to PATH for this install.`,
-  });
-  // Write the ownership marker after full successful install+validation.
+  // Write/refresh the ownership marker after a successful provision/reuse.
   writeRuntimeMarker(config, prefix, origin);
-  return { installed: true, piCmd: piBin };
-}
 
+  if (config.dryRun) return { installed, piCmd: "", runtimePrefix: prefix };
+  return { installed, piCmd: existsSync(piBin) ? piBin : "", runtimePrefix: prefix };
+}
 function profileCleanupIo(
   config: ProfileCleanupConfig,
   runtimeConfig?: InstallConfig,
@@ -1178,16 +1119,12 @@ function profileCleanupIo(
     runPiRemove: (commandArgs) => {
       if (runtimeConfig) spawnCaptureIsolatedPi(runtimeConfig, commandArgs);
     },
+    runCommand: (commandArgs, options) =>
+      runtimeConfig ? runCommand(runtimeConfig, commandArgs, options) : undefined,
   };
-}
-export function cleanupRetiredProfileDirectories(config: ProfileCleanupConfig): void {
-  cleanupRetiredProfileDirectoriesImpl(config, profileCleanupIo(config));
 }
 export function cleanupLegacyManagedProfileArtifacts(config: ProfileCleanupConfig): void {
   cleanupLegacyManagedProfileArtifactsImpl(config, profileCleanupIo(config));
-}
-export function cleanupRetiredProfileFiles(config: InstallConfig): void {
-  cleanupRetiredProfileFilesImpl(config, profileCleanupIo(config));
 }
 export function cleanupOldSettingsBackups(config: InstallConfig): void {
   cleanupOldSettingsBackupsImpl(config, profileCleanupIo(config));
@@ -1432,8 +1369,23 @@ async function writeInstallState(config: InstallConfig): Promise<void> {
     "--wrapper-name",
     config.wrapperName,
   ];
-  const commitSubject = readInstalledCommitSubject(config);
-  if (commitSubject) args.push(`--commit-subject=${commitSubject}`);
+  const commitMetadata = gitInstall.readVerifiedGitCommitMetadata(
+    config,
+    config.packageRoot,
+    gitCheckoutIo(config),
+  );
+  if (commitMetadata.commitSubject) {
+    args.push(`--commit-subject=${commitMetadata.commitSubject}`);
+  }
+  if (
+    config.repo === DEFAULT_REPO &&
+    config.ref === DEFAULT_REF &&
+    config.updateTrack === "ref" &&
+    config.packageSourceIsDefault &&
+    commitMetadata.commitSha
+  ) {
+    args.push(`--commit-sha=${commitMetadata.commitSha}`);
+  }
 
   const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
   const piInstalledByTlhForWrite =
@@ -1889,7 +1841,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   await preflightRuntimeSupportFiles(config, supportFileIo(config));
 
   const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
-  const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);
+  const { installed: piInstalledByTlh, piCmd, runtimePrefix } = installPiIfNeeded(config);
   // A runtime installed by this run is always TLH-owned, even if an update passed through a
   // stale false/absent value from an older install-state. Otherwise preserve the explicit
   // override or previously recorded ownership state when present, and fall back to false only
@@ -1917,8 +1869,6 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   }
   await mergeSettings(config);
   cleanupLegacyManagedProfileArtifacts(config);
-  cleanupRetiredProfileDirectories(config);
-  if (!config.noSettings) cleanupRetiredProfileFiles(config);
   if (!config.noSettings) reclaimRetiredExtensionResidues(config);
   if (!config.noSettings) cleanupOldSettingsBackups(config);
   await writeInstallState(config);
@@ -1927,6 +1877,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);
+  pruneRuntimeCache(config, profileCleanupIo(config, config), runtimePrefix);
   printSummary(config);
 }
 
@@ -1981,8 +1932,6 @@ if (isMainModule()) {
 export {
   LEGACY_MANAGED_PROFILE_ARTIFACTS,
   MIN_NODE_VERSION,
-  RETIRED_PROFILE_DIRECTORIES,
-  RETIRED_PROFILE_FILES,
   RUNTIME_MARKER_FILENAME,
   RUNTIME_OWNED_TOPLEVEL,
   assertSupportedNodeRuntime,

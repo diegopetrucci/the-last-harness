@@ -4,11 +4,28 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-type` is recorded in [Unsafe dictionary investigation (2026-08-18)](no-unsafe-dictionary-investigation-2026-08-18.md). It is evidence for a future decision only; do not enable the rule or apply cosmetic remediations from that note without a separately approved implementation slice.
 
+## TelemetryDeck MCP (contributors only)
+
+The project-local [`.mcp.json`](../.mcp.json) provides a lazy, OAuth-backed `telemetrydeck` MCP server for approved contributor investigations. It is not part of TLH runtime telemetry behavior. Authenticate only when needed with:
+
+```text
+/mcp-auth telemetrydeck
+```
+
+Treat TelemetryDeck data as sensitive and follow these mandatory constraints:
+
+- Queries must be aggregate-only and must enforce at least 10 distinct `clientUser` values before a result is inspected or reported (for example, `COUNT(DISTINCT clientUser) >= 10`).
+- Never call `Tlh.User.mark`.
+- Never query, display, or retain individual identifiers, including individual `clientUser` values.
+- Never perform cross-system linking: do not link TelemetryDeck data with another system, dataset, repository, session, or identifier.
+
+Do not export or copy raw event data into issues, commits, tests, logs, or other project artifacts. Keep any approved findings at the aggregate level and use the MCP only for contributor work.
+
 ## Direct dependency pin decisions
 
-Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.85.1`, Oxlint `1.82.0`, `@oxlint/plugins` `1.82.0`, Oxfmt `0.67.0`, and `@types/node` `26.5.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current. Pi `0.85.1` removed `bundleDependencies`; `pi-ai`, `pi-tui`, and `pi-agent-core` moved from bundled to ordinary runtime dependencies, `@earendil-works/chord` is a new ordinary runtime dependency, `pi-client`, `pi-protocol`, and `pi-server` are devDependencies of 0.85.1 and absent from the installed dependency tree, and `pi-telemetry` appears transitively; these changes account for the ~1200-line growth in `package-lock.json` relative to `0.84.4`.
+Direct dependency, devDependency, and peerDependency specs remain exact. The current Pi pin is `1.1.0`; the existing exact pins for Oxlint `1.82.0`, `@oxlint/plugins` `1.82.0`, Oxfmt `0.67.0`, and `@types/node` `26.5.0` remain unchanged. The other existing exact pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) also remain unchanged. Pi `1.1.0` retains the runtime dependency layout introduced in 0.85.1, including the ordinary `pi-ai`, `pi-tui`, and `pi-agent-core` dependencies and `@earendil-works/chord`; `pi-client`, `pi-protocol`, and `pi-server` remain absent from the installed dependency tree, while `pi-telemetry` appears transitively.
 
-Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.85.1` declares that exact transitive pin, and `typescript` stays at `6.0.3` because `scripts/runtime-typescript.mjs` resolves `typescript/bin/tsc`, which TypeScript `7.0.2` no longer exports, and `scripts/check-lazy-import-boundaries.mjs` imports the TypeScript compiler API and calls `ts.createSourceFile`, while TypeScript `7.0.2`'s root export does not provide that compiler API. Both holds are therefore compatibility requirements, not stale version metadata.
+TLH's `typebox` pin is a `devDependency` at the exact version `1.3.27` (matching Pi `1.1.0`'s pinned transitive `typebox` version) plus a `peerDependency` of `'*'`. Pi provides `typebox` to extensions at runtime and warns when packages bundle a host-provided dependency, so TLH declares it as a peer rather than a direct runtime dependency. The separate TypeScript compatibility hold remains at `6.0.3` because `scripts/runtime-typescript.mjs` resolves `typescript/bin/tsc`, which TypeScript `7.0.2` no longer exports, and `scripts/check-lazy-import-boundaries.mjs` imports the TypeScript compiler API and calls `ts.createSourceFile`, while TypeScript `7.0.2`'s root export does not provide that compiler API.
 
 ## Package compatibility boundary
 
@@ -162,7 +179,7 @@ TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
 "$tmp/bin/tlh"
 ```
 
-**File-source keybinding caveat (`/effort` picker, Ctrl+S):** under the `file:<checkout>` layout only, the `/effort` picker renders an empty key where `Ctrl+S` should appear, and pressing Ctrl+S does nothing—the picker stays open and no default is saved. Enter and Escape/Ctrl+C still work. This is not a TLH bug. Cause: Pi 0.85.1 renders selector hints from the global pi-tui keybindings registry via `keyDisplayText`/`getKeybindings`, and when TLH is installed from a checkout the checkout's own `node_modules/@earendil-works/pi-coding-agent` supplies a second `pi-coding-agent` (and nested `pi-tui`) module instance whose global keybindings registry is never initialised by the interactive app, so `app.*` binding ids resolve to no keys while `tui.*` ids still resolve from built-in defaults. The unpacked-package layout contains no `node_modules`, so a packaged install has a single module instance and behaves correctly. To verify Ctrl+S persistence, use the unpacked-package layout (npm pack, unpack, then `TLH_PACKAGE_SOURCE=file:<unpacked-package>`).
+**File-source keybinding caveat (`/effort` picker, Ctrl+S):** under the `file:<checkout>` layout only, the `/effort` picker renders an empty key where `Ctrl+S` should appear, and pressing Ctrl+S does nothing—the picker stays open and no default is saved. Enter and Escape/Ctrl+C still work. This is not a TLH bug. Cause: the pinned Pi runtime renders selector hints from the global pi-tui keybindings registry via `keyDisplayText`/`getKeybindings`, and when TLH is installed from a checkout the checkout's own `node_modules/@earendil-works/pi-coding-agent` supplies a second `pi-coding-agent` (and nested `pi-tui`) module instance whose global keybindings registry is never initialised by the interactive app, so `app.*` binding ids resolve to no keys while `tui.*` ids still resolve from built-in defaults. The unpacked-package layout contains no `node_modules`, so a packaged install has a single module instance and behaves correctly. To verify Ctrl+S persistence, use the unpacked-package layout (npm pack, unpack, then `TLH_PACKAGE_SOURCE=file:<unpacked-package>`).
 
 You can also test any pushed TLH branch through GitHub. Fetch that branch's installer and pass the same branch name as `--ref`:
 

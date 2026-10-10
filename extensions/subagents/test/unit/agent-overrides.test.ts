@@ -582,6 +582,39 @@ describe("canonical packaged agent overrides", () => {
     );
   });
 
+  it("rejects a semantically invalid toolBudget override when settings load", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    writeJson(settingsPath, {
+      subagents: { agentOverrides: { developer: { toolBudget: { hard: 0 } } } },
+    });
+
+    assert.throws(
+      () => discoverAgents(tempProject, "both"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(settingsPath) &&
+        error.message.includes("developer") &&
+        error.message.includes("invalid 'toolBudget'"),
+    );
+  });
+
+  it("ignores a retired systemPrompt override and still applies sibling fields", () => {
+    writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+      subagents: {
+        agentOverrides: { developer: { model: "mock/kept", systemPrompt: 12 } },
+      },
+    });
+    writeCanonicalAgent(
+      "developer",
+      "---\nname: developer\ndescription: TLH developer\n---\n\nOriginal prompt.\n",
+    );
+
+    const developer = findAgent("developer");
+    assert.equal(developer.model, "mock/kept");
+    assert.equal(developer.systemPrompt.trim(), "Original prompt.");
+    assert.equal(developer.override?.base.systemPrompt.trim(), "Original prompt.");
+  });
+
   it("surfaces malformed completion guard override values", () => {
     const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
     writeJson(settingsPath, {

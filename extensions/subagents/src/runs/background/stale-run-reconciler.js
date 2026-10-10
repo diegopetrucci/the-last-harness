@@ -2,15 +2,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
-import { createAsyncStatusJsonParseError } from "./async-status-corruption.js";
-import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
-import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
+import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { normalizeIdleEpisodeId } from "../shared/health-transition.js";
+import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
+import { readStatus } from "../../shared/utils.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -57,29 +57,7 @@ function appendJsonlBestEffort(filePath, payload) {
     }
 }
 function readStatusFile(asyncDir) {
-    const statusPath = path.join(asyncDir, "status.json");
-    let content;
-    try {
-        content = fs.readFileSync(statusPath, "utf-8");
-    }
-    catch (error) {
-        if (isNotFoundError(error))
-            return null;
-        throw new Error(`Failed to read async status file '${statusPath}': ${getErrorMessage(error)}`, {
-            cause: error,
-        });
-    }
-    try {
-        return normalizeAsyncLifecycleStatus(JSON.parse(content));
-    }
-    catch (error) {
-        throw createAsyncStatusJsonParseError({
-            asyncDir,
-            statusPath,
-            content,
-            cause: error,
-        });
-    }
+    return readStatus(asyncDir);
 }
 const DURABLE_ATTENTION_REASONS = new Set([
     "context_pressure",
@@ -168,6 +146,7 @@ function readResultRepairData(resultPath) {
             : undefined;
         const activeRuntimeMs = normalizeActiveRuntimeMs(data.activeRuntimeMs);
         const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(data.activeRuntimeCheckpointAt);
+        const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
         const results = Array.isArray(data.results)
             ? data.results.map((entry) => {
                 if (!entry || typeof entry !== "object" || Array.isArray(entry))
@@ -214,6 +193,7 @@ function readResultRepairData(resultPath) {
             ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
             ...(results ? { results } : {}),
             ...(projectAgents ? { projectAgents } : projectMarkerPresent ? { projectAgents: [] } : {}),
+            ...(telemetry ? { telemetry } : {}),
         };
     }
     catch (error) {
@@ -231,10 +211,94 @@ function childState(overallState, child) {
         return "failed";
     return overallState === "cancelled" ? "paused" : overallState;
 }
+function isTerminalTelemetryOutcome(outcome) {
+    return (outcome?.state === "completed" ||
+        outcome?.state === "failed" ||
+        outcome?.state === "paused" ||
+        outcome?.state === "cancelled" ||
+        outcome?.state === "continued");
+}
+function copyTerminalTelemetryOutcome(outcome) {
+    return isTerminalTelemetryOutcome(outcome) ? { ...outcome } : undefined;
+}
+function telemetryForRepairedSteps(telemetry, repairedSteps, now, runOutcome) {
+    if (!telemetry)
+        return undefined;
+    const steps = telemetry.steps.map((step) => {
+        const statusStep = repairedSteps[step.index];
+        if (!statusStep || isTerminalTelemetryOutcome(step.outcome))
+            return { ...step };
+        const stillActive = statusStep.status === "running" ||
+            statusStep.status === "pending" ||
+            statusStep.status === "pausing";
+        const priorTiming = step.timing;
+        const startedAt = priorTiming?.startedAt ?? statusStep.startedAt;
+        const timingValues = {
+            ...(statusStep.startedAt !== undefined ? { startedAt: statusStep.startedAt } : {}),
+            ...(statusStep.endedAt !== undefined ? { endedAt: statusStep.endedAt } : {}),
+            ...(statusStep.durationMs !== undefined ? { durationMs: statusStep.durationMs } : {}),
+            ...(statusStep.activeRuntimeMs !== undefined
+                ? { activeRuntimeMs: statusStep.activeRuntimeMs }
+                : {}),
+            ...(stillActive && statusStep.endedAt === undefined ? { endedAt: now } : {}),
+            ...(stillActive && statusStep.durationMs === undefined && startedAt !== undefined
+                ? { durationMs: Math.max(0, now - startedAt) }
+                : {}),
+        };
+        const timing = Object.keys(timingValues).length > 0
+            ? { ...priorTiming, ...timingValues }
+            : priorTiming
+                ? { ...priorTiming }
+                : undefined;
+        const lifecycleOutcome = resolveSubagentTelemetryOutcome({
+            state: statusStep.status,
+            timedOut: statusStep.timedOut,
+            terminationReason: statusStep.terminationReason,
+            acceptanceStatus: statusStep.acceptance?.status,
+        });
+        const outcome = lifecycleOutcome &&
+            lifecycleOutcome.state !== "queued" &&
+            lifecycleOutcome.state !== "running"
+            ? lifecycleOutcome
+            : runOutcome;
+        return {
+            ...step,
+            ...(statusStep.modelIdentity && !step.model
+                ? { model: { ...statusStep.modelIdentity } }
+                : {}),
+            ...(timing ? { timing } : {}),
+            ...(outcome ? { outcome } : {}),
+        };
+    });
+    const priorTiming = telemetry.timing;
+    const startedAt = priorTiming?.startedAt;
+    const timing = priorTiming
+        ? {
+            ...priorTiming,
+            ...(priorTiming.endedAt === undefined ? { endedAt: now } : {}),
+            ...(priorTiming.durationMs === undefined && startedAt !== undefined
+                ? { durationMs: Math.max(0, now - startedAt) }
+                : {}),
+        }
+        : undefined;
+    return {
+        ...telemetry,
+        steps,
+        ...(timing ? { timing } : {}),
+        ...(runOutcome ? { outcome: { ...runOutcome } } : {}),
+    };
+}
 function terminalStatusFromResult(status, resultPath, now) {
     const repair = readResultRepairData(resultPath);
     if (!repair)
         return undefined;
+    const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, status.telemetry);
+    const runOutcome = copyTerminalTelemetryOutcome(mergedTelemetry?.outcome) ??
+        resolveSubagentTelemetryOutcome({
+            state: repair.state,
+            success: repair.state === "complete",
+            terminationReason: repair.state === "failed" ? "process_exit" : undefined,
+        });
     const steps = (status.steps ?? []).map((step, index) => {
         const sanitizedStep = sanitizeStatusStep(step);
         const child = repair.results?.[index];
@@ -313,6 +377,7 @@ function terminalStatusFromResult(status, resultPath, now) {
                 : {}),
         };
     });
+    const telemetry = telemetryForRepairedSteps(mergedTelemetry, steps, now, runOutcome);
     const stepActiveRuntimeMs = steps
         .map((step) => normalizeActiveRuntimeMs(step.activeRuntimeMs))
         .filter((value) => value !== undefined);
@@ -341,6 +406,7 @@ function terminalStatusFromResult(status, resultPath, now) {
         endedAt: status.endedAt ?? now,
         steps,
         ...(repair.projectAgents ? { projectAgents: repair.projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
         ...(reconciledActiveRuntimeMs.length > 0
             ? { activeRuntimeMs: Math.max(...reconciledActiveRuntimeMs) }
             : {}),
@@ -362,6 +428,7 @@ function buildStartedStatus(asyncDir, startedRun, now) {
         lastUpdate: now,
         currentStep: 0,
         ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
+        ...(startedRun.telemetry ? { telemetry: startedRun.telemetry } : {}),
         steps: agents.map((agent) => ({
             agent,
             status: "running",
@@ -417,6 +484,10 @@ function buildFailedRepair(status, asyncDir, now, reason) {
     const repairedCheckpointValues = repairedSteps
         .map((step) => normalizeActiveRuntimeCheckpointAt(step.activeRuntimeCheckpointAt))
         .filter((value) => value !== undefined);
+    const repairedTelemetry = telemetryForRepairedSteps(status.telemetry, repairedSteps, now, {
+        state: "failed",
+        terminationReason: "process_exit",
+    });
     const repairedActiveRuntimeMs = [
         normalizeActiveRuntimeMs(status.activeRuntimeMs),
         ...(repairedRuntimeValues.length > 0
@@ -434,6 +505,7 @@ function buildFailedRepair(status, asyncDir, now, reason) {
         lastUpdate: now,
         endedAt: now,
         steps: repairedSteps,
+        ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
         ...(repairedActiveRuntimeMs.length > 0
             ? { activeRuntimeMs: Math.max(...repairedActiveRuntimeMs) }
             : {}),
@@ -452,8 +524,10 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             success: false,
             state: "failed",
             summary: message,
+            ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
             results: repairedSteps.map((step) => ({
                 agent: step.agent,
+                ...(typeof step.cwd === "string" && step.cwd.length > 0 ? { cwd: step.cwd } : {}),
                 ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
                 ...(step.tkTicketId ? { tkTicketId: step.tkTicketId } : {}),
                 output: step.status === "complete" || step.status === "completed" ? "" : message,
@@ -511,55 +585,6 @@ function writeFailedRepair(asyncDir, status, resultPath, now, reason) {
         message: repair.message,
     });
     return { status: repair.status, repaired: true, resultPath, message: repair.message };
-}
-function terminal(state) {
-    return (state === "complete" ||
-        state === "failed" ||
-        state === "paused" ||
-        state === "cancelled" ||
-        state === "continued");
-}
-function* nestedRuns(children) {
-    for (const child of children ?? []) {
-        yield child;
-        yield* nestedRuns(child.children);
-        yield* nestedRuns(child.steps?.flatMap((step) => step.children ?? []));
-    }
-}
-export function reconcileNestedAsyncDescendants(route, options = {}) {
-    const registry = projectNestedEvents(route);
-    for (const run of nestedRuns(registry.children)) {
-        if (run.state !== "running" && run.state !== "queued")
-            continue;
-        const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
-        if (!asyncDir)
-            continue;
-        const result = reconcileAsyncRun(asyncDir, {
-            ...options,
-            resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-        });
-        const status = result.status;
-        if (!status)
-            continue;
-        if (!result.repaired && !terminal(status.state))
-            continue;
-        const ts = options.now?.() ?? Date.now();
-        writeNestedEvent(route, {
-            type: terminal(status.state) ? "subagent.nested.completed" : "subagent.nested.updated",
-            ts,
-            parentRunId: run.parentRunId,
-            parentStepIndex: run.parentStepIndex,
-            child: nestedSummaryFromAsyncStatus(status, asyncDir, {
-                id: run.id,
-                parentRunId: run.parentRunId,
-                parentStepIndex: run.parentStepIndex,
-                depth: run.depth,
-                path: run.path,
-                mode: run.mode,
-                ts,
-            }),
-        });
-    }
 }
 export { checkPidLiveness };
 export function reconcileAsyncRun(asyncDir, options = {}) {

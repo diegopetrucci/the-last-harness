@@ -54,7 +54,7 @@ import {
   writeLifecycleLock,
 } from "../support/async-execution-helpers.ts";
 
-describe("async execution utilities", () => {
+describe("async execution supervisor", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -134,7 +134,6 @@ describe("async execution utilities", () => {
         includeMetadata: false,
         cleanupDays: 7,
       },
-      shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
       maxSubagentDepth: 2,
     });
@@ -221,7 +220,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -373,7 +371,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -477,7 +474,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -579,7 +575,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -660,7 +655,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -734,7 +728,6 @@ describe("async execution utilities", () => {
             includeMetadata: false,
             cleanupDays: 7,
           },
-          shareEnabled: false,
           sessionRoot: path.join(tempDir, "sessions"),
           maxSubagentDepth: 2,
         });
@@ -768,6 +761,17 @@ describe("async execution utilities", () => {
         ) as any;
         assert.equal(continuedStatus.state, "continued");
         assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
+        // Wait for the continuation mock-pi call record to appear (the
+        // "continued" status is written before the continuation runner spawns
+        // mock-pi, so the call may not exist yet when waitForAsyncState returns)
+        // and then wait for all spawned mock-pi processes to exit so that
+        // afterEach's removeTempDir does not race with in-progress file writes.
+        await waitForMockPiCall(mockPi, 1, scaleTestTimeout(10_000));
+        await waitForPidsToExit(
+          startedMockPiPids(mockPi),
+          "supervisor-recover cleanup",
+          scaleTestTimeout(15_000),
+        );
       } finally {
         if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
         else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
@@ -811,7 +815,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -882,7 +885,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -991,7 +993,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1069,7 +1070,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1141,7 +1141,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1231,7 +1230,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1280,7 +1278,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
@@ -1308,7 +1305,7 @@ describe("async execution utilities", () => {
   );
 
   it(
-    "keeps non-blocking supervisor updates live and pauses only active cohort children for supervisor blocks",
+    "keeps a non-blocking supervisor progress update live without pausing the child",
     {
       skip:
         process.platform === "win32"
@@ -1342,47 +1339,12 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
       const progressPayload = (await readAsyncPayload(progressId)) as any;
       assert.equal(progressPayload.state, "complete");
       assert.equal(progressPayload.pause, undefined);
-
-      mockPi.onCall({
-        steps: [
-          {
-            jsonl: [
-              events.toolStart("contact_supervisor", { reason: "progress_update", message: "FYI" }),
-              events.toolResult("contact_supervisor", "sent"),
-              events.toolEnd("contact_supervisor"),
-            ],
-          },
-          { jsonl: [events.assistantMessage("native update finished")] },
-        ],
-      });
-      const nativeUpdateId = `async-non-blocking-native-${Date.now().toString(36)}`;
-      executeAsyncSingle!(nativeUpdateId, {
-        agent: "worker",
-        task: "Provide a short non-blocking status update only. Do not edit files.",
-        agentConfig: makeAgent("worker", { acceptanceRole: "read-only" }),
-        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        sessionRoot: path.join(tempDir, "sessions"),
-        maxSubagentDepth: 2,
-      });
-      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
-      assert.equal(nativeUpdatePayload.state, "complete");
-      assert.equal(nativeUpdatePayload.pause, undefined);
     },
   );
 
@@ -1451,7 +1413,6 @@ describe("async execution utilities", () => {
           includeMetadata: false,
           cleanupDays: 7,
         },
-        shareEnabled: false,
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });

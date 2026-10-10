@@ -208,7 +208,6 @@ export function createProviderAuthHealthStore(options = {}) {
     const healthEntries = new Map();
     const inFlight = new Map();
     const generations = new Map();
-    const runLevelObservedProviders = new Set();
     const renderListeners = new Set();
     let disposed = false;
     const generation = (provider) => generations.get(provider) ?? 0;
@@ -271,14 +270,12 @@ export function createProviderAuthHealthStore(options = {}) {
                 return;
             bumpGeneration(provider);
             inFlight.delete(provider);
-            runLevelObservedProviders.delete(provider);
             recordEntry(provider, "healthy");
             notifyListeners();
         },
         recordRunLevelAuthObservation(provider) {
             if (disposed)
                 return;
-            runLevelObservedProviders.add(provider);
             recordEntry(provider, "reauth-required");
             notifyListeners();
         },
@@ -318,7 +315,6 @@ export function createProviderAuthHealthStore(options = {}) {
             healthEntries.clear();
             inFlight.clear();
             generations.clear();
-            runLevelObservedProviders.clear();
             renderListeners.clear();
         },
     };

@@ -4,6 +4,8 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 const HERDR_SOURCE = "herdr:tlh";
 const HERDR_AGENT = "pi";
+const HERDR_METADATA_SOURCE = "user:tlh-display";
+const HERDR_DISPLAY_AGENT = "tlh";
 const CMUX_STATUS_KEY = "tlh";
 const DEFAULT_IDLE_DEBOUNCE_MS = 250;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20000;
@@ -160,6 +162,18 @@ function readSessionRef(ctx) {
     }
     return { agentSessionId, agentSessionPath };
 }
+function readSessionName(ctx) {
+    try {
+        const name = ctx.sessionManager.getSessionName();
+        if (typeof name !== "string")
+            return undefined;
+        const trimmed = name.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 function withSessionRef(params, sessionRef) {
     if (sessionRef.agentSessionPath) {
         return { ...params, agent_session_path: sessionRef.agentSessionPath };
@@ -267,9 +281,13 @@ export function createHerdrActivityReporter(options = {}) {
     let heartbeatTimer;
     let heartbeatStopped = false;
     let heartbeatStarted = false;
+    let displayMetadataPending = false;
+    let displayMetadataInFlight = false;
+    let displayMetadataDirty = false;
+    let currentSessionTitle;
     let outboundChain = Promise.resolve();
     const nextReportSeq = () => {
-        reportSeq += 1;
+        reportSeq = Math.max(reportSeq + 1, now() * 1000);
         return reportSeq;
     };
     const enqueueOutbound = (task) => {
@@ -290,6 +308,37 @@ export function createHerdrActivityReporter(options = {}) {
             }, sessionRef),
         });
     };
+    const sendDisplayMetadata = async () => {
+        const titleParam = currentSessionTitle !== undefined ? { title: currentSessionTitle } : { clear_title: true };
+        try {
+            await sendRequest({
+                id: `${HERDR_METADATA_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
+                method: "pane.report_metadata",
+                params: {
+                    pane_id: paneId,
+                    source: HERDR_METADATA_SOURCE,
+                    agent: HERDR_AGENT,
+                    applies_to_source: HERDR_SOURCE,
+                    display_agent: HERDR_DISPLAY_AGENT,
+                    ...titleParam,
+                },
+            });
+        }
+        catch {
+        }
+    };
+    const retryDisplayMetadata = () => {
+        if (!displayMetadataPending || displayMetadataInFlight || !rootSession || disposed)
+            return;
+        displayMetadataInFlight = true;
+        displayMetadataDirty = false;
+        void sendDisplayMetadata().finally(() => {
+            displayMetadataInFlight = false;
+            if (displayMetadataDirty && rootSession && !disposed) {
+                retryDisplayMetadata();
+            }
+        });
+    };
     const stopHeartbeat = () => {
         heartbeatStopped = true;
         if (heartbeatTimer) {
@@ -308,10 +357,11 @@ export function createHerdrActivityReporter(options = {}) {
                 if (heartbeatStopped || !rootSession || disposed)
                     return;
                 const state = desiredState ?? lastReportedState;
-                if (state === undefined)
-                    return;
-                await sendStateCore(state);
-                lastReportedState = state;
+                if (state !== undefined) {
+                    await sendStateCore(state);
+                    lastReportedState = state;
+                }
+                retryDisplayMetadata();
             });
             void heartbeatDelivery
                 .catch(() => undefined)
@@ -348,39 +398,62 @@ export function createHerdrActivityReporter(options = {}) {
         handleSessionStart(ctx) {
             if (disposed || ctx.mode !== "tui") {
                 rootSession = false;
+                displayMetadataPending = false;
                 return;
             }
             rootSession = true;
             sessionRef = readSessionRef(ctx);
-            if (!sessionRef.agentSessionId && !sessionRef.agentSessionPath)
-                return;
+            currentSessionTitle = readSessionName(ctx);
             const startedSessionRef = sessionRef;
-            void sendRequest({
-                id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
-                method: "pane.report_agent_session",
-                params: withSessionRef({
-                    pane_id: paneId,
-                    source: HERDR_SOURCE,
-                    agent: HERDR_AGENT,
-                    seq: nextReportSeq(),
-                }, startedSessionRef),
-            }).catch(() => undefined);
+            if (startedSessionRef.agentSessionId || startedSessionRef.agentSessionPath) {
+                void sendRequest({
+                    id: `${HERDR_SOURCE}:session:${now()}:${Math.random().toString(36).slice(2)}`,
+                    method: "pane.report_agent_session",
+                    params: withSessionRef({
+                        pane_id: paneId,
+                        source: HERDR_SOURCE,
+                        agent: HERDR_AGENT,
+                        seq: nextReportSeq(),
+                    }, startedSessionRef),
+                }).catch(() => undefined);
+            }
+            displayMetadataPending = true;
+            displayMetadataDirty = true;
+            retryDisplayMetadata();
         },
         handleSnapshot(snapshot) {
             if (!rootSession || disposed)
                 return;
             queuedReporter.handleSnapshot(snapshot);
         },
+        handleSessionInfoChanged(ctx) {
+            if (!rootSession || disposed)
+                return;
+            const name = readSessionName(ctx);
+            if (name === currentSessionTitle)
+                return;
+            currentSessionTitle = name;
+            if (displayMetadataInFlight) {
+                displayMetadataDirty = true;
+                return;
+            }
+            displayMetadataPending = true;
+            retryDisplayMetadata();
+        },
         handleSessionShutdown() {
             if (!rootSession)
                 return;
             rootSession = false;
+            displayMetadataPending = false;
+            displayMetadataDirty = false;
             stopHeartbeat();
             queuedReporter.handleSessionShutdown();
         },
         dispose() {
             disposed = true;
             rootSession = false;
+            displayMetadataPending = false;
+            displayMetadataDirty = false;
             stopHeartbeat();
             queuedReporter.dispose();
         },
@@ -490,10 +563,99 @@ export function createCmuxActivityReporter(options = {}) {
         },
     };
 }
+function resolveBlockedProgramStatusState(kind) {
+    if (kind === "confirm")
+        return "blocked:permission";
+    if (kind === "select" || kind === "input" || kind === "editor" || kind === "custom")
+        return "blocked:question";
+    return "blocked";
+}
+function formatProgramStatusSequence(state) {
+    if (state === "clear") {
+        return "\x1b]7501;state=clear\x1b\\";
+    }
+    if (state === "blocked:permission") {
+        return "\x1b]7501;state=blocked:app=tlh:kind=permission\x1b\\";
+    }
+    if (state === "blocked:question") {
+        return "\x1b]7501;state=blocked:app=tlh:kind=question\x1b\\";
+    }
+    return `\x1b]7501;state=${state}:app=tlh\x1b\\`;
+}
+export function createProgramStatusActivityReporter(options = {}) {
+    const env = options.env ?? process.env;
+    if (env.TLH_PROGRAM_STATUS === "0") {
+        return createNoopReporter();
+    }
+    const output = options.output ?? process.stdout;
+    if (!output.isTTY) {
+        return createNoopReporter();
+    }
+    let rootSession = false;
+    const resolveState = (snapshot) => {
+        if (snapshot.waitingForUser) {
+            return resolveBlockedProgramStatusState(snapshot.waitingForUserKind);
+        }
+        if (snapshot.inProgress || snapshot.runActive)
+            return "working";
+        if (snapshot.lastRunOutcome === "aborted")
+            return "idle";
+        if (snapshot.lastRunOutcome === "error")
+            return "error";
+        if (snapshot.lastRunOutcome === "completed")
+            return "done";
+        return "idle";
+    };
+    const sendState = async (state) => {
+        try {
+            output.write(formatProgramStatusSequence(state));
+        }
+        catch {
+        }
+    };
+    const sendClear = async () => {
+        try {
+            output.write(formatProgramStatusSequence("clear"));
+        }
+        catch {
+        }
+    };
+    const queuedReporter = createQueuedStateReporter(sendState, resolveState, options);
+    return {
+        handleSessionStart(ctx) {
+            if (ctx.mode !== "tui") {
+                rootSession = false;
+                return;
+            }
+            rootSession = true;
+        },
+        handleSnapshot(snapshot) {
+            if (!rootSession)
+                return;
+            queuedReporter.handleSnapshot(snapshot);
+        },
+        handleSessionShutdown() {
+            if (!rootSession)
+                return;
+            rootSession = false;
+            queuedReporter.handleSessionShutdown();
+            queuedReporter.enqueueAfterDrain(sendClear);
+        },
+        dispose() {
+            if (rootSession) {
+                rootSession = false;
+                queuedReporter.handleSessionShutdown();
+                queuedReporter.enqueueAfterDrain(sendClear);
+            }
+            queuedReporter.dispose();
+        },
+    };
+}
 export function registerTlhActivityReporters(pi, tracker, options = {}) {
     const reporters = [
         createHerdrActivityReporter(options.herdr),
         createCmuxActivityReporter(options.cmux),
+        createProgramStatusActivityReporter(options.programStatus),
     ];
     const unsubscribe = tracker.subscribe((snapshot) => {
         for (const reporter of reporters) {
@@ -507,6 +669,11 @@ export function registerTlhActivityReporters(pi, tracker, options = {}) {
         const snapshot = tracker.getSnapshot();
         for (const reporter of reporters) {
             reporter.handleSnapshot(snapshot);
+        }
+    });
+    pi.on("session_info_changed", (_event, ctx) => {
+        for (const reporter of reporters) {
+            reporter.handleSessionInfoChanged?.(ctx);
         }
     });
     pi.on("session_shutdown", () => {

@@ -1,0 +1,21 @@
+{
+  "scenario": "invalid-frames",
+  "expected": [
+    {
+      "case": "declared-body-too-large",
+      "code": "frame-too-large"
+    },
+    {
+      "case": "truncated-body",
+      "code": "malformed-frame"
+    },
+    {
+      "case": "invalid-json-control",
+      "code": "invalid-json"
+    },
+    {
+      "case": "invalid-utf8-control",
+      "code": "invalid-utf8"
+    }
+  ]
+}

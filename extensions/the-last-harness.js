@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { AgentSession as TlhPiAgentSession, getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
@@ -13,6 +14,7 @@ import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createProviderAuthHealthStore, } from "./the-last-harness/provider-auth-health.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { maybeNotifyLegacyThemeNotice } from "./the-last-harness/legacy-theme-notice.js";
 import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
@@ -23,15 +25,15 @@ import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
+import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-mirror-observer-facade.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
-import { createReviewCommandHandler } from "./the-last-harness/review.js";
-import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
+import { registerTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
-import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
+import { getTlhHeaderUpdate, getTlhMainTrackBehindCount, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
-const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
+import { createRetryableLazyImport } from "./the-last-harness/common.js";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
@@ -40,17 +42,26 @@ function getActiveProjectTrustDecision(ctx) {
     const projectTrusted = ctx.isProjectTrusted?.();
     return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
 }
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
+function setTlhTerminalTitle(ctx) {
+    try {
+        if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.setTitle !== "function")
+            return;
+        const cwdLabel = basename(ctx.cwd) || ctx.cwd;
+        if (!cwdLabel)
+            return;
+        let sessionName;
+        try {
+            const raw = ctx.sessionManager?.getSessionName?.();
+            if (typeof raw === "string")
+                sessionName = raw.trim() || undefined;
         }
-        return modulePromise;
-    };
+        catch {
+        }
+        const title = sessionName ? `tlh - ${sessionName} - ${cwdLabel}` : `tlh - ${cwdLabel}`;
+        ctx.ui.setTitle(title);
+    }
+    catch {
+    }
 }
 const EMPTY_STARTUP_RESOURCES = {
     context: [],
@@ -60,10 +71,15 @@ const EMPTY_STARTUP_RESOURCES = {
     themes: [],
     projectGuidance: [],
 };
+const TERMINAL_TITLE_REASSERTION_DELAYS_MS = [0, 250, 1000];
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
 };
 let startupResourceCollector = collectStartupResourceSnapshot;
+let scheduleTerminalTitleReapplication = (task, delayMs) => {
+    const handle = setTimeout(task, delayMs);
+    handle.unref();
+};
 export const __testing = {
     setDeferredStartupTaskSchedulerForTests(scheduler) {
         scheduleDeferredStartupTask = scheduler;
@@ -71,11 +87,18 @@ export const __testing = {
     setStartupResourceCollectorForTests(collector) {
         startupResourceCollector = collector;
     },
+    setTerminalTitleSchedulerForTests(scheduler) {
+        scheduleTerminalTitleReapplication = scheduler;
+    },
     reset() {
         scheduleDeferredStartupTask = (task) => {
             setImmediate(task);
         };
         startupResourceCollector = collectStartupResourceSnapshot;
+        scheduleTerminalTitleReapplication = (task, delayMs) => {
+            const handle = setTimeout(task, delayMs);
+            handle.unref();
+        };
     },
 };
 export default function theLastHarness(pi) {
@@ -88,6 +111,20 @@ export default function theLastHarness(pi) {
         activeTlhHeader = undefined;
         activeTlhHeaderComponentId = 0;
         return activeTlhHeaderSessionToken;
+    };
+    const scheduleTlhTerminalTitleReassertions = (ctx, sessionToken) => {
+        const reassert = (passIndex) => {
+            if (activeTlhHeaderSessionToken !== sessionToken)
+                return;
+            setTlhTerminalTitle(ctx);
+            const nextPassIndex = passIndex + 1;
+            if (nextPassIndex >= TERMINAL_TITLE_REASSERTION_DELAYS_MS.length ||
+                activeTlhHeaderSessionToken !== sessionToken) {
+                return;
+            }
+            scheduleTerminalTitleReapplication(() => reassert(nextPassIndex), TERMINAL_TITLE_REASSERTION_DELAYS_MS[nextPassIndex]);
+        };
+        scheduleTerminalTitleReapplication(() => reassert(0), TERMINAL_TITLE_REASSERTION_DELAYS_MS[0]);
     };
     let activeProviderAuthHealthStore;
     let activeProviderAuthHealthUnsubscribe;
@@ -111,10 +148,12 @@ export default function theLastHarness(pi) {
     if (!primaryAgentRuntime) {
         return;
     }
+    registerSessionMirrorObserverFacade(pi, {
+        sendUserMessage: (text) => pi.sendUserMessage(text),
+    });
     installTlhPackageUpdateNotificationOverride();
     installTlhNewVersionNotificationOverride();
     registerToggleTlhGitAttributionCommand(pi);
-    const reviewCommandHandler = createReviewCommandHandler(pi);
     const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
     const loadSessionLimitReportModule = createRetryableLazyImport(() => import("./the-last-harness/session-limit-report.js"));
     const loadAnnotateLastMessageModule = createRetryableLazyImport(() => import("./the-last-harness/annotate-last-message.js"));
@@ -183,12 +222,7 @@ export default function theLastHarness(pi) {
     registerExperimentalCommand(pi);
     registerReconcileCommand(pi, primaryAgentRuntime);
     registerSubagentSettingsCommand(pi);
-    registerLazyTlhTicketWorkflowUi(pi);
-    pi.registerCommand("review", {
-        description: REVIEW_COMMAND_DESCRIPTION,
-        getArgumentCompletions: () => null,
-        handler: reviewCommandHandler,
-    });
+    registerTlhTicketWorkflowUi(pi);
     pi.registerCommand("tlh-changelog", {
         description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
         handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
@@ -228,33 +262,51 @@ export default function theLastHarness(pi) {
     pi.on("model_select", (_event, ctx) => {
         refreshSubscriptionUsage(ctx);
     });
+    pi.on("turn_start", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
+    });
     pi.on("turn_end", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
         refreshSubscriptionUsage(ctx);
+    });
+    pi.on("session_info_changed", (_event, ctx) => {
+        setTlhTerminalTitle(ctx);
     });
     pi.on("session_start", async (event, ctx) => {
         const sessionToken = invalidateActiveTlhHeaderSession();
-        await primaryAgentRuntime.applySessionStart(ctx);
+        await primaryAgentRuntime.applySessionStart(ctx, event.reason);
         refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
         if (!ctx.hasUI) {
             return;
         }
+        setTlhTerminalTitle(ctx);
+        scheduleTlhTerminalTitleReassertions(ctx, sessionToken);
         if (event.reason === "startup") {
             try {
                 scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
             }
             catch {
             }
+            maybeNotifyLegacyThemeNotice(ctx, event.reason);
         }
         ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
         const sessionState = { resources: EMPTY_STARTUP_RESOURCES };
         const headerUpdate = getTlhHeaderUpdate();
         const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
         const installNotice = readTlhInstallNotice();
+        const mainTrackFooterState = {
+            behindCount: getTlhMainTrackBehindCount(ctx.cwd, installNotice),
+        };
         const providerAuthHealthStore = createProviderAuthHealthStore();
         activeProviderAuthHealthStore = providerAuthHealthStore;
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
                 subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
+                sessionState.requestFooterRender = () => {
+                    if (activeTlhHeaderSessionToken === sessionToken) {
+                        tui.requestRender();
+                    }
+                };
                 const gitCache = new FooterGitCache({
                     cwd: () => ctx.sessionManager.getCwd(),
                     onChange: () => tui.requestRender(),
@@ -266,7 +318,7 @@ export default function theLastHarness(pi) {
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
                     shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
-                }, gitCache, installNotice, providerAuthHealthStore);
+                }, gitCache, installNotice, providerAuthHealthStore, mainTrackFooterState);
             });
         }
         if (typeof ctx.ui.setHeader === "function") {
@@ -298,6 +350,14 @@ export default function theLastHarness(pi) {
             maybeNotifyModelEffortDrift(ctx);
             void maybeNotifyAvailableTlhUpdate(ctx, {
                 canNotify: () => activeTlhHeaderSessionToken === sessionToken,
+                installNotice,
+                onMainTrackBehindCountChange: (behindCount) => {
+                    if (mainTrackFooterState.behindCount === behindCount) {
+                        return;
+                    }
+                    mainTrackFooterState.behindCount = behindCount;
+                    sessionState.requestFooterRender?.();
+                },
             }).catch(() => undefined);
             const launchContextInputs = (() => {
                 try {

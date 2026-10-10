@@ -17,7 +17,7 @@ The release build fails closed if the stage-0 inventory is incomplete, duplicate
 
 Only the generated GitHub Release `install.sh` asset is pinned and integrity-verifiable for its tag: the release workflow bakes the matching tag and support-file SHA-256 inventory into that stage-0 asset, so later changes on `main` cannot silently change the verified bytes for that release. A matching generated asset is the canonical stage-0 handoff and verifies support files directly instead of self-refreshing; explicit matching `--ref`/`TLH_REF` values remain eligible for that direct path. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; raw, mutable, custom, and local paths are not release-verified. The v0.27 boundary otherwise means remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
 
-Through **2026-09-29**, compatibility is retained only for locally saved **pre-v0.27 raw source installers from published/tagged releases whose baked manifests requested the retained query/librarian assets**. It excludes arbitrary snapshots of `main` or unreleased intermediate states, including the never-released profile-writer manifest window; this compatibility window does not extend support for every older TLH runtime. After **2026-09-29**, the supported recovery is to download and run the current installer rather than continuing to use the saved file:
+Saved pre-v0.27 raw source installers are outside the current support window. Download and run the current installer:
 
 ```sh
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
@@ -49,7 +49,7 @@ For architect-managed work, keep implementation-ticket checks narrow and ticket-
 Then run the aggregate validation script and release-notes check:
 
 ```sh
-npm install --no-package-lock
+npm ci
 npm run validate
 node scripts/release-notes.mjs --tag "v$version" --output /tmp/tlh-release-notes.md
 ```
@@ -60,7 +60,7 @@ Then run the startup performance checker as release-tier manual validation:
 npm run check:startup-performance
 ```
 
-Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. The release objective is a steady-state first TLH header mean below `1000ms`.
+Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. All measured runs in an invocation share one stable temporary profile path; run 1 is the cold sample and later runs are warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved. The release objective is a steady-state first TLH header mean below `1000ms`. The every-PR startup-performance workflow is informational and budgets `2500ms`. Release preparation still uses this `1000ms` objective.
 
 If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 

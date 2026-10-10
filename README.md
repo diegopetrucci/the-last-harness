@@ -13,7 +13,7 @@ Two core ideas drive it:
 
 It achieves this [via a custom orchestration workflow](https://www.stavros.io/posts/how-i-write-software-with-llms/) — you only interface with an architect, whom you engage as a senior peer, and once you're satisfied with the discussion and plan, it takes over until everything is done. Work is pre-reviewed too, often multiple times, so that your time is not wasted in minutiae, freeing you to focus on the bigger picture.
 
-You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger `/review`". Your time is worth more.
+You're also not asked to manually run commands, manage context, or anything like that. This is built-in and done for you. Every further action that you take is because you _want_ to take it, not because you _have_ to. You should not be finding yourself thinking eg "oh, I forgot to trigger a review". Your time is worth more.
 
 `tlh` is also slow by default, and relatively token-expensive: it is designed to be used as a long-running, reliable, and predictable tool. You spend time preparing the work, and once it's off, it's off. No babysitting.
 
@@ -40,7 +40,7 @@ At times, the architect might seem eager to ask you to `approve` the plan. Do no
 The architect has access to a few subagents, which can be divided in three big categories:
 
 - Single-purpose, automatically-invoked ones to keep its context smaller: the librarian to check git repos, web-scout for the internet, etc.
-- Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
+- Core: as the agent does not write code, 1+ developer(s) are tasked to. The reviewer works the same way, so reviews happen automatically rather than requiring a manual command.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
 Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Direct Anthropic sessions try OpenAI Codex first, then xAI; direct OpenAI/Codex sessions try Anthropic first, then xAI; direct xAI sessions try Anthropic first, then OpenAI Codex. OpenRouter sessions use the same three-family vendor-aware order with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
@@ -64,7 +64,17 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 `disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Disabled mode receives no primary-role append, while each newly launched canonical minor agent still uses its own matching project append. It can also initiate an explicitly requested, freshly scoped project custom agent under the exact-root contract. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
+### Optional iPhone companion
+
+The `session-mirror-observer` experimental feature is **off by default** and is not added to a fresh profile or enabled by installation. Use `/experimental` to inspect or change it in the isolated TLH profile. When enabled for a new session, it can mirror bounded TLH session state to a paired iPhone companion; the paired companion can submit bounded plain-text user-message replies while the feature is active. Enable, disable, and toggle changes take effect on the next session. Disabling is not immediate revocation: a currently enabled session retains activation until a new session.
+
+TLH never automatically installs or pairs the companion, edits the normal profile, stores a second transcript, or promises background/network behavior. This is an experimental source and deterministic-test boundary, not a claim of fresh physical-device proof; see the [command reference](docs/commands.md) and [companion roadmap](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/companion-roadmap.md) for limits and reported evidence.
+
 ## Everything else
+
+### Footer status
+
+The footer refreshes local Git status every 8 seconds. Eligible non-default branches refresh GitHub pull-request metadata at most every 5 minutes; the next refresh after a branch or directory change bypasses that interval. Default branches are skipped, and local upstream tracking is not required. Cached PR data remains visible while a transient lookup fails and is retried on the same cadence.
 
 ### Subagents
 
@@ -72,17 +82,17 @@ Subagent orchestration is first-party TLH functionality: the runtime, prompts, a
 
 The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`): omission means **14400000 ms (4h)**, and the value must be a positive safe integer or `false`. Canonical minor role ceilings are code-owned defaults, applied before human overrides:
 
-| Role | `maxExecutionTimeMs` |
-| --- | ---: |
-| `developer` | 3600000 ms (1h) |
-| `code-reviewer` | 1800000 ms (30m) |
-| `test-runner` | 3600000 ms (1h) |
-| `librarian` | 14400000 ms (4h) |
-| `oracle` | 2700000 ms (45m) |
-| `contrarian` | 1800000 ms (30m) |
-| `repo-scout` | 600000 ms (10m) |
-| `web-scout` | 300000 ms (5m) |
-| `diff-summarizer` | 300000 ms (5m) |
+| Role              | `maxExecutionTimeMs` |
+| ----------------- | -------------------: |
+| `developer`       |      3600000 ms (1h) |
+| `code-reviewer`   |     1800000 ms (30m) |
+| `test-runner`     |      3600000 ms (1h) |
+| `librarian`       |     14400000 ms (4h) |
+| `oracle`          |     2700000 ms (45m) |
+| `contrarian`      |     1800000 ms (30m) |
+| `repo-scout`      |      600000 ms (10m) |
+| `web-scout`       |       300000 ms (5m) |
+| `diff-summarizer` |       300000 ms (5m) |
 
 Human canonical-role overrides use `subagents.agentOverrides.<role>.maxExecutionTimeMs` in the isolated `<agent-dir>/settings.json`. TLH selects the project's role entry when present, otherwise the profile entry, and does not merge the two objects field-by-field; a project entry that omits `maxExecutionTimeMs` therefore leaves the code-owned role default in effect unless authoritative frontmatter declares the field. Trusted custom agents declare a positive-safe-integer `maxExecutionTimeMs` in frontmatter, or use the **14400000 ms (4h)** fallback when omitted. A parallel batch has one shared deadline covering queueing and fallback/retry work, not one caller budget per task. `false` clears only the layer where it is set; another applicable run/role bound may still constrain execution. See [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) for active-time continuation rules, migration/restart guidance, and rollback details.
 

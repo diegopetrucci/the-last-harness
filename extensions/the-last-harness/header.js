@@ -36,7 +36,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         muted: (text) => theme.fg("muted", text),
         accent: (text) => theme.fg("accent", text),
     };
-    const logo = headerUpdate
+    const renderLogo = () => headerUpdate
         ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
         : theme.bold(color.accent(TLH_NAME));
     const section = (name, items, width) => {
@@ -106,7 +106,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
-        const lines = [logo];
+        const lines = [renderLogo()];
         const details = [...launchContextLines(width)];
         if (details.length > 0) {
             lines.push("", ...details);
@@ -118,7 +118,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         return lines;
     };
     const renderExpanded = (width) => {
-        const lines = [logo];
+        const lines = [renderLogo()];
         const details = headerDetails(width);
         if (details.length > 0) {
             lines.push("", ...details);

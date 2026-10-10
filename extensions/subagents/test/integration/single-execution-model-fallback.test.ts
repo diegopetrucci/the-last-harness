@@ -9,21 +9,20 @@ import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
   createTempDir,
-  createEventBus,
   removeTempDir,
   makeAgentConfigs,
   makeAgent,
   makeMinimalCtx,
   makeModel,
+  makeModelRegistryContext,
   events,
 } from "../support/helpers.ts";
 import {
   available,
   runSync,
   createSubagentExecutor,
+  makeExecutor,
   type MockPiCallRecord,
-  type ExecutionModule,
-  type ExecuteAsyncSingleOverride,
 } from "../support/single-execution-fixtures.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 import { getFinalOutput } from "../support/single-execution-fixtures.ts";
@@ -120,32 +119,6 @@ describe(
       };
     }
 
-    function makeExecutor(
-      agents = [makeAgent("echo")],
-      config: Record<string, unknown> = {},
-      state = {
-        baseCwd: tempDir,
-        currentSessionId: null,
-        asyncJobs: new Map(),
-        foregroundRuns: new Map(),
-        foregroundControls: new Map(),
-        lastForegroundControlId: null,
-      },
-      runSyncOverride: ExecutionModule["runSync"] | undefined = runSync,
-      executeAsyncSingleOverride: ExecuteAsyncSingleOverride | undefined = undefined,
-    ) {
-      return createSubagentExecutor!({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state,
-        config,
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
-        runSync: runSyncOverride,
-        executeAsyncSingle: executeAsyncSingleOverride,
-      });
-    }
     it("uses agent model config", async () => {
       mockPi.onCall({ output: "Done" });
       const agents = [makeAgent("echo", { model: "anthropic/claude-sonnet-4" })];
@@ -178,7 +151,7 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "Done" });
-        const executor = makeExecutor([makeAgent("echo")]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo")]);
 
         const result = await executor.execute(
           "single-parent-model",
@@ -204,7 +177,7 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "Done" });
-        const executor = makeExecutor([makeAgent("echo")]);
+        const executor = makeExecutor(tempDir, [makeAgent("echo")]);
 
         const result = await executor.execute(
           "single-explicit-model-override",
@@ -487,8 +460,10 @@ describe(
         });
         mockPi.onCall({ output: "Recovered on the preserved fallback" });
 
-        const ctx = makeMinimalCtx(tempDir);
-        ctx.modelRegistry.getAvailable = () => [primary];
+        const { context: ctx } = await makeModelRegistryContext(tempDir, [
+          { provider: "openai", models: [primary] },
+          { provider: "anthropic", models: [backup], authenticated: false },
+        ]);
         if (variant === "missing-catalog") {
           Object.defineProperty(ctx.modelRegistry, "getAll", {
             configurable: true,
@@ -508,7 +483,7 @@ describe(
           });
         }
 
-        const result = await makeExecutor([
+        const result = await makeExecutor(tempDir, [
           makeAgent("echo", {
             model: primaryId,
             fallbackModels: [backupId],
@@ -673,17 +648,18 @@ describe(
           exitCode: 0,
         });
         mockPi.onCall({ output: "Recovered on the agent fallback" });
-        const executor = makeExecutor([
+        const executor = makeExecutor(tempDir, [
           makeAgent("echo", {
             model: "openai/gpt-5-mini",
             fallbackModels: ["google/gemini-2.5-pro"],
           }),
         ]);
-        const ctx = makeMinimalCtx(tempDir);
         const primary = makeModel("gpt-5-mini", { provider: "openai" });
         const agentFallback = makeModel("gemini-2.5-pro", { provider: "google" });
-        ctx.modelRegistry.getAvailable = () => [primary, agentFallback];
-        ctx.modelRegistry.getAll = () => [primary, agentFallback];
+        const { context: ctx } = await makeModelRegistryContext(tempDir, [
+          { provider: "openai", models: [primary] },
+          { provider: "google", models: [agentFallback] },
+        ]);
 
         const result = await executor.execute(
           "single-agent-fallback-order",
@@ -721,7 +697,7 @@ describe(
       },
       async () => {
         mockPi.onCall({ output: "Done without retry" });
-        const executor = makeExecutor([
+        const executor = makeExecutor(tempDir, [
           makeAgent("echo", {
             model: "openai/gpt-5-mini",
             fallbackModels: ["anthropic/claude-sonnet-4"],

@@ -4,14 +4,13 @@ import { PROJECT_AGENT_TERMINAL_RETENTION_MS, normalizeProjectAgentRunCapture, r
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "../../shared/foreground-pause.js";
 import { canonicalSubagentModelIdentity } from "../shared/model-fallback.js";
 import { lifecycleContinuationForIndex, lifecycleGeneration, recoverStaleLifecycleContinuationClaim, transitionLifecycleStatus, withLifecycleContinuation, } from "../shared/lifecycle-state.js";
-import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { readStatus } from "../../shared/utils.js";
 import {} from "../../shared/types.js";
+import { transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
 import { isClaimedPausedLifecycle, pausedForegroundStatusPath, pausedForegroundTerminationReason, } from "./foreground-pause-state.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
 import { resolveSubagentResultStatus } from "../../shared/result-formatting.js";
-import { updateForegroundNestedProjection } from "../shared/nested-events.js";
 import { projectRunAuthorizationError } from "./project-agent-control.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.js";
@@ -54,21 +53,7 @@ function formatForegroundActivity(control) {
         return [`no activity for ${seconds}s`, ...facts].join(" | ");
     return [`active ${seconds}s ago`, ...facts].join(" | ");
 }
-export function trustedSessionRootsForStatus(ctx, deps) {
-    const roots = [];
-    const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-    if (parentSessionFile)
-        roots.push(deps.getSubagentSessionRoot(parentSessionFile));
-    return [...new Set(roots)];
-}
 export function foregroundStatusResult(control) {
-    let nestedWarning;
-    try {
-        updateForegroundNestedProjection(control);
-    }
-    catch (error) {
-        nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
-    }
     const activity = formatForegroundActivity(control);
     const lines = [
         `Run: ${control.runId}`,
@@ -79,13 +64,6 @@ export function foregroundStatusResult(control) {
             : undefined,
         activity ? `Activity: ${activity}` : undefined,
     ].filter((line) => Boolean(line));
-    lines.push(...formatNestedRunStatusLines(control.nestedChildren, {
-        indent: "",
-        commandHints: true,
-        maxLines: 20,
-    }));
-    if (nestedWarning)
-        lines.push(`Warning: ${nestedWarning}`);
     return {
         content: [{ type: "text", text: lines.join("\n") }],
         details: { mode: "management", results: [] },
@@ -147,11 +125,15 @@ export function rememberForegroundRun(state, input) {
         mode: input.mode,
         cwd: input.cwd,
         updatedAt,
+        ...(input.telemetry ? { telemetry: input.telemetry } : {}),
         children: input.results.map((result, index) => {
             const activeRuntimeMs = normalizeActiveRuntimeMs(result.activeRuntimeMs) ??
                 normalizeActiveRuntimeMs(result.progress?.durationMs);
+            const resolvedChildCwd = typeof input.childCwds?.[index] === "string" ? input.childCwds[index] : undefined;
             const child = {
                 agent: result.agent,
+                ...(resolvedChildCwd !== undefined ? { cwd: resolvedChildCwd } : {}),
+                ...(result.childLocation ? { childLocation: result.childLocation } : {}),
                 ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
                 ...(result.agent === "developer" && normalizeTkTicketId(result.tkTicketId)
                     ? { tkTicketId: normalizeTkTicketId(result.tkTicketId) }
@@ -210,6 +192,8 @@ export function updateRememberedForegroundChild(state, input) {
         state.foregroundRuns.set(input.runId, run);
     }
     run.updatedAt = updatedAt;
+    if (input.telemetry)
+        run.telemetry = input.telemetry;
     const child = run.children[input.index] ?? {
         agent: input.result.agent,
         index: input.index,
@@ -219,6 +203,8 @@ export function updateRememberedForegroundChild(state, input) {
     run.children[input.index] = {
         ...child,
         agent: input.result.agent,
+        ...(typeof input.childCwd === "string" ? { cwd: input.childCwd } : {}),
+        ...(input.result.childLocation ? { childLocation: input.result.childLocation } : {}),
         ...(input.result.projectAgent ? { projectAgent: input.result.projectAgent } : {}),
         ...(input.result.agent === "developer" && normalizeTkTicketId(input.result.tkTicketId)
             ? { tkTicketId: normalizeTkTicketId(input.result.tkTicketId) }
@@ -353,7 +339,7 @@ export function resolveForegroundResumeTarget(params, state) {
             ? { tkTicketId: normalizeTkTicketId(child.tkTicketId) }
             : {}),
         index,
-        cwd: run.cwd,
+        cwd: child.cwd ?? child.childLocation?.childCwd ?? run.cwd,
         sessionFile,
         ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
             ? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -388,6 +374,7 @@ export function resolveForegroundResumeTarget(params, state) {
                 activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(child.activeRuntimeCheckpointAt),
             }
             : {}),
+        ...(run.telemetry ? { telemetry: run.telemetry } : {}),
     };
 }
 function updateRememberedForegroundCancellation(state, runId, cancelledAt, summary, index = 0) {
@@ -528,9 +515,17 @@ export function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index
                     : step);
                 const remainingActionable = nextSteps?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
                 const remainingResumable = hasResumableSiblingStep(nextSteps, targetIndex);
+                const nextState = remainingActionable || remainingResumable ? "paused" : "cancelled";
+                const telemetry = transitionSubagentRunTelemetryLifecycle({
+                    telemetry: status.telemetry,
+                    runState: nextState,
+                    stepIndex: targetIndex,
+                    stepState: "cancelled",
+                    endedAt: cancelledAt,
+                });
                 return {
                     ...status,
-                    state: remainingActionable || remainingResumable ? "paused" : "cancelled",
+                    state: nextState,
                     pid: undefined,
                     ...(remainingActionable || remainingResumable
                         ? {}
@@ -541,6 +536,7 @@ export function cancelPersistedPausedForegroundRun(state, asyncDir, runId, index
                         : undefined,
                     lastUpdate: cancelledAt,
                     endedAt: cancelledAt,
+                    ...(telemetry ? { telemetry } : {}),
                     lifecycle: withLifecycleContinuation(status, targetIndex, undefined),
                     steps: nextSteps,
                 };

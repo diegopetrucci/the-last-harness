@@ -1,5 +1,11 @@
 /** @typedef {import("@earendil-works/pi-coding-agent").ExtensionAPI} ExtensionAPI */
 
+import {
+  blockForcedSystemPrompt,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION,
+  setStructuredChildPromptRuntime,
+} from "./shared/subagent-child-boundary.js";
+
 /**
  * @typedef {object} TlhStartupModeOptions
  * @property {Record<string, string | undefined>=} env
@@ -280,11 +286,18 @@ export function validateSubagentToolInput(input, options = {}) {
  * @param {() => string} buildChildSubagentSystemPrompt
  */
 export function registerChildSubagentPrompt(pi, buildChildSubagentSystemPrompt) {
-  pi.on("before_agent_start", async (event) => ({
-    systemPrompt: [event.systemPrompt, buildChildSubagentSystemPrompt()]
-      .filter(Boolean)
-      .join("\n\n"),
-  }));
+  pi.on("before_agent_start", async (event) => {
+    blockForcedSystemPrompt(event.systemPromptOptions);
+    setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "root", [
+      buildChildSubagentSystemPrompt(),
+    ]);
+    // The prompt-only fallback has no explicit subagent runtime to install the
+    // shared boundary, so reserve that owner here without adding root content.
+    if (event.systemPromptOptions.sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION] === undefined) {
+      setStructuredChildPromptRuntime(event.systemPromptOptions.sections, "explicit", []);
+    }
+    return undefined;
+  });
 }
 
 /**

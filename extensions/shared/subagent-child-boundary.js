@@ -9,7 +9,8 @@ export const CHILD_SUBAGENT_ROOT_RUNTIME_OPEN = "<!-- tlh:child-root-runtime:sta
 export const CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE = "<!-- tlh:child-root-runtime:end -->";
 export const CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN = "<!-- tlh:child-explicit-runtime:start -->";
 export const CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE = "<!-- tlh:child-explicit-runtime:end -->";
-const TRAILING_WHITESPACE_PATTERN = /\s*$/u;
+export const CHILD_SUBAGENT_ROOT_RUNTIME_SECTION = "tlh_child_root_runtime";
+export const CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION = "tlh_child_explicit_runtime";
 const RESERVED_RUNTIME_MARKER_NAMESPACE_PATTERN = /<!-- tlh:child-[^>\s]+-runtime(?::|(?=\s|-->|$))/gu;
 const DEFANGED_RUNTIME_MARKER_PREFIX = "[tlh child-runtime marker: ";
 const RUNTIME_WRAPPER_MARKERS = {
@@ -22,55 +23,24 @@ const RUNTIME_WRAPPER_MARKERS = {
         close: CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
     },
 };
-function terminalContentEnd(prompt) {
-    const trailingWhitespace = prompt.match(TRAILING_WHITESPACE_PATTERN)?.[0] ?? "";
-    return prompt.length - trailingWhitespace.length;
+function readBlockedForcedSystemPrompt() {
+    return undefined;
 }
-function removeTerminalRuntimeBlockAt(prompt, blockStart) {
-    if (blockStart >= 2 && prompt.slice(blockStart - 2, blockStart) === "\n\n") {
-        return prompt.slice(0, blockStart - 2);
-    }
-    return prompt.slice(0, blockStart);
+function ignoreBlockedForcedSystemPrompt(_value) {
 }
-function stripTerminalBoundary(prompt) {
-    const contentEnd = terminalContentEnd(prompt);
-    const boundaryStart = contentEnd - CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS.length;
-    if (boundaryStart < 0 ||
-        prompt.slice(boundaryStart, contentEnd) !== CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS) {
-        return undefined;
+export function blockForcedSystemPrompt(options) {
+    const descriptor = Object.getOwnPropertyDescriptor(options, "forceSystemPrompt");
+    if (descriptor?.get === readBlockedForcedSystemPrompt &&
+        descriptor.set === ignoreBlockedForcedSystemPrompt) {
+        return;
     }
-    return removeTerminalRuntimeBlockAt(prompt, boundaryStart);
-}
-function findTerminalRuntimeBlock(prompt, owner) {
-    const { open, close } = RUNTIME_WRAPPER_MARKERS[owner];
-    const contentEnd = terminalContentEnd(prompt);
-    const closeStart = contentEnd - close.length;
-    if (closeStart < 0 || prompt.slice(closeStart, contentEnd) !== close)
-        return undefined;
-    const blockStart = prompt.lastIndexOf(open, closeStart);
-    if (blockStart < 0)
-        return undefined;
-    if (blockStart !== 0 && !prompt.slice(0, blockStart).endsWith("\n\n"))
-        return undefined;
-    const contentStart = blockStart + open.length;
-    if (prompt[contentStart] !== "\n" || prompt[closeStart - 1] !== "\n")
-        return undefined;
-    return { owner, block: prompt.slice(blockStart, contentEnd), blockStart };
-}
-function parseTerminalChildPromptRuntime(prompt) {
-    const withoutBoundary = stripTerminalBoundary(prompt);
-    if (withoutBoundary === undefined)
-        return undefined;
-    let base = withoutBoundary;
-    const explicit = findTerminalRuntimeBlock(base, "explicit");
-    if (explicit !== undefined) {
-        base = removeTerminalRuntimeBlockAt(base, explicit.blockStart);
-    }
-    const root = findTerminalRuntimeBlock(base, "root");
-    if (root !== undefined) {
-        base = removeTerminalRuntimeBlockAt(base, root.blockStart);
-    }
-    return { base, root: root?.block, explicit: explicit?.block };
+    delete options.forceSystemPrompt;
+    Object.defineProperty(options, "forceSystemPrompt", {
+        configurable: true,
+        enumerable: true,
+        get: readBlockedForcedSystemPrompt,
+        set: ignoreBlockedForcedSystemPrompt,
+    });
 }
 function defangReservedRuntimeMarkers(content) {
     return content.replace(RESERVED_RUNTIME_MARKER_NAMESPACE_PATTERN, DEFANGED_RUNTIME_MARKER_PREFIX);
@@ -82,28 +52,21 @@ function wrapRuntimeBlock(owner, additions) {
     const { open, close } = RUNTIME_WRAPPER_MARKERS[owner];
     return [open, content, close].join("\n");
 }
-export function composeChildPromptRuntime(prompt, additions, owner) {
-    const currentBlock = wrapRuntimeBlock(owner, additions);
-    const parsed = parseTerminalChildPromptRuntime(prompt);
-    if (parsed === undefined) {
-        if (owner === "root") {
-            const existingRoot = findTerminalRuntimeBlock(prompt, "root");
-            if (existingRoot !== undefined) {
-                const base = removeTerminalRuntimeBlockAt(prompt, existingRoot.blockStart);
-                return [base, currentBlock].filter(Boolean).join("\n\n");
-            }
-            return [prompt, currentBlock].filter(Boolean).join("\n\n");
-        }
-        return [prompt, currentBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
-            .filter(Boolean)
-            .join("\n\n");
-    }
-    const rootBlock = owner === "root" ? currentBlock : (parsed.root ?? "");
-    const explicitBlock = owner === "explicit" ? currentBlock : (parsed.explicit ?? "");
-    return [parsed.base, rootBlock, explicitBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
+export function setStructuredChildPromptRuntime(sections, owner, additions) {
+    const rootSection = sections[CHILD_SUBAGENT_ROOT_RUNTIME_SECTION];
+    const explicitSection = sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION];
+    delete sections[CHILD_SUBAGENT_ROOT_RUNTIME_SECTION];
+    delete sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION];
+    const runtime = [
+        wrapRuntimeBlock(owner, additions),
+        owner === "explicit" ? CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS : "",
+    ]
         .filter(Boolean)
         .join("\n\n");
-}
-export function appendBeforeChildSubagentBoundary(prompt, additions) {
-    return composeChildPromptRuntime(prompt, [additions], "root");
+    const nextRootSection = owner === "root" ? runtime : rootSection;
+    const nextExplicitSection = owner === "explicit" ? runtime : explicitSection;
+    if (nextRootSection)
+        sections[CHILD_SUBAGENT_ROOT_RUNTIME_SECTION] = nextRootSection;
+    if (nextExplicitSection)
+        sections[CHILD_SUBAGENT_EXPLICIT_RUNTIME_SECTION] = nextExplicitSection;
 }

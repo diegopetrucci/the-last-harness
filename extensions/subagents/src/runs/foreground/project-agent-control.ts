@@ -429,7 +429,10 @@ export function lookupPrivateProjectActionReference(
   return runId ? lookupProjectAgentRunReference(runId) : { status: "missing" };
 }
 
-/** Recognize persisted project markers as a deny-only signal, even when malformed. */
+/**
+ * Recognize persisted project markers as a deny-only signal, even when malformed.
+ * Retired nested metadata stays deny-only; never revive nested execution, status, or display.
+ */
 export function hasProjectAgentControlMarker(value: unknown): boolean {
   if (!isRecordValue(value)) return false;
   if (

@@ -1,6 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
-import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
@@ -193,18 +192,28 @@ export function formatReauthWarningLine(providers, width, theme) {
 function sanitizeCommitSubject(text) {
     return sanitizeStatusText(text.replace(/\p{Cc}/gu, (character) => character === "\r" || character === "\n" || character === "\t" ? " " : ""));
 }
-function formatTlhInstallNoticeLine(notice, width, theme) {
+function formatTlhInstallNoticeLine(notice, width, theme, mainTrackBehindCount) {
     const label = formatTlhInstallNoticeTrackLabel(notice);
-    const commitSubject = notice.kind === "ref" && label === "main" && typeof notice.commitSubject === "string"
+    const isMainRef = notice.kind === "ref" && label === "main";
+    const hasMainTrackCommitSha = isMainRef &&
+        typeof notice.commitSha === "string" &&
+        /^[0-9a-f]{40}$/i.test(notice.commitSha.trim());
+    const commitSubject = isMainRef && typeof notice.commitSubject === "string"
         ? sanitizeCommitSubject(notice.commitSubject)
         : "";
     const commitSubjectSuffix = commitSubject
         ? `${theme.fg("dim", " • ")}${theme.fg("dim", commitSubject)}`
         : "";
-    const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix;
+    const behindSuffix = hasMainTrackCommitSha &&
+        typeof mainTrackBehindCount === "number" &&
+        Number.isSafeInteger(mainTrackBehindCount) &&
+        mainTrackBehindCount > 0
+        ? `${theme.fg("dim", " • ")}${theme.fg("dim", `${mainTrackBehindCount} commit${mainTrackBehindCount === 1 ? "" : "s"} behind origin/main`)}`
+        : "";
+    const warningStr = `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix + behindSuffix;
     return truncateToWidth(warningStr, width, theme.fg("dim", "..."));
 }
-export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth) {
+export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth, mainTrackFooterState) {
     let mcpContextEstimateCache;
     return {
         render(width) {
@@ -251,9 +260,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 contextPercentStr = theme.fg("dim", contextPercentDisplay);
             }
             agentLine2Str += dimSep + contextPercentStr;
-            if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
-                agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
-            }
             const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
             const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
             const agentLine2 = fastLine2SuffixWidth <= width
@@ -309,7 +315,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 }
             }
             if (installNotice) {
-                lines.push(formatTlhInstallNoticeLine(installNotice, width, theme));
+                lines.push(formatTlhInstallNoticeLine(installNotice, width, theme, mainTrackFooterState?.behindCount));
             }
             return lines;
         },

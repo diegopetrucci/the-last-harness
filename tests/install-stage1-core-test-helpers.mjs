@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,8 +21,7 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "0.85.1";
-export const TLH_PI_PACKAGE_SPEC = `@earendil-works/pi-coding-agent@${TLH_PINNED_PI_VERSION}`;
+export const TLH_PINNED_PI_VERSION = "1.1.0";
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -95,15 +102,22 @@ export function writeFakeTk(fakebin) {
   writeFakeCommand(fakebin, "tk", "printf 'Usage: tk help\\nTicket CLI helper\\n'");
 }
 
-export function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
+/**
+ * Write a fake npm that handles `npm ci --ignore-scripts --no-audit --no-fund`
+ * called with cwd = the staging dir (the new lockfile-based install path).
+ * The fake npm creates the staged node_modules structure relative to its cwd.
+ */
+export function writeFakeNpmCiInstaller(fakebin, { npmLog, templatePiPath }) {
   writeFakeCommand(
     fakebin,
     "npm",
     [
       `printf '%s\\n' "$*" >>"${npmLog}"`,
-      `mkdir -p "${dirname(installedPiPath)}"`,
-      `cp "${templatePiPath}" "${installedPiPath}"`,
-      `chmod +x "${installedPiPath}"`,
+      `if [[ "$1" == "ci" ]]; then`,
+      `  mkdir -p "node_modules/@earendil-works/pi-coding-agent/dist/bundle"`,
+      `  cp "${templatePiPath}" "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `  chmod +x "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `fi`,
     ].join("\n"),
   );
 }
@@ -130,6 +144,17 @@ export function writeVersionedWrapperPi(commandDir, logPath, version = TLH_PINNE
   );
 }
 
+/**
+ * Seed a runtime's lib/package-lock.json with the shipped lock so that the
+ * reuse-check (byte-identical comparison) passes for the given runtimeDir.
+ */
+export function seedRuntimeLock(runtimeDir) {
+  const shippedLock = join(repoRoot, "config", "pi-runtime", "package-lock.json");
+  if (!existsSync(shippedLock)) return; // shipped lock not present (shouldn't happen in tests)
+  mkdirSync(join(runtimeDir, "lib"), { recursive: true });
+  copyFileSync(shippedLock, join(runtimeDir, "lib", "package-lock.json"));
+}
+
 export function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {
   mkdirSync(dirname(scriptPath), { recursive: true });
   writeFileSync(
@@ -152,7 +177,6 @@ export function runStage1LocalPackageInstall(
     verbose = false,
     existingSupportFiles,
     existingAgentFiles,
-    existingLibrarianConfig,
     existingManagedRtk = false,
     envOverrides = {},
   } = {},
@@ -178,20 +202,12 @@ export function runStage1LocalPackageInstall(
   writeFakeTk(fakebin);
   writeLoggingPi(fakebin, piLog);
   // Fake npm so installPiIfNeeded never hits the network. The fake npm copies a
-  // template pi (reporting the pinned version) into the private runtime path.
+  // template pi (reporting the pinned version) into the staged node_modules path.
   writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
-  writeFakeNpmInstaller(fakebin, {
+  writeFakeNpmCiInstaller(fakebin, {
     npmLog,
     templatePiPath: join(templateDir, "pi"),
-    installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
   });
-  if (existingLibrarianConfig !== undefined) {
-    mkdirSync(join(agentDir, "extensions"), { recursive: true });
-    writeFileSync(
-      join(agentDir, "extensions", "librarian.json"),
-      JSON.stringify(existingLibrarianConfig, null, 2),
-    );
-  }
   if (existingSupportFiles) {
     for (const [relativePath, content] of Object.entries(existingSupportFiles)) {
       const target = join(agentDir, "tlh", relativePath);
