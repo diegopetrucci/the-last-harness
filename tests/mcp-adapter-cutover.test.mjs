@@ -8,7 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { after, test } from "node:test";
@@ -16,7 +16,7 @@ import { after, test } from "node:test";
 import { readDefaultExtensions } from "../scripts/lib/default-extensions.mjs";
 import { evaluateMcpAdapterCutover } from "../scripts/lib/mcp-adapter-cutover.mjs";
 
-const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const harnessPackage = "git:github.com/diegopetrucci/the-last-harness";
 const targetSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";

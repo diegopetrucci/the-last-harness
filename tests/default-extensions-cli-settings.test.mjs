@@ -1175,6 +1175,183 @@ test("tlh-defaults disable anthropic-auth preserves explicit warnings.anthropicE
   assert(settings.warnings !== undefined, "warnings object should remain intact");
 });
 
+// ---------------------------------------------------------------------------
+// syncDefaultExtensionProvenance shrink regression (pma-ru86 fix A)
+// ---------------------------------------------------------------------------
+
+test("tlh-defaults disable removes a managed identity from managedPackageIdentities", () => {
+  const fixture = tempFixture();
+  const webAccessSrc = bundledSource("pi-web-access");
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "pi-web-access",
+          source: webAccessSrc,
+          aliases: [],
+          replaces: [],
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [webAccessSrc],
+        tlh: {
+          defaultExtensionProvenance: {
+            managedPackageIdentities: ["npm:@diegopetrucci/pi-web-access"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "pi-web-access",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [],
+    [],
+    "disabling should remove the identity from managedPackageIdentities",
+  );
+});
+
+test("tlh-defaults non-frozen enable drops stale managed identities not in the recomputed set", () => {
+  const fixture = tempFixture();
+  const webAccessSrc = bundledSource("pi-web-access");
+  const anthropicSrc = "npm:@gotgenes/pi-anthropic-auth";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "pi-web-access",
+          source: webAccessSrc,
+          aliases: [],
+          replaces: [],
+        },
+        {
+          id: "anthropic-auth",
+          source: anthropicSrc,
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // pi-web-access is disabled; both identities are stale in managedPackageIdentities.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [webAccessSrc, anthropicSrc],
+        tlh: {
+          disabledDefaultExtensions: ["pi-web-access"],
+          defaultExtensionProvenance: {
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-web-access",
+              "npm:@gotgenes/pi-anthropic-auth",
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  // enable anthropic-auth (non-mcporter, so mcpDecision is undefined — not frozen)
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "anthropic-auth",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  // anthropic-auth is now enabled and present in packages → identity is managed
+  // pi-web-access is still disabled → its identity must be dropped
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities,
+    ["npm:@gotgenes/pi-anthropic-auth"],
+    "stale disabled-extension identity must not survive a non-frozen enable",
+  );
+});
+
+test("tlh-defaults frozen MCP enable preserves only MCP adapter identity in managedPackageIdentities", () => {
+  const fixture = tempFixture();
+  const nativeSrc = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySrc = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const anthropicSrc = "npm:@gotgenes/pi-anthropic-auth";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        { id: "mcporter", source: nativeSrc, aliases: [], replaces: [legacySrc] },
+        { id: "anthropic-auth", source: anthropicSrc },
+      ],
+      null,
+      2,
+    ),
+  );
+  // mcporter and anthropic-auth are both disabled; legacy pin is in packages.
+  // Both identities are stale in managedPackageIdentities.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySrc, anthropicSrc],
+        tlh: {
+          disabledDefaultExtensions: ["mcporter", "anthropic-auth"],
+          defaultExtensionProvenance: {
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-mcp-adapter",
+              "npm:@gotgenes/pi-anthropic-auth",
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  // enable mcporter → mcpDecision is set and is frozen (legacy pre-v5 selection)
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "mcporter",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  // MCP identity is preserved by frozen preservation (it was previously managed)
+  // anthropic-auth identity is dropped: not recomputed (disabled) and not an MCP identity
+  assert.deepEqual(
+    settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities,
+    ["npm:@diegopetrucci/pi-mcp-adapter"],
+    "frozen MCP enable must preserve only the MCP adapter identity, not other stale identities",
+  );
+});
+
 test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth is in disabledDefaultExtensions", () => {
   const fixture = tempFixture();
   // Synthetic defaults with the warnings suppression that ships in config/settings.defaults.json.

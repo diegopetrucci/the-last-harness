@@ -48,6 +48,8 @@ For the normal TLH profile, these sources are applied in order. Most layers merg
 6. `.pi/mcp.json`
 7. `.pi/mcp-adapter.json`
 
+`~/.agents/mcp.json` and `~/.agents/mcp/mcp.json` are not in this list: the adapter detects them but does not load them by default. Like other host configs, they load only through an explicit `imports` entry in an adapter config, and imported servers take the importing file's position in this list, below that file's own `mcpServers` entries.
+
 Ancestor discovery is opt-in through `settings.ancestorConfigRoots` in a user-global or explicitly selected adapter config. Within a directory, adapter-owned config overrides shared config; project files override global files.
 
 On Pi 0.99 and later, `mcporter` reads the native `${PI_CODING_AGENT_DIR}/mcp.json` and `.pi/mcp.json` server entries and translates supported Pi fields. In native `mcp.json`, `enabled: false` is translated to the adapter's `disabled: true`; native `exposure` and `toolExposure` are also translated to the corresponding adapter controls. By contrast, `disabled: true` is the adapter-owned setting for shared `mcp.json` and `mcp-adapter.json` configuration.

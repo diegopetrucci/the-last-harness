@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -505,6 +505,11 @@ export function mcpAdapterStartupGuardNotice(decision) {
     }
     return undefined;
 }
+class SettingsVerificationError extends Error {
+    constructor(label, filePath) {
+        super(`MCP adapter launch held: could not verify ${label} at ${filePath} (unreadable, broken link, not a regular file, or invalid settings JSON); repair that file before retrying.`);
+    }
+}
 function readStartupJson(path, label) {
     let status;
     try {
@@ -513,12 +518,13 @@ function readStartupJson(path, label) {
     catch (error) {
         if (isErrno(error, "ENOENT"))
             return {};
-        throw new Error(`could not verify ${label}`);
-    }
-    if (status.isSymbolicLink() || !status.isFile()) {
-        throw new Error(`could not verify ${label}`);
+        throw new SettingsVerificationError(label, path);
     }
     try {
+        if (status.isSymbolicLink())
+            status = statSync(path);
+        if (!status.isFile())
+            throw new Error("not a regular file");
         const raw = JSON.parse(readFileSync(path, "utf8"));
         if (!isPlainObject(raw))
             throw new Error("expected an object");
@@ -528,7 +534,7 @@ function readStartupJson(path, label) {
         return raw;
     }
     catch {
-        throw new Error(`could not verify ${label}`);
+        throw new SettingsVerificationError(label, path);
     }
 }
 function startupGuardArguments(args) {
@@ -612,8 +618,13 @@ function runStartupGuard(args) {
         }
         return 0;
     }
-    catch {
-        console.error("MCP adapter launch held: the selected adapter could not be verified safely; run `tlh update` or pin the adapter before retrying.");
+    catch (error) {
+        if (error instanceof SettingsVerificationError) {
+            console.error(error.message);
+        }
+        else {
+            console.error("MCP adapter launch held: the selected adapter could not be verified safely; run `tlh update` or pin the adapter before retrying.");
+        }
         return 1;
     }
 }

@@ -31,6 +31,7 @@ import {
   mcpAdapterCutoverNotice,
   mcpAdapterManagedIdentityPreservation,
   mcpAdapterMigrationFrozen,
+  mcpAdapterPackageIdentities,
   MCP_ADAPTER_CUTOVER_EXTENSION_ID,
   type McpAdapterCutoverDecision,
 } from "./lib/mcp-adapter-cutover.mjs";
@@ -641,12 +642,16 @@ function syncDefaultExtensionProvenance(
       nextManagedPackageIdentities.add(identity);
     }
   }
-  for (const identity of mcpAdapterManagedIdentityPreservation(
-    mcpExtension,
-    mcpDecision,
-    previousManagedIdentities,
-  )) {
-    nextManagedPackageIdentities.add(identity);
+  if (mcpAdapterMigrationFrozen(mcpExtension, mcpDecision)) {
+    const preserved = mcpAdapterManagedIdentityPreservation(
+      mcpExtension,
+      mcpDecision,
+      previousManagedIdentities,
+    );
+    for (const identity of mcpAdapterPackageIdentities(mcpExtension)) {
+      nextManagedPackageIdentities.delete(identity);
+      if (preserved.has(identity)) nextManagedPackageIdentities.add(identity);
+    }
   }
   setDefaultExtensionProvenance(settings, nextManagedPackageIdentities);
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
@@ -11,7 +11,7 @@ import {
   mcpAdapterStartupGuardNotice,
 } from "../scripts/lib/mcp-adapter-cutover.mjs";
 
-const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const repoRoot = resolve(import.meta.dirname, "..");
 const defaultsPath = join(repoRoot, "config", "default-extensions.json");
 const guardPath = join(repoRoot, "scripts", "lib", "mcp-adapter-cutover.mjs");
 const mcporter = readDefaultExtensions(defaultsPath).find((entry) => entry.id === "mcporter");
@@ -235,6 +235,200 @@ test("startup guard treats only confirmed ENOENT settings as absent", () => {
     );
     assert.equal(brokenProject.status, 1);
     assert.match(brokenProject.stderr, /launch held/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Symlinked settings regression tests (pma-ru86 fix B)
+// ---------------------------------------------------------------------------
+
+test("startup guard follows a valid symlinked project settings file with no adapter entry", () => {
+  const { root, agentDir } = fixture();
+  const project = join(root, "project");
+  const settingsTarget = join(root, "target-settings.json");
+  mkdirSync(join(project, ".pi"), { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [nativePin] })}\n`);
+  writeFileSync(settingsTarget, `${JSON.stringify({ packages: [] })}\n`);
+  symlinkSync(settingsTarget, join(project, ".pi", "settings.json"));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        guardPath,
+        "--startup-guard",
+        "--agent-dir",
+        agentDir,
+        "--defaults",
+        defaultsPath,
+        "--cwd",
+        project,
+      ],
+      { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+    );
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("startup guard evaluates a symlinked settings file that selects the native adapter", () => {
+  // Case 1: symlinked project settings with native pin passes
+  {
+    const { root, agentDir } = fixture();
+    const project = join(root, "project");
+    const settingsTarget = join(root, "target-settings.json");
+    mkdirSync(join(project, ".pi"), { recursive: true });
+    writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [] })}\n`);
+    writeFileSync(settingsTarget, `${JSON.stringify({ packages: [nativePin] })}\n`);
+    symlinkSync(settingsTarget, join(project, ".pi", "settings.json"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          guardPath,
+          "--startup-guard",
+          "--agent-dir",
+          agentDir,
+          "--defaults",
+          defaultsPath,
+          "--cwd",
+          project,
+        ],
+        { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+      );
+      // native v5 pin is safe — guard should pass
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  // Case 2: symlinked profile settings with unpinned source, no cached metadata
+  // The file must be read through the link; the hold comes from evaluation, not refusal.
+  {
+    const { root, agentDir } = fixture();
+    const project = join(root, "project");
+    mkdirSync(project, { recursive: true });
+    const profileTarget = join(root, "profile-settings-target.json");
+    writeFileSync(profileTarget, `${JSON.stringify({ packages: [source] })}\n`);
+    symlinkSync(profileTarget, join(agentDir, "settings.json"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          guardPath,
+          "--startup-guard",
+          "--agent-dir",
+          agentDir,
+          "--defaults",
+          defaultsPath,
+          "--cwd",
+          project,
+        ],
+        { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+      );
+      // unpinned source with no metadata is held by evaluation, not by a refusal
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /not safely resolved/);
+      assert.doesNotMatch(
+        result.stderr,
+        /could not verify/,
+        "hold must come from evaluation, not from a settings-file refusal",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("startup guard refuses a broken symlink and a symlink to a directory, with the path in stderr", () => {
+  const { root, agentDir } = fixture();
+  const project = join(root, "project");
+  mkdirSync(join(project, ".pi"), { recursive: true });
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [nativePin] })}\n`);
+  const settingsLink = join(project, ".pi", "settings.json");
+
+  // Broken symlink
+  symlinkSync(join(root, "does-not-exist.json"), settingsLink);
+  try {
+    const broken = spawnSync(
+      process.execPath,
+      [
+        guardPath,
+        "--startup-guard",
+        "--agent-dir",
+        agentDir,
+        "--defaults",
+        defaultsPath,
+        "--cwd",
+        project,
+      ],
+      { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+    );
+    assert.equal(broken.status, 1);
+    assert.match(broken.stderr, /launch held/);
+    assert.ok(
+      broken.stderr.includes(settingsLink),
+      `expected settings path in stderr for broken symlink: ${broken.stderr}`,
+    );
+  } finally {
+    rmSync(settingsLink);
+  }
+
+  // Regular file with invalid JSON
+  writeFileSync(settingsLink, "{ not valid json {{{\n");
+  try {
+    const invalidJson = spawnSync(
+      process.execPath,
+      [
+        guardPath,
+        "--startup-guard",
+        "--agent-dir",
+        agentDir,
+        "--defaults",
+        defaultsPath,
+        "--cwd",
+        project,
+      ],
+      { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+    );
+    assert.equal(invalidJson.status, 1);
+    assert.match(invalidJson.stderr, /launch held/);
+    assert.ok(
+      invalidJson.stderr.includes(settingsLink),
+      `expected settings path in stderr for invalid JSON: ${invalidJson.stderr}`,
+    );
+  } finally {
+    rmSync(settingsLink);
+  }
+
+  // Symlink to a directory
+  const dirTarget = join(root, "a-directory");
+  mkdirSync(dirTarget);
+  symlinkSync(dirTarget, settingsLink);
+  try {
+    const dirLink = spawnSync(
+      process.execPath,
+      [
+        guardPath,
+        "--startup-guard",
+        "--agent-dir",
+        agentDir,
+        "--defaults",
+        defaultsPath,
+        "--cwd",
+        project,
+      ],
+      { cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: join(root, "home") } },
+    );
+    assert.equal(dirLink.status, 1);
+    assert.match(dirLink.stderr, /launch held/);
+    assert.ok(
+      dirLink.stderr.includes(settingsLink),
+      `expected settings path in stderr for dir symlink: ${dirLink.stderr}`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

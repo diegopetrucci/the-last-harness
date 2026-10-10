@@ -6,7 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
-import { evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
+import { evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { parseMcpMigrationArgs, runMcpAdapterMigration } from "./lib/mcp-adapter-migration.mjs";
 import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 const BUILTIN_MCP_EXCLUSION = "-builtin:mcp";
@@ -469,8 +469,13 @@ function syncDefaultExtensionProvenance(settings, defaultExtensions, mcpDecision
             nextManagedPackageIdentities.add(identity);
         }
     }
-    for (const identity of mcpAdapterManagedIdentityPreservation(mcpExtension, mcpDecision, previousManagedIdentities)) {
-        nextManagedPackageIdentities.add(identity);
+    if (mcpAdapterMigrationFrozen(mcpExtension, mcpDecision)) {
+        const preserved = mcpAdapterManagedIdentityPreservation(mcpExtension, mcpDecision, previousManagedIdentities);
+        for (const identity of mcpAdapterPackageIdentities(mcpExtension)) {
+            nextManagedPackageIdentities.delete(identity);
+            if (preserved.has(identity))
+                nextManagedPackageIdentities.add(identity);
+        }
     }
     setDefaultExtensionProvenance(settings, nextManagedPackageIdentities);
 }

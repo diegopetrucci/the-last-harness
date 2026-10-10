@@ -17,12 +17,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 
 import { runMcpAdapterMigration } from "../scripts/lib/mcp-adapter-migration.mjs";
 
-const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/u, "");
+const repoRoot = resolve(import.meta.dirname, "..");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const defaultExtensions = join(repoRoot, "config", "default-extensions.json");
 const canonicalMcpIdentity = "npm:@diegopetrucci/pi-mcp-adapter";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -19,7 +19,7 @@ const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
 const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
 const helperSource = "npm:fixture-helper@1.0.0";
 const canonicalIdentity = "npm:@diegopetrucci/pi-mcp-adapter";
-const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/u, "");
+const repoRoot = resolve(import.meta.dirname, "..");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 const defaultExtensionsPath = join(repoRoot, "config", "default-extensions.json");
 
