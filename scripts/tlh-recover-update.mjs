@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -17,6 +17,12 @@ const PACKAGE_UPDATE_UNSUPPORTED_OPTIONS = [
     ["noSettings", "--no-settings"],
     ["noWrapper", "--no-wrapper"],
 ];
+const RECOVERY_MCP_IDENTITIES = new Set([
+    "npm:@diegopetrucci/pi-mcp-adapter",
+    "npm:pi-mcp-adapter",
+    "git:github.com/diegopetrucci/pi-mcp-adapter",
+]);
+const RECOVERY_NATIVE_MAJOR = 5;
 function usage() {
     return `Usage: tlh update [options]
 
@@ -462,6 +468,286 @@ function assertPackageUpdateArgs(args) {
         throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
     }
 }
+function recoveryPackageSource(entry) {
+    if (typeof entry === "string")
+        return entry;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+        return undefined;
+    const source = entry.source;
+    return typeof source === "string" ? source : undefined;
+}
+function recoveryNpmPackageReference(source) {
+    const trimmed = source.trim();
+    if (!trimmed.startsWith("npm:"))
+        return undefined;
+    const spec = trimmed.slice("npm:".length);
+    const match = spec.match(/^(@[^@/]+\/[^@]+|[^@]+)(?:@(.*))?$/);
+    return match ? { identity: `npm:${match[1]}`, selector: match[2] } : undefined;
+}
+function recoverySplitGitRef(url) {
+    const hashSeparator = url.lastIndexOf("#");
+    if (hashSeparator >= 0) {
+        const repo = url.slice(0, hashSeparator);
+        const ref = url.slice(hashSeparator + 1);
+        if (repo && ref)
+            return { repo, ref };
+    }
+    const scpLikeMatch = url.match(/^git@([^:]+):(.+)$/);
+    if (scpLikeMatch) {
+        const pathWithMaybeRef = scpLikeMatch[2] || "";
+        const refSeparator = pathWithMaybeRef.indexOf("@");
+        if (refSeparator < 0)
+            return { repo: url };
+        const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+        const ref = pathWithMaybeRef.slice(refSeparator + 1);
+        if (!repoPath || !ref)
+            return { repo: url };
+        return { repo: `git@${scpLikeMatch[1] || ""}:${repoPath}`, ref };
+    }
+    if (url.includes("://")) {
+        try {
+            const parsed = new URL(url);
+            const pathWithMaybeRef = parsed.pathname.replace(/^\/+/, "");
+            const refSeparator = pathWithMaybeRef.indexOf("@");
+            if (refSeparator < 0)
+                return { repo: url };
+            const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+            const ref = pathWithMaybeRef.slice(refSeparator + 1);
+            if (!repoPath || !ref)
+                return { repo: url };
+            parsed.pathname = `/${repoPath}`;
+            return { repo: parsed.toString().replace(/\/$/, ""), ref };
+        }
+        catch {
+            return { repo: url };
+        }
+    }
+    const slashIndex = url.indexOf("/");
+    if (slashIndex < 0)
+        return { repo: url };
+    const host = url.slice(0, slashIndex);
+    const pathWithMaybeRef = url.slice(slashIndex + 1);
+    const refSeparator = pathWithMaybeRef.indexOf("@");
+    if (refSeparator < 0)
+        return { repo: url };
+    const repoPath = pathWithMaybeRef.slice(0, refSeparator);
+    const ref = pathWithMaybeRef.slice(refSeparator + 1);
+    if (!repoPath || !ref)
+        return { repo: url };
+    return { repo: `${host}/${repoPath}`, ref };
+}
+function recoveryParseGitSource(source) {
+    const trimmed = source.trim();
+    if (!trimmed)
+        return undefined;
+    const hasPiGitPrefix = trimmed.startsWith("git:") && !/^git:\/\//i.test(trimmed);
+    const url = hasPiGitPrefix ? trimmed.slice(4).trim() : trimmed;
+    if (!hasPiGitPrefix && !/^(https?|ssh|git):\/\//i.test(url) && !url.startsWith("git@")) {
+        return undefined;
+    }
+    const { repo: repoWithoutRef, ref } = recoverySplitGitRef(url);
+    let host;
+    let repoPath;
+    const scpLikeMatch = repoWithoutRef.match(/^git@([^:]+):(.+)$/);
+    if (scpLikeMatch) {
+        host = scpLikeMatch[1] || "";
+        repoPath = scpLikeMatch[2] || "";
+    }
+    else if (/^(https?|ssh|git):\/\//i.test(repoWithoutRef)) {
+        try {
+            const parsed = new URL(repoWithoutRef);
+            host = parsed.hostname;
+            repoPath = parsed.pathname.replace(/^\/+/, "");
+        }
+        catch {
+            return undefined;
+        }
+    }
+    else {
+        const slashIndex = repoWithoutRef.indexOf("/");
+        if (slashIndex < 0)
+            return undefined;
+        host = repoWithoutRef.slice(0, slashIndex);
+        repoPath = repoWithoutRef.slice(slashIndex + 1);
+        if (!host.includes(".") && host !== "localhost")
+            return undefined;
+    }
+    const normalizedPath = repoPath.replace(/\.git$/, "").replace(/^\/+/, "");
+    if (!host || !normalizedPath || normalizedPath.split("/").length < 2)
+        return undefined;
+    const git = { host, path: normalizedPath, ref };
+    return {
+        identity: `git:${host.toLowerCase()}/${normalizedPath.toLowerCase()}`,
+        selector: ref,
+        git,
+    };
+}
+function recoveryPackageReference(source) {
+    return recoveryNpmPackageReference(source) || recoveryParseGitSource(source);
+}
+function recoveryPackageIdentity(source) {
+    return recoveryPackageReference(source)?.identity;
+}
+function recoveryParseVersion(value) {
+    if (typeof value !== "string")
+        return undefined;
+    const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
+    return match
+        ? { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) }
+        : undefined;
+}
+function recoveryVersionEqual(left, right) {
+    return left.major === right.major && left.minor === right.minor && left.patch === right.patch;
+}
+function recoveryExactVersion(source) {
+    const reference = recoveryPackageReference(source);
+    if (!reference)
+        return undefined;
+    if (reference.identity.startsWith("npm:")) {
+        return recoveryParseVersion(reference.selector);
+    }
+    const ref = reference.git?.ref;
+    if (ref === undefined)
+        return undefined;
+    const stable = ref.match(/^tlh-v(\d+)\.(\d+)\.(\d+)(?:-\d+)?$/);
+    if (stable) {
+        return { major: Number(stable[1]), minor: Number(stable[2]), patch: Number(stable[3]) };
+    }
+    return recoveryParseVersion(ref);
+}
+function recoveryHasSelector(source) {
+    const reference = recoveryPackageReference(source);
+    return reference === undefined || reference.selector !== undefined;
+}
+function recoveryPathWithin(root, target) {
+    const relativePath = relative(resolve(root), resolve(target));
+    return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+function recoveryInstalledMetadata(agentDir, source) {
+    const reference = recoveryPackageReference(source);
+    if (!reference)
+        return { kind: "invalid" };
+    let packagePath;
+    let expectedName;
+    let installRoot;
+    if (reference.identity.startsWith("npm:")) {
+        expectedName = reference.identity.slice("npm:".length);
+        installRoot = resolve(agentDir, "npm");
+        packagePath = resolve(installRoot, "node_modules", expectedName, "package.json");
+    }
+    else if (reference.git) {
+        installRoot = resolve(agentDir, "git");
+        packagePath = resolve(installRoot, reference.git.host, reference.git.path, "package.json");
+    }
+    else {
+        return { kind: "invalid" };
+    }
+    if (!recoveryPathWithin(installRoot, packagePath))
+        return { kind: "invalid" };
+    let status;
+    try {
+        status = lstatSync(packagePath);
+    }
+    catch (error) {
+        return error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+            ? { kind: "missing" }
+            : { kind: "invalid" };
+    }
+    if (status.isSymbolicLink() || !status.isFile())
+        return { kind: "invalid" };
+    try {
+        const realProfile = realpathSync(agentDir);
+        const realRoot = realpathSync(installRoot);
+        const realPath = realpathSync(packagePath);
+        if (!recoveryPathWithin(realProfile, realRoot) || !recoveryPathWithin(realRoot, realPath)) {
+            return { kind: "invalid" };
+        }
+        const raw = JSON.parse(readFileSync(realPath, "utf8"));
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
+            return { kind: "invalid" };
+        if (expectedName && raw.name !== expectedName)
+            return { kind: "invalid" };
+        const version = recoveryParseVersion(raw.version);
+        return version ? { kind: "found", version } : { kind: "invalid" };
+    }
+    catch {
+        return { kind: "invalid" };
+    }
+}
+function recoverySettings(path, label) {
+    let status;
+    try {
+        status = lstatSync(path);
+    }
+    catch (error) {
+        if (error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT") {
+            return {};
+        }
+        throw new Error(`could not verify ${label}`);
+    }
+    if (status.isSymbolicLink() || !status.isFile())
+        throw new Error(`could not verify ${label}`);
+    try {
+        const raw = JSON.parse(readFileSync(path, "utf8"));
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
+            throw new Error("not an object");
+        if ("packages" in raw && raw.packages !== undefined && !Array.isArray(raw.packages)) {
+            throw new Error("packages must be an array");
+        }
+        return raw;
+    }
+    catch {
+        throw new Error(`could not verify ${label}`);
+    }
+}
+function recoverySelectionIsSafe(agentDir, source) {
+    const declared = recoveryExactVersion(source);
+    const metadata = recoveryInstalledMetadata(agentDir, source);
+    if (metadata.kind === "invalid")
+        return false;
+    // Recovery is deliberately stricter than normal startup: only an exact
+    // native source or an unpinned source with an already-native cache can pass.
+    if (declared) {
+        if (declared.major < RECOVERY_NATIVE_MAJOR)
+            return false;
+        return (metadata.kind === "missing" ||
+            (metadata.version !== undefined && recoveryVersionEqual(declared, metadata.version)));
+    }
+    if (recoveryHasSelector(source))
+        return false;
+    return metadata.kind === "found" && metadata.version !== undefined
+        ? metadata.version.major >= RECOVERY_NATIVE_MAJOR
+        : false;
+}
+function assertMcpAdapterRecoveryUpdateSafe(agentDir) {
+    const projectRoot = resolve(process.cwd());
+    const scopes = [
+        {
+            settings: recoverySettings(join(projectRoot, ".pi", "settings.json"), "project settings"),
+            root: join(projectRoot, ".pi"),
+        },
+        {
+            settings: recoverySettings(join(agentDir, "settings.json"), "profile settings"),
+            root: agentDir,
+        },
+    ];
+    for (const scope of scopes) {
+        const packages = Array.isArray(scope.settings.packages) ? scope.settings.packages : [];
+        for (const entry of packages) {
+            const source = recoveryPackageSource(entry);
+            const identity = source ? recoveryPackageIdentity(source) : undefined;
+            if (!source || !identity || !RECOVERY_MCP_IDENTITIES.has(identity))
+                continue;
+            if (!recoverySelectionIsSafe(scope.root, source)) {
+                throw new Error("MCP adapter extension update held: the selected adapter migration is not safe to bypass; run `tlh update` or pin the adapter before retrying.");
+            }
+        }
+    }
+}
 function realpathIfPossible(pathValue) {
     try {
         return realpathSync(pathValue);
@@ -537,6 +823,15 @@ function printPackageUpdateDryRun(piCommand, args) {
 function runPackageUpdate(args) {
     assertPackageUpdateTargetSafe(args.agentDir);
     assertPackageUpdateArgs(args);
+    try {
+        assertMcpAdapterRecoveryUpdateSafe(args.agentDir);
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : "the selected adapter could not be verified safely";
+        throw new Error(detail.startsWith("MCP adapter extension update held:")
+            ? detail
+            : `MCP adapter extension update held: ${detail}`);
+    }
     const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
     // Always use the absolute private TLH runtime pi binary rather than resolving
     // "pi" by name from PATH — identical logic to tlh-recover-update.mjs.

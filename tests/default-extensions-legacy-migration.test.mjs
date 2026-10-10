@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { packageIdentity } from "../scripts/lib/default-extensions.mjs";
@@ -623,7 +624,7 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
   ]);
 });
 
-test("mcporter migration handles prior TLH-managed and manual installs", () => {
+test("mcporter migration holds prior TLH-managed and manual installs until v5 is proven", () => {
   const bundledPath = bundledExtensionsPath;
   const mcporter = bundledExtension("mcporter");
 
@@ -644,10 +645,10 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   ]);
 
   const replacementMergedSettings = readJson(replacementMergeFixture.settings);
-  assert.deepEqual(replacementMergedSettings.packages, [harnessPackage, bundledSource("mcporter")]);
+  assert.deepEqual(replacementMergedSettings.packages, [previousMcporterSource, harnessPackage]);
   assert.deepEqual(
     replacementMergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities,
-    ["npm:@diegopetrucci/pi-mcp-adapter"],
+    [],
   );
 
   const managedPinnedFixture = tempFixture();
@@ -678,9 +679,7 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   ]);
 
   const managedPinnedSettings = readJson(managedPinnedFixture.settings);
-  assert.equal(managedPinnedSettings.packages.includes(bundledSource("mcporter")), true);
-  assert.equal(managedPinnedSettings.packages.includes(previousBundledMcporterSource), false);
-  assert.equal(managedPinnedSettings.packages.includes(harnessPackage), true);
+  assert.deepEqual(managedPinnedSettings.packages, [previousBundledMcporterSource, harnessPackage]);
   assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
     "npm:@diegopetrucci/pi-mcp-adapter",
   ]);
@@ -730,7 +729,7 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   assert.deepEqual(disabledSettings.packages, []);
 });
 
-test("mcporter migration upgrades the managed 2.36.0 pin to 5.0.0 idempotently", () => {
+test("mcporter migration holds the managed 2.36.0 pin idempotently", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
   assert.equal(mcporter.source, "npm:@diegopetrucci/pi-mcp-adapter@5.0.0");
@@ -770,8 +769,7 @@ test("mcporter migration upgrades the managed 2.36.0 pin to 5.0.0 idempotently",
   ]);
 
   const firstSettings = readJson(fixture.settings);
-  assert.deepEqual(firstSettings.packages, [harnessPackage, mcporter.source]);
-  assert.equal(firstSettings.packages.includes(stalePin), false);
+  assert.deepEqual(firstSettings.packages, [harnessPackage, stalePin]);
   assert.deepEqual(firstSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
     "npm:@diegopetrucci/pi-mcp-adapter",
   ]);
@@ -788,7 +786,7 @@ test("mcporter migration upgrades the managed 2.36.0 pin to 5.0.0 idempotently",
   assert.equal(readFileSync(fixture.settings, "utf8"), firstRaw);
 });
 
-test("merge migrates a filtered active replacement object in place", () => {
+test("merge holds a filtered active replacement object in place", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
   const replacementEntry = {
@@ -819,10 +817,7 @@ test("merge migrates a filtered active replacement object in place", () => {
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [
-    harnessPackage,
-    { ...replacementEntry, source: mcporter.source },
-  ]);
+  assert.deepEqual(settings.packages, [harnessPackage, replacementEntry]);
   assert.equal(settings.tlh.userFlag, true);
 });
 
@@ -901,10 +896,10 @@ test("merge lets an unfiltered canonical object win over a filtered replacement"
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, canonicalEntry]);
+  assert.deepEqual(settings.packages, [harnessPackage, replacementEntry, canonicalEntry]);
 });
 
-test("tlh-defaults enable migrates an active replacement object without dropping metadata", () => {
+test("tlh-defaults enable holds a package-filter-disabled mcporter entry in place and prints a warning", () => {
   const mcporter = bundledExtension("mcporter");
   assert.ok(mcporter, "bundled mcporter default should exist");
   const replacementEntry = {
@@ -927,20 +922,87 @@ test("tlh-defaults enable migrates an active replacement object without dropping
     ),
   );
 
-  runNode(defaultsScript, [
-    "--settings",
-    fixture.settings,
-    "--defaults",
-    fixture.extensions,
-    "enable",
-    "mcporter",
-  ]);
+  const result = spawnSync(
+    process.execPath,
+    [
+      defaultsScript,
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "enable",
+      "mcporter",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `enable exited non-zero: ${result.stderr}`);
 
+  // Package-filter opt-out is preserved: packages stay unchanged (fail-closed gate).
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [
-    { source: mcporter.source, autoload: true, userMetadata: { preserve: true } },
-  ]);
+  assert.deepEqual(
+    settings.packages,
+    [replacementEntry],
+    "package-filter entry must be held in place unchanged",
+  );
+  // disabledDefaultExtensions is cleared (the disabled marker is removed).
   assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
+
+  // A warning must be printed to stderr describing the package-filter hold.
+  assert.match(
+    result.stderr,
+    /mcporter remains disabled by a package filter/,
+    "stderr must warn that mcporter remains disabled by a package filter",
+  );
+  assert.match(
+    result.stderr,
+    /user-owned entry was left unchanged/,
+    "stderr must state the user-owned entry was left unchanged",
+  );
+  assert.match(
+    result.stderr,
+    /edit or remove the package filter/,
+    "stderr must instruct the user to edit or remove the filter",
+  );
+});
+
+test("tlh-defaults enable mcporter without a package filter prints no package-filter warning", () => {
+  const mcporter = bundledExtension("mcporter");
+  assert.ok(mcporter, "bundled mcporter default should exist");
+  const fixture = tempFixture();
+  writeFileSync(fixture.extensions, JSON.stringify([mcporter], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      defaultsScript,
+      "--settings",
+      fixture.settings,
+      "--defaults",
+      fixture.extensions,
+      "enable",
+      "mcporter",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `enable exited non-zero: ${result.stderr}`);
+
+  // Without a package filter, no package-filter warning should appear on stderr.
+  assert.doesNotMatch(
+    result.stderr,
+    /package filter/,
+    "stderr must not warn about a package filter when no package filter is present",
+  );
 });
 
 test("tlh-defaults disable migrates the fast alias and removes the replaced package", () => {

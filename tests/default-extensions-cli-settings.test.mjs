@@ -744,6 +744,68 @@ test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned
   assert.deepEqual(sources, ["npm:@diegopetrucci/pi-oracle@0.1.12"]);
 });
 
+test("tlh-defaults sources and enable hold legacy MCP selections without emitting the native pin", () => {
+  const fixture = tempFixture();
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [{ id: "mcporter", source: nativeSource, aliases: [], replaces: [legacySource] }],
+      null,
+      2,
+    ),
+  );
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySource],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const runDefaults = (command) =>
+    spawnSync(
+      process.execPath,
+      [
+        defaultsScript,
+        "--settings",
+        fixture.settings,
+        "--defaults",
+        fixture.extensions,
+        ...command,
+      ],
+      { cwd: repoRoot, env: process.env, encoding: "utf8" },
+    );
+  const sources = runDefaults(["sources"]);
+  assert.equal(sources.status, 0, sources.stderr);
+  assert.equal(sources.stdout.trim(), "");
+  assert.match(sources.stderr, /selected adapter is pre-v5/);
+
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [legacySource],
+        tlh: { disabledDefaultExtensions: ["mcporter"] },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const enabled = runDefaults(["enable", "mcporter"]);
+  assert.equal(enabled.status, 0, enabled.stderr);
+  assert.match(enabled.stderr, /selected adapter is pre-v5/);
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(settings.packages, [legacySource]);
+  assert.deepEqual(settings.tlh?.disabledDefaultExtensions ?? [], []);
+  assert.doesNotMatch(JSON.stringify(settings), /pi-mcp-adapter@5\.0\.0/);
+});
+
 test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
   const fixture = tempFixture();
   writeFileSync(

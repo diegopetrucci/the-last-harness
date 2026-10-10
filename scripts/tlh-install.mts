@@ -21,6 +21,11 @@ import {
   packageSourceInstallDir,
   packageSourcePiSource,
 } from "./lib/tlh-install-package-source.mjs";
+import { packageIdentity, readDefaultExtensions } from "./lib/default-extensions.mjs";
+import {
+  mcpAdapterPackageIdentities,
+  MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+} from "./lib/mcp-adapter-cutover.mjs";
 import {
   assertSafeSettingsTarget,
   copySafeProfileFile,
@@ -38,6 +43,7 @@ import {
 } from "./lib/tlh-install-profile-cleanup.mjs";
 import type { ProfileCleanupConfig, ProfileCleanupIo } from "./lib/tlh-install-profile-cleanup.mjs";
 import {
+  mcpAdapterCutoverHeldForInstall,
   preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl,
   type NpmPreinstallConfig,
   type NpmPreinstallIo,
@@ -1517,9 +1523,20 @@ function updateDefaultExtensionSourcesBestEffort(config: InstallConfig, sources:
   return failures;
 }
 
-function updateNonCriticalDefaultExtensions(config: InstallConfig, sources: string[]): number {
+function updateNonCriticalDefaultExtensions(
+  config: InstallConfig,
+  sources: string[],
+  { mcpAdapterHeld = false }: { mcpAdapterHeld?: boolean } = {},
+): number {
   if (sources.length === 0) return 0;
   const fallbackDescription = `${sources.length} non-critical bundled default source(s)`;
+  if (mcpAdapterHeld) {
+    verboseLog(
+      config,
+      "MCP adapter cutover is held; skipping the settings-wide extension refresh and updating only non-MCP defaults.",
+    );
+    return updateDefaultExtensionSourcesBestEffort(config, sources);
+  }
   if (config.dryRun) {
     log(config, "Dry run: settings-wide extension refresh will run from merged settings.");
   } else {
@@ -1615,21 +1632,43 @@ function installDefaultExtensions(config: InstallConfig): void {
     criticalSourcesOutput = "";
   }
 
-  const { sources, criticalSources, nonCriticalSources } = splitDefaultExtensionSources(
+  const { criticalSources, nonCriticalSources } = splitDefaultExtensionSources(
     sourcesOutput,
     criticalSourcesOutput,
   );
-  if (sources.length === 0) {
+  const mcpAdapterHeld = mcpAdapterCutoverHeldForInstall(config);
+  const mcpExtension = (() => {
+    try {
+      return readDefaultExtensions(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE).find(
+        (entry) => entry.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+      );
+    } catch {
+      return undefined;
+    }
+  })();
+  const heldMcpIdentities = mcpAdapterHeld
+    ? mcpAdapterPackageIdentities(mcpExtension)
+    : new Set<string>();
+  const safeSource = (source: string): boolean => {
+    const identity = packageIdentity(source);
+    return identity === undefined || !heldMcpIdentities.has(identity);
+  };
+  const safeCriticalSources = criticalSources.filter(safeSource);
+  const safeNonCriticalSources = nonCriticalSources.filter(safeSource);
+  const safeSources = [...safeCriticalSources, ...safeNonCriticalSources];
+  if (safeSources.length === 0) {
     log(config, "No bundled default extensions are enabled.");
     return;
   }
 
   log(config, "Installing bundled default extensions...");
-  verboseLog(config, `Installing bundled default extensions (${sources.length})...`);
-  preflightCriticalDefaultExtensionTargets(config, criticalSources);
-  const failures = updateNonCriticalDefaultExtensions(config, nonCriticalSources);
+  verboseLog(config, `Installing bundled default extensions (${safeSources.length})...`);
+  preflightCriticalDefaultExtensionTargets(config, safeCriticalSources);
+  const failures = updateNonCriticalDefaultExtensions(config, safeNonCriticalSources, {
+    mcpAdapterHeld,
+  });
   if (failures !== 0) warn(`${failures} bundled default extension package(s) failed to update`);
-  for (const source of criticalSources) installCriticalDefaultExtension(config, source);
+  for (const source of safeCriticalSources) installCriticalDefaultExtension(config, source);
 
   if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
 }

@@ -581,6 +581,8 @@ required|config/pi-runtime/package-lock.json
 required|scripts/merge-settings.mjs
 required|scripts/tlh-defaults.mjs
 required|scripts/lib/default-extensions.mjs
+required|scripts/lib/mcp-adapter-cutover.mjs
+required|scripts/lib/mcp-adapter-migration.mjs
 required|scripts/tlh-gnosis.mjs
 required|scripts/tlh-tickets.mjs
 required|scripts/tlh-recover-update.mjs
