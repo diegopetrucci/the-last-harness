@@ -379,7 +379,134 @@ test("tlh doctor returns success for a healthy isolated profile", (t) => {
   assert.match(output, /OK\s+managed tk validation:/);
   assert.match(output, /OK\s+gh availability\/auth:/);
   assert.match(output, /OK\s+MCP\/web-search prerequisites:/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.0; target=5\.0\.0/);
   assert.match(output, /Summary: .*0 FAIL/);
+});
+
+test("tlh doctor recognizes global and selected project adapter configs without reading their contents", (t) => {
+  const fixture = configureHealthyFixture(t);
+  writeFileSync(
+    join(fixture.agentDir, "mcp-adapter.json"),
+    JSON.stringify({ settings: { authToken: "secret-value" } }, null, 2),
+  );
+  mkdirSync(join(fixture.root, ".pi"), { recursive: true });
+  writeFileSync(
+    join(fixture.root, ".pi", "mcp-adapter.json"),
+    JSON.stringify({ imports: ["./shared.json"] }, null, 2),
+  );
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    cwd: fixture.root,
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(output, /MCP config present \(3; 2 adapter-owned\)/);
+  assert.match(output, /OK\s+MCP adapter cutover: state=native; selected=5\.0\.0; target=5\.0\.0/);
+  assert.doesNotMatch(output, /secret-value|shared\.json/);
+});
+
+test("tlh doctor reports a held pre-v5 adapter with sanitized versions and no writes", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  writeFileSync(
+    join(fixture.agentDir, "mcp-adapter.json"),
+    JSON.stringify({ settings: { authToken: "secret-value" } }, null, 2),
+  );
+  const settingsBeforeDoctor = readFileSync(settingsPath, "utf8");
+  const backupsBeforeDoctor = readdirSync(fixture.agentDir).filter((entry) =>
+    entry.startsWith("settings.json.backup-"),
+  ).length;
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-pre-v5; selected=2\.36\.0; target=5\.0\.0; held/,
+  );
+  assert.doesNotMatch(output, /secret-value|@diegopetrucci|https?:\/\//i);
+  assert.equal(readFileSync(settingsPath, "utf8"), settingsBeforeDoctor);
+  assert.equal(
+    readdirSync(fixture.agentDir).filter((entry) => entry.startsWith("settings.json.backup-"))
+      .length,
+    backupsBeforeDoctor,
+  );
+});
+
+test("tlh doctor does not label a newer native adapter as held", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@5.1.0";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /^OK[ \t]+MCP adapter cutover: state=native; selected=5\.1\.0; target=5\.0\.0$/m,
+  );
+  assert.doesNotMatch(output, /^.*MCP adapter cutover:.*held.*$/m);
+});
+
+test("tlh doctor holds an unresolved adapter selector without exposing its source", (t) => {
+  const fixture = configureHealthyFixture(t);
+  const settingsPath = join(fixture.agentDir, "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const adapterIndex = settings.packages.findIndex((entry) =>
+    String(typeof entry === "string" ? entry : entry.source).includes("pi-mcp-adapter"),
+  );
+  assert.notEqual(adapterIndex, -1);
+  settings.packages[adapterIndex] = "npm:@diegopetrucci/pi-mcp-adapter@^5";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+  const result = runDoctor(["--agent-dir", fixture.agentDir, "--package-root", repoRoot], {
+    env: {
+      HOME: fixture.home,
+      PATH: `${fixture.fakebin}:${process.env.PATH}`,
+      EXA_API_KEY: "hidden",
+    },
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(
+    output,
+    /WARN\s+MCP adapter cutover: state=hold; reason=selected-version-unresolved; selected=unresolved; target=5\.0\.0; held/,
+  );
+  assert.doesNotMatch(output, /@diegopetrucci|\^5/);
 });
 
 test("tlh doctor ignores RTK executables on PATH", (t) => {

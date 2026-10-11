@@ -118,6 +118,8 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
   cp scripts/lib/tlh-install-runtime.mjs "${stage_scripts_dir}/lib/tlh-install-runtime.mjs"
   cp scripts/lib/default-extensions.mjs "${stage_scripts_dir}/lib/default-extensions.mjs"
+  cp scripts/lib/mcp-adapter-cutover.mjs "${stage_scripts_dir}/lib/mcp-adapter-cutover.mjs"
+  cp scripts/lib/mcp-adapter-migration.mjs "${stage_scripts_dir}/lib/mcp-adapter-migration.mjs"
 
   cat >"${fakebin}/sh" <<'EOF_FAKE_STAGED_SH'
 #!/bin/sh
