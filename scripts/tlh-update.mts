@@ -4,6 +4,7 @@ import {
   chmodSync,
   constants,
   existsSync,
+  lstatSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import type { JsonValue } from "@earendil-works/pi-ai";
 
@@ -29,9 +31,16 @@ import {
   defaultTlhBinDir,
   expandHomePath,
 } from "./lib/tlh-install-utils.mjs";
+import { readDefaultExtensions } from "./lib/default-extensions.mjs";
+import {
+  evaluateMcpAdapterCutover,
+  MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+} from "./lib/mcp-adapter-cutover.mjs";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"] as const);
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 const PACKAGE_UPDATE_ARGS = ["update", "--extensions"] as const;
@@ -650,6 +659,88 @@ function assertPackageUpdateTargetSafe(agentDir: string): void {
   }
 }
 
+function isErrno(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+function readSettingsForPackageGuard(path: string, label: string): Record<string, unknown> {
+  let status;
+  try {
+    status = lstatSync(path);
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return {};
+    throw new Error(
+      `MCP adapter extension update held: could not verify ${label}; run \`tlh update\` after repairing the settings file.`,
+    );
+  }
+  if (status.isSymbolicLink() || !status.isFile()) {
+    throw new Error(
+      `MCP adapter extension update held: could not verify ${label}; run \`tlh update\` after repairing the settings file.`,
+    );
+  }
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
+    if ("packages" in raw && raw.packages !== undefined && !Array.isArray(raw.packages)) {
+      throw new Error("packages must be an array");
+    }
+    return raw as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `MCP adapter extension update held: could not verify ${label}; run \`tlh update\` after repairing the settings file.`,
+    );
+  }
+}
+
+function assertMcpAdapterExtensionUpdateSafe(agentDir: string): void {
+  let extension;
+  try {
+    const defaultExtensionsPath = join(__dirname, "..", "config", "default-extensions.json");
+    extension = readDefaultExtensions(defaultExtensionsPath).find(
+      (entry) => entry.id === MCP_ADAPTER_CUTOVER_EXTENSION_ID,
+    );
+  } catch {
+    throw new Error(
+      "MCP adapter extension update held: the bundled default manifest could not be verified; run `tlh update` to repair the tlh package.",
+    );
+  }
+  if (!extension) {
+    throw new Error(
+      "MCP adapter extension update held: the bundled MCP adapter default could not be verified; run `tlh update` to repair the tlh package.",
+    );
+  }
+
+  const profileSettingsPath = settingsPath(agentDir);
+  const profileSettings = readSettingsForPackageGuard(profileSettingsPath, "profile settings");
+  const projectRoot = resolve(process.cwd());
+  const projectSettingsPath = join(projectRoot, ".pi", "settings.json");
+  const projectSettings = readSettingsForPackageGuard(projectSettingsPath, "project settings");
+  const decisions = [
+    evaluateMcpAdapterCutover(profileSettings, extension, {
+      agentDir,
+      homeDir: process.env.HOME || "",
+      optedOut: false,
+      preserveOptOut: false,
+    }),
+    evaluateMcpAdapterCutover(projectSettings, extension, {
+      agentDir: join(projectRoot, ".pi"),
+      homeDir: process.env.HOME || "",
+      optedOut: false,
+      preserveOptOut: false,
+    }),
+  ];
+  if (decisions.some((decision) => decision.action === "hold")) {
+    throw new Error(
+      "MCP adapter extension update held: the selected adapter migration is not safe to bypass; run `tlh update` or pin the adapter before retrying.",
+    );
+  }
+}
+
 function assertPackageUpdateArgs(args: Pick<CliArgs, "explicitOptions">): void {
   const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS.filter(([key]) =>
     args.explicitOptions.has(key),
@@ -681,6 +772,7 @@ function reportSubagentExtensionConfigMigration(
 function runPackageUpdate(args: CliArgs): void {
   assertPackageUpdateTargetSafe(args.agentDir);
   assertPackageUpdateArgs(args);
+  assertMcpAdapterExtensionUpdateSafe(args.agentDir);
   const sanitizedEnv = envWithSanitizedPath(process.env, args.agentDir);
   // Always use the absolute private TLH runtime pi binary rather than resolving
   // "pi" by name from PATH — identical logic to tlh-recover-update.mjs.

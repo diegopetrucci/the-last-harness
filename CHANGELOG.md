@@ -11,6 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Subscription usage no longer silently drops footer redraws when `model_select` or `turn_end` delivers a fresh `ExtensionContext` instead of the one that registered the render callback. [#769](https://github.com/diegopetrucci/the-last-harness/issues/769)
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped. Invalid `toolBudget` overrides fail when settings load, and a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
 - Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.
@@ -25,6 +26,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Updated the bundled `developer` Anthropic default to `claude-sonnet-5-5` at medium effort.
 - Raised TLH's reversible primary and other non-child context cap from 200,000 to 300,000 tokens; canonical developer children continue to use a 272,000-token ceiling and other child roles retain native windows.
 - Updated Anthropic defaults for `test-runner`, `diff-summarizer`, `librarian`, `repo-scout`, and `web-scout` to Claude Haiku 5.5; `test-runner` remains at low effort and the other four use medium effort.
 - Bumped the bundled Pi runtime from `1.0.4` to `1.1.0`. Pi now provides a native OSC 7501 writer, tool-policy modifiers, richer tool/settlement metadata, and MCP/auth lifecycle improvements; TLH keeps its effective-activity root writer, private runtime ownership, child policy, generic MCP gateway, and terminal activity contracts unchanged.
@@ -38,6 +40,8 @@ All notable changes to The Last Harness will be documented in this file.
 - `typebox` is no longer a runtime dependency of the TLH package: it is pinned as an exact dev dependency and declared as a `"*"` peer dependency because Pi provides it to extensions at runtime.
 - Updated the bundled OpenAI Codex defaults: Architect, Product, and Bug Hunter now use GPT-6.1 Sol at medium effort (was GPT-5.6 Sol at high); Rush now uses GPT-6.1 Sol at low effort (was GPT-5.6 Luna at medium); code-reviewer now uses GPT-6.1 Sol at medium effort (was GPT-5.6 Sol); and Contrarian now uses GPT-6 Astra at medium effort (was GPT-5.6 Sol at high). Oracle remains on GPT-6 Astra at medium effort, while all other packaged OpenAI Codex, Anthropic, xAI, and OpenRouter defaults remain unchanged.
 - Bumped the bundled `mcporter` extension (`@diegopetrucci/pi-mcp-adapter`) from `2.11.0` to `2.36.0`. It adds MCP Tasks with progress and cancellation, enabling and disabling servers from the `/mcp` panel, more reliable OAuth and bearer-token reconnection with secure credential storage, and a faster, ~150MB smaller default-extension install because it no longer bundles its own copies of Pi's libraries.
+- Bumped the bundled `mcporter` extension from `2.36.0` to `5.0.0`. Version 5 reads Pi-native `mcp.json` files and ignores adapter-only fields in them. Fresh installs get `5.0.0`; a profile that already selects a pre-v5, custom, unresolved, or ambiguous adapter is held rather than silently advanced until it is migrated with `tlh defaults migrate-mcp` (see `docs/mcp.md`).
+- Documented the guarded v5 MCP rollout and preview-first migration transaction, including explicit acknowledgement, selected-project/ancestor limits, byte-preserving JSONC handling, rollback ownership, and SDK cache/cold-start caveats. `tlh doctor` now recognizes adapter-owned config files and reports sanitized MCP adapter cutover state without repairing or exposing config values.
 - TLH now persists `-builtin:mcp` in isolated settings while bundled `mcporter` is enabled, so the adapter owns `/mcp` without Pi's built-in-extension replacement warning. TLH records ownership only when it inserts the exclusion; pre-existing unmarked exclusions remain user-owned. Disabling or opting out `mcporter` removes only a TLH-owned exclusion and clears its marker, while enabling it restores the exclusion only when absent.
 - Async activity rehydration now skips the machine-global run-directory scan in subagent child processes, reducing child startup overhead while preserving live async event handling.
 - Bundled async restore now publishes one exact-session snapshot for TLH activity tracking, avoiding a duplicate parent startup scan while retaining a fallback when bundled restore is unavailable.

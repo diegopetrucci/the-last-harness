@@ -10,6 +10,8 @@
     "extensions/notify/*.js",
     "extensions/subagents/src/**/*.js",
     "scripts/lib/default-extensions.mjs",
+    "scripts/lib/mcp-adapter-cutover.mjs",
+    "scripts/lib/mcp-adapter-migration.mjs",
     "scripts/lib/session-analysis.mjs",
     "scripts/lib/session-analysis-coverage.mjs",
     "scripts/lib/subagent-analysis.mjs",
