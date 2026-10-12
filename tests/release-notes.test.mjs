@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -39,7 +39,7 @@ test("release-notes prints help and rejects unknown arguments", () => {
 });
 
 test("release-notes rejects missing and empty option values consistently", () => {
-  for (const flag of ["--tag", "--changelog", "--output", "--repository", "--ref"]) {
+  for (const flag of ["--tag", "--notes-dir", "--output", "--repository", "--ref"]) {
     const missing = runReleaseNotes([flag]);
     assert.equal(missing.status, 1, `${flag} missing value should fail`);
     assert.match(
@@ -60,173 +60,124 @@ test("release-notes rejects missing and empty option values consistently", () =>
   }
 });
 
-test("release-notes uses CLI values over environment defaults", (t) => {
+function notesFixture(t, files) {
   const root = tempFixture(t);
-  const changelogPath = join(root, "CHANGELOG.md");
-  writeFileSync(changelogPath, ["## [1.2.3] - 2026-07-18", "", "CLI body", ""].join("\n"));
+  const dir = join(root, "release-notes");
+  mkdirSync(dir);
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+  return { root, dir };
+}
 
+test("release-notes builds the body from the notes file with CLI values over env defaults", (t) => {
+  const { dir } = notesFixture(t, { "v1.2.3.md": "## Highlights\n\n- CLI body.\n\n" });
   const result = runReleaseNotes(
-    [
-      "--tag=v1.2.3",
-      `--changelog=${changelogPath}`,
-      "--repository=cli/repo",
-      "--ref=refs/tags/v1.2.3",
-    ],
-    {
-      GITHUB_REF_NAME: "v9.9.9",
-      GITHUB_REPOSITORY: "env/repo",
-    },
+    ["--tag=v1.2.3", `--notes-dir=${dir}`, "--repository=cli/repo", "--ref=refs/tags/v1.2.3"],
+    { GITHUB_REF_NAME: "v9.9.9", GITHUB_REPOSITORY: "env/repo" },
   );
-
   assert.equal(result.status, 0, result.stderr);
-  assert.match(
+  assert.equal(
     result.stdout,
-    /^CLI body\n\n---\n\nFull changelog: https:\/\/github.com\/cli\/repo\/blob\/refs\/tags\/v1\.2\.3\/CHANGELOG\.md\n$/,
+    "## Highlights\n\n- CLI body.\n\n---\n\nFull changelog: https://github.com/cli/repo/blob/refs/tags/v1.2.3/CHANGELOG.md\n",
   );
-  assert.equal(result.stderr, "");
 });
 
-test("release-notes extracts exactly one bracketed or unbracketed section across CRLF changelogs", (t) => {
-  const root = tempFixture(t);
-  const changelogPath = join(root, "CHANGELOG.md");
-  writeFileSync(
-    changelogPath,
-    [
-      "## [1.2.3] - 2026-07-18",
-      "",
-      "Bracketed body",
-      "",
-      "## 1.2.4",
-      "- Unbracketed body",
-      "",
-      "## [1.2.40] - 2026-07-20",
-      "",
-      "Should not match 1.2.4",
-    ].join("\r\n"),
-    "utf8",
-  );
-
-  const bracketed = runReleaseNotes([`--changelog=${changelogPath}`], {
-    GITHUB_REF_NAME: "v1.2.3",
-  });
-  assert.equal(bracketed.status, 0, bracketed.stderr);
-  assert.equal(bracketed.stdout, "Bracketed body\n");
-
-  const unbracketed = runReleaseNotes(["--tag", "v1.2.4", "--changelog", changelogPath]);
-  assert.equal(unbracketed.status, 0, unbracketed.stderr);
-  assert.equal(unbracketed.stdout, "- Unbracketed body\n");
+test("release-notes uses GITHUB_REF_NAME, strips CRLF, and omits footer without repository", (t) => {
+  const { dir } = notesFixture(t, { "v1.2.3.md": "- One.\r\n- Two.\r\n" });
+  const result = runReleaseNotes([`--notes-dir=${dir}`], { GITHUB_REF_NAME: "v1.2.3" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "- One.\n- Two.\n");
 });
 
-test("release-notes treats version strings literally and rejects malformed headings", (t) => {
-  const root = tempFixture(t);
-  const literalPath = join(root, "literal.md");
-  writeFileSync(
-    literalPath,
-    ["## [1.2.3+build(7)?.*] - 2026-07-18", "", "Literal version body", "", "##"].join("\n"),
-  );
+test("release-notes fails without CHANGELOG fallback for missing, empty, and bad tags", (t) => {
+  const { root, dir } = notesFixture(t, { "v1.2.4.md": " \n\n" });
+  writeFileSync(join(root, "CHANGELOG.md"), "## [1.2.3] - 2026-07-18\n\nChangelog body\n");
 
-  const literal = runReleaseNotes(["--tag", "v1.2.3+build(7)?.*", "--changelog", literalPath]);
-  assert.equal(literal.status, 0, literal.stderr);
-  assert.equal(literal.stdout, "Literal version body\n");
+  const missing = runReleaseNotes(["--tag", "v1.2.3", "--notes-dir", dir]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /Missing release notes file .*v1\.2\.3\.md/);
+  assert.equal(missing.stdout, "");
 
-  for (const [name, heading] of [
-    ["opening-only", "## [1.2.3 - 2026-07-18"],
-    ["closing-only", "## 1.2.3] - 2026-07-18"],
-    ["split-heading", "##\n[1.2.3] - 2026-07-18"],
-  ]) {
-    const halfBracketedPath = join(root, `${name}.md`);
-    writeFileSync(halfBracketedPath, [heading, "", "Broken heading"].join("\n"));
+  const empty = runReleaseNotes(["--tag", "v1.2.4", "--notes-dir", dir]);
+  assert.equal(empty.status, 1);
+  assert.match(empty.stderr, /v1\.2\.4\.md is empty/);
 
-    const halfBracketed = runReleaseNotes(["--tag", "v1.2.3", "--changelog", halfBracketedPath]);
-    assert.equal(halfBracketed.status, 1, `${name} heading should fail`);
-    assert.match(halfBracketed.stderr, /missing a section for 1\.2\.3/);
-    assert.equal(halfBracketed.stdout, "");
-  }
+  const noTag = runReleaseNotes(["--notes-dir", dir]);
+  assert.equal(noTag.status, 1);
+  assert.match(noTag.stderr, /Missing release tag/);
+
+  const bareV = runReleaseNotes(["--tag", "v", "--notes-dir", dir]);
+  assert.equal(bareV.status, 1);
+  assert.match(bareV.stderr, /must include a version after any leading v/);
 });
 
-test("release-notes rejects missing tags, blank tags, empty v tags, missing sections, and empty sections", (t) => {
-  const root = tempFixture(t);
-  const changelogPath = join(root, "CHANGELOG.md");
-  writeFileSync(
-    changelogPath,
-    [
-      "## [1.2.3] - 2026-07-18",
-      "",
-      "Filled section",
-      "",
-      "## [] - 2026-07-18",
-      "",
-      "Must not be release notes for tag v",
-      "",
-      "## [1.2.4] - 2026-07-19",
-      "",
-    ].join("\n"),
-  );
-
-  const missingTag = runReleaseNotes(["--changelog", changelogPath]);
-  assert.equal(missingTag.status, 1);
-  assert.match(missingTag.stderr, /Missing release tag/);
-
-  const blankEnvTag = runReleaseNotes(["--changelog", changelogPath], { GITHUB_REF_NAME: "   " });
-  assert.equal(blankEnvTag.status, 1);
-  assert.match(blankEnvTag.stderr, /Missing release tag/);
-
-  const emptyVTag = runReleaseNotes(["--tag", "v", "--changelog", changelogPath]);
-  assert.equal(emptyVTag.status, 1);
-  assert.match(emptyVTag.stderr, /must include a version after any leading v/);
-
-  const blankVTag = runReleaseNotes(["--tag", "v   ", "--changelog", changelogPath]);
-  assert.equal(blankVTag.status, 1);
-  assert.match(blankVTag.stderr, /must include a version after any leading v/);
-
-  const missingSection = runReleaseNotes(["--tag", "v9.9.9", "--changelog", changelogPath]);
-  assert.equal(missingSection.status, 1);
-  assert.match(missingSection.stderr, /missing a section for 9\.9\.9/);
-
-  const emptySection = runReleaseNotes(["--tag", "v1.2.4", "--changelog", changelogPath]);
-  assert.equal(emptySection.status, 1);
-  assert.match(emptySection.stderr, /section for 1\.2\.4 is empty/);
-});
-
-test("release-notes writes output files on success and leaves existing files untouched on failure", (t) => {
-  const root = tempFixture(t);
-  const changelogPath = join(root, "CHANGELOG.md");
+test("release-notes writes output on success and leaves existing output on failure", (t) => {
+  const { root, dir } = notesFixture(t, { "v1.2.3.md": "Saved body.\n" });
   const outputPath = join(root, "notes.md");
-  writeFileSync(changelogPath, ["## [1.2.3] - 2026-07-18", "", "Saved body"].join("\n"));
 
-  const success = runReleaseNotes([
-    "--tag=v1.2.3",
-    `--changelog=${changelogPath}`,
-    `--output=${outputPath}`,
-  ]);
+  const success = runReleaseNotes(["--tag=v1.2.3", `--notes-dir=${dir}`, `--output=${outputPath}`]);
   assert.equal(success.status, 0, success.stderr);
   assert.equal(success.stdout, "");
-  assert.equal(readFileSync(outputPath, "utf8"), "Saved body\n");
+  assert.equal(readFileSync(outputPath, "utf8"), "Saved body.\n");
 
-  writeFileSync(outputPath, "keep me\n", "utf8");
-  const failedBuild = runReleaseNotes([
-    "--tag",
-    "v9.9.9",
-    "--changelog",
-    changelogPath,
-    "--output",
-    outputPath,
-  ]);
-  assert.equal(failedBuild.status, 1);
-  assert.match(failedBuild.stderr, /missing a section for 9\.9\.9/);
+  writeFileSync(outputPath, "keep me\n");
+  const failed = runReleaseNotes(["--tag", "v9.9.9", "--notes-dir", dir, "--output", outputPath]);
+  assert.equal(failed.status, 1);
   assert.equal(readFileSync(outputPath, "utf8"), "keep me\n");
 
-  const blockedOutputPath = join(root, "missing", "notes.md");
-  const failedWrite = runReleaseNotes([
-    "--tag",
-    "v1.2.3",
-    "--changelog",
-    changelogPath,
-    "--output",
-    blockedOutputPath,
-  ]);
+  const blocked = join(root, "missing", "notes.md");
+  const failedWrite = runReleaseNotes(["--tag", "v1.2.3", "--notes-dir", dir, "--output", blocked]);
   assert.equal(failedWrite.status, 1);
   assert.match(failedWrite.stderr, /ENOENT/);
-  assert.equal(existsSync(blockedOutputPath), false);
-  assert.equal(existsSync(join(root, "missing")), false);
+  assert.equal(existsSync(blocked), false);
+});
+
+test("release-notes --check passes with zero files, a missing dir, and valid files", (t) => {
+  const empty = notesFixture(t, { "README.md": "no heading and mid sentence" });
+  const zero = runReleaseNotes(["--check", "--notes-dir", empty.dir]);
+  assert.equal(zero.status, 0, zero.stderr);
+
+  const absent = runReleaseNotes(["--check", "--notes-dir", join(empty.root, "nope")]);
+  assert.equal(absent.status, 0, absent.stderr);
+
+  const valid = notesFixture(t, {
+    "v1.0.0.md": "- Added a thing.\n",
+    "v1.0.1.md": "Intro.\n\n## Heading\n\n```sh\ntlh\n```\n",
+    "v1.0.2.md": "- Item\n\n## Trailing heading\n",
+  });
+  const ok = runReleaseNotes(["--check", "--notes-dir", valid.dir]);
+  assert.equal(ok.status, 0, ok.stderr);
+});
+
+test("release-notes --check reports every invalid file", (t) => {
+  const { dir } = notesFixture(t, {
+    "v1.0.0.md": "\n  \n",
+    "v1.0.1.md": "Plain prose without structure.\n",
+    "v1.0.2.md": "- Item that stops mid\n",
+    "v1.0.3.md": "- Fine.\n",
+  });
+  const result = runReleaseNotes(["--check", "--notes-dir", dir]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /v1\.0\.0\.md is empty/);
+  assert.match(result.stderr, /v1\.0\.1\.md contains no markdown heading or list item/);
+  assert.match(result.stderr, /v1\.0\.2\.md ends mid-sentence/);
+  assert.doesNotMatch(result.stderr, /v1\.0\.3/);
+});
+
+test("release-notes --check judges the last line by punctuation after closing delimiters", (t) => {
+  const passing = notesFixture(t, {
+    "v1.0.0.md": "- **Bold.**\n",
+    "v1.0.1.md": "- The status now says \u201cReady.\u201d\n",
+    "v1.0.2.md": "- Use `/tokens`\n",
+  });
+  const ok = runReleaseNotes(["--check", "--notes-dir", passing.dir]);
+  assert.equal(ok.status, 0, ok.stderr);
+
+  const failing = notesFixture(t, {
+    "v1.0.0.md": "- You can now **configure updates**\n",
+    "v1.0.1.md": "- Something changed \u2014 no\n",
+  });
+  const bad = runReleaseNotes(["--check", "--notes-dir", failing.dir]);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /v1\.0\.0\.md ends mid-sentence/);
+  assert.match(bad.stderr, /v1\.0\.1\.md ends mid-sentence/);
 });
