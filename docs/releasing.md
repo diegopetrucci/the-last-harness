@@ -7,7 +7,7 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 3. runs the release checks;
 4. builds an npm-style package tarball;
 5. generates a pinned stage-0 `install.sh` asset with the tag and SHA-256 inventory for every stage-0 support fetch baked in, plus the `latest-release` update track for future updates;
-6. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
+6. creates a GitHub Release whose body is `release-notes/v<version>.md` plus a full-changelog link, along with release assets.
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-0 release asset verifies the bytes it fetches for stage 1 before executing them; explicitly repeating that asset's baked tag is still verified, while raw source/custom-ref/custom-base installers intentionally do not reuse another tag's hashes. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
@@ -38,6 +38,8 @@ git diff -- package.json
 
 Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
 
+Then draft or edit `release-notes/v$version.md`, the user-facing release body. The TLH architect drafts it from the `CHANGELOG.md` section and the maintainer edits it; follow [`release-notes/README.md`](../release-notes/README.md). Release creation fails if this file is missing or empty.
+
 Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
 
 - `docs/install.md`: pinned-tag install examples and the non-stable footer-label examples should use `v$version`.
@@ -46,7 +48,7 @@ Before validation, update release-sensitive docs that include concrete versioned
 
 For architect-managed work, keep implementation-ticket checks narrow and ticket-scoped, then put the exact validation steps in a separate final-validation `tk` ticket and dispatch it to `test-runner`. The ticket must contain ordered shell commands (with arguments) and/or exact adapter-shaped generic MCP inputs containing only the fields required by the selected status, discovery, search, connect, or call operation; `server`, `tool`, and `args` are optional overall, and `args` is a JSON string for tool calls. Derive the steps from `VALIDATING.md` or repository discovery; assigned MCP calls may invoke tools that change server-side state. `test-runner` executes that list and reports the outcomes without planning, editing, installing dependencies, or fixing failures. Keep dependency installation and release-preparation commands outside the execution-only runner.
 
-Then run the aggregate validation script and release-notes check:
+Then run the aggregate validation script and release-notes check (the latter fails if `release-notes/v$version.md` is missing):
 
 ```sh
 npm ci
