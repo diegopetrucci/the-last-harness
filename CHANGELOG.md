@@ -11,6 +11,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Subscription usage no longer silently drops footer redraws when `model_select` or `turn_end` delivers a fresh `ExtensionContext` instead of the one that registered the render callback. [#769](https://github.com/diegopetrucci/the-last-harness/issues/769)
 - A leftover `subagents.agentOverrides` `systemPrompt` is now ignored, matching other unknown override keys. That field was validated and then dropped. Invalid `toolBudget` overrides fail when settings load, and a project-scoped agent list includes load warnings for canonical packaged roles.
 - `/toggle-context-cap` now refuses to write when `settings.json`, `tlh`, or `tlh.contextCap` is not a JSON object, instead of throwing or saving a corrupted settings file.
 - Explicit `--model` and `--thinking` launch flags now win over persisted primary-agent overrides and packaged defaults for the launch session. Previously, `applySessionStart` would replace the CLI-resolved model and thinking level with the active primary's stored or bundled defaults, causing RPC hosts (such as tlh-gui) that spawn `tlh --model M --thinking T` and verify the active model to fail.

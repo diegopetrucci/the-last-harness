@@ -18,10 +18,14 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
   private readonly loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
   private service: TlhSubscriptionUsageServiceLike | undefined;
   private servicePromise: Promise<TlhSubscriptionUsageServiceLike> | undefined;
-  private readonly requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
+  private currentFooterRender: (() => void) | undefined;
 
-  registerFooterRenderRequest(ctx: ExtensionContext, requestRender: () => void): void {
-    this.requestFooterRenderByContext.set(ctx, requestRender);
+  registerFooterRenderRequest(requestRender: () => void): void {
+    this.currentFooterRender = requestRender;
+  }
+
+  clearFooterRenderRequest(): void {
+    this.currentFooterRender = undefined;
   }
 
   getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -57,7 +61,7 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
           nextProviderSnapshot !== previousProviderSnapshot ||
           nextProviderEligible !== previousProviderEligible
         ) {
-          this.requestFooterRenderByContext.get(ctx)?.();
+          this.currentFooterRender?.();
         }
       })
       .catch(() => undefined);
