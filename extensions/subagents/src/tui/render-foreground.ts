@@ -51,7 +51,12 @@ interface LegacyResultAnimationContext {
 }
 
 const TK_TICKET_WIDGET_PREFIX = "ticket: ";
-const WIDGET_ACTIVITY_PREFIX = "       ";
+// Detail column = agent-name column + 2. Single results start at column 0
+// ("<glyph> <agent>"), so details sit at 4; multi rows are indented under the
+// header ("  <glyph> <label>"), so collapsed details sit at 6. Expanded multi
+// rows start at column 0, so they use the single-result column.
+const FOREGROUND_DETAIL_INDENT = "    ";
+const MULTI_DETAIL_INDENT = "      ";
 
 export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationContext): void {
   const timer = context.state.subagentResultAnimationTimer;
@@ -256,8 +261,8 @@ function resultGlyph(
   if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return theme.fg("warning", "✓");
   return theme.fg("success", "✓");
 }
-const FOREGROUND_ACTIVITY_PREFIX = "     ";
-const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = "     ";
+const FOREGROUND_ACTIVITY_PREFIX = FOREGROUND_DETAIL_INDENT;
+const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = FOREGROUND_DETAIL_INDENT;
 
 function compactProgressActivityLines(
   progress: AgentProgress,
@@ -436,9 +441,9 @@ function renderSingleCompact(
   lines.push(
     `${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}`,
   );
-  const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
+  const ticketLine = foregroundTkTicketLine(r, theme, isRunning, FOREGROUND_DETAIL_INDENT);
   if (ticketLine) lines.push(ticketLine);
-  const childLocLine = childLocationLine(r.childLocation, theme);
+  const childLocLine = childLocationLine(r.childLocation, theme, FOREGROUND_DETAIL_INDENT);
   if (childLocLine) lines.push(childLocLine);
 
   if (isRunning && r.progress) {
@@ -453,17 +458,22 @@ function renderSingleCompact(
         activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
       lines.push(theme.fg("dim", `${prefix}${activity}`));
     }
-    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
+    lines.push(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}${liveDetailHintText()}`));
     return collapsedForegroundComponent(lines, theme);
   }
 
   const preview = compactOutputPreview(rawOutput);
-  lines.push(theme.fg("dim", `     ${resultStatusLine(r, preview)}`));
+  lines.push(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}${resultStatusLine(r, preview)}`));
   if (preview && r.exitCode === 0 && !hasEmptyTextOutputWithoutOutputTarget(r.task, output)) {
-    lines.push(theme.fg("dim", `     ${preview}`));
+    lines.push(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}${preview}`));
   }
   if (r.sessionFile)
-    lines.push(theme.fg("dim", `  session: ${safeTerminalText(shortenPath(r.sessionFile))}`));
+    lines.push(
+      theme.fg(
+        "dim",
+        `${FOREGROUND_DETAIL_INDENT}session: ${safeTerminalText(shortenPath(r.sessionFile))}`,
+      ),
+    );
   return collapsedForegroundComponent(lines, theme);
 }
 
@@ -549,31 +559,37 @@ function renderMultiCompact(
     const stepLabel = resultRowLabel(multiLabel, stepNumber);
     const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${pendingLabel}`;
     lines.push(`  ${line}`);
-    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
+    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, MULTI_DETAIL_INDENT);
     if (ticketLine) lines.push(ticketLine);
-    const childLocLineMulti = childLocationLine(r.childLocation, theme, "    ");
+    const childLocLineMulti = childLocationLine(r.childLocation, theme, MULTI_DETAIL_INDENT);
     if (childLocLineMulti) lines.push(childLocLineMulti);
     if (rRunning && liveProgress) {
       hasRunningResult = true;
       for (const activity of compactProgressActivityLines(
         liveProgress,
         width,
-        WIDGET_ACTIVITY_PREFIX,
-        WIDGET_ACTIVITY_PREFIX,
+        MULTI_DETAIL_INDENT,
+        MULTI_DETAIL_INDENT,
         now,
       )) {
-        lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
+        lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${activity}`));
       }
     } else if (
       !rPending &&
       (rFailed || rPaused || hasEmptyTextOutputWithoutOutputTarget(r.task, output))
     ) {
-      lines.push(theme.fg(rFailed ? "error" : "dim", `       ${resultStatusLine(r, rawOutput)}`));
+      lines.push(
+        theme.fg(
+          rFailed ? "error" : "dim",
+          `${MULTI_DETAIL_INDENT}${resultStatusLine(r, rawOutput)}`,
+        ),
+      );
     }
   }
   if (d.artifacts)
     lines.push(theme.fg("dim", `  artifacts: ${safeTerminalText(shortenPath(d.artifacts.dir))}`));
-  if (hasRunningResult) lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
+  if (hasRunningResult)
+    lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${liveDetailHintText()}`));
   return collapsedForegroundComponent(lines, theme);
 }
 
@@ -646,9 +662,9 @@ function renderExpandedSingleResult(
       0,
     ),
   );
-  const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
+  const ticketLine = foregroundTkTicketLine(r, theme, isRunning, FOREGROUND_DETAIL_INDENT);
   if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
-  const childLocLineSingle = childLocationLine(r.childLocation, theme);
+  const childLocLineSingle = childLocationLine(r.childLocation, theme, FOREGROUND_DETAIL_INDENT);
   if (childLocLineSingle) c.addChild(new Text(childLocLineSingle, 0, 0));
   c.addChild(new Spacer(1));
   c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
@@ -663,20 +679,25 @@ function renderExpandedSingleResult(
     const progressSnapshotNow = snapshotNowForProgress(r.progress);
     const toolLines = formatCurrentToolLines(
       r.progress,
-      w - visibleWidth("> "),
-      w - visibleWidth("  "),
+      w - visibleWidth(`${FOREGROUND_DETAIL_INDENT}> `),
+      w - visibleWidth(`${FOREGROUND_DETAIL_INDENT}  `),
       true,
       progressSnapshotNow,
     );
     for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
-      const prefix = toolLineIndex === 0 ? "> " : "  ";
+      const prefix =
+        toolLineIndex === 0 ? `${FOREGROUND_DETAIL_INDENT}> ` : `${FOREGROUND_DETAIL_INDENT}  `;
       c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
     }
     const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
     if (liveStatusLine) {
-      c.addChild(new Text(theme.fg("accent", liveStatusLine), 0, 0));
+      c.addChild(
+        new Text(theme.fg("accent", `${FOREGROUND_DETAIL_INDENT}${liveStatusLine}`), 0, 0),
+      );
     }
-    c.addChild(new Text(theme.fg("dim", liveDetailHintText()), 0, 0));
+    c.addChild(
+      new Text(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}${liveDetailHintText()}`), 0, 0),
+    );
     if (r.artifactPaths) {
       c.addChild(
         new Text(
@@ -693,7 +714,10 @@ function renderExpandedSingleResult(
       for (const t of r.progress.recentTools.slice(-3)) {
         c.addChild(
           new Text(
-            theme.fg("dim", `${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`),
+            theme.fg(
+              "dim",
+              `${FOREGROUND_DETAIL_INDENT}  ${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`,
+            ),
             0,
             0,
           ),
@@ -701,7 +725,9 @@ function renderExpandedSingleResult(
       }
     }
     for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-      c.addChild(new Text(theme.fg("dim", `  ${safeTerminalText(line)}`), 0, 0));
+      c.addChild(
+        new Text(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}  ${safeTerminalText(line)}`), 0, 0),
+      );
     }
     if (
       toolLines?.length ||
@@ -880,6 +906,7 @@ function renderExpandedMultiResult(
 
   c.addChild(new Spacer(1));
 
+  let hintShown = false;
   for (const { index: resultIndex, result: r } of entries) {
     const progressFromArray =
       d.progress?.find((p) => p.index === resultIndex) ||
@@ -914,9 +941,13 @@ function renderExpandedMultiResult(
       : `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
     const toolCallLines = getToolCallLines(r);
     c.addChild(new Text(stepHeader, 0, 0));
-    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
+    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, FOREGROUND_DETAIL_INDENT);
     if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
-    const childLocLineExpanded = childLocationLine(r.childLocation, theme, "    ");
+    const childLocLineExpanded = childLocationLine(
+      r.childLocation,
+      theme,
+      FOREGROUND_DETAIL_INDENT,
+    );
     if (childLocLineExpanded) c.addChild(new Text(childLocLineExpanded, 0, 0));
 
     c.addChild(new Text(theme.fg("dim", `    task: ${safeTerminalDocumentLeaf(r.task)}`), 0, 0));
@@ -985,7 +1016,10 @@ function renderExpandedMultiResult(
       if (liveStatusLine) {
         c.addChild(new Text(theme.fg("accent", `    ${liveStatusLine}`), 0, 0));
       }
-      c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
+      if (!hintShown) {
+        hintShown = true;
+        c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
+      }
       if (r.artifactPaths) {
         c.addChild(
           new Text(

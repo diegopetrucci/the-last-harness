@@ -1259,7 +1259,7 @@ describe("subagent async widget rendering", () => {
 
       const preview = lines.slice(commandStart, nextStepStart);
       assert.ok(preview.length <= 3);
-      assert.ok(preview.slice(1).every((line) => line.startsWith("       ")));
+      assert.ok(preview.slice(1).every((line) => line.startsWith("      ")));
       const previewText = preview
         .map((line, index) => (index === 0 ? line.slice(line.indexOf("bash: ")) : line.trimStart()))
         .join("");
@@ -1530,7 +1530,7 @@ describe("subagent async widget rendering", () => {
       assert.ok(nextStepStart > commandStart);
       const commandPreview = lines.slice(commandStart, nextStepStart);
       assert.equal(commandPreview.length, 3);
-      assert.match(commandPreview[0] ?? "", /^       bash:/);
+      assert.match(commandPreview[0] ?? "", /^      bash:/);
       assert.doesNotMatch(commandPreview.join("\n"), /⎿/);
       assert.match(commandPreview.at(-1) ?? "", /…/);
       assert.ok(commandPreview.every((line) => visibleWidth(line) <= width - 2));

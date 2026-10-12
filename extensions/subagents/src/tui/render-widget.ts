@@ -42,7 +42,15 @@ import {
 } from "./render-primitives.ts";
 import { PHRASE_HOLD_MS } from "./whimsical-phrases.ts";
 
-const WIDGET_ACTIVITY_PREFIX = "       ";
+// Detail column = agent-name column + 2 (6 spaces under a "  <glyph> <agent>" header).
+const WIDGET_ACTIVITY_PREFIX = "      ";
+const WIDGET_DETAIL_INDENT = WIDGET_ACTIVITY_PREFIX;
+
+function widgetHasRunningStep(job: AsyncJobState): boolean {
+  return (
+    job.steps?.some((step) => projectContinuedWidgetStep(job, step).status === "running") ?? false
+  );
+}
 
 export function widgetRenderKey(job: AsyncJobState): string {
   return JSON.stringify({
@@ -682,25 +690,26 @@ function foregroundStyleWidgetStepLines(
   // step header) so it survives budget-pressure truncation. fitWidgetLineBudget
   // drops from the END, so activity — which is transient and regenerates every
   // tick — absorbs the cut rather than the rare, static location line.
-  const childLocLine = childLocationLine(step.childLocation, theme, "    ");
+  const childLocLine = childLocationLine(step.childLocation, theme, WIDGET_DETAIL_INDENT);
   if (childLocLine) lines.push(childLocLine);
   for (const activity of activityLines) {
     lines.push(theme.fg("dim", `${WIDGET_ACTIVITY_PREFIX}${activity}`));
   }
-  if (resolvedDisplayStatus === "running") {
-    if (!expanded) lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
-    if (expanded) {
-      const output = widgetOutputPath(job, step);
-      if (output)
-        lines.push(`    ${theme.fg("dim", `output: ${safeTerminalText(shortenPath(output))}`)}`);
-      for (const tool of step.recentTools?.slice(-3) ?? []) {
-        const toolName = safeTerminalText(tool.tool);
-        const toolArgs = safeTerminalText(tool.args);
-        lines.push(`      ${theme.fg("dim", `${toolName}${toolArgs ? `: ${toolArgs}` : ""}`)}`);
-      }
-      for (const line of step.recentOutput?.slice(-5) ?? []) {
-        lines.push(`      ${theme.fg("dim", safeTerminalText(line))}`);
-      }
+  if (resolvedDisplayStatus === "running" && expanded) {
+    const output = widgetOutputPath(job, step);
+    if (output)
+      lines.push(
+        `${WIDGET_DETAIL_INDENT}${theme.fg("dim", `output: ${safeTerminalText(shortenPath(output))}`)}`,
+      );
+    for (const tool of step.recentTools?.slice(-3) ?? []) {
+      const toolName = safeTerminalText(tool.tool);
+      const toolArgs = safeTerminalText(tool.args);
+      lines.push(
+        `${WIDGET_DETAIL_INDENT}  ${theme.fg("dim", `${toolName}${toolArgs ? `: ${toolArgs}` : ""}`)}`,
+      );
+    }
+    for (const line of step.recentOutput?.slice(-5) ?? []) {
+      lines.push(`${WIDGET_DETAIL_INDENT}  ${theme.fg("dim", safeTerminalText(line))}`);
     }
   }
   return lines;
@@ -737,6 +746,9 @@ function foregroundStyleWidgetDetails(
       ),
     );
   }
+  // One live-detail hint per job block, after the last step.
+  if (!expanded && widgetHasRunningStep(job))
+    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return lines;
 }
 
@@ -761,8 +773,10 @@ function singleWidgetAgentDetails(
       singleWidgetStepDisplayStatus(job, step),
       phraseNow,
     );
-    const ticketLines = widgetTkTicketLines(job, theme, "    ");
-    const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
+    const ticketLines = widgetTkTicketLines(job, theme, WIDGET_DETAIL_INDENT);
+    const lines = [stepLines[0]!, ...ticketLines, ...stepLines.slice(1)];
+    if (!expanded && singleWidgetStepDisplayStatus(job, step) === "running")
+      lines.push(`${WIDGET_DETAIL_INDENT}${theme.fg("dim", liveDetailHintText())}`);
     return lines;
   }
 
@@ -894,7 +908,7 @@ function singleModeHealthWarningLines(
     );
     if (stepActivityLines.includes(warning)) return [];
   }
-  return [`    ${theme.fg("dim", `   ${warning}`)}`];
+  return [`${WIDGET_DETAIL_INDENT}${theme.fg("dim", warning)}`];
 }
 
 function buildSingleWidgetLines(
@@ -1026,11 +1040,10 @@ function compactSingleWidgetLines(
     // fitWidgetLineBudget pressure (which drops from the tail). In the compact
     // view activity is folded into the row, so there is no before/after-activity
     // distinction — we just place it on its own line right after.
-    const compactChildLocLine = childLocationLine(step.childLocation, theme, "    ");
+    const compactChildLocLine = childLocationLine(step.childLocation, theme, WIDGET_DETAIL_INDENT);
     if (compactChildLocLine) lines.push(compactChildLocLine);
   }
-  if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
-    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
+  if (widgetHasRunningStep(job)) lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return wrapDisplayLines(lines, contentWidth);
 }
 
@@ -1523,6 +1536,7 @@ export function buildWidgetLines(
   let hiddenFinished = 0;
   let queuedSummaryShown = false;
   let slots = MAX_WIDGET_JOBS;
+  let listHasRunningStep = false;
 
   for (const job of running) {
     if (slots <= 0) {
@@ -1542,6 +1556,7 @@ export function buildWidgetLines(
       ...widgetActivityDetailLines(job, theme, expanded, phraseNow),
       ...widgetParallelAgentDetails(job, theme, expanded, width, phraseNow),
     ]);
+    if (widgetHasRunningStep(job)) listHasRunningStep = true;
     slots--;
   }
 
@@ -1592,6 +1607,14 @@ export function buildWidgetLines(
     for (const detail of item.slice(1)) {
       lines.push(...wrapDisplayLine(`${theme.fg("dim", continuation)} ${detail}`, contentWidth));
     }
+  }
+
+  // One live-detail hint for the whole list, after the last job block. It is the
+  // final line, so fitWidgetLineBudget (which drops from the end) sheds it first.
+  if (!expanded && listHasRunningStep) {
+    lines.push(
+      ...wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth),
+    );
   }
 
   return lines;

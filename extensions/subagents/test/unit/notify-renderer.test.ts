@@ -68,7 +68,9 @@ describe("native completion notification renderer", () => {
 				const collapsedRows = collapsed.split("\n");
 				const collapsedPreview = collapsedRows[1] ?? "";
 				if (collapsed.includes("⎿")) throw new Error(testCase.name + " renderer added the branch glyph: " + collapsed);
-				if (!/^ {5}Done\s*$/.test(collapsedPreview)) throw new Error(testCase.name + " collapsed preview was not the exact result-first row: " + collapsed);
+				if (!/^ {4}Done\s*$/.test(collapsedPreview)) throw new Error(testCase.name + " collapsed preview was not the exact result-first row: " + collapsed);
+				const hintRow = collapsedRows.find((row) => row.includes("full notification")) ?? "";
+				if (!/^ {4}\S/.test(hintRow)) throw new Error(testCase.name + " hint row did not share the detail column: " + collapsed);
 				if (collapsed.includes("Async id")) throw new Error(testCase.name + " collapsed output leaked async metadata: " + collapsed);
 				if (!collapsed.includes("full notification")) throw new Error(testCase.name + " did not show the hidden-reference expand hint: " + collapsed);
 				if (!/ctrl\+o full notification/i.test(collapsed)) throw new Error(testCase.name + " stopped using Pi's stock Ctrl+O notification expansion: " + collapsed);
