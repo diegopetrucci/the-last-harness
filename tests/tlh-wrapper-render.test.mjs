@@ -4,9 +4,16 @@
  * executing the wrapper.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { renderWrapper } from "../scripts/tlh-wrapper.mjs";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Minimal valid args used across multiple tests.
 const BASE_ARGS = {
@@ -203,5 +210,73 @@ test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin
   assert.ok(
     rendered.includes('export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"'),
     "rendered wrapper must contain the verbatim NODE_COMPILE_CACHE export expression",
+  );
+});
+
+test("renderWrapper: version subcommand is wired before the MCP guard and pi exec", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  const versionIndex = rendered.indexOf('if [[ "${1:-}" == "version" ]]; then');
+  const guardIndex = rendered.indexOf("tlh_mcp_adapter_guard_required=1");
+  const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
+  assert.ok(versionIndex >= 0, "version block must be present");
+  assert.ok(versionIndex < guardIndex, "version block must precede the MCP guard");
+  assert.ok(versionIndex < piExecIndex, "version block must precede the pi exec");
+  assert.ok(
+    rendered.includes(
+      '"${default_tlh_package_root}/scripts/tlh-version.mjs" --agent-dir "${default_agent_dir}" --package-root "${default_tlh_package_root}" --pi-cmd "${default_pi_cmd}" "$@"',
+    ),
+    "version exec must pass baked agent dir, package root, and pi cmd",
+  );
+  assert.ok(
+    rendered.includes("tlh version package support files are missing or corrupt"),
+    "version block must emit recovery error",
+  );
+});
+
+test("renderWrapper: --version is still handled outside the version subcommand", () => {
+  const rendered = renderWrapper(PINNED_ARGS);
+  assert.ok(rendered.includes("--version|-v|install|remove|uninstall|list|mcp)"));
+  assert.ok(!rendered.includes('"${1:-}" == "--version"'));
+});
+
+function runRenderedWrapper(t, { withScript }) {
+  const root = mkdtempSync(join(tmpdir(), "tlh-wrapper-version-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const packageRoot = join(root, "package");
+  const agentDir = join(root, "agent");
+  mkdirSync(join(packageRoot, "scripts"), { recursive: true });
+  mkdirSync(agentDir, { recursive: true });
+  if (withScript) {
+    for (const name of ["tlh-version.mjs"]) {
+      copyFileSync(join(REPO_ROOT, "scripts", name), join(packageRoot, "scripts", name));
+    }
+    writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ version: "9.9.9" }));
+  }
+  const wrapperPath = join(root, "tlh");
+  writeFileSync(
+    wrapperPath,
+    renderWrapper({ ...BASE_ARGS, agentDir, packageRoot, binDir: root, piCmd: "" }),
+    { mode: 0o755 },
+  );
+  return spawnSync("bash", [wrapperPath, "version", "--json"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: root },
+  });
+}
+
+test("rendered wrapper: version --json runs tlh-version.mjs with the baked agent dir", (t) => {
+  const result = runRenderedWrapper(t, { withScript: true });
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(typeof parsed, "object");
+  assert.ok(result.stdout.includes("agent"), "output should reference the baked agent dir");
+});
+
+test("rendered wrapper: version with missing script prints recovery error and exits 1", (t) => {
+  const result = runRenderedWrapper(t, { withScript: false });
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tlh version package support files are missing or corrupt; run `tlh update` to recover\./,
   );
 });
