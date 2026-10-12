@@ -7,7 +7,7 @@ tlhModelDefaults:
     models: [gpt-5.6-luna]
     effort: max
   - provider: anthropic
-    models: [claude-sonnet-4-6]
+    models: [claude-sonnet-5-5]
     effort: medium
   - provider: xai
     models: [grok-4.6]
