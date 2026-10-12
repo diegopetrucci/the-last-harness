@@ -1411,6 +1411,7 @@ function fitAdaptiveWidgetLines(
   width: number,
   expanded: boolean,
   phraseNow?: number,
+  footerLines: string[] = [],
 ): string[] {
   if (expanded) {
     resetWidgetLayoutSession();
@@ -1449,9 +1450,16 @@ function fitAdaptiveWidgetLines(
     return rendered.lines;
   }
 
+  // Tier selection ignores the optional footer (live-detail hint) so it can never
+  // tip a list that fits exactly into the progressive tier; it is shown only when
+  // a row is spare in the full tier.
   if (lines.length <= availableRows) {
     widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
-    return fitWidgetLineBudget(lines, theme, width, false);
+    const withFooter =
+      footerLines.length > 0 && lines.length + footerLines.length <= availableRows
+        ? [...lines, ...footerLines]
+        : lines;
+    return fitWidgetLineBudget(withFooter, theme, width, false);
   }
 
   if (availableRows <= 2) {
@@ -1493,13 +1501,21 @@ export function buildWidgetComponent(
     const phraseNow = now ?? Date.now();
     const width = getTermWidth();
     const expanded = liveDetailExpanded(controller);
-    const lines = expanded
-      ? buildWidgetLines(jobs, theme, width, true, phraseNow)
-      : jobs.length === 1
-        ? compactSingleWidgetLines(jobs[0]!, theme, width, phraseNow)
-        : buildWidgetLines(jobs, theme, width, false, phraseNow);
+    let footerLines: string[] = [];
+    let lines: string[];
+    if (expanded) lines = buildWidgetLines(jobs, theme, width, true, phraseNow);
+    else if (jobs.length === 1) lines = compactSingleWidgetLines(jobs[0]!, theme, width, phraseNow);
+    else ({ lines, footerLines } = buildWidgetListParts(jobs, theme, width, false, phraseNow));
     const container = new Container();
-    for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow))
+    for (const line of fitAdaptiveWidgetLines(
+      jobs,
+      lines,
+      theme,
+      width,
+      expanded,
+      phraseNow,
+      footerLines,
+    ))
       container.addChild(new Text(line, 1, 0));
     return container;
   };
@@ -1512,10 +1528,24 @@ export function buildWidgetLines(
   expanded = false,
   phraseNow?: number,
 ): string[] {
-  if (jobs.length === 0) return [];
+  const { lines, footerLines } = buildWidgetListParts(jobs, theme, width, expanded, phraseNow);
+  return [...lines, ...footerLines];
+}
+
+function buildWidgetListParts(
+  jobs: AsyncJobState[],
+  theme: Theme,
+  width: number,
+  expanded: boolean,
+  phraseNow?: number,
+): { lines: string[]; footerLines: string[] } {
+  if (jobs.length === 0) return { lines: [], footerLines: [] };
   const contentWidth = Math.max(1, width - 2);
   if (jobs.length === 1)
-    return buildSingleWidgetLines(jobs[0]!, theme, contentWidth, expanded, phraseNow);
+    return {
+      lines: buildSingleWidgetLines(jobs[0]!, theme, contentWidth, expanded, phraseNow),
+      footerLines: [],
+    };
   const running = jobs.filter((job) => job.status === "running");
   const queued = jobs.filter((job) => job.status === "queued");
   const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -1609,15 +1639,15 @@ export function buildWidgetLines(
     }
   }
 
-  // One live-detail hint for the whole list, after the last job block. It is the
-  // final line, so fitWidgetLineBudget (which drops from the end) sheds it first.
-  if (!expanded && listHasRunningStep) {
-    lines.push(
-      ...wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth),
-    );
-  }
+  // One live-detail hint for the whole list, after the last job block. It is
+  // returned separately so tier selection ignores it; fitAdaptiveWidgetLines adds
+  // it back only when a row is spare in the full tier.
+  const footerLines =
+    !expanded && listHasRunningStep
+      ? wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth)
+      : [];
 
-  return lines;
+  return { lines, footerLines };
 }
 
 /**

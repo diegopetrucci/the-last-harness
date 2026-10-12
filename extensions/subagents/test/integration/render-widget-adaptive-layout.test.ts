@@ -1602,4 +1602,47 @@ describe("subagent async widget rendering", () => {
     assertWrappedSource(expanded, longTicket);
     assert.doesNotMatch(expanded.join(""), /…|\.\.\./);
   });
+
+  it("keeps exact-fit multi-job lists in the full tier and omits the live-detail hint", () => {
+    const now = Date.now();
+    const jobs: AsyncJobState[] = [0, 1].map((index): AsyncJobState => ({
+      asyncId: `exact-fit-${index}`,
+      asyncDir: `/tmp/exact-fit-${index}`,
+      status: "running",
+      mode: "parallel",
+      agents: ["reviewer"],
+      runningSteps: 1,
+      completedSteps: 0,
+      stepsTotal: 1,
+      updatedAt: now,
+      steps: [0].map((step) => ({
+        index: step,
+        agent: "reviewer",
+        status: "running",
+        lastActivityAt: now,
+        turnCount: 2,
+        toolCount: 3,
+        tokens: { input: 1_000, output: 500, total: 1_500 },
+      })),
+    }));
+    const reservedRows = 19; // RESERVED_NON_WIDGET_ROWS
+    const full = buildWidgetLines(jobs, theme, 120, false, now);
+    const hint = full.at(-1) ?? "";
+    const withoutHint = full.slice(0, -1);
+    assert.match(stripTerminalSequences(hint), /expand|detail/i);
+    assert.ok(full.length <= 10, `fixture must fit the minimum collapsed budget: ${full.length}`);
+
+    for (const [spare, expected] of [
+      [0, withoutHint],
+      [1, full],
+    ] as const) {
+      resetWidgetLayout();
+      withStdoutSize(withoutHint.length + reservedRows + spare, 120, () => {
+        const ui = createUiContext();
+        renderWidget(ui.ctx as never, jobs, undefined, now);
+        assert.deepEqual(renderWidgetHarnessLines(ui.widgets.at(-1)), expected);
+      });
+    }
+    resetWidgetLayout();
+  });
 });

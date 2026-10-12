@@ -978,7 +978,7 @@ function fitWidgetLineBudget(lines, theme, width, expanded) {
         visibleCount = nextVisibleCount;
     }
 }
-function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow) {
+function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow, footerLines = []) {
     if (expanded) {
         resetWidgetLayoutSession();
         return fitWidgetLineBudget(lines, theme, width, true);
@@ -1001,7 +1001,10 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow) 
     }
     if (lines.length <= availableRows) {
         widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
-        return fitWidgetLineBudget(lines, theme, width, false);
+        const withFooter = footerLines.length > 0 && lines.length + footerLines.length <= availableRows
+            ? [...lines, ...footerLines]
+            : lines;
+        return fitWidgetLineBudget(withFooter, theme, width, false);
     }
     if (availableRows <= 2) {
         widgetLayoutSession = { expanded, rows, columns, tier: "single-line", visibleJobKeys: [] };
@@ -1031,23 +1034,33 @@ export function buildWidgetComponent(jobs, controller, now) {
         const phraseNow = now ?? Date.now();
         const width = getTermWidth();
         const expanded = liveDetailExpanded(controller);
-        const lines = expanded
-            ? buildWidgetLines(jobs, theme, width, true, phraseNow)
-            : jobs.length === 1
-                ? compactSingleWidgetLines(jobs[0], theme, width, phraseNow)
-                : buildWidgetLines(jobs, theme, width, false, phraseNow);
+        let footerLines = [];
+        let lines;
+        if (expanded)
+            lines = buildWidgetLines(jobs, theme, width, true, phraseNow);
+        else if (jobs.length === 1)
+            lines = compactSingleWidgetLines(jobs[0], theme, width, phraseNow);
+        else
+            ({ lines, footerLines } = buildWidgetListParts(jobs, theme, width, false, phraseNow));
         const container = new Container();
-        for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow))
+        for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded, phraseNow, footerLines))
             container.addChild(new Text(line, 1, 0));
         return container;
     };
 }
 export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded = false, phraseNow) {
+    const { lines, footerLines } = buildWidgetListParts(jobs, theme, width, expanded, phraseNow);
+    return [...lines, ...footerLines];
+}
+function buildWidgetListParts(jobs, theme, width, expanded, phraseNow) {
     if (jobs.length === 0)
-        return [];
+        return { lines: [], footerLines: [] };
     const contentWidth = Math.max(1, width - 2);
     if (jobs.length === 1)
-        return buildSingleWidgetLines(jobs[0], theme, contentWidth, expanded, phraseNow);
+        return {
+            lines: buildSingleWidgetLines(jobs[0], theme, contentWidth, expanded, phraseNow),
+            footerLines: [],
+        };
     const running = jobs.filter((job) => job.status === "running");
     const queued = jobs.filter((job) => job.status === "queued");
     const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -1122,10 +1135,10 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
             lines.push(...wrapDisplayLine(`${theme.fg("dim", continuation)} ${detail}`, contentWidth));
         }
     }
-    if (!expanded && listHasRunningStep) {
-        lines.push(...wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth));
-    }
-    return lines;
+    const footerLines = !expanded && listHasRunningStep
+        ? wrapDisplayLine(`    ${theme.fg("dim", `  ${liveDetailHintText()}`)}`, contentWidth)
+        : [];
+    return { lines, footerLines };
 }
 export function renderWidget(ctx, jobs, controller, now) {
     if (jobs.length === 0) {
