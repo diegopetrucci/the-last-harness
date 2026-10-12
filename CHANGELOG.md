@@ -2,7 +2,7 @@
 
 All notable changes to The Last Harness will be documented in this file.
 
-## Unreleased
+## [0.44.0] - 2026-10-12
 
 ### Added
 
