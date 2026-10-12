@@ -26,6 +26,7 @@ import {
 
 import {
   backupFiles,
+  bundledExtensionsPath,
   bundledSource,
   defaultsScript,
   disablingExtensionFilterCases,
@@ -199,6 +200,64 @@ test("tlh-defaults rejects disabling critical defaults without changing settings
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /critical default extension 'subagents' cannot be disabled/i);
   assert.equal(readFileSync(fixture.settings, "utf8"), before);
+});
+
+test("bundled quiet-tools is mandatory for canonical and alias IDs and remains discoverable as critical", () => {
+  const fixture = tempFixture();
+  const oldSettings = {
+    packages: ["npm:@diegopetrucci/pi-quiet-tools@0.1.12"],
+    tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash"] },
+  };
+  writeFileSync(fixture.settings, JSON.stringify(oldSettings, null, 2));
+
+  const sources = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "sources",
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  const criticalSources = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "critical-sources",
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.deepEqual(
+    sources.filter((source) => source.includes("pi-quiet-tools")),
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+  );
+  assert.deepEqual(
+    criticalSources.filter((source) => source.includes("pi-quiet-tools")),
+    ["npm:@diegopetrucci/pi-quiet-tools@0.1.14"],
+  );
+
+  for (const id of ["quiet-tools", "compact-bash"]) {
+    const before = readFileSync(fixture.settings, "utf8");
+    const result = spawnSync(
+      process.execPath,
+      [
+        defaultsScript,
+        "--settings",
+        fixture.settings,
+        "--defaults",
+        bundledExtensionsPath,
+        "disable",
+        id,
+      ],
+      { cwd: repoRoot, env: process.env, encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0, `${id} must not be disableable`);
+    assert.match(result.stderr, /critical default extension 'quiet-tools' cannot be disabled/i);
+    assert.equal(readFileSync(fixture.settings, "utf8"), before);
+  }
 });
 
 test("tlh-defaults refuses to mutate normal Pi config paths", () => {

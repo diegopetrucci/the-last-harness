@@ -146,6 +146,8 @@ To opt out persistently, set `"tlh": { "telemetry": { "enabled": false } }` in `
 
 Plain `tlh update` also refreshes bundled default extension packages. Bundled npm defaults are installer-pinned to explicit versions from `config/default-extensions.json`, while any remaining TLH git-fork defaults stay pinned to their tagged refs; TLH only changes those managed versions when a TLH release updates the bundle. The first-party subagent runtime is refreshed with the TLH package itself rather than through this default-extension update path.
 
+`pi-quiet-tools` is a mandatory, always-on, renderer-only TLH default pinned to `npm:@diegopetrucci/pi-quiet-tools@0.1.14`. Historical `quiet-tools` and `compact-bash` opt-outs do not apply: install/update removes those invalid opt-out IDs, migrates recognized old sources, and enforces the verified source and extension loading while preserving unrelated settings and package metadata. There is no supported `tlh defaults disable` or off recommendation for this default. Its `/quiet-tools` command is read-only status for the installer-managed source only; Ctrl+O and per-row expansion still show native full output, and separately loaded third-party extensions are outside this renderer guarantee.
+
 ## Fullscreen TUI
 
 Starting with Pi 1.0.0, the interactive terminal UI runs in fullscreen mode by default (`tuiMode: "fullscreen"`). In fullscreen mode Pi owns the viewport: the transcript scrolls within the terminal window, the editor and status area stay fixed, and mouse-wheel scroll events go to the transcript rather than terminal history.

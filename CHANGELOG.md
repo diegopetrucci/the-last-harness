@@ -44,6 +44,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH launch time should be ~25/30% faster.
 - Opus 5.5 is the default for many things, now.
 - The private Pi runtime is now installed via `npm ci` from a TLH-shipped lockfile in `config/pi-runtime/`, keeping Pi's dependency graph pinned even when upstream stops shipping a shrinkwrap; existing runtimes are reinstalled once from the lockfile on the next `tlh update` or fresh install, a failed install preserves the previous runtime, and `tlh doctor` warns when the runtime does not match the shipped lockfile.
+- Restored `pi-quiet-tools` as a mandatory, always-on, renderer-only default at the verified `0.1.14` source; historical `quiet-tools`/`compact-bash` opt-outs no longer apply, while Ctrl+O and per-row expansion retain native full output.
 
 ### Removed
 

@@ -429,7 +429,7 @@ function applyDefaultExtensionSourceUpdates(settings, defaultExtensions, disable
             continue;
         if (isUnpersistedPackageFilter(settings, extension, disabledIds))
             continue;
-        if (hasCanonicalEntryWithReplacementObject(settings, extension))
+        if (extension.critical !== true && hasCanonicalEntryWithReplacementObject(settings, extension))
             continue;
         const identity = packageIdentity(extension.source);
         if (!identity)
@@ -513,18 +513,6 @@ function purgeForceRemovedRetiredDefaultExtensionPackages(settings, changes) {
             changes.push(`force-remove retired default extension package: ${source}`);
         }
     }
-}
-function pruneQuietToolsDisabledDefaultExtension(settings, changes) {
-    if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
-        return;
-    const values = settings.tlh.disabledDefaultExtensions;
-    if (!Array.isArray(values))
-        return;
-    const nextValues = values.filter((value) => !(typeof value === "string" && ["quiet-tools", "compact-bash"].includes(value.trim())));
-    if (nextValues.length === values.length)
-        return;
-    settings.tlh.disabledDefaultExtensions = nextValues;
-    changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
 }
 function pruneVoiceTranscribeDisabledDefaultExtension(settings, changes) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh))
@@ -837,7 +825,6 @@ function main() {
     applyRetiredTlhDefaultPackageCleanup(next, changes, withLegacyRetiredDefaultPackageIdentities(next, readDefaultExtensionProvenance(next).managedPackageIdentities));
     removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-    pruneQuietToolsDisabledDefaultExtension(next, changes);
     pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
     applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);

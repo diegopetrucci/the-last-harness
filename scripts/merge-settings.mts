@@ -635,7 +635,8 @@ function applyDefaultExtensionSourceUpdates(
   for (const extension of defaultExtensions) {
     if (disabledIds.has(extension.id)) continue;
     if (isUnpersistedPackageFilter(settings, extension, disabledIds)) continue;
-    if (hasCanonicalEntryWithReplacementObject(settings, extension)) continue;
+    if (extension.critical !== true && hasCanonicalEntryWithReplacementObject(settings, extension))
+      continue;
     const identity = packageIdentity(extension.source);
     if (!identity) continue;
     const index = settings.packages.findIndex(
@@ -734,19 +735,6 @@ function purgeForceRemovedRetiredDefaultExtensionPackages(
       changes.push(`force-remove retired default extension package: ${source}`);
     }
   }
-}
-
-function pruneQuietToolsDisabledDefaultExtension(settings: JsonObject, changes: string[]): void {
-  if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
-  const values = settings.tlh.disabledDefaultExtensions;
-  if (!Array.isArray(values)) return;
-  const nextValues = values.filter(
-    (value: unknown) =>
-      !(typeof value === "string" && ["quiet-tools", "compact-bash"].includes(value.trim())),
-  );
-  if (nextValues.length === values.length) return;
-  settings.tlh.disabledDefaultExtensions = nextValues;
-  changes.push("remove stale quiet-tools opt-out from tlh.disabledDefaultExtensions");
 }
 
 function pruneVoiceTranscribeDisabledDefaultExtension(
@@ -1183,7 +1171,6 @@ function main(): void {
   );
   removeCriticalDisabledDefaultExtensionOptOuts(next, defaultExtensions, changes);
   purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
-  pruneQuietToolsDisabledDefaultExtension(next, changes);
   pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
   applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
   syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes);
