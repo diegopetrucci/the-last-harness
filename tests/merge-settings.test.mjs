@@ -1652,83 +1652,93 @@ test("merge removes TLH-managed subagents from a modern profile where provenance
   );
 });
 
-// ── quiet-tools stale opt-out pruner tests ────────────────────────────────
+// ── mandatory quiet-tools critical-default migration tests ─────────────────
 
-test("merge prunes quiet-tools from tlh.disabledDefaultExtensions and emits a changes line", () => {
+const mandatoryQuietTools = {
+  id: "quiet-tools",
+  aliases: ["compact-bash"],
+  replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+  migrateReplacements: true,
+  critical: true,
+  source: "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+};
+
+test("merge restores mandatory quiet-tools and removes canonical opt-outs while preserving unrelated ones", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
       packages: [harnessPackage],
       tlh: { disabledDefaultExtensions: ["quiet-tools", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("quiet-tools"),
-    false,
-    "stale quiet-tools opt-out must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [harnessPackage, mandatoryQuietTools.source]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
 });
 
-test("merge prunes compact-bash (legacy alias) from tlh.disabledDefaultExtensions and emits a changes line", () => {
+test("merge treats compact-bash as the mandatory quiet-tools alias", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-compact-bash@0.1.5"],
       tlh: { disabledDefaultExtensions: ["compact-bash", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("compact-bash"),
-    false,
-    "stale compact-bash opt-out must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [harnessPackage, mandatoryQuietTools.source]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
 });
 
-test("merge prunes both quiet-tools and compact-bash together while preserving unrelated entries", () => {
+test("merge enforces quiet-tools loading on filtered objects while preserving metadata and idempotence", () => {
+  const filteredCanonical = {
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
+    extensions: [],
+    resources: ["README.md"],
+    userMetadata: { preserve: true },
+  };
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage],
+      packages: [
+        harnessPackage,
+        filteredCanonical,
+        "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+        "npm:unrelated@1.0.0",
+      ],
       tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash", "notify"] },
     },
+    [mandatoryQuietTools],
   );
 
   const output = runMerge(fixture, { quiet: false });
   const settings = readJson(fixture.settings);
 
-  assert.match(output, /remove stale quiet-tools opt-out from tlh\.disabledDefaultExtensions/);
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "quiet-tools" || v === "compact-bash",
-    ),
-    false,
-    "stale quiet-tools and compact-bash opt-outs must be removed",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-    true,
-    "unrelated opt-out must be preserved",
-  );
+  assert.match(output, /remove invalid critical default extension opt-out/);
+  assert.deepEqual(settings.packages, [
+    harnessPackage,
+    {
+      source: mandatoryQuietTools.source,
+      resources: ["README.md"],
+      userMetadata: { preserve: true },
+    },
+    "npm:unrelated@1.0.0",
+  ]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"]);
+
+  const afterFirst = readFileSync(fixture.settings, "utf8");
+  const secondOutput = runMerge(fixture, { quiet: false });
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(readFileSync(fixture.settings, "utf8"), afterFirst);
 });
 
 test("merge subagents retirement cleanup is idempotent after first run", () => {

@@ -351,6 +351,14 @@ These commands are registered and fully functional, but deliberately excluded fr
 | `/import`        | Import and resume a session from a JSONL file                                  |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling                                    |
 
+### Hidden bundled extension commands
+
+| Command        | Extension       | Description                                                                                                  |
+| -------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `/quiet-tools` | `pi-quiet-tools` | Show read-only status for the mandatory TLH-managed renderer; this command does not toggle or disable it. |
+
+The status covers only the installer-managed quiet-tools source. Separately loaded third-party extensions are outside its scope. Ctrl+O and per-row expansion remain available for native full output.
+
 ---
 
 ## TLH CLI subcommands
@@ -373,7 +381,7 @@ tlh defaults disable <id>  # disable a separately managed default extension (e.g
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed non-critical default extensions only (those in `config/default-extensions.json`); the mandatory `quiet-tools` renderer has no supported disable/off path. First-party packaged extensions like `notify`, `/annotate-last-message`, and `/annotate-git-diff` are not managed by this flow.
 
 ### Configuring the notify extension
 

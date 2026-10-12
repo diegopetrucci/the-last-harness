@@ -213,23 +213,11 @@ test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk
   );
 });
 
-test("merge force-removes pi-quiet-tools and pi-compact-bash (string and object entries, duplicates, idempotent)", () => {
+test("merge restores mandatory quiet-tools from canonical and compact-bash variants, idempotently", () => {
   const fixture = tempFixture();
-  writeFileSync(
-    fixture.extensions,
-    JSON.stringify(
-      [
-        {
-          id: "helper",
-          source: "npm:helper",
-        },
-      ],
-      null,
-      2,
-    ),
-  );
-  // Cover both package identities (quiet-tools and legacy compact-bash), object
-  // form, and a duplicate entry.
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
   writeFileSync(
     fixture.settings,
     JSON.stringify(
@@ -237,87 +225,18 @@ test("merge force-removes pi-quiet-tools and pi-compact-bash (string and object 
         packages: [
           harnessPackage,
           "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-          { source: "npm:@diegopetrucci/pi-quiet-tools@0.1.10", owner: "user" },
+          { source: "npm:@diegopetrucci/pi-quiet-tools@0.1.13", owner: "duplicate" },
           "npm:@diegopetrucci/pi-compact-bash@0.1.5",
-          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-          "npm:helper",
-        ],
-        tlh: { disabledDefaultExtensions: ["quiet-tools", "compact-bash", "helper"] },
-      },
-      null,
-      2,
-    ),
-  );
-
-  runNode(mergeScript, [
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-    "--quiet",
-  ]);
-
-  const settings = readJson(fixture.settings);
-  // All quiet-tools and compact-bash packages must be stripped unconditionally,
-  // even object entries marked owner:user.
-  assert.deepEqual(settings.packages, [harnessPackage]);
-
-  // quiet-tools and compact-bash are pruned from disabledDefaultExtensions;
-  // the unrelated 'helper' entry must survive.
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).some(
-      (v) => v === "quiet-tools" || v === "compact-bash",
-    ),
-    false,
-    "quiet-tools and compact-bash opt-outs must be pruned from disabledDefaultExtensions",
-  );
-  assert.equal(
-    (settings.tlh?.disabledDefaultExtensions ?? []).includes("helper"),
-    true,
-    "unrelated helper opt-out must survive",
-  );
-
-  // Second merge is idempotent — no changes reported.
-  const secondOutput = runNode(mergeScript, [
-    fixture.defaults,
-    "--settings",
-    fixture.settings,
-    "--default-extensions",
-    fixture.extensions,
-  ]);
-  assert.match(secondOutput, /No settings changes needed\./);
-});
-
-test("merge force-removes pi-quiet-tools even when provenance marks it as manually re-added", () => {
-  const fixture = tempFixture();
-  writeFileSync(
-    fixture.extensions,
-    JSON.stringify(
-      [
-        {
-          id: "helper",
-          source: "npm:helper",
-        },
-      ],
-      null,
-      2,
-    ),
-  );
-  writeFileSync(
-    fixture.settings,
-    JSON.stringify(
-      {
-        packages: [
-          harnessPackage,
-          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
-          "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+          { source: "npm:@diegopetrucci/pi-compact-bash@0.1.6", legacy: true },
           "npm:helper",
         ],
         tlh: {
+          disabledDefaultExtensions: ["quiet-tools", "compact-bash", "helper"],
           defaultExtensionProvenance: {
-            // Simulate a user who manually re-added both packages.
-            managedPackageIdentities: [],
+            managedPackageIdentities: [
+              "npm:@diegopetrucci/pi-quiet-tools",
+              "npm:@diegopetrucci/pi-compact-bash",
+            ],
           },
         },
       },
@@ -336,18 +255,105 @@ test("merge force-removes pi-quiet-tools even when provenance marks it as manual
   ]);
 
   const settings = readJson(fixture.settings);
-  assert.ok(
-    !settings.packages.some(
-      (p) =>
-        (typeof p === "string" ? p : (p?.source ?? "")).includes("pi-quiet-tools") ||
-        (typeof p === "string" ? p : (p?.source ?? "")).includes("pi-compact-bash"),
+  assert.deepEqual(settings.packages, [harnessPackage, quietTools.source, "npm:helper"]);
+  assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
+  assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+    "npm:@diegopetrucci/pi-quiet-tools",
+  ]);
+
+  const secondOutput = runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+  ]);
+  assert.match(secondOutput, /No settings changes needed\./);
+});
+
+test("merge preserves quiet-tools object metadata while enforcing the verified source and loading", () => {
+  const fixture = tempFixture();
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
+  const canonicalEntry = {
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.13",
+    extensions: ["-*"],
+    resources: ["README.md"],
+    owner: "preserve",
+    metadata: { keep: true },
+  };
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          canonicalEntry,
+          {
+            source: "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+            extensions: ["-*"],
+            replacementMetadata: { keep: true },
+          },
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
     ),
-    "force-removal must apply even when provenance does not mark packages as managed",
   );
-  assert.ok(
-    settings.packages.includes("npm:helper"),
-    "unrelated packages must survive force-removal",
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    harnessPackage,
+    {
+      source: quietTools.source,
+      resources: ["README.md"],
+      owner: "preserve",
+      metadata: { keep: true },
+    },
+  ]);
+});
+
+test("merge enforces quiet-tools for manually pinned sources without provenance", () => {
+  const fixture = tempFixture();
+  const quietTools = bundledExtension("quiet-tools");
+  assert.ok(quietTools, "quiet-tools must be present in the bundled manifest");
+  writeFileSync(fixture.extensions, JSON.stringify([quietTools], null, 2));
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [
+          harnessPackage,
+          "npm:@diegopetrucci/pi-quiet-tools@0.1.12",
+          "npm:@diegopetrucci/pi-compact-bash@0.1.5",
+        ],
+        tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+      },
+      null,
+      2,
+    ),
   );
+
+  runNode(mergeScript, [
+    fixture.defaults,
+    "--settings",
+    fixture.settings,
+    "--default-extensions",
+    fixture.extensions,
+    "--quiet",
+  ]);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, quietTools.source]);
 });
 
 test("merge no longer reorders a bundled extension upgrade around retired rtk packages", () => {

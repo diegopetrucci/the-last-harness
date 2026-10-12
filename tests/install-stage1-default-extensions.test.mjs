@@ -42,6 +42,38 @@ test("stage-1 batches non-critical default extension updates", (t) => {
   assertPiCommands(piLog, agentDir, ["update --extensions"]);
 });
 
+test("stage-1 installs the mandatory npm quiet-tools default and fails on install errors", (t) => {
+  const quietTools = {
+    id: "quiet-tools",
+    critical: true,
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+  };
+  const success = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: [quietTools],
+    settings: { packages: [quietTools.source] },
+    fakePiBody: 'printf \'%s|%s|%s\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+  });
+
+  installDefaultExtensions(success.config);
+  assertPiCommands(success.piLog, success.agentDir, [
+    "install npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+  ]);
+
+  const failure = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: [quietTools],
+    settings: { packages: [quietTools.source] },
+    fakePiBody: [
+      'printf \'%s|%s|%s\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      'if [[ "$1" == "install" ]]; then exit 42; fi',
+    ].join("\n"),
+  });
+
+  assert.throws(
+    () => installDefaultExtensions(failure.config),
+    /critical default extension package install failed: npm:@diegopetrucci\/pi-quiet-tools@0\.1\.14.*required default cannot be disabled/,
+  );
+});
+
 test("stage-1 holds the legacy MCP adapter across batch and fallback update paths", (t) => {
   const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
   const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";

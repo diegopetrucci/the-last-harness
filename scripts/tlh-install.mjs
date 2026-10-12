@@ -1101,10 +1101,10 @@ function installCriticalDefaultExtension(config, source) {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
     }
     catch {
-        throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this isolation-critical default cannot be disabled.`);
+        throw new Error(`critical default extension package install failed: ${source}. Fix the package install and rerun the installer; this required default cannot be disabled.`);
     }
     if (!ensureCriticalGitSourceCheckout(config, source)) {
-        throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this isolation-critical default cannot be disabled.`);
+        throw new Error(`critical default extension package checkout validation failed: ${source}. Fix the package checkout and rerun the installer; this required default cannot be disabled.`);
     }
 }
 function updateDefaultExtensionSourceBestEffort(config, source) {
