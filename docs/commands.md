@@ -371,7 +371,7 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 ### `tlh version`
 
-`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 except for argument errors, which exit 2 with nothing on stdout.
+`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
 
 ```json
 {
@@ -396,6 +396,10 @@ Every field is always present. A missing, invalid, or wrong-typed value is `null
 | `ref`           | Installed tag or ref from install metadata: release tag on `latest-release`, tag on `pinned-tag`, ref on `ref`; may be `null` on `custom` or when unknown |
 | `repo`          | Install metadata: the source repository                                                                    |
 | `agentDir`      | The wrapper's authoritative isolated profile path                                                          |
+
+`track` is one of the four values above or `null`; consumers should tolerate new `track` values added in future schema-compatible releases.
+
+Known limitation: installs from a non-local custom package source (for example `github:owner/repo` or an npm source) have no resolvable package root, so `tlh version` (like `tlh doctor` and `tlh sessions`) exits 1 there; consumers fall back as for older TLH.
 
 Only `latest-release` moves to newer releases via `tlh update`. `pinned-tag` reinstalls its tag, `ref` follows that ref, and `custom` requires a manual installer rerun.
 

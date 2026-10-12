@@ -114,6 +114,18 @@ function readPiVersion(piCmd: string): string | null {
   return null;
 }
 
+const VALID_TRACKS: ReadonlySet<string> = new Set([
+  "latest-release",
+  "pinned-tag",
+  "ref",
+  "custom",
+]);
+
+function validTrack(value: unknown): string | null {
+  const track = nonEmptyString(value);
+  return track !== null && VALID_TRACKS.has(track) ? track : null;
+}
+
 function collect(args: { agentDir: string; packageRoot: string; piCmd: string }): VersionInfo {
   const pkg = readJsonObject(join(args.packageRoot, "package.json"));
   const state = readJsonObject(join(args.agentDir, "tlh", "install-state.json"));
@@ -121,7 +133,7 @@ function collect(args: { agentDir: string; packageRoot: string; piCmd: string })
     schemaVersion: SCHEMA_VERSION,
     tlhVersion: pkg === null ? null : nonEmptyString(pkg.version),
     piVersion: readPiVersion(args.piCmd),
-    track: state === null ? null : nonEmptyString(state.track),
+    track: state === null ? null : validTrack(state.track),
     ref: state === null ? null : nonEmptyString(state.ref),
     repo: state === null ? null : nonEmptyString(state.repo),
     agentDir: args.agentDir,

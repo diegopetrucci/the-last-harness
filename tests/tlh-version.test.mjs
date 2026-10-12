@@ -116,6 +116,14 @@ test("ref track with main still reports tlhVersion from package.json", (t) => {
   assert.equal(out.tlhVersion, "0.9.0");
 });
 
+test("unsupported track yields null while ref and repo are still reported", (t) => {
+  const f = makeFixture(t, { state: { track: "garbage", ref: "v1", repo: "o/r" } });
+  const out = runJson(f);
+  assert.equal(out.track, null);
+  assert.equal(out.ref, "v1");
+  assert.equal(out.repo, "o/r");
+});
+
 test("missing install-state yields null provenance", (t) => {
   const f = makeFixture(t);
   const out = runJson(f);
@@ -217,7 +225,7 @@ test("unknown option or missing required flags fail with empty stdout", (t) => {
     ["--agent-dir", f.agentDir, "--json"],
   ]) {
     const result = run(f, { args });
-    assert.notEqual(result.status, 0);
+    assert.equal(result.status, 2);
     assert.equal(result.stdout, "");
     assert.notEqual(result.stderr, "");
   }

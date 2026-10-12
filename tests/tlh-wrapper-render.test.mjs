@@ -258,22 +258,22 @@ function runRenderedWrapper(t, { withScript }) {
     renderWrapper({ ...BASE_ARGS, agentDir, packageRoot, binDir: root, piCmd: "" }),
     { mode: 0o755 },
   );
-  return spawnSync("bash", [wrapperPath, "version", "--json"], {
+  const result = spawnSync("bash", [wrapperPath, "version", "--json"], {
     encoding: "utf8",
     env: { ...process.env, HOME: root },
   });
+  return { result, agentDir };
 }
 
 test("rendered wrapper: version --json runs tlh-version.mjs with the baked agent dir", (t) => {
-  const result = runRenderedWrapper(t, { withScript: true });
+  const { result, agentDir } = runRenderedWrapper(t, { withScript: true });
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
-  assert.equal(typeof parsed, "object");
-  assert.ok(result.stdout.includes("agent"), "output should reference the baked agent dir");
+  assert.equal(parsed.agentDir, agentDir);
 });
 
 test("rendered wrapper: version with missing script prints recovery error and exits 1", (t) => {
-  const result = runRenderedWrapper(t, { withScript: false });
+  const { result } = runRenderedWrapper(t, { withScript: false });
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
