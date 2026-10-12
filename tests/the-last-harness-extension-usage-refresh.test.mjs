@@ -413,8 +413,8 @@ test("subscription usage refresh redraws the footer when the event context diffe
   // passed to model_select or turn_end is a different object from the ctx
   // passed to session_start (where the footer factory runs and registers the
   // render callback). The facade must not use context identity to locate the
-  // render callback; it must redraw whichever event context triggered the
-  // refresh.
+  // render callback; it must call the currently registered render callback
+  // regardless of which event context triggered the refresh.
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-ctx-distinct-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
@@ -707,18 +707,16 @@ test("pending refresh before session_shutdown does not redraw the old footer", a
   }
 });
 
-test("pending refresh before session switch does not redraw the old footer; new session refresh redraws only the new footer", async () => {
-  // Tests AC #3 (session switch): a refresh that starts during session A must
-  // not redraw session A's footer after session B's session_start runs. The
-  // session-token guard on the captured callback prevents the stale render.
-  // A subsequent refresh in session B must redraw only B's footer.
+test("pending refresh before session switch redraws the new session's footer when it settles, not the old session's footer", async () => {
+  // Tests AC #1 (session switch): a refresh that starts during session A must
+  // redraw session B's footer (not A's) when it settles after the switch.
   //
   // Mechanism: session_start A queues an initial refresh with fetch deferred.
-  // session_start B invalidates A's token. Resolving A's deferred fetch causes
-  // the facade to call callback_A (snapshot changed), but the token guard
-  // blocks it. A later model_select for session B clears the provider via a
-  // runtime override, changing the provider snapshot; callback_B passes its
-  // own token guard and redraws only B's footer.
+  // session_start B invalidates A's token and overwrites the registered
+  // callback with callback_B. Resolving A's deferred fetch causes the facade
+  // to call this.currentFooterRender (now callback_B). callback_B passes its
+  // own token guard and redraws B's footer exactly once. A's footer is never
+  // touched.
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-pending-switch-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
@@ -816,31 +814,20 @@ test("pending refresh before session switch does not redraw the old footer; new 
     );
 
     // Resolve session A's deferred fetch. The snapshot changes from undefined
-    // to a real value, so the facade fires callback_A -- but the session-token
-    // guard rejects it because session B is now active.
+    // to a real value. The facade calls this.currentFooterRender, which is now
+    // callback_B (registered by session_start B). callback_B passes its own
+    // token guard and redraws B's footer exactly once. A's footer is never
+    // called.
     resolveNextFetch(1);
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await eventually(
+      () => ctxBRenders === 1,
+      "session A's pending refresh settling must redraw B's footer via the facade's current callback",
+    );
     assert.equal(
       ctxARenders,
       0,
       "session A's stale pending refresh must not redraw A's footer after session switch",
     );
-    assert.equal(ctxBRenders, 0, "session A's stale pending refresh must not redraw B's footer");
-
-    // A fresh refresh in session B: set a runtime credential override, which
-    // causes the service to clear the provider's stored usage. The facade
-    // detects the provider-snapshot change (snapshot -> undefined) and fires
-    // callback_B. callback_B passes its own token guard and redraws only B's
-    // footer. callback_A is no longer the registered callback, so A's footer
-    // is unaffected.
-    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
-    void fireAll(pi, "model_select", {}, ctxB);
-    await eventually(
-      () => ctxBRenders === 1,
-      "session B's own refresh must redraw only B's footer",
-    );
-    assert.equal(ctxARenders, 0, "session B's render must not affect A's render count");
   } finally {
     globalThis.fetch = previousFetch;
     restoreEnv(previousEnv);

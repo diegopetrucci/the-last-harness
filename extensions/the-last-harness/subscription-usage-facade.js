@@ -25,7 +25,6 @@ class LazyTlhSubscriptionUsageService {
         const previousEligible = this.isEligible(ctx);
         const previousProviderSnapshot = provider ? this.getSnapshot(provider) : undefined;
         const previousProviderEligible = provider ? this.isEligible(provider) : false;
-        const footerRender = this.currentFooterRender;
         void this.getService()
             .then((service) => service.refresh(ctx, options))
             .then(() => {
@@ -37,7 +36,7 @@ class LazyTlhSubscriptionUsageService {
                 nextEligible !== previousEligible ||
                 nextProviderSnapshot !== previousProviderSnapshot ||
                 nextProviderEligible !== previousProviderEligible) {
-                footerRender?.();
+                this.currentFooterRender?.();
             }
         })
             .catch(() => undefined);
