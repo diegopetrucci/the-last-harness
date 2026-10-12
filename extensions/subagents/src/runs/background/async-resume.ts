@@ -43,6 +43,7 @@ import {
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { isWellFormedResolvedAcceptance } from "../shared/acceptance.ts";
+import { normalizeExecutionTimeoutOwner } from "../../agents/execution-ceiling.ts";
 import {
   mergeSubagentRunTelemetry,
   normalizeSubagentRunTelemetry,
@@ -133,6 +134,8 @@ type AsyncResumeTarget = {
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
+  timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
   /** Selected-child success, independent of the aggregate async lifecycle state. */
   successfulCompletion?: boolean;
   projectAgent?: ProjectAgentRunCapture;
@@ -457,6 +460,12 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         throw new Error(
           `Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`,
         );
+      const timedOut = child.timedOut;
+      if (timedOut !== undefined && typeof timedOut !== "boolean")
+        throw new Error(
+          `Invalid async result file '${resultPath}': results[${index}].timedOut must be a boolean.`,
+        );
+      const timeoutOwner = normalizeExecutionTimeoutOwner(child.timeoutOwner);
       const activeRuntimeMs = child.activeRuntimeMs;
       if (
         activeRuntimeMs !== undefined &&
@@ -491,6 +500,8 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(stepCwd ? { cwd: stepCwd } : {}),
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+        ...(typeof timedOut === "boolean" ? { timedOut } : {}),
+        ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(model ? { model } : {}),
         ...(tkTicketId ? { tkTicketId } : {}),
         ...(thinking ? { thinking } : {}),
@@ -1218,8 +1229,25 @@ function buildTerminalAsyncResumeTarget(
     context.result,
   );
   const runtimeMetadata = resolveSelectedChildRuntimeMetadata(context, index);
+  // Normalize each source independently so a malformed status owner (e.g.
+  // "ROLE") cannot mask a valid result-side "role" owner via nullish coalescing.
+  // Either source carrying "role" evidence must fail closed.
+  const statusTimeoutOwner = normalizeExecutionTimeoutOwner(selectedStatusStep?.timeoutOwner);
+  const resultTimeoutOwner = normalizeExecutionTimeoutOwner(
+    context.resultSteps[index]?.timeoutOwner,
+  );
+  const timeoutOwner =
+    statusTimeoutOwner === "role" || resultTimeoutOwner === "role"
+      ? ("role" as const)
+      : (statusTimeoutOwner ?? resultTimeoutOwner);
+  // Similarly normalize timedOut from each source so a truthy non-boolean in
+  // the status cannot suppress a legitimate true in the result.
+  const timedOut =
+    selectedStatusStep?.timedOut === true || context.resultSteps[index]?.timedOut === true;
   return {
     ...targetWithModelMetadata,
+    ...(timedOut ? { timedOut: true } : {}),
+    ...(timeoutOwner ? { timeoutOwner } : {}),
     ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
     ...(diagnosticMetadata.contextPressure
       ? { contextPressure: diagnosticMetadata.contextPressure }

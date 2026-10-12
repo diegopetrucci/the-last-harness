@@ -1622,6 +1622,7 @@ export async function runSync(
     result.activeRuntimeMs = runtimeTracker.finalize();
     result.activeRuntimeCheckpointAt =
       normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) ?? Date.now();
+    if (options.timeoutOwner) result.timeoutOwner = options.timeoutOwner;
     lastResult = result;
     if (result.controlEvents) allControlEvents.push(...result.controlEvents);
     contextPressure = result.contextPressure ?? contextPressure;

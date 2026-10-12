@@ -23,6 +23,7 @@ const MAX_REFERENCE_CHARS = 500;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
+export const BUDGET_EXHAUSTION_GUIDANCE = "Budget exhausted: this child instance is permanently expired. Inspect partial output, artifacts, and files before deciding on a fresh dispatch; do not resume or mechanically redispatch the unchanged task.";
 let completionBatchIdentitySequence = 0;
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -170,6 +171,10 @@ function normalizeAsyncIdentifier(value) {
         return undefined;
     return value;
 }
+function isRoleBudgetExhausted(value) {
+    return (value.timeoutOwner === "role" &&
+        (value.timedOut === true || value.terminationReason === "timed_out"));
+}
 function formatAsyncIdLine(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     return asyncId ? `Async id: ${asyncId}` : undefined;
@@ -194,6 +199,7 @@ function formatPausedSupervisorActionLines(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     const target = details.resumeTarget;
     if (!details.awaitingSupervisor ||
+        details.budgetExhausted ||
         !asyncId ||
         !target ||
         !hasExistingSessionFile(target.sessionPath))
@@ -241,8 +247,16 @@ function resolveResumeTarget(result, asyncId) {
     if (!asyncId)
         return undefined;
     const children = Array.isArray(result.results) ? result.results : [];
-    if (children.length <= 1) {
-        const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
+    if (children.length === 0) {
+        if (isRoleBudgetExhausted(result))
+            return undefined;
+        const sessionPath = normalizeSessionPath(result.sessionFile);
+        return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
+    }
+    if (children.length === 1) {
+        if (isRoleBudgetExhausted(result) || isRoleBudgetExhausted(children[0]))
+            return undefined;
+        const sessionPath = normalizeSessionPath(children[0].sessionPath ?? result.sessionFile);
         return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
     }
     const statusPriority = [
@@ -251,7 +265,8 @@ function resolveResumeTarget(result, asyncId) {
         "completed",
     ];
     const resumableChild = statusPriority
-        .map((status) => children.find((child) => resolveChildStatus(child) === status &&
+        .map((status) => children.find((child) => !isRoleBudgetExhausted(child) &&
+        resolveChildStatus(child) === status &&
         isValidChildIndex(child.index, children.length) &&
         hasExistingSessionFile(child.sessionPath)))
         .find((child) => child !== undefined);
@@ -308,6 +323,7 @@ function formatChildReferences(child, privacySafe = false) {
     })();
     return [
         acceptanceLine,
+        isRoleBudgetExhausted(child) ? BUDGET_EXHAUSTION_GUIDANCE : undefined,
         child.artifactPath ? `Output artifact: ${boundedReference(child.artifactPath)}` : undefined,
         child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
     ].filter((line) => Boolean(line));
@@ -490,12 +506,16 @@ export function formatSingleCompletion(details) {
     const resumeLine = formatResumeLine(details);
     const pausedSupervisorActionLines = formatPausedSupervisorActionLines(details);
     const sessionLine = formatSessionLine(details);
+    const exhaustionLine = details.budgetExhausted ? BUDGET_EXHAUSTION_GUIDANCE : undefined;
     const headLines = [
         `Background task ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
         "",
         asyncIdLine,
+        exhaustionLine,
         ...(pausedSupervisorActionLines.length > 0 ? pausedSupervisorActionLines : [resumeLine]),
-        asyncIdLine || pausedSupervisorActionLines.length > 0 || resumeLine ? "" : undefined,
+        asyncIdLine || exhaustionLine || pausedSupervisorActionLines.length > 0 || resumeLine
+            ? ""
+            : undefined,
     ].filter((line) => line !== undefined);
     const tailLines = [sessionLine ? "" : undefined, sessionLine].filter((line) => line !== undefined);
     const headCost = joinedLineCost(headLines);
@@ -684,7 +704,9 @@ export function buildCompletionDetails(result) {
     const taskInfo = result.taskIndex !== undefined && result.totalTasks !== undefined
         ? ` (${result.taskIndex + 1}/${result.totalTasks})`
         : undefined;
-    const hasNormalizedChildResults = Array.isArray(result.results) && result.results.length > 0;
+    const children = Array.isArray(result.results) ? result.results : [];
+    const hasNormalizedChildResults = children.length > 0;
+    const budgetExhausted = isRoleBudgetExhausted(result) && children.length <= 1 && !children.some(isRoleBudgetExhausted);
     const privacySafe = isProtectedPausedLifecycle({
         state: result.state,
         pause: result.pause,
@@ -715,6 +737,7 @@ export function buildCompletionDetails(result) {
             result.pause?.kind === "awaiting_supervisor"
             ? { awaitingSupervisor: true }
             : {}),
+        ...(budgetExhausted ? { budgetExhausted: true } : {}),
         ...(telemetry ? { telemetry } : {}),
     };
 }

@@ -3,16 +3,18 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { captureConsole, readPiLog } from "./install-stage1-test-helpers.mjs";
+import { captureConsole, readPiLog, readPiLogRecords } from "./install-stage1-test-helpers.mjs";
 import {
   assertPiCommands,
   makeDefaultExtensionInstallConfig,
@@ -22,6 +24,7 @@ import {
   installDefaultExtensions,
   preInstallNpmDefaultExtensions,
 } from "../scripts/tlh-install.mjs";
+import { mcpAdapterCutoverHeldForInstall } from "../scripts/lib/tlh-install-npm.mjs";
 
 test("stage-1 batches non-critical default extension updates", (t) => {
   const defaults = [
@@ -37,6 +40,58 @@ test("stage-1 batches non-critical default extension updates", (t) => {
   installDefaultExtensions(config);
 
   assertPiCommands(piLog, agentDir, ["update --extensions"]);
+});
+
+test("stage-1 holds the legacy MCP adapter across batch and fallback update paths", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: [legacySource, "npm:helper"] },
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  installDefaultExtensions(config);
+
+  const records = readPiLogRecords(piLog);
+  assert.ok(records.length > 0);
+  assert.deepEqual(
+    records.map((record) => record.command),
+    ["update npm:helper"],
+  );
+  assert.equal(
+    records.some((record) => record.command.includes("pi-mcp-adapter")),
+    false,
+  );
+  assertPiCommands(piLog, agentDir, ["update npm:helper"]);
+  assert.equal(existsSync(join(agentDir, "settings-wide-update.done")), false);
+});
+
+test("stage-1 npm pre-install holds the legacy MCP adapter while installing other pins", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:@scope/helper@1.0.0" },
+  ];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: [legacySource, "npm:@scope/helper@1.0.0"] },
+    fakeNpmBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+  });
+
+  preInstallNpmDefaultExtensions(config);
+
+  const npmLog = readFileSync(join(agentDir, "npm.log"), "utf8");
+  assert.match(npmLog, /@scope\/helper@1\.0\.0/);
+  assert.doesNotMatch(npmLog, /pi-mcp-adapter/);
 });
 
 test("stage-1 falls back to old-CLI positional per-source non-critical updates when batch update fails", (t) => {
@@ -527,3 +582,389 @@ test(
     );
   },
 );
+
+// Regression 1: filter opt-out (extensions: []) + unpinned legacy adapter
+// The gate must fire hold independently of the load opt-out so that no
+// settings-wide `pi update --extensions` runs and no MCP adapter is
+// pre-installed.  Non-MCP defaults must still be updated individually.
+test("stage-1 filter-opted-out legacy adapter holds across install batch and leaves settings bytes unchanged", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: [
+        { source: legacySource, extensions: [] }, // filter opt-out: package present but no extensions loaded
+        "npm:helper",
+      ],
+    },
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  const settingsBefore = readFileSync(config.settingsPath, "utf8");
+  installDefaultExtensions(config);
+  const settingsAfter = readFileSync(config.settingsPath, "utf8");
+
+  const records = readPiLogRecords(piLog);
+  assert.ok(records.length > 0, "at least one pi command should run for the non-MCP default");
+  assert.deepEqual(
+    records.map((record) => record.command),
+    ["update npm:helper"],
+    "should update only the non-MCP default individually (no batch update --extensions)",
+  );
+  assert.equal(
+    records.some((r) => r.command.includes("pi-mcp-adapter")),
+    false,
+    "no pi command should mention the MCP adapter",
+  );
+  assert.equal(existsSync(join(agentDir, "settings-wide-update.done")), false);
+  assert.equal(settingsBefore, settingsAfter, "settings bytes must not change");
+});
+
+// Defense-in-depth: the configured source here is the pinned legacy spec
+// (@2.36.0), which does NOT match the default extension's native source
+// (@5.0.0). Even if the gate returned "fresh" (old opt-out-aware behavior
+// before pma-upkb), sourceMatches would be false and the native adapter would
+// never be pre-installed. The test is kept to confirm the gate still fires and
+// that the non-MCP pinned default (@scope/helper) is not incorrectly blocked.
+test("stage-1 npm pre-install defense-in-depth: filter-opted-out pinned legacy spec is independently blocked by spec mismatch", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:@scope/helper@1.0.0" },
+  ];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: [
+        { source: legacySource, extensions: [] }, // filter opt-out
+        "npm:@scope/helper@1.0.0",
+      ],
+    },
+    fakeNpmBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+  });
+
+  preInstallNpmDefaultExtensions(config);
+
+  const npmLog = readFileSync(join(agentDir, "npm.log"), "utf8");
+  assert.match(npmLog, /@scope\/helper@1\.0\.0/, "non-MCP pinned default must be pre-installed");
+  assert.doesNotMatch(npmLog, /pi-mcp-adapter/, "held MCP adapter must not be pre-installed");
+});
+
+// Regression 2: marker opt-out (tlh.disabledDefaultExtensions) + legacy adapter
+// Even when the adapter is marker-disabled, a legacy configured entry must still
+// trigger hold so that `pi update --extensions` is not run.
+test("stage-1 marker-opted-out legacy adapter holds across install batch and skips settings-wide update", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: [legacySource, "npm:helper"],
+      tlh: { disabledDefaultExtensions: ["mcporter"] },
+    },
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  installDefaultExtensions(config);
+
+  assertPiCommands(piLog, agentDir, ["update npm:helper"]);
+  assert.equal(
+    existsSync(join(agentDir, "settings-wide-update.done")),
+    false,
+    "settings-wide update sentinel must not appear",
+  );
+});
+
+// Regression 3: control — opt-out with NO adapter package configured must still
+// use the normal settings-wide refresh (gate returns fresh, not hold).
+test("stage-1 adapter-absent opt-out still runs the settings-wide batch update", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  // No adapter entry in packages at all; only the marker disables it.
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: ["npm:helper"],
+      tlh: { disabledDefaultExtensions: ["mcporter"] },
+    },
+    fakePiBody: 'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+  });
+
+  installDefaultExtensions(config);
+
+  assertPiCommands(piLog, agentDir, ["update --extensions"]);
+});
+
+// Regression 5 (reviewer scenario): filter opt-out + UNPINNED legacy adapter
+// entry + a 2.x cached install.  The gate resolves the version from installed
+// metadata under <agentDir>/npm/node_modules/<name>/package.json (the managed
+// npm install path).  Holds must fire even though neither a declared version
+// nor an explicit version selector is present in the source string.
+test("stage-1 filter-opted-out unpinned adapter with 2.x installed metadata holds across install batch and leaves settings bytes unchanged", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const unpinnedSource = "npm:@diegopetrucci/pi-mcp-adapter"; // no version pin
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: [
+        { source: unpinnedSource, extensions: [] }, // filter opt-out, no version pin
+        "npm:helper",
+      ],
+    },
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  // Simulate a cached legacy install: write 2.x package.json at the path the
+  // gate's installed-metadata lookup reads for npm sources:
+  //   <agentDir>/npm/node_modules/<name>/package.json
+  const npmPackageDir = join(agentDir, "npm", "node_modules", "@diegopetrucci", "pi-mcp-adapter");
+  mkdirSync(npmPackageDir, { recursive: true });
+  writeFileSync(
+    join(npmPackageDir, "package.json"),
+    JSON.stringify({ name: "@diegopetrucci/pi-mcp-adapter", version: "2.36.0" }, null, 2),
+    "utf8",
+  );
+
+  const settingsBefore = readFileSync(config.settingsPath, "utf8");
+  installDefaultExtensions(config);
+  const settingsAfter = readFileSync(config.settingsPath, "utf8");
+
+  const records = readPiLogRecords(piLog);
+  assert.ok(records.length > 0, "at least one pi command should run for the non-MCP default");
+  assert.deepEqual(
+    records.map((record) => record.command),
+    ["update npm:helper"],
+    "should update only the non-MCP default individually \\\\ no settings-wide update --extensions",
+  );
+  assert.equal(
+    records.some((r) => r.command.includes("pi-mcp-adapter")),
+    false,
+    "no pi command should mention the MCP adapter (held by installed 2.x metadata)",
+  );
+  assert.equal(settingsBefore, settingsAfter, "settings bytes must not change");
+});
+
+// ── pma-ymoo: project-layer gate tests ──────────────────────────────────────
+
+// Test 1: Project-layer hold blocks the settings-wide refresh.
+// The profile has only npm:helper (no adapter). The project layer at
+// <agentDir>/.pi/settings.json has the unpinned legacy adapter identity and a
+// cached 2.x install under <agentDir>/.pi/npm/node_modules/…/package.json.
+// The gate must see the project layer hold and skip pi update --extensions,
+// running only the individual npm:helper update.
+test("stage-1 project-layer 2.x adapter hold blocks settings-wide refresh and updates only non-adapter defaults", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const unpinnedSource = "npm:@diegopetrucci/pi-mcp-adapter"; // no version pin
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: ["npm:helper"] }, // profile: only helper, no adapter
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  // Write the project settings file at <agentDir>/.pi/settings.json with the
+  // unpinned adapter identity so the gate must resolve the version from metadata.
+  const projectPiDir = join(agentDir, ".pi");
+  mkdirSync(projectPiDir, { recursive: true });
+  writeFileSync(
+    join(projectPiDir, "settings.json"),
+    JSON.stringify({ packages: [unpinnedSource] }, null, 2),
+    "utf8",
+  );
+
+  // Write cached 2.x metadata at the path the gate resolves for agentDir=<agentDir>/.pi:
+  //   <agentDir>/.pi/npm/node_modules/@diegopetrucci/pi-mcp-adapter/package.json
+  const npmPackageDir = join(
+    projectPiDir,
+    "npm",
+    "node_modules",
+    "@diegopetrucci",
+    "pi-mcp-adapter",
+  );
+  mkdirSync(npmPackageDir, { recursive: true });
+  writeFileSync(
+    join(npmPackageDir, "package.json"),
+    JSON.stringify({ name: "@diegopetrucci/pi-mcp-adapter", version: "2.36.0" }, null, 2),
+    "utf8",
+  );
+
+  const profileSettingsBefore = readFileSync(config.settingsPath, "utf8");
+  const projectSettingsBefore = readFileSync(join(projectPiDir, "settings.json"), "utf8");
+  installDefaultExtensions(config);
+  const profileSettingsAfter = readFileSync(config.settingsPath, "utf8");
+  const projectSettingsAfter = readFileSync(join(projectPiDir, "settings.json"), "utf8");
+
+  const records = readPiLogRecords(piLog);
+  assert.ok(records.length > 0, "at least one pi command should run for the non-MCP default");
+  assert.deepEqual(
+    records.map((r) => r.command),
+    ["update npm:helper"],
+    "should run only the non-adapter individual update (no settings-wide update --extensions)",
+  );
+  assert.equal(
+    records.some((r) => r.command.includes("pi-mcp-adapter")),
+    false,
+    "no pi command should mention the MCP adapter (held by project-layer 2.x metadata)",
+  );
+  assert.equal(existsSync(join(agentDir, "settings-wide-update.done")), false);
+  assert.equal(
+    profileSettingsBefore,
+    profileSettingsAfter,
+    "profile settings bytes must not change",
+  );
+  assert.equal(
+    projectSettingsBefore,
+    projectSettingsAfter,
+    "project settings bytes must not change",
+  );
+});
+
+// Test 2: Project-layer fail-closed — malformed project settings means held.
+// The profile has only npm:helper (no adapter). The project settings file
+// exists but is invalid JSON. The gate must treat this as held and skip the
+// settings-wide refresh, running only the individual npm:helper update.
+test("stage-1 project-layer malformed settings is fail-closed and blocks settings-wide refresh", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: ["npm:helper"] }, // profile: only helper, no adapter
+    fakePiBody: [
+      'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+      '[[ "$*" != *"pi-mcp-adapter"* ]] || { printf \'held MCP source was executed\\n\' >&2; exit 91; }',
+    ].join("\n"),
+  });
+
+  // Write an invalid JSON file as the project settings.
+  const projectPiDir = join(agentDir, ".pi");
+  mkdirSync(projectPiDir, { recursive: true });
+  writeFileSync(join(projectPiDir, "settings.json"), "not-valid-json", "utf8");
+
+  installDefaultExtensions(config);
+
+  // Malformed project settings → held → only individual updates, no batch refresh.
+  const records = readPiLogRecords(piLog);
+  assert.ok(records.length > 0, "at least one pi command should run for the non-MCP default");
+  assert.deepEqual(
+    records.map((r) => r.command),
+    ["update npm:helper"],
+    "should run only the non-adapter individual update (no settings-wide update --extensions)",
+  );
+  assert.equal(existsSync(join(agentDir, "settings-wide-update.done")), false);
+});
+
+// Test 3: Missing profile settings file no longer short-circuits to false.
+// Before this fix, ENOENT on the profile layer immediately returned false
+// (not held), bypassing the project layer entirely.  Now it is neutral for
+// that layer and the project layer is still evaluated.
+// Tested at the gate function level because with a missing profile settings
+// file tlh-defaults returns empty settings ({}) → no sources enabled →
+// installDefaultExtensions returns early, making any integration assertion
+// about pi commands vacuous.
+test("stage-1 gate: missing profile settings is neutral and project-layer hold is still evaluated", (t) => {
+  const nativeSource = "npm:@diegopetrucci/pi-mcp-adapter@5.0.0";
+  const legacySource = "npm:@diegopetrucci/pi-mcp-adapter@2.36.0";
+  const unpinnedSource = "npm:@diegopetrucci/pi-mcp-adapter";
+  const defaults = [
+    { id: "mcporter", source: nativeSource, replaces: [legacySource] },
+    { id: "helper", source: "npm:helper" },
+  ];
+
+  const root = mkdtempSync(join(tmpdir(), "tlh-gate-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const agentDir = join(root, "agent");
+  const defaultsPath = join(root, "default-extensions.json");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(defaultsPath, JSON.stringify(defaults, null, 2), "utf8");
+
+  // Set up the project layer with unpinned adapter + 2.x cached metadata.
+  const projectPiDir = join(agentDir, ".pi");
+  mkdirSync(projectPiDir, { recursive: true });
+  const projectSettingsPath = join(projectPiDir, "settings.json");
+  writeFileSync(
+    projectSettingsPath,
+    JSON.stringify({ packages: [unpinnedSource] }, null, 2),
+    "utf8",
+  );
+  const npmPackageDir = join(
+    projectPiDir,
+    "npm",
+    "node_modules",
+    "@diegopetrucci",
+    "pi-mcp-adapter",
+  );
+  mkdirSync(npmPackageDir, { recursive: true });
+  writeFileSync(
+    join(npmPackageDir, "package.json"),
+    JSON.stringify({ name: "@diegopetrucci/pi-mcp-adapter", version: "2.36.0" }, null, 2),
+    "utf8",
+  );
+
+  const config = {
+    agentDir,
+    homeDir: root,
+    settingsPath: join(agentDir, "settings.json"), // does NOT exist
+    supportFilePaths: { DEFAULT_EXTENSIONS_FILE: defaultsPath },
+  };
+
+  // Profile settings missing (ENOENT) + project holds → gate must return true (held).
+  assert.equal(
+    mcpAdapterCutoverHeldForInstall(config),
+    true,
+    "gate must be held when profile is missing but project layer holds",
+  );
+
+  // Sanity: both layers absent (remove project settings too) → not held.
+  rmSync(projectSettingsPath);
+  assert.equal(
+    mcpAdapterCutoverHeldForInstall(config),
+    false,
+    "gate must not be held when both profile and project settings are absent",
+  );
+});
+
+// Test 4 (control): No project settings file → normal settings-wide refresh.
+// This is already proven by "stage-1 batches non-critical default extension
+// updates" (the first test in this file), which writes a profile settings file
+// with enabled defaults but no <agentDir>/.pi/settings.json, and asserts that
+// pi update --extensions runs.  No new test is needed.

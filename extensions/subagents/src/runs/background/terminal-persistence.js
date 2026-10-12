@@ -186,6 +186,7 @@ function resultItems(results) {
         skipped: result.skipped || undefined,
         interrupted: result.interrupted || undefined,
         timedOut: result.timedOut || undefined,
+        timeoutOwner: result.timeoutOwner,
         toolBudget: result.toolBudget,
         toolBudgetBlocked: result.toolBudgetBlocked || undefined,
         contextUsage: result.contextUsage,

@@ -1264,6 +1264,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         result.activeRuntimeMs = runtimeTracker.finalize();
         result.activeRuntimeCheckpointAt =
             normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) ?? Date.now();
+        if (options.timeoutOwner)
+            result.timeoutOwner = options.timeoutOwner;
         lastResult = result;
         if (result.controlEvents)
             allControlEvents.push(...result.controlEvents);

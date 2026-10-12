@@ -274,6 +274,106 @@ describe("completion formatting helpers", () => {
     }
   });
 
+  it("suppresses resume guidance for permanently exhausted role instances", () => {
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-exhausted-session-"));
+    const exhaustedSession = path.join(resultsDir, "exhausted.jsonl");
+    const pausedSession = path.join(resultsDir, "paused.jsonl");
+    fs.writeFileSync(exhaustedSession, "session\n", "utf-8");
+    fs.writeFileSync(pausedSession, "session\n", "utf-8");
+    try {
+      const exhausted = buildCompletionDetails({
+        id: "exhausted-run",
+        agent: "developer",
+        success: false,
+        state: "failed",
+        timedOut: true,
+        timeoutOwner: "role",
+        terminationReason: "timed_out",
+        summary: "Subagent timed out.",
+        timestamp: 1,
+        results: [
+          {
+            agent: "developer",
+            status: "failed",
+            timedOut: true,
+            timeoutOwner: "role",
+            terminationReason: "timed_out",
+            sessionPath: exhaustedSession,
+            index: 0,
+          },
+        ],
+      });
+      assert.equal(exhausted.resumeTarget, undefined);
+      const exhaustedContent = formatSingleCompletion(exhausted);
+      assert.doesNotMatch(exhaustedContent, /subagent\(\{ action: "resume"/);
+      assert.match(
+        exhaustedContent,
+        /Budget exhausted: this child instance is permanently expired/,
+      );
+      assert.match(exhaustedContent, /fresh dispatch/);
+
+      const directExhausted = buildCompletionDetails({
+        id: "direct-exhausted-run",
+        agent: "developer",
+        success: false,
+        state: "failed",
+        timedOut: true,
+        timeoutOwner: "role",
+        terminationReason: "timed_out",
+        sessionFile: exhaustedSession,
+        summary: "Subagent timed out.",
+        timestamp: 1,
+      });
+      assert.equal(directExhausted.resumeTarget, undefined);
+      assert.doesNotMatch(formatSingleCompletion(directExhausted), /action: "resume"/);
+
+      const mixed = buildCompletionDetails({
+        id: "mixed-exhausted-paused",
+        agent: "parallel:developer+reviewer",
+        success: false,
+        state: "failed",
+        summary: "One child exhausted; one child paused.",
+        timestamp: 1,
+        results: [
+          {
+            agent: "developer",
+            status: "failed",
+            timedOut: true,
+            timeoutOwner: "role",
+            terminationReason: "timed_out",
+            sessionPath: exhaustedSession,
+            index: 0,
+          },
+          {
+            agent: "reviewer",
+            status: "paused",
+            summary: "Paused after interrupt.",
+            sessionPath: pausedSession,
+            index: 1,
+          },
+        ],
+      });
+      assert.deepEqual(mixed.resumeTarget, {
+        sessionPath: pausedSession,
+        index: 1,
+        childCount: 2,
+      });
+      const mixedContent = formatSingleCompletion(mixed);
+      assert.match(mixedContent, /Budget exhausted: this child instance is permanently expired/);
+      assert.match(
+        mixedContent,
+        /Revive child: subagent\(\{ action: "resume", id: "mixed-exhausted-paused", index: 1, message: "\.\.\." \}\)/,
+      );
+      assert.equal(
+        mixedContent.match(/subagent\(\{ action: "resume"/g)?.length,
+        1,
+        "only the recoverable sibling may advertise resume",
+      );
+    } finally {
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
   it("buildCompletionDetails derives paused status from state and summary", () => {
     assert.equal(
       buildCompletionDetails({

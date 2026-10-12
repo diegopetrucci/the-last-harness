@@ -1,7 +1,6 @@
 import { normalizeActiveRuntimeMs } from "../runs/shared/lifecycle-state.ts";
 
-export const DEFAULT_SUBAGENT_MAX_RUN_TIME_MS = 14_400_000;
-export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = DEFAULT_SUBAGENT_MAX_RUN_TIME_MS;
+export const DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS = 14_400_000;
 
 /** Code-owned ceilings for the installer-managed first-party subagent roles. */
 export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS: Readonly<Record<string, number>> =
@@ -17,15 +16,6 @@ export const CANONICAL_AGENT_MAX_EXECUTION_TIME_MS: Readonly<Record<string, numb
     "diff-summarizer": 300_000,
   });
 
-export interface ResolvedExecutionPolicy {
-  /** `false` deliberately disables the configured run-level default. */
-  maxRunTimeMs: number | false;
-  /** Bounded, actionable diagnostic returned when the input was invalid. */
-  diagnostic?: string;
-}
-
-let invalidExecutionPolicyWarningShown = false;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -37,44 +27,17 @@ function hasOwn<T extends object, K extends PropertyKey>(
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function invalidExecutionPolicyDiagnostic(): string {
-  return (
-    `[tlh] Invalid execution.maxRunTimeMs; using the bounded default of ` +
-    `${DEFAULT_SUBAGENT_MAX_RUN_TIME_MS}ms (4h). Set a positive safe integer or false.`
-  );
-}
-
-function warnInvalidExecutionPolicy(message: string): void {
-  if (invalidExecutionPolicyWarningShown) return;
-  invalidExecutionPolicyWarningShown = true;
-  console.warn(message);
-}
-
 /**
- * Resolve the human-owned run-level execution policy from its open execution
- * block. Only an own `maxRunTimeMs` property is consumed; all other keys
- * remain outside this policy boundary.
+ * Warn when the retired human-owned shared run ceiling is still present.
+ * The input is intentionally only inspected for key presence so its value is
+ * never disclosed and the user-owned config remains untouched. The extension
+ * load boundary invokes this once per load.
  */
-export function resolveExecutionPolicy(input: unknown): ResolvedExecutionPolicy {
-  const executionRecord = isRecord(input) ? input : undefined;
-
-  if (!executionRecord) {
-    if (input === undefined) return { maxRunTimeMs: DEFAULT_SUBAGENT_MAX_RUN_TIME_MS };
-    const diagnostic = invalidExecutionPolicyDiagnostic();
-    warnInvalidExecutionPolicy(diagnostic);
-    return { maxRunTimeMs: DEFAULT_SUBAGENT_MAX_RUN_TIME_MS, diagnostic };
-  }
-  if (!hasOwn(executionRecord, "maxRunTimeMs")) {
-    return { maxRunTimeMs: DEFAULT_SUBAGENT_MAX_RUN_TIME_MS };
-  }
-
-  const value = executionRecord.maxRunTimeMs;
-  if (value === false) return { maxRunTimeMs: false };
-  if (isPositiveSafeInteger(value)) return { maxRunTimeMs: value };
-
-  const diagnostic = invalidExecutionPolicyDiagnostic();
-  warnInvalidExecutionPolicy(diagnostic);
-  return { maxRunTimeMs: DEFAULT_SUBAGENT_MAX_RUN_TIME_MS, diagnostic };
+export function warnRetiredExecutionPolicy(input: unknown): void {
+  if (!isRecord(input) || !hasOwn(input, "maxRunTimeMs")) return;
+  console.warn(
+    "[tlh] Ignoring retired execution.maxRunTimeMs; per-role execution budgets remain active.",
+  );
 }
 
 /** Return the canonical ceiling for an installer-managed role, if one exists. */
@@ -84,15 +47,21 @@ export function canonicalAgentMaxExecutionTimeMs(agentName: string): number | un
     : undefined;
 }
 
-/** Apply the shared fallback used by trusted custom/project agents. */
+/** Apply the independent fallback used by trusted custom/project agents. */
 export function resolveCustomAgentMaxExecutionTimeMs(
   maxExecutionTimeMs: number | undefined,
 ): number {
   return maxExecutionTimeMs ?? DEFAULT_CUSTOM_AGENT_MAX_EXECUTION_TIME_MS;
 }
 
+export type ExecutionTimeoutOwner = "role" | "run";
+
 export function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+export function normalizeExecutionTimeoutOwner(value: unknown): ExecutionTimeoutOwner | undefined {
+  return value === "role" || value === "run" ? value : undefined;
 }
 
 export function remainingExecutionTimeMs(

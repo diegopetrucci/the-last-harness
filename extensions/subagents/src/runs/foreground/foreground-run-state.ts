@@ -247,6 +247,8 @@ export function rememberForegroundRun(
         ...(pausedForegroundTerminationReason(result)
           ? { terminationReason: pausedForegroundTerminationReason(result) }
           : {}),
+        ...(result.timedOut !== undefined ? { timedOut: result.timedOut } : {}),
+        ...(result.timeoutOwner ? { timeoutOwner: result.timeoutOwner } : {}),
         ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
         ...(normalizeActiveRuntimeCheckpointAt(result.activeRuntimeCheckpointAt) !== undefined
           ? {
@@ -340,6 +342,8 @@ export function updateRememberedForegroundChild(
     ...(pausedForegroundTerminationReason(input.result)
       ? { terminationReason: pausedForegroundTerminationReason(input.result) }
       : {}),
+    ...(input.result.timedOut !== undefined ? { timedOut: input.result.timedOut } : {}),
+    ...(input.result.timeoutOwner ? { timeoutOwner: input.result.timeoutOwner } : {}),
     ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
     ...(normalizeActiveRuntimeCheckpointAt(input.result.activeRuntimeCheckpointAt) !== undefined
       ? {
@@ -408,6 +412,9 @@ export function resolveForegroundResumeTarget(
       contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
       contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
       contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
+      terminationReason?: import("../../shared/types.ts").SubagentTerminationReason;
+      timedOut?: boolean;
+      timeoutOwner?: "role" | "run";
       activityState?: import("../../shared/types.ts").ActivityState;
       idleEpisodeId?: string;
       durableAttentionReasons?: import("../../shared/types.ts").DurableAttentionReason[];
@@ -526,6 +533,9 @@ export function resolveForegroundResumeTarget(
       ? { durableAttentionReasons: [...child.durableAttentionReasons] }
       : {}),
     ...(child.compaction ? { compaction: { ...child.compaction } } : {}),
+    ...(child.terminationReason ? { terminationReason: child.terminationReason } : {}),
+    ...(child.timedOut !== undefined ? { timedOut: child.timedOut } : {}),
+    ...(child.timeoutOwner ? { timeoutOwner: child.timeoutOwner } : {}),
     ...(normalizeActiveRuntimeMs(child.activeRuntimeMs) !== undefined
       ? { activeRuntimeMs: normalizeActiveRuntimeMs(child.activeRuntimeMs) }
       : {}),

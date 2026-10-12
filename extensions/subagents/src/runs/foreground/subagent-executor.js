@@ -13,7 +13,6 @@ import { hasInMemoryProjectAgentCapture, isRecordValue, lookupPrivateProjectActi
 export { buildResumeModelResolution, clearForegroundMessageInbox, normalizeProjectAgentAccess, projectAgentEntryIdentityError, registerForegroundMessageInbox, trimRememberedForegroundRuns, requestInterruptAllRunningSubagentRuns, };
 import { pausedForegroundStatusPath } from "./foreground-pause-state.js";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
-import { resolveExecutionPolicy, } from "../../agents/execution-ceiling.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../background/async-execution.js";
 import { resolveCurrentSessionId } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
@@ -62,7 +61,7 @@ function applyProjectAgentOpenRouterModel(params, captures, currentModel) {
 function retiredExecutionControlError(params) {
     const input = params;
     const topLevelGuidance = {
-        timeoutMs: "Configure `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json`; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing `timeoutMs`.",
+        timeoutMs: "Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing `timeoutMs`.",
         concurrency: "Configure `parallel.concurrency` in `<agent-dir>/extensions/subagent/config.json`; per-call concurrency is no longer supported.",
         fallbackModels: "Configure fallbackModels in the agent definition; per-call fallback selection is no longer supported.",
         includeProgress: "Progress is tracked automatically and is not a caller-controlled execution option.",
@@ -105,7 +104,7 @@ function retiredExecutionControlError(params) {
                     return `${taskPrefix}.${key} is no longer supported. ${guidance}`;
             }
             if (Object.hasOwn(rawTask, "timeoutMs")) {
-                return `${taskPrefix}.timeoutMs is no longer supported. Configure execution.maxRunTimeMs in <agent-dir>/extensions/subagent/config.json; caller-selected execution timeouts are no longer supported. Restart with a new direct run after removing timeoutMs.`;
+                return `${taskPrefix}.timeoutMs is no longer supported. Caller-selected execution timeouts are retired; per-role execution budgets are applied automatically. Restart with a new direct run after removing timeoutMs.`;
             }
             if (Object.hasOwn(rawTask, "reads")) {
                 return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
@@ -285,7 +284,6 @@ function runAsyncPath(data, deps) {
             controlConfig,
             telemetryProvenance: data.telemetryProvenance,
             telemetryLineage: data.telemetryLineage,
-            timeoutMs: data.timeoutMs,
             projectAgentCaptures: data.projectAgentCaptures,
         }));
     }
@@ -330,7 +328,6 @@ function runAsyncPath(data, deps) {
             controlConfig,
             telemetryProvenance: data.telemetryProvenance,
             telemetryLineage: data.telemetryLineage,
-            timeoutMs: data.timeoutMs,
             projectAgent: data.projectAgentCaptures?.find((capture) => capture.provenance.agent === params.agent),
         }));
     }
@@ -718,7 +715,6 @@ async function executeInterruptAction(params, ctx, deps) {
 }
 export function createSubagentExecutor(deps) {
     const configuredArtifactConfig = deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
-    const executionPolicy = deps.executionPolicy ?? resolveExecutionPolicy(deps.config.execution);
     const execute = async (_id, params, signal, onUpdate, ctx) => {
         deps.state.baseCwd = ctx.cwd;
         deps.state.foregroundRuns ??= new Map();
@@ -752,7 +748,6 @@ export function createSubagentExecutor(deps) {
                         ...configuredArtifactConfig,
                         enabled: paramsWithResolvedCwd.artifacts !== false,
                     },
-                    executionPolicy,
                 });
             }
             if (action === "steer")
@@ -796,7 +791,6 @@ export function createSubagentExecutor(deps) {
             return normalized.error;
         const normalizedParams = normalized.params;
         let effectiveParams = normalizedParams;
-        const runTimeoutMs = executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
         const scope = resolveExecutionAgentScope(effectiveParams.agentScope);
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -883,7 +877,6 @@ export function createSubagentExecutor(deps) {
             controlConfig,
             telemetryProvenance: deps.telemetryProvenance,
             startedAt: runStartedAt,
-            timeoutMs: runTimeoutMs,
             modelScope,
             runSync: deps.runSync,
         };

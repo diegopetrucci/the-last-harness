@@ -20,7 +20,7 @@ import { assessDurableResumeContext, formatDurableResumeContextBlock, parseConte
 import { readStatus } from "../../shared/utils.js";
 import { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSingleRunOutputBaseDir, unknownAgentMessage, } from "./foreground-support.js";
 import { RESULTS_DIR, } from "../../shared/types.js";
-import { remainingExecutionTimeMs, } from "../../agents/execution-ceiling.js";
+import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { lookupPrivateProjectActionReference, projectRunAuthorizationError, requirePersistedProjectCaptureForTarget, authorizePersistedProjectAgentRun, rejectMissingPrivateProjectReference, } from "./project-agent-control.js";
 import { resolveForegroundResumeTarget } from "./foreground-run-state.js";
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
@@ -645,45 +645,37 @@ async function resolveResumeActionTarget(input) {
     }
     return target;
 }
-function resolveSuccessfulResumeCompletion(target) {
-    return (("successfulCompletion" in target ? target.successfulCompletion : undefined) ??
-        target.state === "complete");
-}
-function preflightResumeRuntimePolicy(target, agentConfig, executionPolicy) {
-    const runTimeoutMs = executionPolicy.maxRunTimeMs === false ? undefined : executionPolicy.maxRunTimeMs;
-    const successfulCompletion = resolveSuccessfulResumeCompletion(target);
+function preflightResumeRuntimePolicy(target, agentConfig) {
     const normalizedTargetActiveRuntimeMs = normalizeActiveRuntimeMs(target.activeRuntimeMs);
-    if (!successfulCompletion &&
-        target.activeRuntimeMs !== undefined &&
-        normalizedTargetActiveRuntimeMs === undefined) {
+    if (target.activeRuntimeMs !== undefined && normalizedTargetActiveRuntimeMs === undefined) {
         return {
             kind: "error",
             message: "Invalid active runtime evidence; continuation cannot start.",
         };
     }
     const activeRuntimeCheckpointAt = normalizeActiveRuntimeCheckpointAt(target.activeRuntimeCheckpointAt);
-    if (!successfulCompletion &&
-        target.activeRuntimeCheckpointAt !== undefined &&
-        activeRuntimeCheckpointAt === undefined) {
+    if (target.activeRuntimeCheckpointAt !== undefined && activeRuntimeCheckpointAt === undefined) {
         return {
             kind: "error",
             message: "Invalid active runtime checkpoint; continuation cannot start.",
         };
     }
-    const activeRuntimeMs = successfulCompletion ? 0 : (normalizedTargetActiveRuntimeMs ?? 0);
+    const activeRuntimeMs = normalizedTargetActiveRuntimeMs ?? 0;
+    const roleTimeoutEvidence = target.timeoutOwner === "role" &&
+        (target.timedOut === true || target.terminationReason === "timed_out");
     const remainingAgentTimeMs = remainingExecutionTimeMs(agentConfig.maxExecutionTimeMs, activeRuntimeMs);
-    if (remainingAgentTimeMs === 0) {
+    if (roleTimeoutEvidence || remainingAgentTimeMs === 0) {
         return {
             kind: "error",
-            message: `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
+            message: roleTimeoutEvidence
+                ? `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling; persisted role-timeout evidence permanently retires this instance.`
+                : `Agent '${target.agent}' has exhausted its maxExecutionTimeMs ceiling after ${activeRuntimeMs}ms of active runtime.`,
         };
     }
     return {
         kind: "ready",
         activeRuntimeMs,
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-        successfulCompletion,
-        ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
     };
 }
 function preflightResumeContextPolicy(target, agentConfig, modelOverride, currentModel, availableModels) {
@@ -797,10 +789,10 @@ async function prepareResume(input) {
             },
         };
     }
-    const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig, input.executionPolicy);
+    const runtimePolicy = preflightResumeRuntimePolicy(target, agentConfig);
     if (runtimePolicy.kind === "error")
         return managementError(runtimePolicy.message);
-    const { activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs } = runtimePolicy;
+    const { activeRuntimeMs, activeRuntimeCheckpointAt } = runtimePolicy;
     const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
     const contextPolicy = preflightResumeContextPolicy(target, agentConfig, input.params.model, input.ctx.model, modelRegistrySnapshot.availableModels);
     if (contextPolicy.kind === "error")
@@ -830,15 +822,13 @@ async function prepareResume(input) {
         persistedProjectAuthorization,
         activeRuntimeMs,
         ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
-        successfulCompletion,
-        ...(runTimeoutMs !== undefined ? { runTimeoutMs } : {}),
     };
 }
 export async function resumeAsyncRun(input) {
     const preparation = await prepareResume(input);
     if (preparation.kind === "error")
         return preparation.result;
-    const { target, followUp, parentSessionFile, effectiveCwd, agentConfig, modelScope, modelRegistrySnapshot, claimedPause, continuationRunId, persistedProjectAuthorization, activeRuntimeMs, activeRuntimeCheckpointAt, successfulCompletion, runTimeoutMs, } = preparation;
+    const { target, followUp, parentSessionFile, effectiveCwd, agentConfig, modelScope, modelRegistrySnapshot, claimedPause, continuationRunId, persistedProjectAuthorization, activeRuntimeMs, activeRuntimeCheckpointAt, } = preparation;
     input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
     const { availableModels } = modelRegistrySnapshot;
     const runId = continuationRunId;
@@ -925,10 +915,7 @@ export async function resumeAsyncRun(input) {
             sessionFile: target.sessionFile,
             continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
             activeRuntimeMs,
-            ...(!successfulCompletion && activeRuntimeCheckpointAt !== undefined
-                ? { activeRuntimeCheckpointAt }
-                : {}),
-            timeoutMs: runTimeoutMs,
+            ...(activeRuntimeCheckpointAt !== undefined ? { activeRuntimeCheckpointAt } : {}),
             outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
             maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
             controlConfig: resolveControlConfig(input.deps.config.control),

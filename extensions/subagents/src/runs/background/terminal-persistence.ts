@@ -56,6 +56,7 @@ export interface RunnerStepResult {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -389,6 +390,7 @@ function resultItems(results: RunnerStepResult[]): AsyncResultArtifact["results"
     skipped: result.skipped || undefined,
     interrupted: result.interrupted || undefined,
     timedOut: result.timedOut || undefined,
+    timeoutOwner: result.timeoutOwner,
     toolBudget: result.toolBudget,
     toolBudgetBlocked: result.toolBudgetBlocked || undefined,
     contextUsage: result.contextUsage,

@@ -56,6 +56,9 @@ const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
 
+export const BUDGET_EXHAUSTION_GUIDANCE =
+  "Budget exhausted: this child instance is permanently expired. Inspect partial output, artifacts, and files before deciding on a fresh dispatch; do not resume or mechanically redispatch the unchanged task.";
+
 // UUIDs provide cross-process uniqueness; the monotonic suffix also keeps IDs
 // distinct if a test or host replaces crypto.randomUUID with a deterministic stub.
 let completionBatchIdentitySequence = 0;
@@ -69,6 +72,9 @@ interface SubagentChildResult {
   artifactPath?: string;
   sessionPath?: string;
   index?: number;
+  timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
+  terminationReason?: string;
   acceptance?: AcceptanceLedger;
 }
 
@@ -89,6 +95,8 @@ export interface SubagentNotifyDetails {
   sessionLabel?: string;
   sessionValue?: string;
   awaitingSupervisor?: boolean;
+  /** True when this notice represents an exhausted, permanently expired instance. */
+  budgetExhausted?: boolean;
   telemetry?: SubagentRunTelemetry;
   /**
    * @internal Set by buildCompletionDetails for results with structured child data. Enables
@@ -254,6 +262,9 @@ interface SubagentResult {
   taskIndex?: number;
   totalTasks?: number;
   sessionId?: string | null;
+  timedOut?: boolean;
+  timeoutOwner?: "role" | "run";
+  terminationReason?: string;
   telemetry?: unknown;
 }
 
@@ -390,6 +401,17 @@ function normalizeAsyncIdentifier(value: unknown): string | undefined {
   return value;
 }
 
+function isRoleBudgetExhausted(value: {
+  timedOut?: unknown;
+  timeoutOwner?: unknown;
+  terminationReason?: unknown;
+}): boolean {
+  return (
+    value.timeoutOwner === "role" &&
+    (value.timedOut === true || value.terminationReason === "timed_out")
+  );
+}
+
 function formatAsyncIdLine(details: SubagentNotifyDetails): string | undefined {
   const asyncId = normalizeAsyncIdentifier(details.asyncId);
   return asyncId ? `Async id: ${asyncId}` : undefined;
@@ -418,6 +440,7 @@ function formatPausedSupervisorActionLines(details: SubagentNotifyDetails): stri
   const target = details.resumeTarget;
   if (
     !details.awaitingSupervisor ||
+    details.budgetExhausted ||
     !asyncId ||
     !target ||
     !hasExistingSessionFile(target.sessionPath)
@@ -477,8 +500,14 @@ function resolveResumeTarget(
 ): ResumeTarget | undefined {
   if (!asyncId) return undefined;
   const children = Array.isArray(result.results) ? result.results : [];
-  if (children.length <= 1) {
-    const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
+  if (children.length === 0) {
+    if (isRoleBudgetExhausted(result)) return undefined;
+    const sessionPath = normalizeSessionPath(result.sessionFile);
+    return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
+  }
+  if (children.length === 1) {
+    if (isRoleBudgetExhausted(result) || isRoleBudgetExhausted(children[0])) return undefined;
+    const sessionPath = normalizeSessionPath(children[0].sessionPath ?? result.sessionFile);
     return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
   }
   const statusPriority: Array<NonNullable<SubagentChildResult["status"]>> = [
@@ -490,6 +519,7 @@ function resolveResumeTarget(
     .map((status) =>
       children.find(
         (child) =>
+          !isRoleBudgetExhausted(child) &&
           resolveChildStatus(child) === status &&
           isValidChildIndex(child.index, children.length) &&
           hasExistingSessionFile(child.sessionPath),
@@ -555,6 +585,7 @@ function formatChildReferences(child: SubagentChildResult, privacySafe = false):
   })();
   return [
     acceptanceLine,
+    isRoleBudgetExhausted(child) ? BUDGET_EXHAUSTION_GUIDANCE : undefined,
     child.artifactPath ? `Output artifact: ${boundedReference(child.artifactPath)}` : undefined,
     child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
   ].filter((line): line is string => Boolean(line));
@@ -832,12 +863,16 @@ export function formatSingleCompletion(details: SubagentNotifyDetails): string {
   const resumeLine = formatResumeLine(details);
   const pausedSupervisorActionLines = formatPausedSupervisorActionLines(details);
   const sessionLine = formatSessionLine(details);
+  const exhaustionLine = details.budgetExhausted ? BUDGET_EXHAUSTION_GUIDANCE : undefined;
   const headLines = [
     `Background task ${details.status}: **${details.agent}**${details.taskInfo ?? ""}`,
     "",
     asyncIdLine,
+    exhaustionLine,
     ...(pausedSupervisorActionLines.length > 0 ? pausedSupervisorActionLines : [resumeLine]),
-    asyncIdLine || pausedSupervisorActionLines.length > 0 || resumeLine ? "" : undefined,
+    asyncIdLine || exhaustionLine || pausedSupervisorActionLines.length > 0 || resumeLine
+      ? ""
+      : undefined,
   ].filter((line): line is string => line !== undefined);
   const tailLines = [sessionLine ? "" : undefined, sessionLine].filter(
     (line): line is string => line !== undefined,
@@ -1110,7 +1145,12 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
       ? ` (${result.taskIndex + 1}/${result.totalTasks})`
       : undefined;
 
-  const hasNormalizedChildResults = Array.isArray(result.results) && result.results.length > 0;
+  const children = Array.isArray(result.results) ? result.results : [];
+  const hasNormalizedChildResults = children.length > 0;
+  // Parallel/structured results carry authoritative exhaustion per child; a
+  // single-child result may also retain the outer marker for compatibility.
+  const budgetExhausted =
+    isRoleBudgetExhausted(result) && children.length <= 1 && !children.some(isRoleBudgetExhausted);
   const privacySafe = isProtectedPausedLifecycle({
     state: result.state,
     pause: (result as { pause?: { kind?: string } }).pause,
@@ -1148,6 +1188,7 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
     (result as { pause?: { kind?: string } }).pause?.kind === "awaiting_supervisor"
       ? { awaitingSupervisor: true }
       : {}),
+    ...(budgetExhausted ? { budgetExhausted: true } : {}),
     ...(telemetry ? { telemetry } : {}),
   };
 }

@@ -33,6 +33,8 @@ You may use the generic `mcp` gateway for tools within your authorized task scop
 - Do not directly edit source files. Implementation belongs to `developer`.
 - Preserve pre-existing worktree and index changes as human-owned state. Do not discard, overwrite, revert, stage, or otherwise clean them up on your own. This includes `git stash`, `git restore`, `git reset`, non-dry-run `git clean`, and checkout/switch discard or force options when they would affect pre-existing state; ask the user how to proceed instead.
 - A paused or interrupted developer/subagent dispatch is a recoverable paused run, not authorization to edit directly. Resume by run id/index when appropriate, re-dispatch an approved ticket if replacing the paused run, ask the user when the next step is ambiguous, or stop. Do not treat `doctor` showing no active run as proof the pause was stale or failed.
+- Every child instance has a bounded role budget. A recoverable pause resumes the same lineage and context with its remaining active-time budget; paused wall time does not consume it. If the role budget expires, the instance is permanently poisoned: inspect its partial output, artifacts, and files before deciding whether to narrow or split the remaining scope and whether a fresh dispatch is warranted.
+- Never automatically replace an expired child, roll back its work, or mechanically redispatch the unchanged task. Exhausted results and status omit resume hints; ordinary paused results retain only valid same-lineage resume hints.
 - Only the human can pick different models/thinking for subagents, never override them on your own.
 - Use direct codebase inspection for discovery; do not ask the user questions the repository can answer.
 - Prefer simple, correct, reviewable changes. Avoid speculative abstractions and YAGNI violations.
@@ -136,7 +138,8 @@ For each ready task:
 
 - Let healthy async children continue; use status or steer as needed, and do not pause or interrupt them without a real decision, blocker, or safety concern.
 - If a live async child's scope expands beyond the dispatched task, steer it to synthesize what it has learned, name the new gap, and stop so you can decide whether to split follow-up work.
-- Treat cumulative runtime budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime.
+- Treat cumulative role budgets as continuous across foreground, async, fallback, retry, pause, and resume continuations; status updates and steering do not reset consumed runtime. A timeout from an older run-owned deadline is compatibility metadata, not proof that the role budget is exhausted.
+- When a child is budget-exhausted, inspect partial output, artifacts, and files before making any new dispatch. Narrow or split the remaining scope when possible, and make a fresh dispatch only as an explicit decision; do not offer unchanged-task replacement or rollback as an automatic recovery.
 
 ## Final review
 
