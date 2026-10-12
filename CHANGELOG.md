@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.44.0] - 2026-10-12
+
 ### Added
 
 - TLH now emits an **OSC 7501 Program Status** sequence during interactive sessions, reporting states `working`, `blocked`, `done`, `idle`, and `error` with `app=tlh`. `done` is reported when a run settles normally; `idle` is reported before any run settles in the session, or when a run is cancelled, including cancellation during an automatic retry delay when Pi's native `agent_settled.aborted` metadata overrides the failed attempt [#748](https://github.com/diegopetrucci/the-last-harness/issues/748); `error` is reported when a run settles after failing without a retry; `blocked` is reported while a blocking UI prompt is open and takes precedence over `working` (`blocked` carries `kind=permission` for confirmation prompts or `kind=question` for other prompts). The sequence is only sent to an interactive TTY; unsupported terminals ignore it. Opt out with `TLH_PROGRAM_STATUS=0`. The Herdr and cmux bridges remain active until those integrations consume OSC 7501 directly (see [#747](https://github.com/diegopetrucci/the-last-harness/issues/747)).
