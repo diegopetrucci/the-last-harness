@@ -280,12 +280,12 @@ describe("renderSubagentResult", () => {
     assert.ok(reviewerRowIndex !== -1, "first agent row should be present");
     assert.match(
       lines[reviewerActivityIndex] ?? "",
-      /^ {7}read: reviewer\.ts$/,
+      /^ {6}read: reviewer\.ts$/,
       "foreground parallel activity must keep the exact 7-space column",
     );
     assert.match(
       lines[writerActivityIndex] ?? "",
-      /^ {7}write: writer\.ts$/,
+      /^ {6}write: writer\.ts$/,
       "second foreground parallel activity must keep the exact 7-space column",
     );
     assert.doesNotMatch(text, /⎿/, "foreground parallel rendering must not add the branch glyph");
@@ -972,7 +972,7 @@ describe("renderSubagentResult", () => {
     const text = widget.render(120).join("\n");
     assert.match(text, /^✓ reviewer/);
     assert.doesNotMatch(text, /⟳ 2|3 tool uses|1\.2k token|1\.5s/);
-    assert.match(text, /^ {5}Done \(no text output\)\s*$/m);
+    assert.match(text, /^ {4}Done \(no text output\)\s*$/m);
     assert.doesNotMatch(text, /⎿/);
     assert.match(text, /session: \/tmp\/session\.jsonl/);
   });
@@ -1052,7 +1052,7 @@ describe("renderSubagentResult", () => {
     assert.match(compactText, /active 2s ago/);
     assert.match(
       compactText,
-      /^ {5}read: package\.json \| 3\.0s(?: · active 2s ago)?\s*$/m,
+      /^ {4}read: package\.json \| 3\.0s(?: · active 2s ago)?\s*$/m,
       "foreground single activity must keep the exact 5-space column",
     );
     assert.doesNotMatch(compactText, /⎿/);
@@ -1109,7 +1109,7 @@ describe("renderSubagentResult", () => {
     const compact = renderSubagentResult!(makeResult(0, 4_000), { expanded: false }, theme)
       .render(120)
       .join("\n");
-    assert.match(compact, new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"));
+    assert.match(compact, new RegExp(`^ {4}${escapeRegExp(slot0Phrase)}$`, "m"));
     assert.ok(compact.indexOf(slot0Phrase) < compact.indexOf("active now"));
     assert.doesNotMatch(compact, /3 tool uses|1\.2k token|4\.0s|⟳ 0/);
 
@@ -1119,7 +1119,7 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(
       nextTurn,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      new RegExp(`^ {4}${escapeRegExp(slot0Phrase)}$`, "m"),
       "phrase must not change within the same 8 s window even if turnCount increases",
     );
 
@@ -1151,7 +1151,7 @@ describe("renderSubagentResult", () => {
     )
       .render(120)
       .join("\n");
-    assert.match(activeTool, /^ {5}read \| 4\.0s(?: · active 2s ago)?\s*$/m);
+    assert.match(activeTool, /^ {4}read \| 4\.0s(?: · active 2s ago)?\s*$/m);
     assert.match(activeTool, /active 2s ago/);
     assert.doesNotMatch(activeTool, /⎿/);
     assert.doesNotMatch(activeTool, new RegExp(escapeRegExp(slot0Phrase)));
@@ -1222,7 +1222,7 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(
       at4s,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      new RegExp(`^ {4}${escapeRegExp(slot0Phrase)}$`, "m"),
       "phrase must be slot 0 when now - startedAt < 8 s",
     );
 
@@ -1238,7 +1238,7 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(
       at6s,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      new RegExp(`^ {4}${escapeRegExp(slot0Phrase)}$`, "m"),
       "phrase must remain slot 0 at 6 s (still within first window)",
     );
 
@@ -1256,7 +1256,7 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(
       at8s,
-      new RegExp(`^ {5}${escapeRegExp(slot1Phrase)}$`, "m"),
+      new RegExp(`^ {4}${escapeRegExp(slot1Phrase)}$`, "m"),
       "phrase must advance to slot 1 when now - startedAt reaches the 8 s boundary",
     );
     assert.doesNotMatch(
@@ -1305,7 +1305,7 @@ describe("renderSubagentResult", () => {
       .join("\n");
     assert.match(
       fallback,
-      new RegExp(`^ {5}${escapeRegExp(slot0Phrase)}$`, "m"),
+      new RegExp(`^ {4}${escapeRegExp(slot0Phrase)}$`, "m"),
       "must fall back to durationMs when startedAt is absent",
     );
   });
@@ -1547,7 +1547,7 @@ describe("renderSubagentResult", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /^■ parallel/);
-    assert.match(text, /^ {7}Paused\s*$/m);
+    assert.match(text, /^ {6}Paused\s*$/m);
     assert.doesNotMatch(text, /⎿/);
   });
 
@@ -1573,7 +1573,7 @@ describe("renderSubagentResult", () => {
     );
 
     const text = widget.render(120).join("\n");
-    assert.match(text, /^ {7}Done \(no text output\)\s*$/m);
+    assert.match(text, /^ {6}Done \(no text output\)\s*$/m);
     assert.doesNotMatch(text, /⎿/);
     assert.doesNotMatch(text, /0ms/);
   });

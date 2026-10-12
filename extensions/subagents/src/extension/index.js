@@ -418,19 +418,19 @@ export default function registerSubagentExtension(pi) {
             ? trimmedPreview.split("\n").filter((line) => line.trim())
             : [trimmedPreview.split("\n", 1)[0] ?? ""].filter((line) => line.trim());
         for (const line of previewLines.length > 0 ? previewLines : ["(no output)"]) {
-            text += `\n  ${theme.fg("dim", `   ${line}`)}`;
+            text += `\n    ${theme.fg("dim", line)}`;
         }
         if (options.expanded) {
             for (const line of referenceLines) {
-                text += `\n  ${theme.fg("muted", line)}`;
+                text += `\n    ${theme.fg("muted", line)}`;
             }
         }
         else if (trimmedPreview.includes("\n") || referenceLines.length > 0) {
             const expandKey = keyText("app.tools.expand");
-            text += `\n  ${theme.fg("dim", `${expandKey} full notification`)}`;
+            text += `\n    ${theme.fg("dim", `${expandKey} full notification`)}`;
         }
         if (details.sessionLabel && details.sessionValue) {
-            text += `\n  ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
+            text += `\n    ${theme.fg("muted", `${details.sessionLabel}: ${shortenPath(details.sessionValue)}`)}`;
         }
         return new Text(text, 0, 0);
     });

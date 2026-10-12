@@ -167,9 +167,9 @@ describe("subagent async widget rendering", () => {
       "ticket line should appear before the live-detail hint",
     );
     const ticketRowIndex = lines.findIndex((line) =>
-      /^ {4}ticket: Show active tk title\s*$/.test(line),
+      /^ {6}ticket: Show active tk title\s*$/.test(line),
     );
-    const activityRowIndex = lines.findIndex((line) => /^ {7}read\s*$/.test(line));
+    const activityRowIndex = lines.findIndex((line) => /^ {6}read\s*$/.test(line));
     assert.ok(ticketRowIndex >= 0, "ticket row should be present");
     assert.ok(activityRowIndex >= 0, "activity row should be present");
     assert.ok(
@@ -406,14 +406,14 @@ describe("subagent async widget rendering", () => {
     assert.match(
       text,
       new RegExp(
-        `Agent 1/3: reviewer\\n^ {7}${escapeRegExp(whimsicalThinkingPhrase(0))}$\\n^ {7}active now$`,
+        `Agent 1/3: reviewer\\n^ {6}${escapeRegExp(whimsicalThinkingPhrase(0))}$\\n^ {6}active now$`,
         "m",
       ),
     );
     assert.match(
       text,
-      /Agent 2\/3: reviewer[\s\S]*^ {7}read \| 2\.0s\s*$/m,
-      "widget step activity must keep the exact 7-space column",
+      /Agent 2\/3: reviewer[\s\S]*^ {6}read \| 2\.0s\s*$/m,
+      "widget step activity must keep the exact 6-space column",
     );
     assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
     assert.match(text, /Agent 3\/3: reviewer · complete/);
@@ -532,7 +532,7 @@ describe("subagent async widget rendering", () => {
     const collapsed = buildWidgetLines([job], theme, 180).join("\n");
     assert.match(
       collapsed,
-      new RegExp(`^ {7}${escapeRegExp(slot0Phrase)}$\\n^ {7}active now$`, "m"),
+      new RegExp(`^ {6}${escapeRegExp(slot0Phrase)}$\\n^ {6}active now$`, "m"),
     );
     assert.doesNotMatch(collapsed, /5 turns|18 tool uses|44k token|7\.0s/);
 
@@ -706,8 +706,8 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(expandedText, /Press Configured\+Expand\+Key for live detail/);
     assert.match(
       expandedText,
-      /^ {7}read: src\/tui\/render\.ts \| 2\.0s$/m,
-      "widget step activity must keep the exact 7-space column",
+      /^ {6}read: src\/tui\/render\.ts \| 2\.0s$/m,
+      "widget step activity must keep the exact 6-space column",
     );
     assert.doesNotMatch(expandedText, /⎿/);
     assert.match(expandedText, outputPathPattern("/tmp/1/output-0.log"));
@@ -752,7 +752,7 @@ describe("subagent async widget rendering", () => {
       new RegExp(`${runningGlyphPattern} developer \\(gpt-5\\.5 · thinking high\\)`),
     );
     assert.doesNotMatch(collapsedText, /2 turns|3 tool uses|12k token|4\.0s/);
-    assert.match(collapsedText, /^ {7}read: src\/tui\/render\.ts \| 2\.0s$/m);
+    assert.match(collapsedText, /^ {6}read: src\/tui\/render\.ts \| 2\.0s$/m);
     assert.doesNotMatch(collapsedText, /⎿/);
     assert.match(collapsedText, /Press Ctrl\+Shift\+D for live detail/);
     assert.doesNotMatch(collapsedText, /(?:Agent|Step) 1\/1/);
@@ -874,7 +874,7 @@ describe("subagent async widget rendering", () => {
       const expandedText = buildWidgetLines([{ ...job, status }], theme, 180, true).join("\n");
       assert.match(expandedText, /2 turns · 3 tool uses · 12k token/);
       assert.doesNotMatch(expandedText, /output-0\.log|stale detail|stale live output/);
-      assert.doesNotMatch(expandedText, /^ {7}read\b/m);
+      assert.doesNotMatch(expandedText, /^ {6}read\b/m);
     }
   });
 
