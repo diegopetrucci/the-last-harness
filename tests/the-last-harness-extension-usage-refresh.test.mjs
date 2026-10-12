@@ -407,8 +407,15 @@ test("subscription usage refresh requests a footer render when a runtime overrid
   }
 });
 
-test("subscription usage refresh renders only the footer for the refreshed context", async () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-context-scope-"));
+test("subscription usage refresh redraws the footer when the event context differs from the footer registration context", async () => {
+  // Regression test for the cross-context redraw bug: Pi's ExtensionRunner
+  // creates a fresh ExtensionContext for each dispatched event, so the ctx
+  // passed to model_select or turn_end is a different object from the ctx
+  // passed to session_start (where the footer factory runs and registers the
+  // render callback). The facade must not use context identity to locate the
+  // render callback; it must redraw whichever event context triggered the
+  // refresh.
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-ctx-distinct-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
   const previousEnv = {
@@ -419,8 +426,7 @@ test("subscription usage refresh renders only the footer for the refreshed conte
   const previousFetch = globalThis.fetch;
 
   let fetchCalls = 0;
-  let contextARenderRequests = 0;
-  let contextBRenderRequests = 0;
+  let renderRequests = 0;
   let returnedAccessToken = "oauth-access-token";
   const credential = { type: "oauth", access: "oauth-access-token" };
   const authStorage = {
@@ -433,10 +439,15 @@ test("subscription usage refresh renders only the footer for the refreshed conte
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.TLH_SKIP_UPDATE_CHECK = "1";
     mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(agentDir, "tlh"), { recursive: true });
     mkdirSync(cwd, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
       `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(agentDir, "tlh", "install-state.json"),
+      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
     );
 
     globalThis.fetch = async () => {
@@ -449,62 +460,387 @@ test("subscription usage refresh renders only the footer for the refreshed conte
 
     const pi = createPi();
     theLastHarness(pi);
-    assert.ok(
-      (pi.handlers.get("session_start")?.length ?? 0) >= 1,
-      "session_start handler must be registered by the extension",
-    );
-    const ctxA = createCtx({
+
+    // ctxSession is the context passed to session_start and used inside the
+    // footer factory to register the render callback.
+    const ctxSession = createCtx({
       cwd,
       authStorage,
       currentAccessToken: () => returnedAccessToken,
       requestRender: () => {
-        contextARenderRequests += 1;
+        renderRequests += 1;
+      },
+    });
+
+    await fireAll(pi, "session_start", { reason: "restore" }, ctxSession);
+    await eventually(
+      () => fetchCalls === 1 && renderRequests === 1,
+      "initial usage fetch should request a render via the registration context",
+    );
+
+    renderRequests = 0;
+    returnedAccessToken = "runtime-api-key";
+    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
+
+    // ctxEvent is a DISTINCT context object, simulating the fresh context Pi
+    // creates per event. It has the same provider/auth so the service uses the
+    // same snapshot key, but it is not the same object as ctxSession.
+    const ctxEvent = createCtx({
+      cwd,
+      authStorage,
+      currentAccessToken: () => returnedAccessToken,
+      requestRender: () => {
+        // This render callback belongs to ctxEvent, which never had its footer
+        // factory called; the facade must NOT call this.
+        throw new Error("ctxEvent render callback must not be invoked");
+      },
+    });
+
+    // This is the key difference from the pre-fix code: the event fires with
+    // ctxEvent, not ctxSession. The WeakMap lookup on ctxEvent returned
+    // undefined, silently suppressing the footer redraw.
+    void fireAll(pi, "model_select", {}, ctxEvent);
+    await eventually(
+      () => renderRequests === 1,
+      "refresh triggered from a distinct event context must still redraw the registered footer",
+    );
+    assert.equal(fetchCalls, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreEnv(previousEnv);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("turn_end refresh with a context distinct from registration redraws the footer when the snapshot changes", async () => {
+  // Companion regression test to the model_select variant: turn_end events
+  // also arrive with a fresh context that is different from the session_start
+  // context used when the footer registered its render callback.
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-turnend-distinct-"));
+  const agentDir = join(tempDir, "agent");
+  const cwd = join(tempDir, "workspace");
+  const previousEnv = {
+    PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+  };
+  const previousFetch = globalThis.fetch;
+
+  let fetchCalls = 0;
+  let renderRequests = 0;
+  let returnedAccessToken = "oauth-access-token";
+  const credential = { type: "oauth", access: "oauth-access-token" };
+  const authStorage = {
+    runtimeOverrides: new Map(),
+    get: (provider) => (provider === "anthropic" ? credential : undefined),
+  };
+
+  try {
+    delete process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(agentDir, "tlh"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(agentDir, "tlh", "install-state.json"),
+      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
+    );
+
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        json: async () => ({ five_hour: { used: 4, limit: 10 } }),
+      };
+    };
+
+    const pi = createPi();
+    theLastHarness(pi);
+
+    // ctxSession is used for session_start; the footer factory registers the
+    // render callback against this session.
+    const ctxSession = createCtx({
+      cwd,
+      authStorage,
+      currentAccessToken: () => returnedAccessToken,
+      requestRender: () => {
+        renderRequests += 1;
+      },
+    });
+
+    await fireAll(pi, "session_start", { reason: "restore" }, ctxSession);
+    await eventually(
+      () => fetchCalls === 1 && renderRequests === 1,
+      "initial usage fetch should request a render via the registration context",
+    );
+
+    renderRequests = 0;
+    returnedAccessToken = "runtime-api-key";
+    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
+
+    // ctxTurnEnd is a DISTINCT object, as Pi creates per event. It must not
+    // prevent the registered footer callback from firing.
+    const ctxTurnEnd = createCtx({
+      cwd,
+      authStorage,
+      currentAccessToken: () => returnedAccessToken,
+      requestRender: () => {
+        throw new Error("ctxTurnEnd render callback must not be invoked directly");
+      },
+    });
+
+    void fireAll(pi, "turn_end", {}, ctxTurnEnd);
+    await eventually(
+      () => renderRequests === 1,
+      "turn_end refresh from a distinct context must still redraw the registered footer",
+    );
+    assert.equal(fetchCalls, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreEnv(previousEnv);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("pending refresh before session_shutdown does not redraw the old footer", async () => {
+  // Tests AC #3 (shutdown): a refresh that STARTS before session_shutdown must
+  // not redraw when it resolves after shutdown. The session-token guard and
+  // clearFooterRenderRequest() together prevent the stale render.
+  //
+  // The initial session_start refresh is used as the "pending" refresh: all
+  // fetches are deferred so that session_shutdown fires while the initial
+  // refresh is still in flight.
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-pending-shutdown-"));
+  const agentDir = join(tempDir, "agent");
+  const cwd = join(tempDir, "workspace");
+  const previousEnv = {
+    PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+  };
+  const previousFetch = globalThis.fetch;
+
+  let fetchCalls = 0;
+  let renderRequests = 0;
+  const credential = { type: "oauth", access: "oauth-access-token" };
+  const authStorage = {
+    runtimeOverrides: new Map(),
+    get: (provider) => (provider === "anthropic" ? credential : undefined),
+  };
+
+  try {
+    delete process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(agentDir, "tlh"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(agentDir, "tlh", "install-state.json"),
+      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
+    );
+
+    // All fetches are deferred so the session_start refresh is in flight when
+    // session_shutdown fires.
+    const pendingFetches = [];
+    globalThis.fetch = () => {
+      fetchCalls += 1;
+      return new Promise((resolve) => {
+        pendingFetches.push(resolve);
+      });
+    };
+    const resolveNextFetch = (used) => {
+      pendingFetches.shift()?.({
+        ok: true,
+        json: async () => ({ five_hour: { used, limit: 10 } }),
+      });
+    };
+
+    const pi = createPi();
+    theLastHarness(pi);
+    const ctx = createCtx({
+      cwd,
+      authStorage,
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {
+        renderRequests += 1;
+      },
+    });
+
+    // session_start registers callback_A and immediately queues the initial
+    // refresh. The fetch is deferred, so the refresh is in flight.
+    void fireAll(pi, "session_start", { reason: "restore" }, ctx);
+    await eventually(
+      () => pendingFetches.length >= 1,
+      "session_start initial refresh must queue a fetch before session_shutdown fires",
+    );
+    assert.equal(renderRequests, 0, "no render before fetch resolves");
+
+    // session_shutdown fires while the refresh is in flight.
+    await fireAll(pi, "session_shutdown", {}, ctx);
+
+    // Resolve the deferred fetch with a snapshot that would otherwise trigger a
+    // render. The session-token guard on callback_A and clearFooterRenderRequest()
+    // must both prevent any redraw.
+    resolveNextFetch(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(
+      renderRequests,
+      0,
+      "pending refresh must not redraw the old footer after session_shutdown",
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreEnv(previousEnv);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("pending refresh before session switch does not redraw the old footer; new session refresh redraws only the new footer", async () => {
+  // Tests AC #3 (session switch): a refresh that starts during session A must
+  // not redraw session A's footer after session B's session_start runs. The
+  // session-token guard on the captured callback prevents the stale render.
+  // A subsequent refresh in session B must redraw only B's footer.
+  //
+  // Mechanism: session_start A queues an initial refresh with fetch deferred.
+  // session_start B invalidates A's token. Resolving A's deferred fetch causes
+  // the facade to call callback_A (snapshot changed), but the token guard
+  // blocks it. A later model_select for session B clears the provider via a
+  // runtime override, changing the provider snapshot; callback_B passes its
+  // own token guard and redraws only B's footer.
+  const tempDir = mkdtempSync(join(tmpdir(), "tlh-usage-pending-switch-"));
+  const agentDir = join(tempDir, "agent");
+  const cwd = join(tempDir, "workspace");
+  const previousEnv = {
+    PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
+  };
+  const previousFetch = globalThis.fetch;
+
+  let fetchCalls = 0;
+  let ctxARenders = 0;
+  let ctxBRenders = 0;
+  const credential = { type: "oauth", access: "oauth-access-token" };
+  const authStorage = {
+    runtimeOverrides: new Map(),
+    get: (provider) => (provider === "anthropic" ? credential : undefined),
+  };
+
+  try {
+    delete process.env.PI_SUBAGENT_CHILD;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(join(agentDir, "tlh"), { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(agentDir, "tlh", "install-state.json"),
+      `${JSON.stringify({ repo: "diegopetrucci/the-last-harness", track: "latest-release", ref: "v1.0.0", packageSource: "npm:@diegopetrucci/the-last-harness@1.0.0", packageSourceIsDefault: true }, null, 2)}\n`,
+    );
+
+    // All fetches are deferred so session_start A's initial refresh is in
+    // flight when session_start B fires. Session A and B share the same OAuth
+    // credential (same cache key), so session B's own refresh is throttled and
+    // only one fetch is ever in flight.
+    const pendingFetches = [];
+    globalThis.fetch = () => {
+      fetchCalls += 1;
+      return new Promise((resolve) => {
+        pendingFetches.push(resolve);
+      });
+    };
+    const resolveNextFetch = (used) => {
+      pendingFetches.shift()?.({
+        ok: true,
+        json: async () => ({ five_hour: { used, limit: 10 } }),
+      });
+    };
+
+    const pi = createPi();
+    theLastHarness(pi);
+
+    // ctxA and ctxB share the same authStorage so they resolve to the same
+    // subscription cache key. The session-token guard distinguishes them.
+    const ctxA = createCtx({
+      cwd,
+      authStorage,
+      currentAccessToken: () => "oauth-access-token",
+      requestRender: () => {
+        ctxARenders += 1;
       },
     });
     const ctxB = createCtx({
       cwd,
       authStorage,
-      currentAccessToken: () => returnedAccessToken,
+      currentAccessToken: () => "oauth-access-token",
       requestRender: () => {
-        contextBRenderRequests += 1;
+        ctxBRenders += 1;
       },
     });
 
-    await fireAll(pi, "session_start", { reason: "restore" }, ctxA);
+    // --- Session A ---
+    // session_start A registers callback_A and queues the initial refresh.
+    // The fetch is deferred, so the refresh remains in flight.
+    void fireAll(pi, "session_start", { reason: "restore" }, ctxA);
     await eventually(
-      () => fetchCalls === 1 && contextARenderRequests === 1,
-      "initial usage fetch should request a render for the first context",
+      () => pendingFetches.length >= 1,
+      "session A initial refresh must queue a fetch before session B starts",
     );
+
+    // --- Session B ---
+    // session_start B invalidates session A's token and registers callback_B.
+    // B's own refresh is throttled (same cache key, lastAttempts just set by
+    // A), so pendingFetches stays at 1.
     await fireAll(pi, "session_start", { reason: "restore" }, ctxB);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(
-      contextBRenderRequests,
-      0,
-      "registering a second context should not render when usage is unchanged",
-    );
-
-    contextARenderRequests = 0;
-    contextBRenderRequests = 0;
-    returnedAccessToken = "runtime-api-key";
-    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
-
-    void fireAll(pi, "model_select", {}, ctxA);
-    await eventually(
-      () => contextARenderRequests + contextBRenderRequests === 1,
-      "refreshing the first context should request exactly one footer render",
-    );
-
-    assert.equal(
-      contextARenderRequests,
+      pendingFetches.length,
       1,
-      "refreshing context A should render context A's footer",
+      "session B's throttled refresh must not add a second fetch",
     );
+
+    // Resolve session A's deferred fetch. The snapshot changes from undefined
+    // to a real value, so the facade fires callback_A -- but the session-token
+    // guard rejects it because session B is now active.
+    resolveNextFetch(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(
-      contextBRenderRequests,
+      ctxARenders,
       0,
-      "refreshing context A must not render context B's footer",
+      "session A's stale pending refresh must not redraw A's footer after session switch",
     );
-    assert.equal(fetchCalls, 1);
+    assert.equal(ctxBRenders, 0, "session A's stale pending refresh must not redraw B's footer");
+
+    // A fresh refresh in session B: set a runtime credential override, which
+    // causes the service to clear the provider's stored usage. The facade
+    // detects the provider-snapshot change (snapshot -> undefined) and fires
+    // callback_B. callback_B passes its own token guard and redraws only B's
+    // footer. callback_A is no longer the registered callback, so A's footer
+    // is unaffected.
+    authStorage.runtimeOverrides.set("anthropic", "runtime-api-key");
+    void fireAll(pi, "model_select", {}, ctxB);
+    await eventually(
+      () => ctxBRenders === 1,
+      "session B's own refresh must redraw only B's footer",
+    );
+    assert.equal(ctxARenders, 0, "session B's render must not affect A's render count");
   } finally {
     globalThis.fetch = previousFetch;
     restoreEnv(previousEnv);

@@ -3,9 +3,12 @@ class LazyTlhSubscriptionUsageService {
     loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
     service;
     servicePromise;
-    requestFooterRenderByContext = new WeakMap();
-    registerFooterRenderRequest(ctx, requestRender) {
-        this.requestFooterRenderByContext.set(ctx, requestRender);
+    currentFooterRender;
+    registerFooterRenderRequest(requestRender) {
+        this.currentFooterRender = requestRender;
+    }
+    clearFooterRenderRequest() {
+        this.currentFooterRender = undefined;
     }
     getSnapshot(provider) {
         return this.service?.getSnapshot(provider);
@@ -22,6 +25,7 @@ class LazyTlhSubscriptionUsageService {
         const previousEligible = this.isEligible(ctx);
         const previousProviderSnapshot = provider ? this.getSnapshot(provider) : undefined;
         const previousProviderEligible = provider ? this.isEligible(provider) : false;
+        const footerRender = this.currentFooterRender;
         void this.getService()
             .then((service) => service.refresh(ctx, options))
             .then(() => {
@@ -33,7 +37,7 @@ class LazyTlhSubscriptionUsageService {
                 nextEligible !== previousEligible ||
                 nextProviderSnapshot !== previousProviderSnapshot ||
                 nextProviderEligible !== previousProviderEligible) {
-                this.requestFooterRenderByContext.get(ctx)?.();
+                footerRender?.();
             }
         })
             .catch(() => undefined);

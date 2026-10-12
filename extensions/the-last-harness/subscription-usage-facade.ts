@@ -18,10 +18,14 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
   private readonly loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
   private service: TlhSubscriptionUsageServiceLike | undefined;
   private servicePromise: Promise<TlhSubscriptionUsageServiceLike> | undefined;
-  private readonly requestFooterRenderByContext = new WeakMap<ExtensionContext, () => void>();
+  private currentFooterRender: (() => void) | undefined;
 
-  registerFooterRenderRequest(ctx: ExtensionContext, requestRender: () => void): void {
-    this.requestFooterRenderByContext.set(ctx, requestRender);
+  registerFooterRenderRequest(requestRender: () => void): void {
+    this.currentFooterRender = requestRender;
+  }
+
+  clearFooterRenderRequest(): void {
+    this.currentFooterRender = undefined;
   }
 
   getSnapshot(provider?: string): TlhSubscriptionUsageSnapshot | undefined {
@@ -44,6 +48,7 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
     const previousEligible = this.isEligible(ctx);
     const previousProviderSnapshot = provider ? this.getSnapshot(provider) : undefined;
     const previousProviderEligible = provider ? this.isEligible(provider) : false;
+    const footerRender = this.currentFooterRender;
     void this.getService()
       .then((service) => service.refresh(ctx, options))
       .then(() => {
@@ -57,7 +62,7 @@ class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotPro
           nextProviderSnapshot !== previousProviderSnapshot ||
           nextProviderEligible !== previousProviderEligible
         ) {
-          this.requestFooterRenderByContext.get(ctx)?.();
+          footerRender?.();
         }
       })
       .catch(() => undefined);

@@ -348,6 +348,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
     subscriptionUsageService.refresh(ctx, options);
   };
 
+  pi.on("session_shutdown", () => {
+    subscriptionUsageService.clearFooterRenderRequest();
+  });
+
   pi.on("model_select", (_event, ctx) => {
     refreshSubscriptionUsage(ctx);
   });
@@ -414,7 +418,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
     if (typeof ctx.ui.setFooter === "function") {
       ctx.ui.setFooter((tui, theme, footerData) => {
-        subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
+        subscriptionUsageService.registerFooterRenderRequest(() => {
+          if (activeTlhHeaderSessionToken === sessionToken) {
+            tui.requestRender();
+          }
+        });
         sessionState.requestFooterRender = () => {
           if (activeTlhHeaderSessionToken === sessionToken) {
             tui.requestRender();
