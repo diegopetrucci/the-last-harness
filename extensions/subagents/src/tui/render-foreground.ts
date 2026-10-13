@@ -458,7 +458,7 @@ function renderSingleCompact(
         activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
       lines.push(theme.fg("dim", `${prefix}${activity}`));
     }
-    lines.push(theme.fg("dim", `${FOREGROUND_DETAIL_INDENT}${liveDetailHintText()}`));
+    lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
     return collapsedForegroundComponent(lines, theme);
   }
 
@@ -588,8 +588,7 @@ function renderMultiCompact(
   }
   if (d.artifacts)
     lines.push(theme.fg("dim", `  artifacts: ${safeTerminalText(shortenPath(d.artifacts.dir))}`));
-  if (hasRunningResult)
-    lines.push(theme.fg("dim", `${MULTI_DETAIL_INDENT}${liveDetailHintText()}`));
+  if (hasRunningResult) lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return collapsedForegroundComponent(lines, theme);
 }
 

@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.
+
 ## [0.44.0] - 2026-10-12
 
 ### Added
