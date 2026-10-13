@@ -913,6 +913,8 @@ function projectCompletionBatchDetails(value) {
         result.triggersTurn = value.triggersTurn;
     else
         invalid = true;
+    if (value.wakeMode === "native")
+        result.wakeMode = "native"; // exact marker only
     if (!Array.isArray(value.completions)) {
         invalid = true;
     }

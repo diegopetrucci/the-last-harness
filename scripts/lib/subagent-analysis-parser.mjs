@@ -212,6 +212,7 @@ export function parseCompletionBatchDetails(value) {
         flushIndex,
         flushCount,
         triggersTurn: value.triggersTurn,
+        nativeWakeMode: value.wakeMode === "native",
         completions,
         invalid,
     };

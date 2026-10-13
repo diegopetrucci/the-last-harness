@@ -107,6 +107,8 @@ export interface ParsedCompletionBatch {
   flushIndex: number;
   flushCount: number;
   triggersTurn: boolean;
+  /** True only for the exact `wakeMode: "native"` marker of the nudge-less runtime. */
+  nativeWakeMode: boolean;
   completions: ParsedCompletionBatchEntry[];
   /** Nested entry errors invalidate the wakeup without discarding valid siblings. */
   invalid: boolean;
@@ -311,6 +313,7 @@ export function parseCompletionBatchDetails(value: unknown): ParsedCompletionBat
     flushIndex,
     flushCount,
     triggersTurn: value.triggersTurn,
+    nativeWakeMode: value.wakeMode === "native",
     completions,
     invalid,
   };

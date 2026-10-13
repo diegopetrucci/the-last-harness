@@ -1045,6 +1045,7 @@ function projectCompletionBatchDetails(value: unknown): Record<string, unknown> 
   else invalid = true;
   if (typeof value.triggersTurn === "boolean") result.triggersTurn = value.triggersTurn;
   else invalid = true;
+  if (value.wakeMode === "native") result.wakeMode = "native"; // exact marker only
 
   if (!Array.isArray(value.completions)) {
     invalid = true;

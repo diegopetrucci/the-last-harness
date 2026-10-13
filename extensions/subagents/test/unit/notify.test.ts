@@ -812,6 +812,22 @@ describe("registerSubagentNotify", () => {
     assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
+  it("accepts batch details with or without the wakeMode marker and rejects other values", () => {
+    const base = {
+      schemaVersion: 1,
+      kind: "subagent_completion_batch",
+      batchId: "marker-batch",
+      batchIndex: 0,
+      batchCount: 1,
+      triggersTurn: true,
+      completions: [{ agent: "worker", status: "completed", asyncId: "marker-run" }],
+    };
+    assert.equal(isSubagentCompletionBatchDetails(base), true, "older markerless batches validate");
+    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: "native" }), true);
+    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: "legacy" }), false);
+    assert.equal(isSubagentCompletionBatchDetails({ ...base, wakeMode: true }), false);
+  });
+
   it("groups sibling successes and emits exactly one wake per flush", () => {
     const clock = createFakeClock();
     const { events, sentMessages, wakes } = createBatchingPi(clock);
@@ -866,6 +882,7 @@ describe("registerSubagentNotify", () => {
     assert.equal(groupedDetails.batchIndex, 0);
     assert.equal(groupedDetails.batchCount, 1);
     assert.equal(groupedDetails.triggersTurn, true);
+    assert.equal(groupedDetails.wakeMode, "native");
     assert.equal(groupedDetails.completions.length, 3);
     assert.deepEqual(
       groupedDetails.completions.map(({ agent, status, asyncId }) => ({ agent, status, asyncId })),
@@ -963,6 +980,7 @@ describe("registerSubagentNotify", () => {
         batchIndex: details.batchIndex,
         batchCount: details.batchCount,
         triggersTurn: details.triggersTurn,
+        wakeMode: details.wakeMode,
       })),
       [
         {
@@ -970,12 +988,14 @@ describe("registerSubagentNotify", () => {
           batchIndex: 0,
           batchCount: 2,
           triggersTurn: false,
+          wakeMode: "native",
         },
         {
           batchId: batches[0]!.details.batchId,
           batchIndex: 1,
           batchCount: 2,
           triggersTurn: true,
+          wakeMode: "native",
         },
       ],
     );
@@ -1107,6 +1127,7 @@ describe("registerSubagentNotify", () => {
         Array.from({ length: entryCount }, (_, index) => `boundary-${entryCount}-${index}`),
       );
       assert.equal(messages.at(-1)!.details.triggersTurn, true);
+      assert.ok(messages.every(({ details }) => details.wakeMode === "native"));
       assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
     });
   }

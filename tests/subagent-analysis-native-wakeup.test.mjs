@@ -117,6 +117,7 @@ test("subagent analysis: native batch final chunk wakes once, tolerating a syste
     batchIndex: index,
     batchCount: 2,
     triggersTurn,
+    wakeMode: "native",
     completions: [
       {
         agent: "native-agent",
@@ -154,6 +155,7 @@ test("subagent analysis: a batch without triggersTurn never wakes natively", asy
       batchIndex: 0,
       batchCount: 1,
       triggersTurn: false,
+      wakeMode: "native",
       completions: [
         {
           agent: "native-agent",
@@ -168,6 +170,7 @@ test("subagent analysis: a batch without triggersTurn never wakes natively", asy
   const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
   assert.equal(output.wakeups.length, 0);
   assert.equal(output.coverage.wakeups.observed, 0);
+  assert.equal(output.coverage.wakeups.missingNudge, 0);
 });
 
 test("subagent analysis: assistant -> custom(triggersTurn false) -> assistant is a steer, not a wakeup", async (t) => {
@@ -344,4 +347,92 @@ test("subagent analysis: a malformed legacy-text control notice(false) never dis
   assert.equal(wakeups.supersededSources, 0);
   assert.equal(output.coverage.evidence.legacyProseNotifications, 1);
   assert.equal(output.coverage.evidence.malformedControlDetails, 1);
+});
+
+// Pre-#780 batches persisted `triggersTurn: true` on the final chunk to mean "a
+// synthetic nudge follows"; only the `wakeMode: "native"` marker makes it a wake.
+const legacyBatch = (batchId, runId, extra = {}) => ({
+  schemaVersion: 1,
+  kind: "subagent_completion_batch",
+  batchId,
+  batchIndex: 0,
+  batchCount: 1,
+  triggersTurn: true,
+  completions: [
+    {
+      agent: "native-agent",
+      status: "completed",
+      asyncId: runId,
+      telemetry: telemetryEnvelope(runId, "async"),
+    },
+  ],
+  ...extra,
+});
+
+test("subagent analysis: a markerless batch with triggersTurn true and no nudge is a missing nudge", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("legacy-batch-no-nudge"),
+    messageEntry({ role: "assistant", content: [] }),
+    completionBatchMessage(legacyBatch("legacy-batch-a", "legacy-batch-run")),
+    messageEntry({ role: "user", content: "human first" }),
+    nativeAssistant("legacy-batch-call", "legacy-batch-run"),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.wakeups.length, 0);
+  assert.equal(output.coverage.wakeups.nativeObserved, 0);
+  assert.equal(output.coverage.wakeups.missingNudge, 1);
+});
+
+test("subagent analysis: a markerless batch followed by assistant without a nudge is a missing nudge", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("legacy-batch-assistant"),
+    messageEntry({ role: "assistant", content: [] }),
+    completionBatchMessage(legacyBatch("legacy-batch-b", "legacy-batch-run-b")),
+    nativeAssistant("legacy-batch-call-b", "legacy-batch-run-b"),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.wakeups.length, 0);
+  assert.equal(output.coverage.wakeups.nativeObserved, 0);
+  assert.equal(output.coverage.wakeups.missingNudge, 1);
+});
+
+test("subagent analysis: a markerless batch -> nudge -> assistant is an unchanged legacy wake", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("legacy-batch-nudge"),
+    messageEntry({ role: "assistant", content: [] }),
+    completionBatchMessage(legacyBatch("legacy-batch-c", "legacy-batch-run-c")),
+    messageEntry({ role: "user", content: BACKGROUND_COMPLETION_NUDGE }),
+    nativeAssistant("legacy-batch-call-c", "legacy-batch-run-c"),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.wakeups.length, 1);
+  assert.equal(output.wakeups[0]?.attributed, true);
+  assert.equal(output.coverage.wakeups.legacyObserved, 1);
+  assert.equal(output.coverage.wakeups.nativeObserved, 0);
+  assert.equal(output.coverage.wakeups.missingNudge, 0);
+});
+
+test("subagent analysis: a marked final chunk with triggersTurn true wakes natively; a non-native marker value does not", async (t) => {
+  const native = writeFixture(t, [
+    sessionHeader("marked-batch"),
+    messageEntry({ role: "assistant", content: [] }),
+    completionBatchMessage(legacyBatch("marked-batch-a", "marked-run", { wakeMode: "native" })),
+    nativeAssistant("marked-call", "marked-run"),
+  ]);
+  const nativeOut = analyzeSubagentSessions([await scanSessionFile(native)]);
+  assert.equal(nativeOut.wakeups.length, 1);
+  assert.equal(nativeOut.wakeups[0]?.attributed, true);
+  assert.equal(nativeOut.coverage.wakeups.nativeObserved, 1);
+  assert.equal(nativeOut.coverage.wakeups.missingNudge, 0);
+
+  const other = writeFixture(t, [
+    sessionHeader("marked-batch-other"),
+    messageEntry({ role: "assistant", content: [] }),
+    completionBatchMessage(legacyBatch("marked-batch-b", "other-run", { wakeMode: "other" })),
+    nativeAssistant("other-call", "other-run"),
+  ]);
+  const otherOut = analyzeSubagentSessions([await scanSessionFile(other)]);
+  assert.equal(otherOut.wakeups.length, 0);
+  assert.equal(otherOut.coverage.wakeups.nativeObserved, 0);
+  assert.equal(otherOut.coverage.wakeups.missingNudge, 1);
 });

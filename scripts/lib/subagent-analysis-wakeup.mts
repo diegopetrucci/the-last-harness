@@ -120,6 +120,8 @@ type CompletionBatchState = {
   runIds: Set<string>;
   sawFinalChunk: boolean;
   sawFinalTrigger: boolean;
+  /** The triggering final chunk carried the native wake marker. */
+  triggerNative: boolean;
   invalid: boolean;
   structurallyInvalid: boolean;
   mixedLegacy: boolean;
@@ -677,6 +679,7 @@ function processCompletionBatchNotification(
       runIds: new Set(),
       sawFinalChunk: false,
       sawFinalTrigger: false,
+      triggerNative: false,
       invalid: false,
       structurallyInvalid: false,
       mixedLegacy: false,
@@ -740,6 +743,7 @@ function processCompletionBatchNotification(
       batch.structurallyInvalid = true;
     } else {
       batch.sawFinalTrigger = true;
+      batch.triggerNative = parsed.nativeWakeMode;
     }
   }
   for (const completion of parsed.completions)
@@ -765,8 +769,10 @@ function processCompletionBatchNotification(
         key: wakeSourceKey,
         runIds: [...new Set(flushMembers.flatMap((member) => [...member.runIds]))],
         nudgeKind: "completion",
-        // The final chunk's structured `triggersTurn` starts the wake run.
-        native: true,
+        // Native only when the triggering final chunk has `triggersTurn: true`
+        // and the exact `wakeMode: "native"` marker; pre-marker batches meant
+        // "a nudge follows" and keep the legacy nudge rules.
+        native: batch.triggerNative,
       });
       for (const member of flushMembers) {
         member.wakeSourceKey = wakeSourceKey;

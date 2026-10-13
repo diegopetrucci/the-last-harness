@@ -136,6 +136,12 @@ export interface SubagentCompletionBatchDetails {
   /** Number of logical batches in the flush. */
   flushCount?: number;
   triggersTurn: boolean;
+  /**
+   * Persistence-semantics marker written by the nudge-less runtime on every chunk:
+   * a final chunk's `triggersTurn: true` means the message itself started the wake
+   * run. Absent on older sessions, where it meant a synthetic nudge follows.
+   */
+  wakeMode?: "native";
   completions: SubagentCompletionBatchEntry[];
 }
 
@@ -235,6 +241,7 @@ export function isSubagentCompletionBatchDetails(
     batchIndex >= batchCount ||
     flushMetadataInvalid ||
     typeof value.triggersTurn !== "boolean" ||
+    (value.wakeMode !== undefined && value.wakeMode !== "native") ||
     !Array.isArray(value.completions) ||
     value.completions.length === 0 ||
     value.completions.length > MAX_GROUPED_ENTRIES
@@ -1094,6 +1101,7 @@ function sendCompletion(
         flushIndex: logicalBatchIndex,
         flushCount: logicalBatchCount,
         triggersTurn,
+        wakeMode: "native",
         completions: batchCompletions,
       };
       pi.sendMessage(

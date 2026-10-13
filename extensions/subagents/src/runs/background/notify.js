@@ -103,6 +103,7 @@ export function isSubagentCompletionBatchDetails(value) {
         batchIndex >= batchCount ||
         flushMetadataInvalid ||
         typeof value.triggersTurn !== "boolean" ||
+        (value.wakeMode !== undefined && value.wakeMode !== "native") ||
         !Array.isArray(value.completions) ||
         value.completions.length === 0 ||
         value.completions.length > MAX_GROUPED_ENTRIES) {
@@ -656,6 +657,7 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
                 flushIndex: logicalBatchIndex,
                 flushCount: logicalBatchCount,
                 triggersTurn,
+                wakeMode: "native",
                 completions: batchCompletions,
             };
             pi.sendMessage({
