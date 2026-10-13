@@ -40,16 +40,18 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 
 function makeRecorder() {
   const sent: Array<{ message: unknown; options?: unknown }> = [];
-  const nudges: Array<{ text: string; options?: unknown }> = [];
+  const syntheticUserMessages: unknown[] = [];
   return {
     sent,
-    nudges,
+    syntheticUserMessages,
+    wakes: () =>
+      sent.filter((entry) => (entry.options as { triggerTurn?: boolean } | undefined)?.triggerTurn),
     pi: {
       sendMessage(message: unknown, options?: unknown) {
         sent.push({ message, options });
       },
-      sendUserMessage(text: string, options?: unknown) {
-        nudges.push({ text, options });
+      sendUserMessage(text: string) {
+        syntheticUserMessages.push(text);
       },
     },
   };
@@ -60,7 +62,7 @@ function wait(ms: number): Promise<void> {
 }
 
 describe("subagent control notice delivery", () => {
-  it("delivers async needs-attention notices with no options and one nudge when idle", () => {
+  it("delivers async needs-attention notices with triggerTurn and no synthetic user message when idle", () => {
     const state = makeState();
     const recorder = makeRecorder();
 
@@ -74,20 +76,16 @@ describe("subagent control notice delivery", () => {
     });
 
     assert.equal(recorder.sent.length, 1);
+    assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
     assert.equal(
-      recorder.sent[0]?.options,
-      undefined,
-      "sendMessage must have no options (no triggerTurn)",
+      (recorder.sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+        ?.triggersTurn,
+      true,
     );
-    assert.equal(recorder.nudges.length, 1, "exactly one nudge");
-    assert.equal(
-      recorder.nudges[0]?.text,
-      "[tlh] Subagent run needs attention \u2014 see notice above.",
-    );
-    assert.deepEqual(recorder.nudges[0]?.options, { deliverAs: "followUp" });
+    assert.equal(recorder.syntheticUserMessages.length, 0, "no synthetic user message");
   });
 
-  it("delivers async needs-attention notices with no options and no nudge when not idle", () => {
+  it("delivers async needs-attention notices with no options (steered, no wake) when not idle", () => {
     const state = makeState();
     const recorder = makeRecorder();
 
@@ -106,10 +104,16 @@ describe("subagent control notice delivery", () => {
       undefined,
       "sendMessage must have no options (no triggerTurn)",
     );
-    assert.equal(recorder.nudges.length, 0, "no nudge when not idle");
+    assert.equal(recorder.wakes().length, 0, "no triggerTurn when not idle");
+    assert.equal(
+      (recorder.sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+        ?.triggersTurn,
+      false,
+    );
+    assert.equal(recorder.syntheticUserMessages.length, 0);
   });
 
-  it("assumes idle when no isIdle is provided (nudge sent)", () => {
+  it("assumes idle when no isIdle is provided (triggerTurn sent)", () => {
     const state = makeState();
     const recorder = makeRecorder();
 
@@ -122,7 +126,13 @@ describe("subagent control notice delivery", () => {
     });
 
     assert.equal(recorder.sent.length, 1);
-    assert.equal(recorder.nudges.length, 1, "nudge sent when isIdle not provided (assumes idle)");
+    assert.deepEqual(recorder.sent[0]?.options, { triggerTurn: true });
+    assert.equal(
+      (recorder.sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+        ?.triggersTurn,
+      true,
+    );
+    assert.equal(recorder.syntheticUserMessages.length, 0);
   });
 
   it("suppresses async completion-guard notices so terminal completion stays authoritative", () => {
@@ -145,10 +155,10 @@ describe("subagent control notice delivery", () => {
     });
 
     assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
+    assert.equal(recorder.wakes().length, 0);
   });
 
-  it("queues foreground needs-attention notices until the same step is still actionable, with no nudge", async () => {
+  it("queues foreground needs-attention notices until the same step is still actionable, with no wake", async () => {
     const state = makeState();
     state.foregroundControls.set("run-1", {
       runId: "run-1",
@@ -178,7 +188,12 @@ describe("subagent control notice delivery", () => {
       undefined,
       "sendMessage must have no options for foreground",
     );
-    assert.equal(recorder.nudges.length, 0, "no nudge for foreground notices");
+    assert.equal(recorder.wakes().length, 0, "no wake for foreground notices");
+    assert.equal(
+      (recorder.sent[0]?.message as { details?: { triggersTurn?: boolean } } | undefined)?.details
+        ?.triggersTurn,
+      false,
+    );
   });
 
   it("drops queued foreground notices when the run finishes before delivery", async () => {
@@ -206,7 +221,7 @@ describe("subagent control notice delivery", () => {
 
     await wait(35);
     assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
+    assert.equal(recorder.wakes().length, 0);
   });
 
   it("drops queued foreground notices after the run advances to another step", async () => {
@@ -241,7 +256,7 @@ describe("subagent control notice delivery", () => {
 
     await wait(25);
     assert.equal(recorder.sent.length, 0);
-    assert.equal(recorder.nudges.length, 0);
+    assert.equal(recorder.wakes().length, 0);
   });
 
   it("does not deliver an idle timer after its episode recovers into a durable warning", async () => {

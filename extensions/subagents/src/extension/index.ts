@@ -767,7 +767,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   // Capture a session context so idleness can be read live at send time.
   // Mirrors the pattern in registerSubagentNotify (notify.ts): a hand-rolled
   // streaming flag would stick if prompt() threw between before_agent_start
-  // and the run starting, silently suppressing every future nudge.
+  // and the run starting, silently suppressing every future wake.
   let controlNoticeSessionContext: Pick<ExtensionContext, "isIdle"> | null = null;
   const isControlNoticeIdle = () => controlNoticeSessionContext?.isIdle() ?? true;
   const controlEventHandler = (payload: unknown) => {

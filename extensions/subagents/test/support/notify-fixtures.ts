@@ -3,15 +3,14 @@ import registerSubagentNotify, {
   type RegisterSubagentNotifyOptions,
 } from "../../src/runs/background/notify.ts";
 
-export const NUDGE_TEXT = "[tlh] Background subagent completed — see notification above.";
-
 export function createPi(
   currentSessionId = "session-1",
   registerOptions: RegisterSubagentNotifyOptions = {},
 ) {
   const events = new EventEmitter();
   const sentMessages: Array<{ message: unknown; options: unknown }> = [];
-  const sentUserMessages: Array<{ content: unknown; options: unknown }> = [];
+  // Messages sent with { triggerTurn: true } — the native wake of an idle parent.
+  const wakes: Array<{ message: unknown; options: unknown }> = [];
   const lifecycleHandlers = new Map<string, (...args: unknown[]) => void>();
   const pi = {
     events,
@@ -20,9 +19,12 @@ export function createPi(
     },
     sendMessage(message: unknown, options?: unknown) {
       sentMessages.push({ message, options });
+      if ((options as { triggerTurn?: boolean } | undefined)?.triggerTurn) {
+        wakes.push({ message, options });
+      }
     },
-    sendUserMessage(content: unknown, options?: unknown) {
-      sentUserMessages.push({ content, options });
+    sendUserMessage() {
+      throw new Error("notify must not send a synthetic user message (#470)");
     },
   };
 
@@ -34,7 +36,7 @@ export function createPi(
     { batchConfig: { enabled: false }, ...registerOptions },
   );
 
-  return { events, sentMessages, sentUserMessages, lifecycleHandlers };
+  return { events, sentMessages, wakes, lifecycleHandlers };
 }
 
 export function createBatchingPi(
@@ -43,7 +45,8 @@ export function createBatchingPi(
 ) {
   const events = new EventEmitter();
   const sentMessages: Array<{ message: unknown; options: unknown }> = [];
-  const sentUserMessages: Array<{ content: unknown; options: unknown }> = [];
+  // Messages sent with { triggerTurn: true } — the native wake of an idle parent.
+  const wakes: Array<{ message: unknown; options: unknown }> = [];
   const lifecycleHandlers = new Map<string, (...args: unknown[]) => void>();
   const state = { currentSessionId };
   const pi = {
@@ -53,9 +56,12 @@ export function createBatchingPi(
     },
     sendMessage(message: unknown, options?: unknown) {
       sentMessages.push({ message, options });
+      if ((options as { triggerTurn?: boolean } | undefined)?.triggerTurn) {
+        wakes.push({ message, options });
+      }
     },
-    sendUserMessage(content: unknown, options?: unknown) {
-      sentUserMessages.push({ content, options });
+    sendUserMessage() {
+      throw new Error("notify must not send a synthetic user message (#470)");
     },
   };
   registerSubagentNotify(pi as never, state, {
@@ -70,7 +76,7 @@ export function createBatchingPi(
     timers: clock.api,
     now: clock.now,
   });
-  return { events, sentMessages, sentUserMessages, state, lifecycleHandlers };
+  return { events, sentMessages, wakes, state, lifecycleHandlers };
 }
 
 interface FakeJob {
