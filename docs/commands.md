@@ -369,6 +369,44 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 `tlh sessions` is a read-only session analysis tool. It emits JSON to stdout so you can pipe to `jq`. Run `tlh sessions --mode per-session` for a per-session summary of tool-pair statistics and coverage, `tlh sessions --mode per-tool` for aggregated per-tool statistics across all sessions, or `tlh sessions --mode subagents` for a schema-v1 summary of locally persisted subagent telemetry, including foreground/async runs, usage, runtime, operation coverage, lineage, and synthetic wakeups. Coverage includes bounded correlation-evidence failure counters (`scanCaptureOverflow`, `rescanCaptureOverflow`, `digestMismatch`, and `generationMismatch`); a failed evidence join is omitted rather than trusted. Raw paths, cwd values, project labels, prompts, tasks, outputs, arguments, and raw run identifiers are omitted from the default report; bounded metadata such as roles, models, usage, and costs may still be present. Pass `--include-paths` only when you need local profile and session-directory provenance. The command reads the active isolated profile's session JSONL files, never reads `run-history.jsonl`, does not contact remote telemetry services, and never writes to session or profile files.
 
+### `tlh version`
+
+`tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
+
+```json
+{
+  "schemaVersion": 1,
+  "tlhVersion": "0.43.0",
+  "piVersion": "1.1.0",
+  "track": "latest-release",
+  "ref": "v0.43.0",
+  "repo": "diegopetrucci/the-last-harness",
+  "agentDir": "/Users/me/.the-last-harness/agent"
+}
+```
+
+Every field is always present. A missing, invalid, or wrong-typed value is `null` (except `schemaVersion` and `agentDir`).
+
+| Field           | Source                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | Always `1`                                                                                                 |
+| `tlhVersion`    | Installed TLH package version; on ref tracks such as `main`, the release version that checkout is based on |
+| `piVersion`     | Version of the private Pi runtime package the wrapper execs, read from its `package.json` (no subprocess)  |
+| `track`         | Install metadata: `latest-release`, `pinned-tag`, `ref`, or `custom`                                       |
+| `ref`           | Installed tag or ref from install metadata: release tag on `latest-release`, tag on `pinned-tag`, ref on `ref`; may be `null` on `custom` or when unknown |
+| `repo`          | Install metadata: the source repository                                                                    |
+| `agentDir`      | The wrapper's authoritative isolated profile path                                                          |
+
+`track` is one of the four values above or `null`; consumers should tolerate new `track` values added in future schema-compatible releases.
+
+Known limitation: installs from a non-local custom package source (for example `github:owner/repo` or an npm source) have no resolvable package root, so `tlh version` (like `tlh doctor` and `tlh sessions`) exits 1 there; consumers fall back as for older TLH.
+
+Only `latest-release` moves to newer releases via `tlh update`. `pinned-tag` reinstalls its tag, `ref` follows that ref, and `custom` requires a manual installer rerun.
+
+Compatibility: fields may be added, but existing fields are never renamed, removed, or retyped without bumping `schemaVersion`. `tlh --version` is unchanged and still reports the Pi runtime version.
+
+Consumers should always pass `--json`. Older TLH wrappers reject the unknown `--json` option with a non-zero exit before any model call, whereas plain `tlh version` on an older TLH is treated as a prompt. Treat a non-zero exit or invalid JSON as unsupported.
+
 ---
 
 ## Managing bundled extensions
