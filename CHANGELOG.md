@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.44.0] - 2026-10-12
+
 ### Added
 
 - `tlh version [--json]` reports read-only, machine-readable install information (`schemaVersion` 1: TLH and Pi runtime versions, update track, ref, repo, and profile directory) for external tools such as tlh-gui. See [`docs/commands.md`](docs/commands.md#tlh-version) and [#746](https://github.com/diegopetrucci/the-last-harness/issues/746).
