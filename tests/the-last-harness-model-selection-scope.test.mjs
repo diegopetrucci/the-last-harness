@@ -92,16 +92,6 @@ function copyPublishedPiPackage(t, suffix) {
   const packageDir = mkdtempSync(join(tmpdir(), `tlh-pi-private-${suffix}-`));
   cpSync(join(getPackageDir(), "package.json"), join(packageDir, "package.json"));
   cpSync(join(getPackageDir(), "dist"), join(packageDir, "dist"), { recursive: true });
-  // Pi 0.85.1 introduced @earendil-works/chord as a runtime bundle dependency.
-  // Copy it into the temp package's node_modules so the isolated dist/bundle
-  // chunks can resolve it without access to the repo-level node_modules.
-  // Use createRequire anchored at pi-coding-agent's package.json to resolve chord
-  // from the same location pi-coding-agent uses (works whether chord is nested or hoisted).
-  const req = createRequire(join(getPackageDir(), "package.json"));
-  const chordDir = dirname(req.resolve("@earendil-works/chord/package.json"));
-  cpSync(chordDir, join(packageDir, "node_modules", "@earendil-works", "chord"), {
-    recursive: true,
-  });
   t.after(() => rmSync(packageDir, { recursive: true, force: true }));
   return packageDir;
 }

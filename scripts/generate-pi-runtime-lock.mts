@@ -28,7 +28,6 @@ const repoRoot = resolve(__dirname, "..");
 
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const PI_SIBLING_PACKAGES = Object.freeze([
-  "@earendil-works/chord",
   "@earendil-works/pi-agent-core",
   "@earendil-works/pi-ai",
   "@earendil-works/pi-codemode",

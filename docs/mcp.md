@@ -114,9 +114,9 @@ Without `--project`, only the global pair is considered. Each `--project DIR` se
 
 ### Package refresh and cold-start limits
 
-The migration commits configuration before refreshing the package cache. Run a normal full `tlh update` after successful apply. Pi 1.1.0's npm resource resolver can install missing packages and reconcile versions outside the configured range, but TLH's launch guard refuses conflicting cached metadata for a native exact pin before that resolver runs. `tlh update --extensions` skips exact npm pins and is not a cache-repair substitute.
+The migration commits configuration before refreshing the package cache. Run a normal full `tlh update` after successful apply. Pi 1.2.0's npm resource resolver can install missing packages and reconcile versions outside the configured range, but TLH's launch guard refuses conflicting cached metadata for a native exact pin before that resolver runs. `tlh update --extensions` skips exact npm pins and is not a cache-repair substitute.
 
-Pi 1.1.0 retains distinct warm-cache and cold-cache paths. TLH's launch guard refuses unsafe or unverified selections; a compatible warm legacy launch may continue until explicitly migrated. The guard covers the selected profile/current project boundary, not live MCP connectivity, every project, or direct manual invocations of the upstream runtime/package manager. It is therefore not a provider, keyring, production, or universal loader-equivalence proof.
+Pi 1.2.0 retains distinct warm-cache and cold-cache paths. TLH's launch guard refuses unsafe or unverified selections; a compatible warm legacy launch may continue until explicitly migrated. The guard covers the selected profile/current project boundary, not live MCP connectivity, every project, or direct manual invocations of the upstream runtime/package manager. It is therefore not a provider, keyring, production, or universal loader-equivalence proof.
 
 ### Rollback
 
