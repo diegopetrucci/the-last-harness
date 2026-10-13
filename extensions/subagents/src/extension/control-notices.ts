@@ -4,17 +4,16 @@ import {
   formatControlNoticeMessage,
 } from "../runs/shared/subagent-control.ts";
 import type { ControlEvent, SubagentState } from "../shared/types.ts";
-import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.ts";
 
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
-
-const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
 
 export interface SubagentControlMessageDetails {
   event: ControlEvent;
   source?: "foreground" | "async";
   asyncDir?: string;
   noticeText?: string;
+  /** True exactly when the notice was sent with { triggerTurn: true }. */
+  triggersTurn?: boolean;
 }
 
 export function formatSubagentControlNotice(
@@ -39,7 +38,7 @@ export function clearPendingForegroundControlNotices(state: SubagentState, runId
 }
 
 function deliverControlNotice(input: {
-  pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">;
+  pi: Pick<ExtensionAPI, "sendMessage">;
   visibleControlNotices: Set<string>;
   details: SubagentControlMessageDetails;
   isIdle?: () => boolean;
@@ -49,23 +48,22 @@ function deliverControlNotice(input: {
   if (input.visibleControlNotices.has(key)) return;
   input.visibleControlNotices.add(key);
   const noticeText = input.details.noticeText ?? formatControlNoticeMessage(input.details.event);
-  input.pi.sendMessage({
-    customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
-    content: noticeText,
-    display: true,
-    details: { ...input.details, noticeText },
-  });
-  // When the session is idle and this is an async notice, wake the agent
-  // through prompt() so before_agent_start fires and the TLH system prompt
-  // is restored. deliverAs:'followUp' is safe under a streaming race: it
-  // queues a benign followUp rather than throwing. When streaming, Pi steers
-  // the turn via the custom message alone; no nudge is needed. Idleness is
-  // read live at send time; when no session context has been captured yet,
-  // assume idle (the nudge degrades to a benign followUp if that assumption
-  // is wrong).
-  if (input.details.source !== "foreground" && (input.isIdle?.() ?? true)) {
-    input.pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
-  }
+  // Async notices wake an idle parent natively: with { triggerTurn: true } Pi starts a
+  // run from the custom message (before_agent_start fires, so the TLH system prompt
+  // applies) and steers an active turn when streaming. Idleness is read live at send
+  // time; when no session context has been captured yet, assume idle. Foreground
+  // notices and non-wake sends pass no options (never triggerTurn:false, which defers
+  // delivery while streaming).
+  const wake = input.details.source !== "foreground" && (input.isIdle?.() ?? true);
+  input.pi.sendMessage(
+    {
+      customType: SUBAGENT_CONTROL_MESSAGE_TYPE,
+      content: noticeText,
+      display: true,
+      details: { ...input.details, noticeText, triggersTurn: wake },
+    },
+    wake ? { triggerTurn: true } : undefined,
+  );
 }
 
 function isForegroundNoticeStillActionable(
@@ -92,7 +90,7 @@ function isForegroundNoticeStillActionable(
 }
 
 export function handleSubagentControlNotice(input: {
-  pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">;
+  pi: Pick<ExtensionAPI, "sendMessage">;
   state: SubagentState;
   visibleControlNotices: Set<string>;
   details: SubagentControlMessageDetails;

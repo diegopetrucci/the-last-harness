@@ -52,6 +52,12 @@ export interface WakeupCounters {
   wakeupsMissingRunId: number;
   wakeupsMissingNudge: number;
   unmatchedNudges: number;
+  /** Wakeups started by a nudge (legacy transcripts). */
+  legacyWakeupsObserved: number;
+  /** Wakeups started by the turn-triggering custom message itself (no nudge). */
+  nativeWakeupsObserved: number;
+  /** Native-eligible sources replaced by a later source before any assistant turn. */
+  supersededSources: number;
   completionBatchesObserved: number;
   completionBatchesComplete: number;
   completionBatchesIncomplete: number;
@@ -85,10 +91,16 @@ type WakeSource = {
   key: string;
   runIds: string[];
   nudgeKind: "completion" | "control";
+  /**
+   * True only when the source's structured details carry a literal
+   * `triggersTurn: true`, i.e. the message itself started a nudge-less wake run.
+   */
+  native?: boolean;
 };
 
 type WakeupRegistration = {
   record: SyntheticWakeupRecord;
+  origin: "legacy" | "native";
   finalized: boolean;
 };
 
@@ -222,12 +234,22 @@ function abandonPendingSource(context: WakeupAnalysisContext, state: WakeState):
   state.pendingSource = undefined;
 }
 
+/** Only a literal boolean `true` marks a native wake; anything else is legacy. */
+function detailsTriggerTurn(details: Record<string, unknown> | undefined): boolean {
+  return details?.triggersTurn === true;
+}
+
 function registerSource(
   context: WakeupAnalysisContext,
   state: WakeState,
   source: WakeSource,
 ): void {
-  if (state.pendingSource) abandonPendingSource(context, state);
+  if (state.pendingSource) {
+    // A replaced native source is not a missing nudge: its message never
+    // reached the assistant turn as the run starter.
+    if (state.pendingSource.native) context.counters.supersededSources++;
+    else context.counters.wakeupsMissingNudge++;
+  }
   state.pendingSource = source;
 }
 
@@ -400,6 +422,8 @@ function revokeWakeup(context: WakeupAnalysisContext, registration: WakeupRegist
   if (recordIndex < 0) return;
   context.wakeups.splice(recordIndex, 1);
   context.counters.wakeupsObserved--;
+  if (registration.origin === "native") context.counters.nativeWakeupsObserved--;
+  else context.counters.legacyWakeupsObserved--;
   if (!registration.finalized) return;
   if (registration.record.attributed) context.counters.wakeupsAttributed--;
   else context.counters.wakeupsUnattributed--;
@@ -741,6 +765,8 @@ function processCompletionBatchNotification(
         key: wakeSourceKey,
         runIds: [...new Set(flushMembers.flatMap((member) => [...member.runIds]))],
         nudgeKind: "completion",
+        // The final chunk's structured `triggersTurn` starts the wake run.
+        native: true,
       });
       for (const member of flushMembers) {
         member.wakeSourceKey = wakeSourceKey;
@@ -809,12 +835,20 @@ function processCompletionNotification(
   context.seenCompletionSources.add(sourceKey);
   const completionEvidenceValid =
     telemetry !== undefined || (statusValid && details.agent !== undefined && agentValid);
-  if (!duplicate && completionEvidenceValid && sourceExecution !== "foreground") {
+  // An explicit `triggersTurn: false` is a known non-waking message (steered or
+  // lifecycle flush): it never registers or displaces a wake source.
+  if (
+    !duplicate &&
+    completionEvidenceValid &&
+    sourceExecution !== "foreground" &&
+    details.triggersTurn !== false
+  ) {
     registerSource(context, state, {
       kind: "completion",
       key: sourceKey,
       runIds: runId ? [runId] : [],
       nudgeKind: "completion",
+      native: detailsTriggerTurn(details),
     });
   }
 }
@@ -838,12 +872,14 @@ function processControlNotification(
     context.counters.malformedControlDetails++;
     if (message.legacyNotification === "control" || isLegacyControlText(message.content)) {
       context.counters.legacyProseNotifications++;
-      registerSource(context, state, {
-        kind: "control",
-        key: tupleKey("control", scanResult.filePath, entryIndex),
-        runIds: [],
-        nudgeKind: "control",
-      });
+      // An explicit `triggersTurn: false` still never displaces a wake source.
+      if (details?.triggersTurn !== false)
+        registerSource(context, state, {
+          kind: "control",
+          key: tupleKey("control", scanResult.filePath, entryIndex),
+          runIds: [],
+          nudgeKind: "control",
+        });
     }
     return;
   }
@@ -856,14 +892,39 @@ function processControlNotification(
   const sourceKey = controlSourceKey(parsed.event, parsed.runId);
   const duplicate = context.seenControlSources.has(sourceKey);
   context.seenControlSources.add(sourceKey);
-  if (effectiveSource !== "foreground" && !duplicate) {
+  if (effectiveSource !== "foreground" && !duplicate && details?.triggersTurn !== false) {
     registerSource(context, state, {
       kind: "control",
       key: sourceKey,
       runIds: [parsed.runId],
       nudgeKind: "control",
+      native: detailsTriggerTurn(details),
     });
   }
+}
+
+function startWake(
+  context: WakeupAnalysisContext,
+  state: WakeState,
+  source: WakeSource,
+  origin: "legacy" | "native",
+): void {
+  context.counters.wakeupsObserved++;
+  if (origin === "native") context.counters.nativeWakeupsObserved++;
+  else context.counters.legacyWakeupsObserved++;
+  const registration: WakeupRegistration = {
+    record: makeWakeupRecord(source, false, undefined, null, emptyManagementCalls()),
+    origin,
+    finalized: false,
+  };
+  context.wakeups.push(registration.record);
+  for (const flush of state.completionFlushes.values()) {
+    if (flush.wakeSourceKey === source.key) flush.wakeupRegistration = registration;
+  }
+  for (const batch of state.completionBatches.values()) {
+    if (batch.wakeSourceKey === source.key) batch.wakeupRegistration = registration;
+  }
+  state.activeWake = { source: { ...source }, registration };
 }
 
 function handleNudge(
@@ -881,20 +942,8 @@ function handleNudge(
   }
   const source = state.pendingSource;
   state.pendingSource = undefined;
-  context.counters.wakeupsObserved++;
-  const registration: WakeupRegistration = {
-    record: makeWakeupRecord(source, false, undefined, null, emptyManagementCalls()),
-    finalized: false,
-  };
-  context.wakeups.push(registration.record);
-  for (const flush of state.completionFlushes.values()) {
-    if (flush.wakeSourceKey === source.key) flush.wakeupRegistration = registration;
-  }
-  for (const batch of state.completionBatches.values()) {
-    if (batch.wakeSourceKey === source.key) batch.wakeupRegistration = registration;
-  }
-  state.activeWake = { source: { ...source }, registration };
-  if (source.nudgeKind !== nudgeKind) {
+  startWake(context, state, source, "legacy");
+  if (source.nudgeKind !== nudgeKind && state.activeWake) {
     finishWakeup(context, state.activeWake, "mismatched-nudge");
     state.activeWake = undefined;
   }
@@ -905,6 +954,15 @@ function processOrdinaryUserMessage(context: WakeupAnalysisContext, state: WakeS
     finishWakeup(context, state.activeWake, "interrupted-by-human-input");
     state.activeWake = undefined;
   }
+  if (state.pendingSource?.native) {
+    // A native wake run was started by the custom message, then the human
+    // interrupted it before any assistant turn.
+    startWake(context, state, state.pendingSource, "native");
+    state.pendingSource = undefined;
+    if (state.activeWake) finishWakeup(context, state.activeWake, "interrupted-by-human-input");
+    state.activeWake = undefined;
+    return;
+  }
   if (state.pendingSource) abandonPendingSource(context, state);
 }
 
@@ -913,6 +971,13 @@ function processAssistantMessage(
   state: WakeState,
   message: Record<string, unknown>,
 ): void {
+  if (state.pendingSource?.native && !state.activeWake) {
+    // Nudge-less wake: the turn-triggering custom message directly precedes
+    // this assistant turn. Earlier native-eligible sources were flushed or
+    // superseded by it.
+    startWake(context, state, state.pendingSource, "native");
+    state.pendingSource = undefined;
+  }
   if (state.activeWake) {
     const usage = assistantUsage(message);
     const runIds = new Set(state.activeWake.source.runIds);
@@ -998,7 +1063,13 @@ export function analyzeWakeupsForScan(
     finishWakeup(context, state.activeWake, "missing-assistant-turn");
     state.activeWake = undefined;
   }
-  if (state.pendingSource) abandonPendingSource(context, state);
+  if (state.pendingSource?.native) {
+    // Native source with the run still in flight or never persisted.
+    startWake(context, state, state.pendingSource, "native");
+    state.pendingSource = undefined;
+    if (state.activeWake) finishWakeup(context, state.activeWake, "missing-assistant-turn");
+    state.activeWake = undefined;
+  } else abandonPendingSource(context, state);
   for (const batch of state.completionBatches.values()) finalizeCompletionBatch(context, batch);
 }
 

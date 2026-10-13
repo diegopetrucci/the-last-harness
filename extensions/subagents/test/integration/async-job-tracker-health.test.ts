@@ -113,13 +113,13 @@ describe(
         );
 
         const sent: unknown[] = [];
-        const nudges: string[] = [];
+        const syntheticUserMessages: string[] = [];
         const noticePi = {
           sendMessage(message: unknown) {
             sent.push(message);
           },
           sendUserMessage(text: string) {
-            nudges.push(text);
+            syntheticUserMessages.push(text);
           },
         };
         const visible = new Set<string>();
@@ -133,7 +133,7 @@ describe(
           });
         }
         assert.equal(sent.length, 2, "duplicate events in one episode should be deduplicated");
-        assert.equal(nudges.length, 0);
+        assert.equal(syntheticUserMessages.length, 0);
 
         fs.writeFileSync(
           path.join(runDir, "status.json"),

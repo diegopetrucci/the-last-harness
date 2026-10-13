@@ -54,17 +54,17 @@ Execution time is bounded per child instance and is owned by the selected role d
 
 The code-owned ceilings for the nine canonical minor roles are:
 
-| Role | `maxExecutionTimeMs` |
-| --- | ---: |
-| `developer` | 3600000 ms (1h) |
-| `code-reviewer` | 1800000 ms (30m) |
-| `test-runner` | 3600000 ms (1h) |
-| `librarian` | 14400000 ms (4h) |
-| `oracle` | 2700000 ms (45m) |
-| `contrarian` | 1800000 ms (30m) |
-| `repo-scout` | 600000 ms (10m) |
-| `web-scout` | 300000 ms (5m) |
-| `diff-summarizer` | 300000 ms (5m) |
+| Role              | `maxExecutionTimeMs` |
+| ----------------- | -------------------: |
+| `developer`       |      3600000 ms (1h) |
+| `code-reviewer`   |     1800000 ms (30m) |
+| `test-runner`     |      3600000 ms (1h) |
+| `librarian`       |     14400000 ms (4h) |
+| `oracle`          |     2700000 ms (45m) |
+| `contrarian`      |     1800000 ms (30m) |
+| `repo-scout`      |      600000 ms (10m) |
+| `web-scout`       |       300000 ms (5m) |
+| `diff-summarizer` |       300000 ms (5m) |
 
 TLH applies those code-owned role defaults before resolving human overrides. For a canonical role whose definition does not explicitly declare the field, TLH selects one `subagents.agentOverrides.<role>` object: the selected project's entry when present, otherwise the active isolated profile's entry from `<agent-dir>/settings.json`. The two objects are not merged field-by-field. Therefore, a project entry that omits `maxExecutionTimeMs` does not retain a profile value; absent an authoritative frontmatter value, the code-owned role default remains. The selected human override accepts only a positive safe integer. An explicit `maxExecutionTimeMs` in a packaged role's frontmatter is definition-owned and remains authoritative for that field. A legacy role override of `maxExecutionTimeMs: false` is diagnosed, ignored, and falls back to the bounded canonical role ceiling. A trusted project custom agent may set a positive safe integer in its own frontmatter; if it omits the field, its custom-agent fallback is **14400000 ms (4h)**. Project custom agents are self-contained and are not completed or overridden by profile/project `subagents.agentOverrides` settings.
 
@@ -159,16 +159,16 @@ Set `"skills": false` in the override to disable skills for agents whose frontma
 
 When a run starts, the runtime walks the following locations and collects all skill directories (each containing a `SKILL.md` file, whose parent directory name becomes the skill name). When the same name appears in multiple locations, the source with the **highest priority number wins**. This ordering is defined by `SOURCE_PRIORITY` in `skills.ts` and assembled by `buildSkillPaths`.
 
-| Priority | Source | Typical path |
-|---|---|---|
-| 700 | `project` | `.pi/skills/` or `.agents/skills/` in the project root |
-| 650 | `project-settings` | Paths listed under `skills` in `.pi/settings.json` |
-| 600 | `project-package` | `.pi/npm/node_modules/<pkg>` (via `pi.skills` in `package.json`) or project root `package.json` → `pi.skills` |
-| 300 | `user` | `<agent-dir>/skills/` |
-| 250 | `user-settings` | Paths listed under `skills` in `<agent-dir>/settings.json` |
-| 200 | `user-package` | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root |
-| 180 | `project-claude` | `.claude/skills/` in the project root ¹ |
-| 170 | `user-claude` | `~/.claude/skills/` ¹ |
+| Priority | Source             | Typical path                                                                                                  |
+| -------- | ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 700      | `project`          | `.pi/skills/` or `.agents/skills/` in the project root                                                        |
+| 650      | `project-settings` | Paths listed under `skills` in `.pi/settings.json`                                                            |
+| 600      | `project-package`  | `.pi/npm/node_modules/<pkg>` (via `pi.skills` in `package.json`) or project root `package.json` → `pi.skills` |
+| 300      | `user`             | `<agent-dir>/skills/`                                                                                         |
+| 250      | `user-settings`    | Paths listed under `skills` in `<agent-dir>/settings.json`                                                    |
+| 200      | `user-package`     | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root                                                   |
+| 180      | `project-claude`   | `.claude/skills/` in the project root ¹                                                                       |
+| 170      | `user-claude`      | `~/.claude/skills/` ¹                                                                                         |
 
 ¹ Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where these lower-priority roots are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
 
@@ -229,12 +229,12 @@ Requesting `pi-subagents` as a skill **fails the run immediately** with `"Skills
 
 These two mechanisms are distinct:
 
-| | `skills` (frontmatter) | `inheritSkills` (frontmatter) |
-|---|---|---|
-| What it does | Injects specific named skills into the child's system prompt | Passes the *parent's* existing skills section down to the child |
-| Default | None (no injection) | `false` (parent skills stripped by `rewriteSubagentPrompt`) |
-| Format | Comma-separated skill names, or array in settings override | Boolean (`true`/`false`) |
-| When to use | Give an agent a specific runbook or checklist | Let a child share the parent's ambient skill context |
+|              | `skills` (frontmatter)                                       | `inheritSkills` (frontmatter)                                   |
+| ------------ | ------------------------------------------------------------ | --------------------------------------------------------------- |
+| What it does | Injects specific named skills into the child's system prompt | Passes the _parent's_ existing skills section down to the child |
+| Default      | None (no injection)                                          | `false` (parent skills stripped by `rewriteSubagentPrompt`)     |
+| Format       | Comma-separated skill names, or array in settings override   | Boolean (`true`/`false`)                                        |
+| When to use  | Give an agent a specific runbook or checklist                | Let a child share the parent's ambient skill context            |
 
 Use `skills:` when a child agent should always receive a particular skill regardless of what the parent has loaded. Use `inheritSkills: true` when the parent's skills are contextually relevant and you want the child to receive them without redeclaring them.
 
@@ -270,7 +270,7 @@ The `subagents` JSON mode reports privacy-safe run summaries and aggregates by r
 
 Only a paired assistant `subagent` call may authorize telemetry, result, or control details from a tool result. Orphan results and details attached to other tools are skipped and counted as unmatched evidence; recognized structured custom completion/control notifications remain an independent evidence source. Structured run IDs are opaque, bounded report inputs (including ordinary spaces or slashes), while legacy/tool-argument IDs use the stricter path-safe grammar.
 
-A synthetic wakeup is attributed only when a structured or recognized legacy completion/control source is followed by its exact user nudge and the immediate next assistant turn is present. Intervening non-turn custom or tool-result records may be skipped. Only that assistant turn's parseable usage and management calls targeting the same run are attached to the wakeup. Human input, a missing assistant turn, a mismatched or missing nudge, or a missing run ID remains explicitly unattributed.
+A synthetic wakeup is attributed only when a structured or recognized legacy completion/control source is followed by the immediate next assistant turn. Two transcript shapes are recognized. In the legacy shape (older transcripts, and any source without the flag below) the source is followed by its exact `[tlh] …` user nudge and then the assistant turn. In the native shape (no nudge) the turn-triggering custom message itself starts the run, and this is recognized only from the persisted structured flag: a single `subagent-notify` completion or async `subagent_control_notice` whose details carry `triggersTurn: true` (written exactly when the message was sent with `{ triggerTurn: true }`), or the final completion-batch chunk whose `triggersTurn` is true. Only a literal boolean `true` counts. A message with an explicit `triggersTurn: false` (a steer while the parent streams or into a run another message started, a foreground notice, a shutdown lifecycle flush, or a held success flushed ahead of a failure) is a known non-waking message: it never starts a wakeup, never replaces a pending wake source, and never counts toward `missingNudge`, and a source with no flag (absent or not a boolean) is evaluated by the legacy nudge rules exactly as before. A native source followed by human input is reported as `interrupted-by-human-input`, and one at the end of the transcript as `missing-assistant-turn`. Intervening non-turn records (system prompt patches, other custom entries, tool-result records) may be skipped. Only that assistant turn's parseable usage and management calls targeting the same run are attached to the wakeup. Human input, a missing assistant turn, a mismatched nudge, a legacy source with no nudge, or a missing run ID remains explicitly unattributed. Native wakeups never count toward `missingNudge` or `unmatchedNudges`; `wakeups.legacyObserved` and `wakeups.nativeObserved` split the observed total, and `wakeups.supersededSources` counts native sources replaced by a later flagged-true or flagless source before any assistant turn.
 
 The scanner retains only bounded allowlisted projections needed for pairing, operation counts, and immediate-next-turn attribution; it does not retain full raw session messages across the corpus. Default output contains no raw paths, cwd values, tasks, prompts, child output, tool arguments, settings, or run identifiers. Run references are stable opaque values scoped to the report. `--include-paths` is an explicit opt-in that adds the inspected profile and sessions directory to provenance; it does not expose task, output, or identifier text. Coverage also reports bounded correlation-evidence failure counters for scan/rescan overflow and digest/generation mismatches; untrusted joins are omitted. This local diagnostic report is separate from the remote release telemetry described in [telemetry.md](telemetry.md).
 
@@ -293,7 +293,7 @@ Only `needs_attention` is emitted as a current health/control state. The retired
 
 **Completion notification sizing.** Each async completion embeds up to 8,000 characters of the child's result inline; roughly 96 percent of real-world results now arrive complete in the notification, up from about 35 percent under the previous 1,200-character cap. Every completion notification is bounded by a 32,000-character ceiling, an increase from the previous 8,000. That ceiling applies whatever the notification's shape: a single parallel dispatch with four children can approach it on its own, as can a batch grouping several completions that arrived within a short window. Architect sessions that previously treated the completion notice as a teaser and always fetched the artifact separately should find that practice unnecessary in the common case.
 
-**Pointer-survival invariant.** `formatSingleCompletion` emits the artifact path and session reference lines last, and the send-time cap in `sendCompletion` truncates from the end. An overflow therefore destroys the recovery pointer before it destroys summary text, turning *truncated but recoverable* into *truncated and unrecoverable*. The invariant is enforced across six sites with no single home: `resolvePerChildSummaryBudget` and the non-summary cost computation in `formatResultPreview` perform the primary reservation by subtracting all fixed scaffold costs before dividing the remainder among child summaries; `fitPreviewWithinCeiling` and `joinedLineCost` enforce the per-entry ceiling in grouped messages; and the per-entry bound in `formatGroupedCompletion` and the send-time cap in `sendCompletion` provide final guardrails. The failure mode is under-reservation — reserving too little space for scaffolding, so the assembled message quietly overshoots the ceiling and the end-cut eats the pointer. Over-reservation is always safe and is the deliberate choice here: `joinedLineCost` over-counts by one character per line for exactly this reason. If you are editing header lines, formatting, or constants in `notify.ts`, keep the arithmetic erring towards reserving more space, never less.
+**Pointer-survival invariant.** `formatSingleCompletion` emits the artifact path and session reference lines last, and the send-time cap in `sendCompletion` truncates from the end. An overflow therefore destroys the recovery pointer before it destroys summary text, turning _truncated but recoverable_ into _truncated and unrecoverable_. The invariant is enforced across six sites with no single home: `resolvePerChildSummaryBudget` and the non-summary cost computation in `formatResultPreview` perform the primary reservation by subtracting all fixed scaffold costs before dividing the remainder among child summaries; `fitPreviewWithinCeiling` and `joinedLineCost` enforce the per-entry ceiling in grouped messages; and the per-entry bound in `formatGroupedCompletion` and the send-time cap in `sendCompletion` provide final guardrails. The failure mode is under-reservation — reserving too little space for scaffolding, so the assembled message quietly overshoots the ceiling and the end-cut eats the pointer. Over-reservation is always safe and is the deliberate choice here: `joinedLineCost` over-counts by one character per line for exactly this reason. If you are editing header lines, formatting, or constants in `notify.ts`, keep the arithmetic erring towards reserving more space, never less.
 
 Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's persisted effective acceptance contract and provenance. A later follow-up from a completed or failed run does not inherit the old contract.
 

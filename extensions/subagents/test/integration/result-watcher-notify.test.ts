@@ -51,13 +51,16 @@ function createNotifyHarness(): {
       emit: (event: string, data: unknown) => void;
     };
     on: (_event: string, _handler: (...args: unknown[]) => void) => void;
-    sendMessage: (message: {
-      customType?: string;
-      content?: string;
-      display?: boolean;
-      details?: unknown;
-    }) => void;
-    sendUserMessage: (content: string, options?: { deliverAs?: string }) => void;
+    sendMessage: (
+      message: {
+        customType?: string;
+        content?: string;
+        display?: boolean;
+        details?: unknown;
+      },
+      options?: { triggerTurn?: boolean },
+    ) => void;
+    sendUserMessage: (content: string) => void;
   };
   sent: string[];
   sentMessages: Array<{
@@ -68,7 +71,7 @@ function createNotifyHarness(): {
       details?: unknown;
     };
   }>;
-  sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }>;
+  wakes: Array<{ options?: { triggerTurn?: boolean } }>;
 } {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const sent: string[] = [];
@@ -80,7 +83,7 @@ function createNotifyHarness(): {
       details?: unknown;
     };
   }> = [];
-  const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
+  const wakes: Array<{ options?: { triggerTurn?: boolean } }> = [];
   return {
     pi: {
       events: {
@@ -95,22 +98,26 @@ function createNotifyHarness(): {
         },
       },
       on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: {
-        customType?: string;
-        content?: string;
-        display?: boolean;
-        details?: unknown;
-      }) {
+      sendMessage(
+        message: {
+          customType?: string;
+          content?: string;
+          display?: boolean;
+          details?: unknown;
+        },
+        options?: { triggerTurn?: boolean },
+      ) {
         sent.push(message.content ?? "");
         sentMessages.push({ message });
+        if (options?.triggerTurn) wakes.push({ options });
       },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
+      sendUserMessage() {
+        throw new Error("notify must not send a synthetic user message (#470)");
       },
     },
     sent,
     sentMessages,
-    sentUserMessages,
+    wakes,
   };
 }
 
@@ -122,7 +129,7 @@ describe("result watcher to native notify", () => {
     const sent: Array<{
       message: { customType?: string; content?: string; display?: boolean };
     }> = [];
-    const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
+    const wakes: Array<{ options?: { triggerTurn?: boolean } }> = [];
     const events = {
       on(event: string, handler: (payload: unknown) => void) {
         const handlers = listeners.get(event) ?? new Set();
@@ -138,11 +145,15 @@ describe("result watcher to native notify", () => {
     const pi = {
       events,
       on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { customType?: string; content?: string; display?: boolean }) {
+      sendMessage(
+        message: { customType?: string; content?: string; display?: boolean },
+        options?: { triggerTurn?: boolean },
+      ) {
         sent.push({ message });
+        if (options?.triggerTurn) wakes.push({ options });
       },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
+      sendUserMessage() {
+        throw new Error("notify must not send a synthetic user message (#470)");
       },
     };
     const state = createState("session-owner");
@@ -243,23 +254,15 @@ describe("result watcher to native notify", () => {
     }
 
     assert.equal(sent.length, 4);
-    // E′ protocol: sendMessage is called without options (no triggerTurn); nudge comes via sendUserMessage
+    // Native wake: each idle completion is sent with { triggerTurn: true }; no synthetic user message.
     assert.equal(
       sent.every(
         (entry) => entry.message.customType === "subagent-notify" && entry.message.display === true,
       ),
       true,
     );
-    // Four sendUserMessage nudges (one per completion, all on idle path with batching disabled)
-    assert.equal(sentUserMessages.length, 4);
-    assert.ok(
-      sentUserMessages.every(
-        (entry) =>
-          entry.content === "[tlh] Background subagent completed — see notification above." &&
-          entry.options?.deliverAs === "followUp",
-      ),
-      "every nudge must use the E\u2032 wake-up text and deliverAs:followUp",
-    );
+    // Four wakes (one per completion, all on idle path with batching disabled)
+    assert.equal(wakes.length, 4);
     const contents = sent.map((entry) => entry.message.content ?? "");
     assert.equal(
       contents.some(
@@ -339,7 +342,7 @@ describe("result watcher to native notify", () => {
 
   it("delivers watcher batches with mixed telemetry in order and wakes once", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-grouped-notify-"));
-    const { pi, sentMessages, sent, sentUserMessages } = createNotifyHarness();
+    const { pi, sentMessages, sent, wakes } = createNotifyHarness();
     const state = createState("session-owner");
     registerSubagentNotify(pi as never, state);
     const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
@@ -389,7 +392,7 @@ describe("result watcher to native notify", () => {
     }
 
     assert.equal(sent.length, 2);
-    assert.equal(sentUserMessages.length, 1);
+    assert.equal(wakes.length, 1);
     const batches = sentMessages.map(
       ({ message }) => message.details as SubagentCompletionBatchDetails,
     );
@@ -459,10 +462,7 @@ describe("result watcher to native notify", () => {
       serialized,
       /prompt-secret|output-secret|\/private\/watcher-cwd|arguments-secret|error-secret/,
     );
-    assert.deepEqual(sentUserMessages[0], {
-      content: "[tlh] Background subagent completed — see notification above.",
-      options: { deliverAs: "followUp" },
-    });
+    assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
   });
 
   it("notifies an awaiting_supervisor paused result exactly once across repeated scans", async () => {
@@ -1238,7 +1238,7 @@ describe("result watcher to native notify", () => {
 
     const listeners = new Map<string, Set<(payload: unknown) => void>>();
     const sent: Array<{ message: { content?: string } }> = [];
-    const sentUserMessages: Array<{ content: string; options?: { deliverAs?: string } }> = [];
+    const wakes: Array<{ options?: { triggerTurn?: boolean } }> = [];
     const pi = {
       events: {
         on(event: string, handler: (payload: unknown) => void) {
@@ -1252,11 +1252,12 @@ describe("result watcher to native notify", () => {
         },
       },
       on(_event: string, _handler: (...args: unknown[]) => void) {},
-      sendMessage(message: { content?: string }) {
+      sendMessage(message: { content?: string }, options?: { triggerTurn?: boolean }) {
         sent.push({ message });
+        if (options?.triggerTurn) wakes.push({ options });
       },
-      sendUserMessage(content: string, options?: { deliverAs?: string }) {
-        sentUserMessages.push({ content, options });
+      sendUserMessage() {
+        throw new Error("notify must not send a synthetic user message (#470)");
       },
     };
     const state = createState("session-owner");
@@ -1329,13 +1330,15 @@ describe("result watcher to native notify", () => {
       const failure = sent[1]!.message.content ?? "";
       assert.match(failure, /^Background task failed: \*\*alpha\*\*/);
       assert.ok(failure.indexOf(repairedResult.summary) < failure.indexOf("Children: 2 completed"));
-      // E′ protocol: no triggerTurn on sendMessage; the failure flushes the
-      // held success in the same synchronous burst, so exactly one nudge.
-      assert.equal(sentUserMessages.length, 1);
-      assert.deepEqual(sentUserMessages[0], {
-        content: "[tlh] Background subagent completed — see notification above.",
-        options: { deliverAs: "followUp" },
-      });
+      // The failure flushes the held success in the same synchronous burst, so
+      // exactly one triggerTurn wake, carried by the trailing failure message.
+      assert.equal(wakes.length, 1);
+      assert.deepEqual(wakes[0]?.options, { triggerTurn: true });
+      const triggers = sent.map(
+        (entry) =>
+          (entry.message as { details?: { triggersTurn?: boolean } }).details?.triggersTurn,
+      );
+      assert.deepEqual(triggers, [false, true]);
     } finally {
       watcher.stopResultWatcher();
       fs.rmSync(root, { recursive: true, force: true });

@@ -6,7 +6,6 @@ import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./comple
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
-import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { acceptanceRejectionReason } from "../shared/acceptance.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
@@ -577,7 +576,6 @@ export function formatGroupedCompletion(details) {
     }
     return blocks.join("\n").trimEnd();
 }
-const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
 function serializeCompletionBatchEntry(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     const telemetry = normalizeSubagentRunTelemetry(details.telemetry);
@@ -597,10 +595,8 @@ function createCompletionBatchIdentity() {
     const sequence = completionBatchIdentitySequence++;
     return `${randomUUID()}-${sequence.toString(36)}`;
 }
-function sendNudge(pi, options) {
-    if (options.triggerTurn && (options.isIdle?.() ?? true)) {
-        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
-    }
+function shouldWake(options) {
+    return options.triggerTurn && (options.isIdle?.() ?? true);
 }
 function sendCompletion(pi, details, options = { triggerTurn: true }) {
     if (details.length === 0)
@@ -608,6 +604,7 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
     const formatted = details.length === 1 ? formatSingleCompletion(details[0]) : formatGroupedCompletion(details);
     const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
     if (details.length === 1) {
+        const wake = shouldWake(options);
         const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0];
         pi.sendMessage({
             customType: "subagent-notify",
@@ -615,6 +612,7 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
             display: true,
             details: {
                 ...serializableDetail,
+                triggersTurn: wake,
                 resultPreview: boundedSummary(details[0].resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
                 ...(details[0].sessionValue
                     ? { sessionValue: boundedReference(details[0].sessionValue) }
@@ -632,14 +630,12 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
                     }
                     : {}),
             },
-        });
-        sendNudge(pi, options);
+        }, wake ? { triggerTurn: true } : undefined);
         return;
     }
     const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
     const flushId = createCompletionBatchIdentity();
     const completions = details.map(serializeCompletionBatchEntry);
-    let triggersTurn = false;
     for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
         const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
         const logicalCompletions = completions.slice(logicalStart, logicalStart + MAX_COMPLETION_BATCH_ENTRIES);
@@ -649,7 +645,7 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
             const start = batchIndex * MAX_GROUPED_ENTRIES;
             const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
             const isFinalChunk = logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
-            triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+            const triggersTurn = isFinalChunk && shouldWake(options);
             const batchDetails = {
                 schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
                 kind: SUBAGENT_COMPLETION_BATCH_KIND,
@@ -667,11 +663,8 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
                 content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
                 display: logicalBatchIndex === 0 && batchIndex === 0,
                 details: batchDetails,
-            });
+            }, triggersTurn ? { triggerTurn: true } : undefined);
         }
-    }
-    if (triggersTurn) {
-        pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
     }
 }
 function completionBatchKey(result) {

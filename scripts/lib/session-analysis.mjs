@@ -782,6 +782,9 @@ function projectSubagentDetails(value, options = {}) {
     Object.assign(result, booleans.value);
     if (booleans.invalid)
         invalid = true;
+    // Native wake flag: only a literal boolean is retained; anything else reads as absent.
+    if (typeof value.triggersTurn === "boolean")
+        result.triggersTurn = value.triggersTurn;
     if (hasOwn(value, "acceptance")) {
         if (isObject(value.acceptance)) {
             const acceptance = projectAllowedStringFields(value.acceptance, ["status"], TELEMETRY_ACCEPTANCE_STATUSES);

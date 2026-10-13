@@ -29,7 +29,6 @@ import {
   type SubagentRunTelemetry,
 } from "../../shared/telemetry.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
-import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 
@@ -89,6 +88,8 @@ export interface SubagentNotifyDetails {
   status: "completed" | "failed" | "paused";
   taskInfo?: string;
   resultPreview: string;
+  /** Set at send time on the persisted single-completion message. */
+  triggersTurn?: boolean;
   durationMs?: number;
   asyncId?: string;
   resumeTarget?: ResumeTarget;
@@ -980,8 +981,6 @@ export function formatGroupedCompletion(details: SubagentNotifyDetails[]): strin
   return blocks.join("\n").trimEnd();
 }
 
-const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
-
 function serializeCompletionBatchEntry(
   details: SubagentNotifyDetails,
 ): SubagentCompletionBatchEntry {
@@ -1005,26 +1004,19 @@ function createCompletionBatchIdentity(): string {
   return `${randomUUID()}-${sequence.toString(36)}`;
 }
 
-function sendNudge(
-  pi: Pick<ExtensionAPI, "sendUserMessage">,
-  options: { triggerTurn: boolean; isIdle?: () => boolean },
-): void {
-  // When the parent is idle and a turn is expected, wake the agent through
-  // prompt() so before_agent_start fires and the TLH system prompt is
-  // restored. deliverAs:'followUp' is safe under a streaming race: it
-  // queues a benign followUp rather than throwing. When streaming, or during
-  // a lifecycle flush (triggerTurn:false), the custom message alone is
-  // sufficient — Pi steers a streaming turn, and the shutdown path sends no
-  // new turn. Idleness is read live at send time; when no session context
-  // has been captured yet, assume idle (the nudge degrades to a benign
-  // followUp if that assumption is wrong).
-  if (options.triggerTurn && (options.isIdle?.() ?? true)) {
-    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
-  }
+/**
+ * Decide whether a send should wake the parent. Idleness is read live at send time;
+ * when no session context has been captured yet, assume idle. { triggerTurn: true }
+ * is safe either way: Pi starts a run from the custom message when idle (so
+ * before_agent_start fires and the TLH system prompt applies) and steers the active
+ * turn when streaming.
+ */
+function shouldWake(options: { triggerTurn: boolean; isIdle?: () => boolean }): boolean {
+  return options.triggerTurn && (options.isIdle?.() ?? true);
 }
 
 function sendCompletion(
-  pi: Pick<ExtensionAPI, "sendMessage" | "sendUserMessage">,
+  pi: Pick<ExtensionAPI, "sendMessage">,
   details: SubagentNotifyDetails[],
   options: { triggerTurn: boolean; isIdle?: () => boolean } = { triggerTurn: true },
 ): void {
@@ -1038,41 +1030,46 @@ function sendCompletion(
   );
 
   if (details.length === 1) {
+    const wake = shouldWake(options);
     // Exclude the internal _reformatPreview closure from the serialised structured
     // details — it is a non-serialisable function and must not appear in the message.
     const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0]!;
-    pi.sendMessage({
-      customType: "subagent-notify",
-      content,
-      display: true,
-      details: {
-        ...serializableDetail,
-        resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
-        ...(details[0]!.sessionValue
-          ? { sessionValue: boundedReference(details[0]!.sessionValue) }
-          : {}),
-        ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
-          ? {
-              resumeTarget: {
-                ...(details[0]!.resumeTarget.index !== undefined
-                  ? { index: details[0]!.resumeTarget.index }
-                  : {}),
-                ...(details[0]!.resumeTarget.childCount !== undefined
-                  ? { childCount: details[0]!.resumeTarget.childCount }
-                  : {}),
-              },
-            }
-          : {}),
+    pi.sendMessage(
+      {
+        customType: "subagent-notify",
+        content,
+        display: true,
+        details: {
+          ...serializableDetail,
+          // Persisted so session analysis can tell a wake from a steer or lifecycle flush.
+          triggersTurn: wake,
+          resultPreview: boundedSummary(details[0]!.resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
+          ...(details[0]!.sessionValue
+            ? { sessionValue: boundedReference(details[0]!.sessionValue) }
+            : {}),
+          ...(details[0]!.awaitingSupervisor && details[0]!.resumeTarget
+            ? {
+                resumeTarget: {
+                  ...(details[0]!.resumeTarget.index !== undefined
+                    ? { index: details[0]!.resumeTarget.index }
+                    : {}),
+                  ...(details[0]!.resumeTarget.childCount !== undefined
+                    ? { childCount: details[0]!.resumeTarget.childCount }
+                    : {}),
+                },
+              }
+            : {}),
+        },
       },
-    });
-    sendNudge(pi, options);
+      // Never pass triggerTurn:false: while streaming it defers delivery instead of steering.
+      wake ? { triggerTurn: true } : undefined,
+    );
     return;
   }
 
   const logicalBatchCount = Math.ceil(details.length / MAX_COMPLETION_BATCH_ENTRIES);
   const flushId = createCompletionBatchIdentity();
   const completions = details.map(serializeCompletionBatchEntry);
-  let triggersTurn = false;
   for (let logicalBatchIndex = 0; logicalBatchIndex < logicalBatchCount; logicalBatchIndex++) {
     const logicalStart = logicalBatchIndex * MAX_COMPLETION_BATCH_ENTRIES;
     const logicalCompletions = completions.slice(
@@ -1086,7 +1083,7 @@ function sendCompletion(
       const batchCompletions = logicalCompletions.slice(start, start + MAX_GROUPED_ENTRIES);
       const isFinalChunk =
         logicalBatchIndex === logicalBatchCount - 1 && batchIndex === batchCount - 1;
-      triggersTurn = isFinalChunk && options.triggerTurn && (options.isIdle?.() ?? true);
+      const triggersTurn = isFinalChunk && shouldWake(options);
       const batchDetails: SubagentCompletionBatchDetails = {
         schemaVersion: SUBAGENT_COMPLETION_BATCH_SCHEMA_VERSION,
         kind: SUBAGENT_COMPLETION_BATCH_KIND,
@@ -1099,18 +1096,18 @@ function sendCompletion(
         triggersTurn,
         completions: batchCompletions,
       };
-      pi.sendMessage({
-        customType: "subagent-notify",
-        // The grouped prose is persisted/displayed exactly once; subsequent chunk
-        // records carry only their bounded structured details.
-        content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
-        display: logicalBatchIndex === 0 && batchIndex === 0,
-        details: batchDetails,
-      });
+      pi.sendMessage(
+        {
+          customType: "subagent-notify",
+          // The grouped prose is persisted/displayed exactly once; subsequent chunk
+          // records carry only their bounded structured details.
+          content: logicalBatchIndex === 0 && batchIndex === 0 ? content : "",
+          display: logicalBatchIndex === 0 && batchIndex === 0,
+          details: batchDetails,
+        },
+        triggersTurn ? { triggerTurn: true } : undefined,
+      );
     }
-  }
-  if (triggersTurn) {
-    pi.sendUserMessage(NUDGE_TEXT, { deliverAs: "followUp" });
   }
 }
 
@@ -1225,16 +1222,16 @@ export default function registerSubagentNotify(
   // Context methods are closures over the runner, so a context captured once
   // keeps returning current state. A hand-rolled streaming flag would stick
   // if prompt() threw between before_agent_start and the run starting,
-  // silently suppressing every future nudge.
+  // silently suppressing every future wake.
   let sessionContext: Pick<ExtensionContext, "isIdle"> | null = null;
   const isIdle = () => sessionContext?.isIdle() ?? true;
   pi.on("session_start", (_event, ctx) => {
     sessionContext = ctx;
   });
 
-  // Ensures at most one nudge per synchronous delivery burst: when a
+  // Ensures at most one wake per synchronous delivery burst: when a
   // non-completion signal flushes held successes and then emits itself, only
-  // the trailing (unconditional) sendCompletion carries the nudge.
+  // the trailing (unconditional) sendCompletion carries triggerTurn.
   let suppressFlushNudge = false;
 
   const seen = getGlobalSeenMap("__pi_subagents_notify_seen__");
@@ -1288,8 +1285,8 @@ export default function registerSubagentNotify(
       // Failures and paused runs bypass grouping. Flush any held
       // successes for the same owner first so they are not stranded
       // behind this signal, then emit the non-completion result immediately.
-      // The flush's nudge is suppressed so the burst produces exactly one
-      // nudge, carried by the unconditional sendCompletion below.
+      // The flush's wake is suppressed so the burst produces exactly one
+      // wake, carried by the unconditional sendCompletion below.
       suppressFlushNudge = true;
       try {
         batcherEntry.batcher.flush();
