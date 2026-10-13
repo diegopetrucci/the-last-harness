@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.
 
+### Changed
+
+- Bumped the bundled Pi runtime from `1.1.0` to `1.2.0`. Pi's `before_agent_start` now also runs for extension-triggered turns, so MCP adapter auth/UI turns keep TLH's system prompt; Pi now validates keybinding values at startup and applies theme validation earlier in startup (TLH's packaged theme passes and its `$schema` URL is updated); and the `@earendil-works/chord` dependency is dropped from the private runtime. TLH's child policy, generic MCP gateway, and terminal activity contracts are unchanged.
+
 ## [0.44.0] - 2026-10-12
 
 ### Added
