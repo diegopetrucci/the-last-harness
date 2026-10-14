@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/render.js";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
 import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../../shared/types.js";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";
 import { readStatus } from "../../shared/utils.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, } from "../shared/lifecycle-state.js";
@@ -603,10 +604,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             clearTimeout(timer);
         }
         state.cleanupTimers.clear();
+        const projectSessionId = ctx ? resolveProjectAgentSessionId(ctx.sessionManager) : null;
         for (const [asyncId, pending] of projectReferenceCleanupTimers) {
-            const sameSession = typeof state.currentSessionId === "string" &&
+            const sameSession = projectSessionId !== null &&
                 pending.captures.length > 0 &&
-                pending.captures.every((capture) => capture.provenance.sessionId === state.currentSessionId);
+                pending.captures.every((capture) => capture.provenance.sessionId === projectSessionId);
             if (!sameSession) {
                 clearTimeout(pending.timer);
                 projectReferenceCleanupTimers.delete(asyncId);

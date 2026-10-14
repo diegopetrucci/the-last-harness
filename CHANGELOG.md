@@ -8,9 +8,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Added `@cortexkit/pi-antigravity-auth@3.0.3` as the opt-in `antigravity-auth` default extension, providing `/login google` and `google/antigravity-…` models. It is unofficial: upstream states it violates Google's Terms of Service and may lead to account suspension or bans, so it is not installed by default. Run `tlh defaults enable antigravity-auth` to accept that risk and install it, and `tlh defaults disable antigravity-auth` to remove it.
 - Default extension manifest entries can set `optIn: true` to stay off until enabled with `tlh defaults enable <id>` (recorded in `tlh.enabledDefaultExtensions`).
+## [0.45.0] - 2026-10-14
 
 ### Fixed
 
+- Project-agent (`embedded.<slug>`) dispatch, resume, and steer now check the session UUID that TLH stamps on project-agent snapshots instead of the session file path, so they are no longer always rejected in persisted sessions. [#782](https://github.com/diegopetrucci/the-last-harness/issues/782)
 - The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.
 - Background subagent completions and async control notices no longer add a synthetic `[tlh] …` user message. They now wake an idle session natively with Pi 1.2.0's `triggerTurn`, so the wake turn keeps TLH's system prompt and the transcript no longer shows an extra user turn. [#470](https://github.com/diegopetrucci/the-last-harness/issues/470), [#468](https://github.com/diegopetrucci/the-last-harness/issues/468)
 

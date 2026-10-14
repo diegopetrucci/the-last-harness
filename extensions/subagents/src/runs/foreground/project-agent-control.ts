@@ -25,7 +25,7 @@ import {
   type ProjectAgentSnapshotExpected,
   type ProjectAgentSnapshotManifest,
 } from "../../agents/project-agent-snapshot.ts";
-import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
@@ -595,7 +595,10 @@ async function authorizeRetainedProjectAgentRun(input: {
     throw projectRunAuthorizationError("the selected entry does not match persisted provenance.");
   }
 
-  const currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+  const currentSessionId = resolveProjectAgentSessionId(input.ctx.sessionManager);
+  if (!currentSessionId) {
+    throw projectRunAuthorizationError("current session identity is unavailable.");
+  }
   if (currentSessionId !== persisted.provenance.sessionId) {
     throw projectRunAuthorizationError("the run belongs to a different session.");
   }
@@ -748,7 +751,10 @@ export async function authorizePersistedProjectAgentRun(input: {
     throw projectRunAuthorizationError("the selected entry does not match persisted provenance.");
   }
 
-  const currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+  const currentSessionId = resolveProjectAgentSessionId(input.ctx.sessionManager);
+  if (!currentSessionId) {
+    throw projectRunAuthorizationError("current session identity is unavailable.");
+  }
   if (currentSessionId !== persisted.provenance.sessionId) {
     throw projectRunAuthorizationError("the run belongs to a different session.");
   }

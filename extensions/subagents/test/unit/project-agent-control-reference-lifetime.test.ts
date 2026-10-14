@@ -249,7 +249,8 @@ describe("project-agent control reference lifetime and continuation", () => {
     const asyncDir = writeStatus(runId, root, generation.capture, { state: "complete" });
     retainProjectAgentRunReference(generation.capability, runId, [generation.capture]);
     const state = createState();
-    state.currentSessionId = "session-project";
+    // Persisted sessions key async ownership by file path, distinct from the capture UUID.
+    state.currentSessionId = "/sessions/session-project.jsonl";
     const tracker = createAsyncJobTracker(
       { events: { emit() {} } } as any,
       state,
@@ -267,12 +268,12 @@ describe("project-agent control reference lifetime and continuation", () => {
         id: runId,
         asyncDir,
         success: true,
-        sessionId: "session-project",
+        sessionId: "/sessions/session-project.jsonl",
       });
       await new Promise((resolve) => setTimeout(resolve, 15));
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
 
-      tracker.resetJobs();
+      tracker.resetJobs(makeContext(root, "session-project"));
       assert.equal(state.asyncJobs.size, 0, "reset still clears UI job state");
       await new Promise((resolve) => setTimeout(resolve, 20));
       assert.equal(
@@ -285,6 +286,52 @@ describe("project-agent control reference lifetime and continuation", () => {
         lookupProjectAgentRunReference(runId).status,
         "missing",
         "preserved timer must release at the configured bounded window",
+      );
+    } finally {
+      tracker.resetJobs();
+      releaseProjectAgentRunReference(runId);
+      revokeIfRegistered(generation.capability);
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it("clears pending terminal cleanup when reset has no ctx", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-tracker-noctx-")),
+    );
+    const generation = createProjectGeneration(root, "session-project", "generation-tracker-noctx");
+    const runId = `project-tracker-noctx-${Date.now().toString(36)}`;
+    const asyncDir = writeStatus(runId, root, generation.capture, { state: "complete" });
+    retainProjectAgentRunReference(generation.capability, runId, [generation.capture]);
+    const state = createState();
+    state.currentSessionId = "/sessions/session-project.jsonl";
+    const tracker = createAsyncJobTracker(
+      { events: { emit() {} } } as any,
+      state,
+      path.dirname(asyncDir),
+      { completionRetentionMs: 5, projectAgentTerminalRetentionMs: 30 },
+    );
+    try {
+      state.asyncJobs.set(runId, {
+        asyncId: runId,
+        asyncDir,
+        status: "running",
+        updatedAt: Date.now(),
+      });
+      tracker.handleComplete({
+        id: runId,
+        asyncDir,
+        success: true,
+        sessionId: "/sessions/session-project.jsonl",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+      tracker.resetJobs();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(
+        lookupProjectAgentRunReference(runId).status,
+        "found",
+        "cleared timer must not release the reference without same-session proof",
       );
     } finally {
       tracker.resetJobs();
@@ -340,8 +387,8 @@ describe("project-agent control reference lifetime and continuation", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
 
-      state.currentSessionId = "session-project-new";
-      tracker.resetJobs();
+      state.currentSessionId = "/sessions/session-project-new.jsonl";
+      tracker.resetJobs(makeContext(root, "session-project-new"));
       releaseProjectAgentRunReference(runId);
       retainProjectAgentRunReference(nextGeneration.capability, runId, [nextGeneration.capture]);
       await new Promise((resolve) => setTimeout(resolve, 20));

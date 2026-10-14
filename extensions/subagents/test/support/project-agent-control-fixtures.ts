@@ -124,7 +124,7 @@ export function makeContext(root: string, sessionId = "session-project"): any {
     hasUI: false,
     sessionManager: {
       getSessionId: () => sessionId,
-      getSessionFile: () => null,
+      getSessionFile: () => `/sessions/${sessionId}.jsonl`,
       getBranch: () => [],
     },
     modelRegistry: { getAvailable: () => [] },
@@ -219,7 +219,8 @@ export function writeStatus(
     mode: "single",
     state: options.state ?? "complete",
     pid: 12345,
-    sessionId: capture.provenance.sessionId,
+    // Async-run ownership uses the session file path (resolveCurrentSessionId), not the UUID.
+    sessionId: `/sessions/${capture.provenance.sessionId}.jsonl`,
     cwd: options.cwd ?? root,
     startedAt: 100,
     endedAt: 200,

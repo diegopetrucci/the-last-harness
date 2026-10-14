@@ -91,7 +91,7 @@ function makeContext(
     }),
     sessionManager: asFixture<ExtensionContext["sessionManager"]>({
       getSessionId: () => "session-execution-test",
-      getSessionFile: () => undefined,
+      getSessionFile: () => "/sessions/session-execution-test.jsonl",
       getBranch: () => [],
     }),
     modelRegistry: asFixture<ExtensionContext["modelRegistry"]>({ getAvailable: () => [] }),
