@@ -1096,19 +1096,26 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
         detailLog(args, "Installing and enabling tk integration by default.");
     }
     const managedTarget = managedTkTargetPath(args, agentDir);
-    const configured = configuredInstallPath(settings);
     const managedPinIsFresh = managedTkPinIsFresh(settings, args.ticketSourceSha256);
-    const pathOfInterestIsManaged = !configured || samePathForCompare(configured, managedTarget);
-    if (pathOfInterestIsManaged && !managedPinIsFresh && validateTkCommand(managedTarget, agentDir)) {
-        detailLog(args, "Managed tk pin changed; reinstalling.");
-        const reinstalledPath = await installManagedTk(args, agentDir);
-        if (reinstalledPath) {
-            setTicketsEnabled(args, settingsPath, settings, previousRaw, reinstalledPath, args.ticketSourceSha256);
-            log(args, `Ticket CLI integration: enabled (${reinstalledPath})`);
-            return;
-        }
-        warnStderr(args, "tk pin changed but reinstall failed; falling back to existing tk discovery.");
+    const configured = configuredInstallPath(settings);
+    const configuredIsManaged = !configured || samePathForCompare(configured, managedTarget);
+    if (managedPinIsFresh &&
+        configuredIsManaged &&
+        lstatIfExists(managedTarget) !== undefined &&
+        validateTkCommand(managedTarget, agentDir)) {
+        detailLog(args, `Managed tk pin is current: ${managedTarget}`);
+        setTicketsEnabled(args, settingsPath, settings, previousRaw, managedTarget, args.ticketSourceSha256);
+        log(args, `Ticket CLI integration: enabled (${managedTarget})`);
+        return;
     }
+    detailLog(args, "Ensuring pinned managed tk is installed.");
+    const managedPath = await installManagedTk(args, agentDir);
+    if (managedPath) {
+        setTicketsEnabled(args, settingsPath, settings, previousRaw, managedPath, args.ticketSourceSha256);
+        log(args, `Ticket CLI integration: enabled (${managedPath})`);
+        return;
+    }
+    warnStderr(args, "managed tk install failed; falling back to existing tk discovery.");
     const validPath = findValidTkForConfigure(args, settings, agentDir);
     if (validPath) {
         detailLog(args, `Found valid tk command: ${validPath}`);
@@ -1117,12 +1124,6 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
             : undefined;
         setTicketsEnabled(args, settingsPath, settings, previousRaw, validPath, sha);
         log(args, `Ticket CLI integration: enabled (${validPath})`);
-        return;
-    }
-    const managedPath = await installManagedTk(args, agentDir);
-    if (managedPath) {
-        setTicketsEnabled(args, settingsPath, settings, previousRaw, managedPath, args.ticketSourceSha256);
-        log(args, `Ticket CLI integration: enabled (${managedPath})`);
         return;
     }
     throw new Error(`tk ticket integration is required, but no valid tk command was found and managed tk could not be installed. Install tk manually and run: ${args.wrapperName} tickets enable`);
