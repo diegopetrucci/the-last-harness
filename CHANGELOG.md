@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Bundled `@cortexkit/pi-antigravity-auth@3.0.3` as the `antigravity-auth` default extension, adding `/login google` and `google/antigravity-…` models. It registers a `google` provider and is unofficial: upstream states it violates Google's Terms of Service and may lead to account bans. Disable with `tlh defaults disable antigravity-auth`.
+
 ### Fixed
 
 - The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.

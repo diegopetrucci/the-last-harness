@@ -13,6 +13,11 @@
     "description": "Improve compatibility with Anthropic Claude Pro/Max OAuth while preserving normal API-key behavior."
   },
   {
+    "id": "antigravity-auth",
+    "source": "npm:@cortexkit/pi-antigravity-auth@3.0.3",
+    "description": "Sign in to Google Antigravity with `/login google` to use Gemini, Claude, and GPT-OSS models on Antigravity quota."
+  },
+  {
     "id": "mcporter",
     "aliases": ["pi-mcp-adapter", "mcp-adapter"],
     "replaces": ["npm:pi-mcp-adapter", "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1"],
