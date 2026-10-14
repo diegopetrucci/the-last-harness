@@ -14,7 +14,7 @@ export { buildResumeModelResolution, clearForegroundMessageInbox, normalizeProje
 import { pausedForegroundStatusPath } from "./foreground-pause-state.js";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../background/async-execution.js";
-import { resolveCurrentSessionId } from "../../shared/session-identity.js";
+import { resolveCurrentSessionId, resolveProjectAgentSessionId, } from "../../shared/session-identity.js";
 import { resolveControlConfig } from "../shared/subagent-control.js";
 import { normalizeSingleOutputOverride } from "../shared/single-output.js";
 import { readStatus } from "../../shared/utils.js";
@@ -795,7 +795,7 @@ export function createSubagentExecutor(deps) {
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
         deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        const projectResolution = resolveProjectAgentExecution(effectiveParams, requestedExecutionCwd, scope, deps.state.currentSessionId, deps);
+        const projectResolution = resolveProjectAgentExecution(effectiveParams, requestedExecutionCwd, scope, resolveProjectAgentSessionId(ctx.sessionManager), deps);
         if ("error" in projectResolution) {
             return toExecutionErrorResult(effectiveParams, new Error(projectResolution.error));
         }

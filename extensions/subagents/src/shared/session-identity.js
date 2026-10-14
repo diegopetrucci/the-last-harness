@@ -4,3 +4,12 @@ export function resolveCurrentSessionId(sessionManager) {
         throw new Error("Current session identity is unavailable.");
     return sessionId;
 }
+export function resolveProjectAgentSessionId(sessionManager) {
+    try {
+        const sessionId = sessionManager.getSessionId();
+        return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : null;
+    }
+    catch {
+        return null;
+    }
+}
