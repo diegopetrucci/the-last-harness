@@ -421,6 +421,15 @@ tlh defaults enable <id>   # re-enable a disabled extension
 
 Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed non-critical default extensions only (those in `config/default-extensions.json`); the mandatory `quiet-tools` renderer has no supported disable/off path. First-party packaged extensions like `notify`, `/annotate-last-message`, and `/annotate-git-diff` are not managed by this flow.
 
+### Opt-in extensions: `antigravity-auth`
+
+Some entries in `config/default-extensions.json` are marked `optIn` and are **not** installed by default. `antigravity-auth` (`npm:@cortexkit/pi-antigravity-auth`) adds `/login google` for Google Antigravity quota, but it is unofficial: upstream states the OAuth flow violates Google's Terms of Service, and Google has said third-party tools using Antigravity login are prohibited and repeat violations can lead to permanent bans. Enable it only if you accept that risk:
+
+```sh
+tlh defaults enable antigravity-auth   # installs it and records tlh.enabledDefaultExtensions in the isolated profile
+tlh defaults disable antigravity-auth  # removes it again
+```
+
 ### Configuring the notify extension
 
 The `notify` extension is first-party and ships bundled with TLH. It cannot be managed with `tlh defaults disable`; instead, disable it by setting `"enabled": false` in its config file.

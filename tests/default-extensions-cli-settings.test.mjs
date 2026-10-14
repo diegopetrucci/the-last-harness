@@ -86,6 +86,7 @@ test("shared default-extension reader trims descriptions and can allow missing m
       replaces: [],
       migrateReplacements: false,
       critical: false,
+      optIn: false,
       source: "npm:helper",
       description: "Helpful default",
     },
@@ -1720,4 +1721,39 @@ test("tlh-defaults mcporter enable/disable cycles keep ownership idempotent", ()
   settings = readJson(fixture.settings);
   assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
   assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
+});
+
+test("opt-in default extensions stay off until explicitly enabled and can be disabled again", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify([
+      { id: "plain", source: "npm:plain@1.0.0", description: "Plain." },
+      { id: "risky", optIn: true, source: "npm:risky@1.0.0", description: "Risky." },
+    ]),
+  );
+  writeFileSync(fixture.settings, JSON.stringify({ packages: [] }));
+  const common = ["--settings", fixture.settings, "--defaults", fixture.extensions];
+  const sources = () =>
+    runNode(defaultsScript, [...common, "sources"])
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+
+  assert.deepEqual(sources(), ["npm:plain@1.0.0"]);
+  assert.match(runNode(defaultsScript, [...common, "list"]), /disabled\s+risky[\s\S]*opt-in/);
+
+  runNode(defaultsScript, [...common, "enable", "risky"]);
+  assert.deepEqual(sources(), ["npm:plain@1.0.0", "npm:risky@1.0.0"]);
+  assert.deepEqual(readJson(fixture.settings).tlh.enabledDefaultExtensions, ["risky"]);
+  assert.ok(
+    readJson(fixture.settings).packages.some((e) => packageSourceOf(e) === "npm:risky@1.0.0"),
+  );
+
+  runNode(defaultsScript, [...common, "disable", "risky"]);
+  assert.deepEqual(sources(), ["npm:plain@1.0.0"]);
+  const after = readJson(fixture.settings);
+  assert.equal(after.tlh.enabledDefaultExtensions, undefined);
+  assert.deepEqual(after.tlh.disabledDefaultExtensions, []);
+  assert.ok(!after.packages.some((e) => packageSourceOf(e) === "npm:risky@1.0.0"));
 });

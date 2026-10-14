@@ -6,7 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Bundled `@cortexkit/pi-antigravity-auth@3.0.3` as the `antigravity-auth` default extension, adding `/login google` and `google/antigravity-…` models. It registers a `google` provider and is unofficial: upstream states it violates Google's Terms of Service and may lead to account bans. Disable with `tlh defaults disable antigravity-auth`.
+- Added `@cortexkit/pi-antigravity-auth@3.0.3` as the opt-in `antigravity-auth` default extension, providing `/login google` and `google/antigravity-…` models. It is unofficial: upstream states it violates Google's Terms of Service and may lead to account suspension or bans, so it is not installed by default. Run `tlh defaults enable antigravity-auth` to accept that risk and install it, and `tlh defaults disable antigravity-auth` to remove it.
+- Default extension manifest entries can set `optIn: true` to stay off until enabled with `tlh defaults enable <id>` (recorded in `tlh.enabledDefaultExtensions`).
 
 ### Fixed
 

@@ -185,6 +185,9 @@ export function readDefaultExtensions(path, { allowMissing = false } = {}) {
         const replaces = readStringArrayField(entry, "replaces", id || String(index + 1));
         const migrateReplacements = readBooleanField(entry, "migrateReplacements", id || String(index + 1));
         const critical = readBooleanField(entry, "critical", id || String(index + 1));
+        const optIn = readBooleanField(entry, "optIn", id || String(index + 1));
+        if (critical && optIn)
+            throw new Error(`Default extension ${id} cannot be both critical and optIn`);
         if (!id)
             throw new Error(`Default extension entry ${index + 1} is missing id`);
         if (!source)
@@ -200,7 +203,7 @@ export function readDefaultExtensions(path, { allowMissing = false } = {}) {
         if (seenSources.has(identity))
             throw new Error(`Duplicate default extension source: ${source}`);
         seenSources.add(identity);
-        return { id, aliases, replaces, migrateReplacements, critical, source, description };
+        return { id, aliases, replaces, migrateReplacements, critical, optIn, source, description };
     });
 }
 function rawDisabledDefaultExtensionIds(settings) {
@@ -213,6 +216,30 @@ function rawDisabledDefaultExtensionIds(settings) {
     return new Set(values
         .filter((value) => typeof value === "string" && value.trim().length > 0)
         .map((value) => value.trim()));
+}
+function rawEnabledDefaultExtensionIds(settings) {
+    if (!isPlainObject(settings))
+        return new Set();
+    const tlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;
+    const values = tlh?.enabledDefaultExtensions;
+    if (!Array.isArray(values))
+        return new Set();
+    return new Set(values
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim()));
+}
+/** Opt-in defaults stay off until the user lists them in tlh.enabledDefaultExtensions. */
+export function optInPendingIds(settings, defaultExtensions) {
+    const enabled = rawEnabledDefaultExtensionIds(settings);
+    const pending = new Set();
+    for (const extension of defaultExtensions) {
+        if (extension.optIn !== true)
+            continue;
+        if ([extension.id, ...extension.aliases].some((id) => enabled.has(id)))
+            continue;
+        pending.add(extension.id);
+    }
+    return pending;
 }
 function rawDefaultExtensionProvenance(settings) {
     if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) {
@@ -259,6 +286,8 @@ export function disabledDefaultExtensionIds(settings, defaultExtensions = []) {
                 ids.delete(alias);
         }
     }
+    for (const id of optInPendingIds(settings, defaultExtensions))
+        ids.add(id);
     return ids;
 }
 export function defaultExtensionPackageIdentities(extension) {

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
+import { RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, defaultExtensionPackageFilterDisables, disabledDefaultExtensionIds as disabledIdsFromSettings, optInPendingIds, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
 import { assertNotInNormalPiConfig, assignOptionValue, backupPathWithTimestamp, defaultTlhSettingsPath, expandHomePath, readJsonFile, } from "./lib/tlh-install-utils.mjs";
 import { evaluateMcpAdapterCutover, mcpAdapterCutoverNotice, mcpAdapterManagedIdentityPreservation, mcpAdapterMigrationFrozen, mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { parseMcpMigrationArgs, runMcpAdapterMigration } from "./lib/mcp-adapter-migration.mjs";
@@ -118,7 +118,29 @@ function orderedDisabledIds(ids, defaultExtensions) {
 }
 function setDisabledIds(settings, ids, defaultExtensions) {
     settings.tlh ??= {};
-    settings.tlh.disabledDefaultExtensions = orderedDisabledIds(ids, defaultExtensions);
+    // Opt-in defaults are off unless listed in enabledDefaultExtensions, so their
+    // pending state is never persisted as a disable marker.
+    const optInIds = new Set(defaultExtensions
+        .filter((extension) => extension.optIn === true)
+        .map((extension) => extension.id));
+    const persisted = new Set([...ids].filter((id) => !optInIds.has(id)));
+    settings.tlh.disabledDefaultExtensions = orderedDisabledIds(persisted, defaultExtensions);
+}
+function setOptInEnabled(settings, extension, enabled) {
+    if (extension.optIn !== true)
+        return;
+    settings.tlh ??= {};
+    const names = new Set([extension.id, ...extension.aliases]);
+    const current = Array.isArray(settings.tlh.enabledDefaultExtensions)
+        ? settings.tlh.enabledDefaultExtensions
+        : [];
+    const next = current.filter((value) => !(typeof value === "string" && names.has(value.trim())));
+    if (enabled)
+        next.push(extension.id);
+    if (next.length === 0)
+        delete settings.tlh.enabledDefaultExtensions;
+    else
+        settings.tlh.enabledDefaultExtensions = next;
 }
 function findDefaultExtension(defaultExtensions, id) {
     return defaultExtensions.find((extension) => extension.id === id || extension.aliases.includes(id));
@@ -244,6 +266,11 @@ function defaultStatus(settings, extension, defaultExtensions) {
     const packageIndex = findPackageIndex(settings, extension.source);
     const entry = packageIndex === -1 ? undefined : settingsPackages(settings)[packageIndex];
     const configuredSource = entry ? packageSourceOf(entry) : undefined;
+    if (optInPendingIds(settings, defaultExtensions).has(extension.id))
+        return {
+            enabled: false,
+            reason: `opt-in; not installed by default. Run 'tlh defaults enable ${extension.id}' to enable`,
+        };
     if (markerDisabled)
         return { enabled: false, reason: "disabled" };
     if (defaultExtensionPackageFilterDisables(settings, extension))
@@ -433,6 +460,7 @@ function commandDisable(settings, defaultExtensions, id) {
     const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
     disabledIds.add(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
+    setOptInEnabled(settings, extension, false);
     disablePackage(settings, extension);
     if (extension.id === MCPORTER_EXTENSION_ID) {
         applyBuiltinMcpExclusionOnDisable(settings);
@@ -447,6 +475,7 @@ function commandEnable(settings, defaultExtensions, id, mcpDecision) {
     const disabledIds = disabledIdsFromSettings(settings, defaultExtensions);
     disabledIds.delete(extension.id);
     setDisabledIds(settings, disabledIds, defaultExtensions);
+    setOptInEnabled(settings, extension, true);
     if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
         enablePackage(settings, extension);
     }

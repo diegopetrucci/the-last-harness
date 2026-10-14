@@ -14,8 +14,9 @@
   },
   {
     "id": "antigravity-auth",
+    "optIn": true,
     "source": "npm:@cortexkit/pi-antigravity-auth@3.0.3",
-    "description": "Sign in to Google Antigravity with `/login google` to use Gemini, Claude, and GPT-OSS models on Antigravity quota."
+    "description": "Sign in to Google Antigravity with `/login google` to use Gemini, Claude, and GPT-OSS models on Antigravity quota. Opt-in: unofficial and may violate Google's Terms of Service, risking account suspension or bans."
   },
   {
     "id": "mcporter",
