@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Project-agent (`embedded.<slug>`) dispatch, resume, and steer now check the session UUID that TLH stamps on project-agent snapshots instead of the session file path, so they are no longer always rejected in persisted sessions. [#782](https://github.com/diegopetrucci/the-last-harness/issues/782)
 - The collapsed foreground subagent card now aligns the live-detail hint with the mode or agent name instead of the detail column, keeping it as the last line for both single and parallel/chain runs.
 - Background subagent completions and async control notices no longer add a synthetic `[tlh] …` user message. They now wake an idle session natively with Pi 1.2.0's `triggerTurn`, so the wake turn keeps TLH's system prompt and the transcript no longer shows an extra user turn. [#470](https://github.com/diegopetrucci/the-last-harness/issues/470), [#468](https://github.com/diegopetrucci/the-last-harness/issues/468)
 

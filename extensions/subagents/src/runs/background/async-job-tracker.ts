@@ -15,6 +15,7 @@ import {
   SUBAGENT_ASYNC_RESTORED_EVENT,
   type SubagentAsyncRestoredEvent,
 } from "../../shared/types.ts";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import {
@@ -713,13 +714,15 @@ export function createAsyncJobTracker(
     // strand terminal references after their result/status files are removed.
     // A timer from another session is stale and must not survive into an id
     // reuse in the new session.
+    // Captures carry the session UUID, while state.currentSessionId is the
+    // session file path in persisted sessions, so compare against the UUID.
+    // Without a ctx/UUID there is no same-session proof: clear the timer.
+    const projectSessionId = ctx ? resolveProjectAgentSessionId(ctx.sessionManager) : null;
     for (const [asyncId, pending] of projectReferenceCleanupTimers) {
       const sameSession =
-        typeof state.currentSessionId === "string" &&
+        projectSessionId !== null &&
         pending.captures.length > 0 &&
-        pending.captures.every(
-          (capture) => capture.provenance.sessionId === state.currentSessionId,
-        );
+        pending.captures.every((capture) => capture.provenance.sessionId === projectSessionId);
       if (!sameSession) {
         clearTimeout(pending.timer);
         projectReferenceCleanupTimers.delete(asyncId);

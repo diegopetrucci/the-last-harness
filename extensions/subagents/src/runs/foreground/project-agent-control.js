@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { discoverAgentsWithProjectSnapshot, } from "../../agents/agents.js";
 import { PROJECT_AGENT_DIRECTORY, PROJECT_AGENT_PACKAGE, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
 import { createProjectAgentRunCapture, lookupProjectAgentRunReference, normalizeProjectAgentRunCapture, projectAgentRunCaptureEquals, resolveProjectAgentRunReference, resolveProjectAgentSnapshot, } from "../../agents/project-agent-snapshot.js";
-import { resolveCurrentSessionId } from "../../shared/session-identity.js";
+import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";
 import { readStatus } from "../../shared/utils.js";
 const EMBEDDED_PROJECT_AGENT_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
 function isEmbeddedProjectAgentName(value) {
@@ -373,7 +373,10 @@ async function authorizeRetainedProjectAgentRun(input) {
     if (persisted.provenance.agent !== input.target.agent) {
         throw projectRunAuthorizationError("the selected entry does not match persisted provenance.");
     }
-    const currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+    const currentSessionId = resolveProjectAgentSessionId(input.ctx.sessionManager);
+    if (!currentSessionId) {
+        throw projectRunAuthorizationError("current session identity is unavailable.");
+    }
     if (currentSessionId !== persisted.provenance.sessionId) {
         throw projectRunAuthorizationError("the run belongs to a different session.");
     }
@@ -483,7 +486,10 @@ export async function authorizePersistedProjectAgentRun(input) {
     if (persisted.provenance.agent !== input.target.agent) {
         throw projectRunAuthorizationError("the selected entry does not match persisted provenance.");
     }
-    const currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+    const currentSessionId = resolveProjectAgentSessionId(input.ctx.sessionManager);
+    if (!currentSessionId) {
+        throw projectRunAuthorizationError("current session identity is unavailable.");
+    }
     if (currentSessionId !== persisted.provenance.sessionId) {
         throw projectRunAuthorizationError("the run belongs to a different session.");
     }
