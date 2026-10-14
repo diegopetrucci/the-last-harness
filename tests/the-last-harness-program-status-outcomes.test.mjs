@@ -194,7 +194,11 @@ test("error emitted when run settles as error (no retry)", async () => {
   timers.advance(0);
   await flushAsyncWork();
 
-  assert.ok(output.writes.includes(errorSeq), "must emit error when settled as error");
+  // The error record now legitimately carries a msg (first error line).
+  assert.deepEqual(output.writes, [
+    workingSeq,
+    `\x1b]7501;state=error:app=tlh:msg=${Buffer.from("provider err").toString("base64")}\x1b\\`,
+  ]);
   reporter.dispose();
 });
 
@@ -294,6 +298,14 @@ test("program-status reporter keeps working while an active child remains after 
     primaryReasons: [],
   });
   await flushAsyncWork();
-  assert.deepEqual(output.writes, [workingSeq], "active child activity must remain working");
+  // Async-only work carries "1 subagent running" as msg (base64).
+  assert.deepEqual(
+    output.writes,
+    [
+      `\x1b]7501;state=working:app=tlh:msg=${Buffer.from("1 subagent running").toString("base64")}\x1b\\`,
+      "\x1b]7501;state=working:id=subagent/child-1\x1b\\", // child record follows root
+    ],
+    "active child activity must remain working",
+  );
   reporter.dispose();
 });

@@ -72,6 +72,25 @@ export type TlhEffectiveActivitySnapshot = {
    * This is an internal detail of the snapshot and is NOT propagated on the shared bus payload.
    */
   lastRunOutcome?: "completed" | "aborted" | "error";
+  /**
+   * Title (ui_prompt_start.title) of the most recently opened prompt that is still open.
+   * Only set while waitingForUser and the prompt supplied a non-empty title. Prompt bodies
+   * are never stored. Internal to the snapshot; NOT on the shared bus payload.
+   */
+  waitingForUserTitle?: string;
+  /** True while any primary:compaction reason is active. Internal; NOT on the bus payload. */
+  compacting?: true;
+  /**
+   * First non-empty trimmed line of the settled run's error message. Set only when
+   * lastRunOutcome is "error". Internal; NOT on the bus payload.
+   */
+  lastRunErrorLine?: string;
+  /**
+   * Agent names of active async jobs, keyed by run id (only jobs whose
+   * subagent:async-started payload named agents). Task text is never stored.
+   * Internal; NOT on the bus payload.
+   */
+  activeAsyncJobAgents?: Record<string, string[]>;
 };
 
 type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
@@ -150,6 +169,8 @@ type AsyncJobRecord = {
   /** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
   pid?: number;
   sessionId?: string;
+  /** Agent name(s) from the subagent:async-started payload; used for child titles. */
+  agents?: string[];
   source: "started" | "control" | "rehydrated" | "restored";
 };
 
@@ -194,6 +215,34 @@ function isAsyncControlContext(
     readNonEmptyStringField(data, "source") ?? readNonEmptyStringField(event, "source")
   )?.toLowerCase();
   return source === "async" || source === "background";
+}
+
+/** Reads agent name(s) from an async-started payload's `agent` / `agents` fields only. */
+function readAsyncAgentNames(data: Record<string, unknown>): string[] {
+  const valid = (value: unknown): string[] =>
+    typeof value === "string" && value.trim().length > 0 ? [value.trim()] : [];
+  if (Array.isArray(data.agents) && data.agents.length > 0) {
+    // Multiplicity matters: parallel agents with the same name are counted separately.
+    const names = data.agents.flatMap(valid);
+    if (names.length > 0) return names;
+  }
+  return valid(data.agent);
+}
+
+/** First non-empty trimmed line of the last assistant message's errorMessage, if any. */
+function deriveAgentEndErrorLine(messages: readonly unknown[] | undefined): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isRecord(message) || message.role !== "assistant") continue;
+    if (typeof message.errorMessage !== "string") return undefined;
+    for (const line of message.errorMessage.split(/\r\n|[\r\n\u2028\u2029]/)) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): boolean {
@@ -281,6 +330,9 @@ export function createTlhEffectiveActivityTracker(
   let pendingOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
   /** Outcome committed at agent_settled; undefined until the first run settles. */
   let lastRunOutcome: TlhEffectiveActivitySnapshot["lastRunOutcome"] = undefined;
+  /** Error line captured at agent_end; committed with the outcome at agent_settled. */
+  let pendingErrorLine: string | undefined;
+  let lastRunErrorLine: string | undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
   /**
@@ -291,6 +343,8 @@ export function createTlhEffectiveActivityTracker(
    * Cleared to empty when uiPromptDepth returns to 0.
    */
   const uiPromptKindStack: (UIPromptKind | undefined)[] = [];
+  /** Parallel to uiPromptKindStack: prompt titles (undefined when absent/blank). */
+  const uiPromptTitleStack: (string | undefined)[] = [];
   let lastSnapshotKey = "0::0::0::::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
@@ -402,8 +456,10 @@ export function createTlhEffectiveActivityTracker(
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
     const sessionId = incoming.sessionId ?? existing?.sessionId;
+    const agents = incoming.agents ?? existing?.agents;
     return {
       source: incoming.source,
+      ...(agents && agents.length > 0 ? { agents } : {}),
       ...(asyncDir ? { asyncDir } : {}),
       ...(pid !== undefined ? { pid } : {}),
       ...(sessionId ? { sessionId } : {}),
@@ -594,6 +650,17 @@ export function createTlhEffectiveActivityTracker(
     // Only propagate kind when it is a recognised UIPromptKind (not undefined).
     const waitingForUserKind: UIPromptKind | undefined =
       topKind !== undefined ? topKind : undefined;
+    const waitingForUserTitle = waitingForUser
+      ? uiPromptTitleStack[uiPromptTitleStack.length - 1]
+      : undefined;
+    const compacting = [...primaryReasons.keys()].some((reason) =>
+      reason.startsWith("primary:compaction:"),
+    );
+    const activeAsyncJobAgents: Record<string, string[]> = {};
+    for (const [runId, record] of [...activeAsyncJobs].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (record.agents && record.agents.length > 0)
+        activeAsyncJobAgents[runId] = [...record.agents];
+    }
     return {
       inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
       waitingForUser,
@@ -602,6 +669,10 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons: [...primaryReasons.keys()].sort(),
       activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
       ...(lastRunOutcome !== undefined ? { lastRunOutcome } : {}),
+      ...(waitingForUserTitle !== undefined ? { waitingForUserTitle } : {}),
+      ...(compacting ? { compacting: true as const } : {}),
+      ...(lastRunOutcome === "error" && lastRunErrorLine !== undefined ? { lastRunErrorLine } : {}),
+      ...(Object.keys(activeAsyncJobAgents).length > 0 ? { activeAsyncJobAgents } : {}),
     };
   };
 
@@ -613,7 +684,12 @@ export function createTlhEffectiveActivityTracker(
       snapshot.waitingForUserKind ?? "",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
+      Object.entries(snapshot.activeAsyncJobAgents ?? {})
+        .map(([runId, names]) => `${runId}=${names.join("+")}`)
+        .join(","),
       snapshot.lastRunOutcome ?? "",
+      snapshot.waitingForUserTitle ?? "",
+      snapshot.lastRunErrorLine ?? "",
     ].join("::");
 
   const notifyIfChanged = (): void => {
@@ -653,6 +729,8 @@ export function createTlhEffectiveActivityTracker(
       runActive = false;
       pendingOutcome = undefined;
       lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
     },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
@@ -712,8 +790,11 @@ export function createTlhEffectiveActivityTracker(
       runActive = false;
       pendingOutcome = undefined;
       lastRunOutcome = undefined;
+      pendingErrorLine = undefined;
+      lastRunErrorLine = undefined;
       uiPromptDepth = 0;
       uiPromptKindStack.length = 0;
+      uiPromptTitleStack.length = 0;
       notifyIfChanged();
       listeners.clear();
     },
@@ -739,6 +820,9 @@ export function createTlhEffectiveActivityTracker(
       pendingOutcome = deriveAgentEndOutcome(
         Array.isArray(event.messages) ? event.messages : undefined,
       );
+      pendingErrorLine = deriveAgentEndErrorLine(
+        Array.isArray(event.messages) ? event.messages : undefined,
+      );
       if (looksLikeRetryableAgentEnd(event.messages)) {
         scheduleRetryGrace("agent-end");
       }
@@ -752,10 +836,13 @@ export function createTlhEffectiveActivityTracker(
       // events always provide the required native boolean.
       if (event.aborted) {
         lastRunOutcome = "aborted";
+        lastRunErrorLine = undefined;
       } else if (pendingOutcome !== undefined) {
         lastRunOutcome = pendingOutcome;
+        lastRunErrorLine = pendingOutcome === "error" ? pendingErrorLine : undefined;
       }
       pendingOutcome = undefined;
+      pendingErrorLine = undefined;
       runActive = false;
       clearRetryGrace();
       notifyIfChanged();
@@ -807,13 +894,17 @@ export function createTlhEffectiveActivityTracker(
           ? kind
           : undefined;
       uiPromptKindStack.push(recordedKind);
+      const title = typeof event?.title === "string" ? event.title.trim() : "";
+      uiPromptTitleStack.push(title.length > 0 ? title : undefined);
       notifyIfChanged();
     },
     handleUIPromptEnd(_event) {
       if (uiPromptDepth === 0) return;
       uiPromptDepth -= 1;
       uiPromptKindStack.pop();
+      uiPromptTitleStack.pop();
       if (uiPromptDepth === 0) {
+        uiPromptTitleStack.length = 0;
         // Defensive: ensure stack is cleared when depth reaches 0.
         uiPromptKindStack.length = 0;
       }
@@ -861,6 +952,8 @@ export function createTlhEffectiveActivityTracker(
       if (sessionId) record.sessionId = sessionId;
       const pid = toValidPid(data.pid);
       if (pid !== undefined) record.pid = pid;
+      const agents = readAsyncAgentNames(data);
+      if (agents.length > 0) record.agents = agents;
       setAsyncJobActive(data.id, record);
       notifyIfChanged();
     },
