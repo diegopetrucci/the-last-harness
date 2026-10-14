@@ -2,6 +2,14 @@
 
 Release builds with TelemetryDeck identifiers configured send pseudonymous telemetry from interactive `tlh` runs.
 
+## Local session diagnostics are separate
+
+`tlh sessions --mode subagents` is a local, read-only diagnostic command. It streams the active isolated profile's session JSONL files, skips `run-history.jsonl`, and reports validated subagent runs, usage/cost, runtime, operation coverage, lineage, and synthetic-wakeup attribution. It does not send a signal, contact TelemetryDeck, read async artifact directories, or change session/profile files. A live or malformed file is represented as a coverage gap.
+
+The command's default JSON is privacy-safe: it omits paths, cwd, prompts, tasks, outputs, arguments, settings, and raw identifiers. Run references remain correlated through stable opaque values scoped to the report. Use `--include-paths` only when the local report needs the inspected profile and sessions-directory provenance. The session files themselves remain local and are not modified; the scanner retains bounded allowlisted projections rather than full raw messages, while the runtime's transcript retention is unchanged.
+
+This local report must not be confused with the remote signals below. Remote telemetry remains unchanged and continues to exclude token usage, cost, session/run/tool identifiers, prompts, outputs, arguments, paths, and settings.
+
 ## Signals and frequency
 
 ### `Tlh.launched`

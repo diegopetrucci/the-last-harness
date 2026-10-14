@@ -25,7 +25,14 @@ import {
 import { terminalResultForStatusStep } from "../../shared/terminal-result.ts";
 import { boundChildError } from "../shared/child-protocol.ts";
 import { isAsyncStatusReadError } from "./async-status-boundary.ts";
-
+import {
+  finalizeSubagentRunTelemetry,
+  mergeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+  resolveSubagentTelemetryOutcome,
+  resolveParallelSubagentTelemetryOutcome,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 export type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
 type ReconcileAsyncRunOptions = {
@@ -111,6 +118,18 @@ function failedStatus(status: AsyncStatus, now: number, message: string): AsyncS
           terminalResult: terminalResultForStatusStep(step, "failed"),
         },
   );
+  // Transition telemetry to a failed outcome, preserving authoritative terminal outcomes.
+  const existingTelemetry = normalizeSubagentRunTelemetry(status.telemetry);
+  const repairedTelemetry = existingTelemetry
+    ? finalizeSubagentRunTelemetry(
+        existingTelemetry,
+        existingTelemetry.outcome?.state !== undefined &&
+          !["queued", "running"].includes(existingTelemetry.outcome.state)
+          ? existingTelemetry.outcome
+          : { state: "failed", terminationReason: "process_exit" },
+        now,
+      )
+    : undefined;
   return {
     ...status,
     state: "failed",
@@ -120,6 +139,7 @@ function failedStatus(status: AsyncStatus, now: number, message: string): AsyncS
     endedAt: status.endedAt ?? now,
     lastUpdate: now,
     ...(steps ? { steps } : {}),
+    ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
   };
 }
 
@@ -171,7 +191,10 @@ function resultArtifact(
     asyncDir,
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
-  };
+    // Copy the committed telemetry envelope into the result artifact so session analysis
+    // can read it even when no earlier result artifact was written by the runner.
+    ...(status.telemetry ? { telemetry: status.telemetry } : {}),
+  } satisfies AsyncResultArtifact;
 }
 
 const protectedLifecycle = (status: AsyncStatus): boolean =>
@@ -279,6 +302,146 @@ export function reconcileNestedAsyncDescendants(
 
 export { checkPidLiveness };
 
+/** Read the result artifact for stale repair, if available. */
+function readResultForRepair(resultPath: string):
+  | {
+      state: string;
+      success?: boolean;
+      results?: Array<Record<string, unknown>>;
+      telemetry?: SubagentRunTelemetry;
+    }
+  | undefined {
+  try {
+    if (!fs.existsSync(resultPath)) return undefined;
+    const parsed: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const rec = parsed as Record<string, unknown>;
+    if (typeof rec.state !== "string") return undefined;
+    return {
+      state: rec.state,
+      success: typeof rec.success === "boolean" ? rec.success : undefined,
+      results: Array.isArray(rec.results)
+        ? (rec.results as Array<Record<string, unknown>>)
+        : undefined,
+      telemetry: normalizeSubagentRunTelemetry(rec.telemetry),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build a repaired status from an existing result artifact when the runner
+ * exited without updating status to a terminal state. Adopts the result's
+ * telemetry when it carries an authoritative terminal outcome; synthesizes
+ * an outcome from the result state/steps otherwise.
+ */
+function repairStatusFromResult(
+  asyncDir: string,
+  observed: AsyncStatus,
+  resultPath: string,
+  now: number,
+): ReconcileAsyncRunResult | undefined {
+  const repair = readResultForRepair(resultPath);
+  if (!repair) return undefined;
+  const isComplete = repair.state === "complete" || repair.state === "completed";
+  const isFailed = repair.state === "failed";
+  if (!isComplete && !isFailed) return undefined;
+
+  const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, observed.telemetry);
+
+  // Adopt the result telemetry outcome when it is a valid terminal state; otherwise synthesize.
+  const isTerminalTelemetryState = (state?: string): boolean =>
+    state === "completed" || state === "failed" || state === "cancelled" || state === "paused";
+  const resultOutcome = mergedTelemetry?.outcome;
+  const runOutcome =
+    resultOutcome && isTerminalTelemetryState(resultOutcome.state)
+      ? resultOutcome
+      : resolveSubagentTelemetryOutcome({
+          state: repair.state,
+          success: isComplete,
+          terminationReason: isFailed ? "process_exit" : undefined,
+        });
+
+  // Update per-child telemetry steps based on the result file's child outcomes.
+  let repairedTelemetry: SubagentRunTelemetry | undefined = mergedTelemetry;
+  if (repairedTelemetry) {
+    const updatedSteps = repairedTelemetry.steps.map((step) => {
+      // Skip already-terminal step outcomes; they are authoritative.
+      if (step.outcome && isTerminalTelemetryState(step.outcome.state)) return step;
+      const child = repair.results?.[step.index] as Record<string, unknown> | undefined;
+      if (!child) return { ...step, ...(runOutcome ? { outcome: runOutcome } : {}) };
+      const childOutcome = resolveSubagentTelemetryOutcome({
+        success: child.success === true,
+        terminationReason:
+          typeof child.terminationReason === "string"
+            ? (child.terminationReason as import("../../shared/types.ts").SubagentTerminationReason)
+            : isFailed
+              ? "process_exit"
+              : undefined,
+      });
+      return { ...step, ...(childOutcome ? { outcome: childOutcome } : {}) };
+    });
+    const aggregateOutcome =
+      updatedSteps.length > 1
+        ? (resolveParallelSubagentTelemetryOutcome(
+            updatedSteps.map((s) => (s.outcome ? { ...s.outcome } : {})),
+          ) ?? runOutcome)
+        : runOutcome;
+    repairedTelemetry = {
+      ...repairedTelemetry,
+      steps: updatedSteps,
+      ...(aggregateOutcome ? { outcome: aggregateOutcome } : {}),
+    };
+  }
+
+  // Build the repaired status, updating step statuses to match the result.
+  const repairedSteps = observed.steps?.map((step) => {
+    if (isCompletedLifecycleStepState(step.status) || step.status === "failed") return step;
+    const child = repair.results?.[observed.steps!.indexOf(step)] as
+      | Record<string, unknown>
+      | undefined;
+    const childSuccess = child?.success === true;
+    return {
+      ...step,
+      status: childSuccess ? ("complete" as const) : ("failed" as const),
+      endedAt: step.endedAt ?? now,
+      exitCode: childSuccess ? (step.exitCode ?? 0) : (step.exitCode ?? 1),
+      ...(typeof child?.error === "string" ? { error: child.error } : {}),
+      terminationReason:
+        step.terminationReason ?? (childSuccess ? undefined : ("process_exit" as const)),
+      terminalResult: terminalResultForStatusStep(step, childSuccess ? "complete" : "failed"),
+    };
+  });
+
+  const repairedStatus: AsyncStatus = {
+    ...observed,
+    state: isComplete ? "complete" : "failed",
+    pid: undefined,
+    error: isFailed ? (observed.error ?? "Async run failed.") : undefined,
+    endedAt: observed.endedAt ?? now,
+    lastUpdate: now,
+    ...(repairedSteps ? { steps: repairedSteps } : {}),
+    ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
+  };
+
+  try {
+    writeAtomicJson(path.join(asyncDir, "status.json"), repairedStatus);
+  } catch {
+    return { status: observed, repaired: false, resultPath };
+  }
+
+  appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
+    type: "subagent.run.repaired_stale",
+    ts: now,
+    runId: observed.runId,
+    resultPath,
+    message: `Stale run repaired from existing result artifact (state=${repairedStatus.state}).`,
+  });
+
+  return { status: repairedStatus, repaired: true, resultPath };
+}
+
 export function reconcileAsyncRun(
   asyncDir: string,
   options: ReconcileAsyncRunOptions = {},
@@ -287,8 +450,19 @@ export function reconcileAsyncRun(
   if (!observed) return { status: null, repaired: false };
   const runId = observed.runId || path.basename(asyncDir);
   const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
-  if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid))
+  if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid)) {
+    // Attempt result-based repair when the run is non-terminal but has no live PID.
+    if (!isTerminalLifecycleState(observed.state) && !validPid(observed.pid)) {
+      const resultRepair = repairStatusFromResult(
+        asyncDir,
+        observed,
+        resultPath,
+        options.now?.() ?? Date.now(),
+      );
+      if (resultRepair) return resultRepair;
+    }
     return { status: observed, repaired: false, resultPath };
+  }
 
   const liveness = checkPidLiveness(observed.pid, options.kill);
   if (liveness !== "dead" && observed.state !== "running")

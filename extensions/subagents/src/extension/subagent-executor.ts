@@ -496,6 +496,7 @@ async function runAsyncPath(
       timeoutMs: data.timeoutMs,
       projectAgentIdentities: data.projectAgentIdentities,
       ticketBodies,
+      ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
     });
   }
 
@@ -560,6 +561,7 @@ async function runAsyncPath(
       projectAgent: data.projectAgentIdentities?.find(
         (identity) => `embedded.${identity.slug}` === params.agent,
       ),
+      ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
     });
   }
 

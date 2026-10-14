@@ -106,4 +106,6 @@ export interface ExecutorDeps {
   /** Narrow functional seam for exercising continuation authorization without spawning a child. */
   executeAsyncSingle?: typeof import("../background/async-execution.ts").executeAsyncSingle;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+  /** Parent-captured telemetry provenance forwarded to child runs. */
+  telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
 }

@@ -1,78 +1,43 @@
 import assert from "node:assert/strict";
-import { symlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   aggregateCoverage,
+  analyzeSubagentSessions,
   extractSubagentCorrelations,
+  extractSubagentCorrelationsWithStatus,
   readSessionHeader,
+  recordCorrelationEvidenceFailures,
   scanSessionFile,
 } from "../scripts/lib/session-analysis.mjs";
 import { makeTempDir } from "./test-fixture-helpers.mjs";
 
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
-
-function sessionHeader(id = "sess-001", cwd = "/workspace") {
-  return JSON.stringify({
-    type: "session",
-    version: 1,
-    id,
-    timestamp: "2026-01-01T00:00:00.000Z",
-    cwd,
-  });
-}
-
-function assistantMessageLine(timestamp, toolCalls = []) {
-  const content = toolCalls.map(({ toolCallId, toolName }) => ({
-    type: "toolCall",
-    toolCallId,
-    toolName,
-  }));
-  return JSON.stringify({
-    type: "message",
-    message: {
-      role: "assistant",
-      model: "claude-opus-5",
-      provider: "anthropic",
-      api: "bedrock",
-      responseId: "resp-1",
-      stopReason: "tool_use",
-      usage: {},
-      content,
-      timestamp,
-    },
-  });
-}
-
-function toolResultLine(timestamp, toolCallId, toolName = "bash", options = {}) {
-  return JSON.stringify({
-    type: "message",
-    message: {
-      role: "toolResult",
-      toolCallId,
-      toolName,
-      isError: options.isError ?? false,
-      content: [{ type: "text", text: options.output ?? "ok" }],
-      ...(options.details ? { details: options.details } : {}),
-      timestamp,
-    },
-  });
-}
-
-function writeFixture(t, lines, { noTrailingNewline = false, filename = "session.jsonl" } = {}) {
-  const dir = makeTempDir("session-analysis-test-", t);
-  const filePath = join(dir, filename);
-  const content = lines.join("\n") + (noTrailingNewline ? "" : "\n");
-  writeFileSync(filePath, content, "utf8");
-  return filePath;
-}
+import {
+  assistantMessageLine,
+  sessionHeader,
+  toolResultLine,
+  writeFixture,
+} from "./session-analysis-fixtures.mjs";
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test("subagent analysis uses an acyclic shared coverage boundary", () => {
+  const sessionAnalysis = readFileSync(
+    new URL("../scripts/lib/session-analysis.mjs", import.meta.url),
+    "utf8",
+  );
+  const subagentAnalysis = readFileSync(
+    new URL("../scripts/lib/subagent-analysis.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(subagentAnalysis, /from ["']\.\/session-analysis-coverage\.mjs["']/);
+  assert.doesNotMatch(subagentAnalysis, /from ["']\.\/session-analysis\.mjs["']/);
+  assert.match(sessionAnalysis, /from ["']\.\/subagent-analysis\.mjs["']/);
+});
 
 test("scanSessionFile: parses session header and a simple tool call pair", async (t) => {
   const filePath = writeFixture(t, [
@@ -96,6 +61,208 @@ test("scanSessionFile: parses session header and a simple tool call pair", async
   assert.equal(result.observedToolCallCount, 1);
   assert.equal(result.duplicateToolCallIdCount, 0);
   assert.equal(result.invalidTimestampPairCount, 0);
+});
+
+test("scanSessionFile: accepts persisted Pi tool fields and top-level custom messages", async (t) => {
+  const compositeId = "call_provider_123|fc_provider_123";
+  const filePath = writeFixture(t, [
+    sessionHeader("persisted-shape"),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        // Pi persists this message timestamp as epoch milliseconds.
+        timestamp: 1767225600000,
+        content: [{ type: "toolCall", id: compositeId, name: "subagent", arguments: {} }],
+      },
+      // The outer persisted envelope retains the usable ISO timestamp.
+      timestamp: "2026-01-01T00:00:00.000Z",
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: compositeId,
+        toolName: "subagent",
+        isError: false,
+        content: [],
+        details: { runId: "run-persisted", status: "completed", agent: "developer" },
+        timestamp: 1767225601000,
+      },
+      timestamp: "2026-01-01T00:00:01.000Z",
+    }),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background task completed: developer",
+      timestamp: "2026-01-01T00:00:02.000Z",
+    }),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent-notify",
+      content: "Background tasks completed: developer",
+      details: {
+        schemaVersion: 1,
+        kind: "subagent_completion_batch",
+        batchId: "batch-persisted|opaque",
+        batchIndex: 0,
+        batchCount: 1,
+        triggersTurn: true,
+        completions: [
+          { agent: "developer", status: "completed", asyncId: "async-persisted|opaque" },
+        ],
+      },
+      timestamp: "2026-01-01T00:00:02.500Z",
+    }),
+    JSON.stringify({
+      type: "custom_message",
+      customType: "subagent_control_notice",
+      content: "Subagent needs attention: developer",
+      details: {
+        source: "async",
+        event: {
+          type: "needs_attention",
+          to: "needs_attention",
+          ts: 1767225602000,
+          runId: "run-persisted-control|opaque",
+          agent: "developer",
+          index: 0,
+          message: "attention",
+          reason: "idle",
+        },
+      },
+      timestamp: "2026-01-01T00:00:03.000Z",
+    }),
+  ]);
+
+  const result = await scanSessionFile(filePath);
+  assert.equal(result.toolPairs.length, 1);
+  assert.equal(result.toolPairs[0]?.toolCallId, compositeId);
+  assert.equal(result.toolPairs[0]?.callTimestamp, "2026-01-01T00:00:00.000Z");
+  assert.equal(result.toolPairs[0]?.resultTimestamp, "2026-01-01T00:00:01.000Z");
+  assert.equal(result.toolPairs[0]?.observedLatencyMs, 1000);
+  assert.equal(result.entries.filter((entry) => entry.message.customType).length, 3);
+
+  const analysis = analyzeSubagentSessions([result]);
+  assert.equal(analysis.coverage.evidence.completionNotifications, 2);
+  assert.equal(analysis.coverage.evidence.controlNotifications, 1);
+  assert.equal(analysis.coverage.evidence.legacyProseNotifications, 1);
+  assert.equal(analysis.coverage.evidence.completionBatchesObserved, 1);
+  assert.equal(analysis.coverage.evidence.completionBatchesComplete, 1);
+});
+
+test("subagent analysis: classifies malformed persisted calls as one unclassified operation", async (t) => {
+  const compositeId = "call_provider_malformed|fc_provider_malformed";
+  const filePath = writeFixture(t, [
+    sessionHeader("persisted-malformed-call"),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        // Pi persists provider tool calls with id/name and may retain malformed
+        // serialized arguments from a failed tool invocation.
+        timestamp: 1767225600000,
+        content: [
+          {
+            type: "toolCall",
+            id: compositeId,
+            name: "subagent",
+            arguments: '{"agent":',
+          },
+        ],
+      },
+      timestamp: "2026-01-01T00:00:00.000Z",
+    }),
+    toolResultLine("2026-01-01T00:00:01.000Z", compositeId, "subagent"),
+  ]);
+
+  const scan = await scanSessionFile(filePath);
+  assert.equal(scan.toolPairs.length, 1);
+  assert.ok(scan.projectionGapCount > 0);
+
+  const analysis = analyzeSubagentSessions([scan]);
+  assert.equal(analysis.operations.malformedArguments, 1);
+  assert.equal(analysis.operations.unclassified, 1);
+  assert.equal(analysis.operations.launches.total, 0);
+  assert.equal(analysis.operations.management.total, 0);
+});
+
+test("scanSessionFile: accepts management-mode subagent details without a projection gap", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("management-mode"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "management-call", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "management-call", "subagent", {
+      details: { mode: "management", results: [] },
+    }),
+  ]);
+
+  const result = await scanSessionFile(filePath);
+  assert.equal(result.toolPairs.length, 1);
+  assert.equal(result.projectionGapCount, 0);
+  assert.deepEqual(result.toolPairs[0]?.details, { mode: "management", results: [] });
+
+  const runFilePath = writeFixture(t, [
+    sessionHeader("management-run"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "management-run-call", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "management-run-call", "subagent", {
+      details: { runId: "management-run-id", mode: "management", results: [] },
+    }),
+  ]);
+  const analysis = analyzeSubagentSessions([await scanSessionFile(runFilePath)]);
+  assert.equal(analysis.runs[0]?.mode, "management");
+
+  const legacyChainLines = [sessionHeader("legacy-chain-gaps")];
+  for (let index = 0; index < 5; index++) {
+    const toolCallId = `legacy-chain-${index}`;
+    legacyChainLines.push(
+      assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId, toolName: "subagent" }]),
+      toolResultLine("2026-01-01T00:00:01.000Z", toolCallId, "subagent", {
+        details: { mode: "chain", results: [] },
+      }),
+    );
+  }
+  const legacyChain = await scanSessionFile(writeFixture(t, legacyChainLines));
+  assert.equal(legacyChain.projectionGapCount, 5);
+});
+
+test("scanSessionFile: exposes malformed persisted subagent evidence as projection gaps", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("projection-gaps"),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        content: [{ type: "toolCall", id: { malformed: true }, name: "subagent" }],
+      },
+    }),
+  ]);
+
+  const result = await scanSessionFile(filePath);
+  assert.ok(result.projectionGapCount > 0);
+  assert.ok(analyzeSubagentSessions([result]).coverage.totalProjectionGaps > 0);
+});
+
+test("scanSessionFile: ignores malformed non-subagent display metadata in projection gaps", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("projection-gap-display"),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        content: [{ type: "toolCall", id: { malformed: true }, name: "bash" }],
+      },
+    }),
+  ]);
+
+  const result = await scanSessionFile(filePath);
+  assert.equal(result.projectionGapCount, 0);
+  assert.equal(analyzeSubagentSessions([result]).coverage.totalProjectionGaps, 0);
 });
 
 test("scanSessionFile: skips and counts malformed lines without throwing", async (t) => {
@@ -352,6 +519,273 @@ test("extractSubagentCorrelations: emits one correlation per child sessionFile i
   const correlations = await extractSubagentCorrelations(scan);
   assert.equal(correlations.length, 2);
   assert.deepEqual(correlations.map((c) => c.childSessionFile).sort(), [childA, childB].sort());
+});
+
+test("extractSubagentCorrelations: ignores tool-call IDs added after the scan snapshot", async (t) => {
+  const originalChild = "/sessions/original/session.jsonl";
+  const addedChild = "/sessions/added/session.jsonl";
+  const originalLines = [
+    sessionHeader("parent-snapshot"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "tc-original", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "tc-original", "subagent", {
+      details: {
+        runId: "run-original",
+        results: [{ agent: "original-agent", sessionFile: originalChild }],
+      },
+    }),
+  ];
+  const filePath = writeFixture(t, originalLines);
+  const scan = await scanSessionFile(filePath);
+  assert.deepEqual(
+    scan.toolPairs.filter((pair) => pair.toolName === "subagent").map((pair) => pair.toolCallId),
+    ["tc-original"],
+  );
+
+  // Replace the file after the streaming snapshot with a newer generation
+  // containing an additional, otherwise valid subagent correlation.
+  writeFileSync(
+    filePath,
+    [
+      ...originalLines,
+      assistantMessageLine("2026-01-01T00:00:02.000Z", [
+        { toolCallId: "tc-added", toolName: "subagent" },
+      ]),
+      toolResultLine("2026-01-01T00:00:03.000Z", "tc-added", "subagent", {
+        details: {
+          runId: "run-added",
+          results: [{ agent: "added-agent", sessionFile: addedChild }],
+        },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const correlations = await extractSubagentCorrelations(scan);
+  assert.equal(correlations.length, 1, "newer tool-call IDs must not be correlated");
+  assert.equal(correlations[0]?.toolCallId, "tc-original");
+  assert.equal(correlations[0]?.runId, "run-original");
+});
+
+test("extractSubagentCorrelations: rejects correlation evidence after a digest mismatch", async (t) => {
+  const originalChild = "/sessions/original-generation/session.jsonl";
+  const replacementChild = "/sessions/replaced-generation/session.jsonl";
+  const originalLines = [
+    sessionHeader("parent-generation"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "tc-generation", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "tc-generation", "subagent", {
+      details: {
+        runId: "run-original-generation",
+        results: [{ agent: "original-agent", sessionFile: originalChild }],
+      },
+    }),
+  ];
+  const filePath = writeFixture(t, originalLines);
+  const scan = await scanSessionFile(filePath);
+  assert.match(scan.correlationEvidenceDigest ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(scan.correlationEvidenceGeneration, 2);
+
+  writeFileSync(
+    filePath,
+    [
+      sessionHeader("parent-generation"),
+      assistantMessageLine("2026-01-01T00:00:00.000Z", [
+        { toolCallId: "tc-generation", toolName: "subagent" },
+      ]),
+      toolResultLine("2026-01-01T00:00:01.000Z", "tc-generation", "subagent", {
+        details: {
+          runId: "run-replacement-generation",
+          results: [{ agent: "replacement-agent", sessionFile: replacementChild }],
+        },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const replacementScan = await scanSessionFile(filePath);
+  assert.notEqual(
+    replacementScan.correlationEvidenceDigest,
+    scan.correlationEvidenceDigest,
+    "replacement evidence must have a different digest",
+  );
+  assert.equal(
+    replacementScan.correlationEvidenceGeneration,
+    scan.correlationEvidenceGeneration,
+    "digest mismatch must not be hidden by a generation change",
+  );
+  const mismatch = await extractSubagentCorrelationsWithStatus(scan);
+  assert.deepEqual(mismatch.failureReasons, ["digestMismatch"]);
+  const coverage = aggregateCoverage([scan]);
+  recordCorrelationEvidenceFailures(coverage, mismatch.failureReasons);
+  assert.equal(coverage.totalCorrelationEvidenceFailures, 1);
+  assert.equal(coverage.correlationEvidenceFailures.digestMismatch, 1);
+  assert.deepEqual(
+    mismatch.correlations,
+    [],
+    "mismatched evidence must not combine with the original scan snapshot",
+  );
+});
+
+test("extractSubagentCorrelations: reports digest and generation mismatches", async (t) => {
+  const lines = [
+    sessionHeader("evidence-generation-mismatch"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "repeated-generation", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "repeated-generation", "subagent", {
+      details: {
+        runId: "generation-run",
+        results: [{ agent: "generation-agent", sessionFile: "/sessions/generation.jsonl" }],
+      },
+    }),
+  ];
+  const filePath = writeFixture(t, lines);
+  const scan = await scanSessionFile(filePath);
+
+  writeFileSync(
+    filePath,
+    [
+      ...lines,
+      assistantMessageLine("2026-01-01T00:00:02.000Z", [
+        { toolCallId: "repeated-generation", toolName: "subagent" },
+      ]),
+      toolResultLine("2026-01-01T00:00:03.000Z", "repeated-generation", "subagent", {
+        details: {
+          runId: "generation-run",
+          results: [{ agent: "generation-agent", sessionFile: "/sessions/generation.jsonl" }],
+        },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  const mismatch = await extractSubagentCorrelationsWithStatus(scan);
+  assert.deepEqual(mismatch.failureReasons, ["digestMismatch", "generationMismatch"]);
+  const coverage = aggregateCoverage([scan]);
+  recordCorrelationEvidenceFailures(coverage, mismatch.failureReasons);
+  assert.equal(coverage.totalCorrelationEvidenceFailures, 1);
+  assert.equal(coverage.correlationEvidenceFailures.digestMismatch, 1);
+  assert.equal(coverage.correlationEvidenceFailures.generationMismatch, 1);
+  assert.deepEqual(mismatch.correlations, []);
+});
+
+test("scanSessionFile: correlation evidence is bounded at the 4096-ID boundary", async (t) => {
+  const makeLines = (count, toolName = "subagent") => {
+    const lines = [sessionHeader(`evidence-${toolName}-${count}`)];
+    for (let index = 0; index < count; index++) {
+      const toolCallId = `${toolName}-evidence-${index}`;
+      lines.push(assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId, toolName }]));
+      lines.push(toolResultLine("2026-01-01T00:00:01.000Z", toolCallId, toolName));
+    }
+    return lines;
+  };
+
+  const atLimit = await scanSessionFile(writeFixture(t, makeLines(4096)));
+  assert.equal(atLimit.toolPairs.length, 4096);
+  assert.match(atLimit.correlationEvidenceDigest ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(atLimit.correlationEvidenceGeneration, 8192);
+
+  const overLimit = await scanSessionFile(writeFixture(t, makeLines(4097)));
+  assert.equal(overLimit.toolPairs.length, 4097);
+  assert.equal(overLimit.correlationEvidenceDigest, null);
+  assert.equal(overLimit.correlationEvidenceGeneration, 0);
+  assert.equal(overLimit.correlationEvidenceCaptureOverflow, true);
+  assert.equal(aggregateCoverage([overLimit]).correlationEvidenceFailures.scanCaptureOverflow, 1);
+
+  // Non-subagent tool IDs do not consume the subagent correlation evidence
+  // budget, even when their count exceeds the same boundary.
+  const displayOnly = await scanSessionFile(writeFixture(t, makeLines(4097, "bash")));
+  assert.equal(displayOnly.toolPairs.length, 4097);
+  assert.match(displayOnly.correlationEvidenceDigest ?? "", /^[0-9a-f]{64}$/);
+  assert.equal(displayOnly.correlationEvidenceGeneration, 0);
+});
+
+test("scanSessionFile: repeated correlation evidence overflows per-ID bounds", async (t) => {
+  const count = 129;
+  const lines = [sessionHeader("evidence-occurrence-overflow")];
+  for (let index = 0; index < count; index++) {
+    lines.push(
+      assistantMessageLine("2026-01-01T00:00:00.000Z", [
+        { toolCallId: "repeated-subagent", toolName: "subagent" },
+      ]),
+    );
+    lines.push(toolResultLine("2026-01-01T00:00:01.000Z", "repeated-subagent", "subagent"));
+  }
+
+  const result = await scanSessionFile(writeFixture(t, lines));
+  assert.equal(result.toolPairs.length, 1);
+  assert.equal(result.duplicateToolCallIdCount, count - 1);
+  assert.equal(result.correlationEvidenceDigest, null);
+  assert.equal(result.correlationEvidenceGeneration, 0);
+});
+
+test("extractSubagentCorrelations: reports bounded rescan overflow", async (t) => {
+  const initialLines = [
+    sessionHeader("evidence-rescan-overflow"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [
+      { toolCallId: "rescan-overflow", toolName: "subagent" },
+    ]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "rescan-overflow", "subagent", {
+      details: {
+        runId: "rescan-run",
+        results: [{ agent: "rescan-agent", sessionFile: "/sessions/rescan.jsonl" }],
+      },
+    }),
+  ];
+  const filePath = writeFixture(t, initialLines);
+  const scan = await scanSessionFile(filePath);
+  const appendedLines = [];
+  for (let index = 0; index < 128; index++) {
+    appendedLines.push(
+      assistantMessageLine("2026-01-01T00:00:02.000Z", [
+        { toolCallId: "rescan-overflow", toolName: "subagent" },
+      ]),
+      toolResultLine("2026-01-01T00:00:03.000Z", "rescan-overflow", "subagent", {
+        details: {
+          runId: "rescan-run",
+          results: [{ agent: "rescan-agent", sessionFile: "/sessions/rescan.jsonl" }],
+        },
+      }),
+    );
+  }
+  writeFileSync(filePath, [...initialLines, ...appendedLines].join("\n") + "\n", "utf8");
+
+  const overflow = await extractSubagentCorrelationsWithStatus(scan);
+  assert.deepEqual(overflow.failureReasons, ["rescanCaptureOverflow"]);
+  assert.deepEqual(overflow.correlations, []);
+  const coverage = aggregateCoverage([scan]);
+  recordCorrelationEvidenceFailures(coverage, overflow.failureReasons);
+  assert.equal(coverage.totalCorrelationEvidenceFailures, 1);
+  assert.equal(coverage.correlationEvidenceFailures.rescanCaptureOverflow, 1);
+});
+
+test("extractSubagentCorrelations: skips the correlation rescan when no subagent call was paired", async (t) => {
+  const filePath = writeFixture(t, [
+    sessionHeader("no-subagent-snapshot"),
+    assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId: "tc-bash", toolName: "bash" }]),
+    toolResultLine("2026-01-01T00:00:01.000Z", "tc-bash"),
+  ]);
+  const scan = await scanSessionFile(filePath);
+  assert.equal(
+    scan.toolPairs.some((pair) => pair.toolName === "subagent"),
+    false,
+  );
+
+  let filePathRead = false;
+  Object.defineProperty(scan, "filePath", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      filePathRead = true;
+      return filePath;
+    },
+  });
+
+  assert.deepEqual(await extractSubagentCorrelations(scan), []);
+  assert.equal(filePathRead, false, "empty paired-ID set must not reread the file");
 });
 
 test("extractSubagentCorrelations: returns empty array when no session header", async (t) => {

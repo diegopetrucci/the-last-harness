@@ -24,14 +24,16 @@ import { parseSessionTokens } from "../../shared/session-tokens.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
 import { persistedTicketId, TICKET_LOOKUP_MAX_OUTPUT_BYTES } from "../shared/ticket-context.js";
-import { advanceLifecycleContinuation, isCompletedLifecycleState, isCompletedLifecycleStepState, lifecycleGeneration, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { advanceLifecycleContinuation, isCompletedLifecycleStepState, lifecycleGeneration, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatSupervisorPauseMessage } from "../../shared/pause-messages.js";
 import { runSingleStep, saturatingStepDeadlineAt } from "./single-step-execution.js";
 import { appendUnexpectedLifecycleTransitionDiagnostic, createBackgroundRunStatusOwner, } from "./run-status-owner.js";
+import { finalizeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { createBackgroundRunControlOwner } from "./run-control-owner.js";
 import { terminalResultForStatusStep } from "../../shared/terminal-result.js";
 import { appendDiagnosticJsonl, appendJsonl, findLatestSessionFile } from "./runner-event-log.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, applyCancelledStatusStepProjection, applyCancelledStepProjection, isPausedStepStatus, normalizeFailedSupervisorPauseResults, preservedCancellationStepStatus, } from "./cancellation-projection.js";
+import { persistContinuationGateRejection, persistRunnerTerminalRun, } from "./terminal-persistence.js";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 function tokenUsageFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)
@@ -279,6 +281,7 @@ function resolveStepDeadlineAt(stepStartedAt, stepTimeoutMs, runDeadlineAt) {
 }
 function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_ERROR) {
     const timestamp = Date.now();
+    const telemetry = finalizeSubagentRunTelemetry(normalizeSubagentRunTelemetry(config.telemetry), { state: "failed", terminationReason: "process_exit" }, timestamp);
     const mode = rejectedPlanMode(config.plan);
     const deadlineAt = isPositiveSafeInteger(config.deadlineAt) ? config.deadlineAt : undefined;
     const status = {
@@ -296,6 +299,7 @@ function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_
         currentStep: 0,
         steps: [],
         ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
         sessionDir: config.sessionDir,
         outputFile: path.join(config.asyncDir, "output-0.log"),
     };
@@ -320,6 +324,7 @@ function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_
         cwd: config.cwd,
         sessionId: config.sessionId,
         ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
         ...(config.taskIndex !== undefined ? { taskIndex: config.taskIndex } : {}),
         ...(config.totalTasks !== undefined ? { totalTasks: config.totalTasks } : {}),
     });
@@ -340,10 +345,12 @@ async function runSubagent(config) {
         throw new Error(error);
     }
     const artifactConfig = resolveArtifactConfig(config.artifactConfig, { legacy: true });
-    const { timeoutMs: _legacyTimeoutMs, plan: _unvalidatedPlan, artifactConfig: _rawArtifactConfig, deadlineAt: _unvalidatedDeadlineAt, ...currentConfig } = config;
+    const telemetry = normalizeSubagentRunTelemetry(config.telemetry);
+    const { timeoutMs: _legacyTimeoutMs, plan: _unvalidatedPlan, artifactConfig: _rawArtifactConfig, deadlineAt: _unvalidatedDeadlineAt, telemetry: _rawTelemetry, ...currentConfig } = config;
     return runSubagentWithInput({
         ...currentConfig,
         ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+        ...(telemetry ? { telemetry } : {}),
         plan,
         artifactConfig,
     }, plan);
@@ -383,6 +390,7 @@ async function runSubagentWithInput(config, plan) {
         sessionId: config.sessionId,
         deadlineAt: config.deadlineAt,
         projectAgents: config.projectAgents,
+        ...(config.telemetry ? { telemetry: config.telemetry } : {}),
         nestedRoute: config.nestedRoute,
         nestedSelf: config.nestedSelf,
         timeoutMessage,
@@ -438,61 +446,17 @@ async function runSubagentWithInput(config, plan) {
         const gate = advanceLifecycleContinuation(continuationSource.asyncDir, continuationSource.index, continuationSource.claimToken, id, true);
         if (gate.changed || gate.done)
             return false;
-        const endedAt = Date.now();
-        const error = `Continuation launch gate rejected for source run '${continuationSource.runId}' child ${continuationSource.index}.`;
-        statusPayload.state = "failed";
-        statusPayload.pid = undefined;
-        statusPayload.endedAt = endedAt;
-        statusPayload.lastUpdate = endedAt;
-        statusPayload.error = error;
-        statusPayload.steps = statusPayload.steps?.map((step, index) => index === 0
-            ? {
-                ...step,
-                status: "failed",
-                endedAt,
-                exitCode: 1,
-                terminationReason: step.terminationReason ?? "process_exit",
-                error,
-            }
-            : step);
-        writeNormalizedLifecycleStatus(asyncDir, statusPayload);
-        const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
-        try {
-            writeAtomicJson(resultPath, {
-                lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-                ...(config.awaited ? { awaited: true } : {}),
-                generation: lifecycleGeneration(statusPayload),
-                id,
-                agent: gateRejectAgent,
-                mode: statusPayload.mode,
-                success: false,
-                state: "failed",
-                summary: error,
-                error,
-                results: [
-                    {
-                        agent: gateRejectAgent,
-                        ...(statusPayload.steps?.[0]?.projectAgent
-                            ? { projectAgent: statusPayload.steps[0].projectAgent }
-                            : {}),
-                        ticketId: statusPayload.steps?.[0]?.ticketId,
-                        output: error,
-                        error,
-                        success: false,
-                        exitCode: 1,
-                    },
-                ],
-                exitCode: 1,
-                timestamp: endedAt,
-                durationMs: 0,
-                asyncDir,
-                sessionId: config.sessionId,
-                ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
-            });
-        }
-        catch (err) {
-            console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
-        }
+        persistContinuationGateRejection({
+            config,
+            plan,
+            statusPayload,
+            asyncDir,
+            resultPath,
+            controlConfig,
+            overallStartTime,
+            sourceRunId: continuationSource.runId,
+            sourceIndex: continuationSource.index,
+        });
         return true;
     };
     if (rejectContinuationLaunch())
@@ -849,6 +813,10 @@ async function runSubagentWithInput(config, plan) {
                     agent: task.agent,
                 }));
                 controlOwner.flushPendingStepSteers(fi);
+                const runTelemetry = normalizeSubagentRunTelemetry(config.telemetry);
+                const childTelemetry = runTelemetry && runTelemetry.steps.some((s) => s.index === fi)
+                    ? { ...runTelemetry, steps: runTelemetry.steps.filter((s) => s.index === fi) }
+                    : undefined;
                 const singleResult = await runSingleStep(task, {
                     cwd,
                     sessionEnabled,
@@ -857,6 +825,7 @@ async function runSubagentWithInput(config, plan) {
                     artifactConfig,
                     id,
                     flatIndex: fi,
+                    childTelemetry,
                     flatStepCount: Math.max(statusPayload.steps.length, 1),
                     outputFile: path.join(asyncDir, `output-${fi}.log`),
                     steerInboxDir: stepSteerInboxDir(asyncDir, fi),
@@ -1295,214 +1264,37 @@ async function runSubagentWithInput(config, plan) {
             normalizeFailedSupervisorPauseResults(results, statusPayload.steps, statusOwner.supervisorPauseRequest.requesterIndex, agentName);
         }
     }
-    const persistTerminalRun = () => {
-        if (!pausedAwaitingSupervisor &&
-            !skipFinalStatusWrite &&
-            !statusOwner.concurrentTerminalStatusAdopted) {
-            statusPayload.state = statusOwner.cancelled
-                ? "cancelled"
-                : statusOwner.terminalReason.reason === "output_limit"
-                    ? "failed"
-                    : statusOwner.supervisorPauseTransitionFailed
-                        ? "failed"
-                        : statusOwner.timedOut
-                            ? "failed"
-                            : statusOwner.interrupted
-                                ? "paused"
-                                : results.every((r) => r.success)
-                                    ? "complete"
-                                    : "failed";
-            statusPayload.activityState = undefined;
-            if (statusOwner.cancelled) {
-                statusPayload.cancel = statusPayload.cancel ?? {
-                    summary: "Cancelled by parent abort.",
-                    cancelledAt: runEndedAt,
-                };
-                statusPayload.error = statusPayload.cancel.summary;
-            }
-            if (statusOwner.timedOut) {
-                statusPayload.timedOut = true;
-                statusPayload.error = timeoutMessage ?? "Subagent timed out.";
-            }
-            if (statusOwner.supervisorPauseTransitionFailed && statusPayload.state === "failed") {
-                statusPayload.error = statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-            }
-            statusPayload.endedAt = runEndedAt;
-            statusPayload.lastUpdate = runEndedAt;
-            statusPayload.sessionFile = effectiveSessionFile;
-            statusPayload.totalCost = finalTotalCost;
-            statusPayload.shareUrl = shareUrl;
-            statusPayload.gistUrl = gistUrl;
-            statusPayload.shareError = shareError;
-            if (statusPayload.state === "failed" && !statusPayload.error) {
-                const failedStep = statusPayload.steps.find((s) => s.status === "failed");
-                if (failedStep?.agent) {
-                    statusPayload.error = failedStep.error ?? `Step failed: ${failedStep.agent}`;
-                }
-            }
-            statusOwner.writeStatusPayload();
-        }
-        if (pausedAwaitingSupervisor)
-            statusOwner.emitNestedSelfEvent("subagent.nested.completed");
-        appendJsonl(eventsPath, JSON.stringify({
-            type: "subagent.run.completed",
-            lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-            ts: runEndedAt,
-            runId: id,
-            status: statusPayload.state,
-            durationMs: runEndedAt - overallStartTime,
-            totalTokens: statusPayload.totalTokens,
-            totalCost: finalTotalCost,
-        }));
-        writeRunLog(logPath, {
-            id,
-            mode: statusPayload.mode,
-            cwd,
-            startedAt: overallStartTime,
-            endedAt: runEndedAt,
-            steps: statusPayload.steps.map((step) => ({
-                agent: step.agent,
-                status: step.status,
-                durationMs: step.durationMs,
-                processCleanup: step.processCleanup,
-            })),
-            summary,
-            truncated,
-            artifactsDir,
-            sessionFile: effectiveSessionFile,
-            shareUrl,
-            shareError,
-        });
-        const resultPausedAwaitingSupervisor = pausedAwaitingSupervisor ??
-            (safePausedResultAfterReap &&
-                !statusOwner.supervisorPauseTransitionFailed &&
-                !statusOwner.concurrentTerminalStatusAdopted
-                ? safePausedResultAfterReap
-                : undefined);
-        const resolveResultState = () => statusOwner.concurrentTerminalStatusAdopted
-            ? statusPayload.state
-            : statusOwner.terminalReason.reason === "output_limit"
-                ? "failed"
-                : statusOwner.timedOut
-                    ? "failed"
-                    : resultPausedAwaitingSupervisor
-                        ? "paused"
-                        : statusOwner.supervisorPauseTransitionFailed
-                            ? "failed"
-                            : statusPayload.state === "failed" ||
-                                statusPayload.state === "paused" ||
-                                statusPayload.state === "cancelled"
-                                ? statusPayload.state
-                                : isCompletedLifecycleState(statusPayload.state)
-                                    ? "complete"
-                                    : statusOwner.interrupted
-                                        ? "paused"
-                                        : results.every((r) => r.success)
-                                            ? "complete"
-                                            : "failed";
-        const resultState = resolveResultState();
-        const resultSuccess = resultState === "complete";
-        const resultSummary = !statusOwner.concurrentTerminalStatusAdopted && statusOwner.timedOut
-            ? (timeoutMessage ?? "Subagent timed out.")
-            : resultPausedAwaitingSupervisor
-                ? pausedOutputForIndex(statusOwner.supervisorPauseRequest?.requesterIndex ?? 0, statusPayload.steps[statusOwner.supervisorPauseRequest?.requesterIndex ?? 0]?.agent ??
-                    agentName)
-                : resultState === "failed"
-                    ? statusOwner.supervisorPauseTransitionFailed
-                        ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
-                        : config.awaited
-                            ? summary
-                            : (statusPayload.error ?? summary)
-                    : resultState === "paused"
-                        ? "Paused after interrupt. Waiting for explicit next action."
-                        : summary;
-        try {
-            writeAtomicJson(resultPath, {
-                lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-                ...(config.awaited ? { awaited: true } : {}),
-                generation: lifecycleGeneration(statusPayload),
-                id,
-                agent: agentName,
-                mode: plan.kind,
-                success: resultSuccess,
-                state: resultState,
-                summary: resultSummary,
-                ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
-                ...(!statusOwner.concurrentTerminalStatusAdopted && statusOwner.timedOut
-                    ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
-                    : resultState === "failed"
-                        ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
-                        : {}),
-                ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
-                results: results.map((r) => ({
-                    agent: r.agent,
-                    ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
-                    ticketId: r.ticketId,
-                    output: r.output,
-                    finalOutput: r.finalOutput,
-                    error: r.error,
-                    cancel: r.cancel,
-                    stderr: r.stderr,
-                    stderrTruncated: r.stderrTruncated,
-                    protocolOutputLimit: r.protocolOutputLimit,
-                    success: r.success,
-                    exitCode: r.exitCode,
-                    exitSignal: r.exitSignal,
-                    skipped: r.skipped || undefined,
-                    interrupted: r.interrupted || undefined,
-                    timedOut: r.timedOut || undefined,
-                    contextUsage: r.contextUsage,
-                    contextPressure: r.contextPressure,
-                    contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
-                    terminationReason: r.terminationReason,
-                    sessionFile: r.sessionFile,
-                    model: r.model,
-                    modelIdentity: r.modelIdentity,
-                    modelResolution: r.modelResolution,
-                    attemptedModels: r.attemptedModels,
-                    modelAttempts: r.modelAttempts,
-                    modelFallbackNotice: r.modelFallbackNotice,
-                    totalCost: r.totalCost,
-                    artifactPaths: r.artifactPaths,
-                    processCleanup: r.processCleanup,
-                    truncated: r.truncated,
-                    transcriptPath: r.transcriptPath,
-                    transcriptError: r.transcriptError,
-                    skills: r.skills,
-                    skillsWarning: r.skillsWarning,
-                    outputMode: r.outputMode,
-                    savedOutputPath: r.savedOutputPath,
-                    outputReference: r.outputReference,
-                    outputSaveError: r.outputSaveError,
-                    childLocation: r.childLocation,
-                    pause: r.pause,
-                    activityState: r.activityState,
-                    terminalResult: r.terminalResult,
-                })),
-                exitCode: resultState === "failed" || resultState === "cancelled" ? 1 : 0,
-                timestamp: runEndedAt,
-                durationMs: runEndedAt - overallStartTime,
-                totalTokens: statusPayload.totalTokens,
-                totalCost: finalTotalCost,
-                truncated,
-                artifactsDir,
-                cwd,
-                asyncDir,
-                sessionId: config.sessionId,
-                ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
-                sessionFile: effectiveSessionFile,
-                shareUrl,
-                gistUrl,
-                shareError,
-                ...(taskIndex !== undefined && { taskIndex }),
-                ...(totalTasks !== undefined && { totalTasks }),
-            });
-        }
-        catch (err) {
-            console.error(`Failed to write result file ${resultPath}:`, err);
-        }
-    };
-    persistTerminalRun();
+    persistRunnerTerminalRun({
+        config,
+        plan,
+        statusOwner,
+        statusPayload,
+        results,
+        controlConfig,
+        overallStartTime,
+        runEndedAt,
+        effectiveSessionFile,
+        finalTotalCost,
+        summary,
+        truncated,
+        agentName,
+        timeoutMessage,
+        shareUrl,
+        gistUrl,
+        shareError,
+        resultPath,
+        cwd,
+        artifactsDir,
+        asyncDir,
+        taskIndex,
+        totalTasks,
+        pausedAwaitingSupervisor,
+        safePausedResultAfterReap,
+        skipFinalStatusWrite,
+        pausedOutputForIndex,
+        appendEvent,
+        writeRunLog: (input) => writeRunLog(logPath, input),
+    });
 }
 const configArg = process.argv[2];
 if (configArg) {

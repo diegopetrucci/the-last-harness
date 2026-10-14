@@ -11,7 +11,22 @@ import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.js";
+import { mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "failed", "paused"]);
+const RESUME_TERMINAL_RUN_STATES = new Set([
+    "complete",
+    "failed",
+    "paused",
+    "cancelled",
+    "continued",
+]);
+function resolveResumeTelemetry(context) {
+    const resultTelemetry = normalizeSubagentRunTelemetry(context.result?.telemetry);
+    const statusTelemetry = normalizeSubagentRunTelemetry(context.status?.telemetry);
+    return mergeSubagentRunTelemetry(resultTelemetry, statusTelemetry, {
+        persistedOutcomeWins: Boolean(context.status && RESUME_TERMINAL_RUN_STATES.has(context.status.state)),
+    });
+}
 export function continuationResumeBlock(continuation) {
     if (continuation?.phase === "completed" ||
         continuation?.phase === "continued" ||
@@ -136,6 +151,7 @@ function validateResultFile(value, resultPath) {
     const normalizedProjectAgents = projectAgents
         ?.map((capture, index) => parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`))
         .filter((capture) => Boolean(capture));
+    const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
     return {
         id: validateOptionalString(data, "id", resultPath),
         runId: validateOptionalString(data, "runId", resultPath),
@@ -163,6 +179,7 @@ function validateResultFile(value, resultPath) {
         ...(results ? { results } : {}),
         ...(projectAgent ? { projectAgent } : {}),
         ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
     };
 }
 function parseProjectAgentCapture(value, source, field) {
@@ -313,6 +330,7 @@ function validateStatusForResume(status, source) {
         return;
     if (status.lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure")
         throw new Error(ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE);
+    status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     if (typeof status.runId !== "string")
         throw new Error(`Invalid async status '${source}': runId must be a string.`);
     if (status.sessionId !== undefined && typeof status.sessionId !== "string")
@@ -478,6 +496,9 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         ...(resolveResumeTerminalResult(index, statusStep, context.resultSteps)
             ? { terminalResult: resolveResumeTerminalResult(index, statusStep, context.resultSteps) }
             : {}),
+        ...(resolveResumeTelemetry(context) !== undefined
+            ? { telemetry: resolveResumeTelemetry(context) }
+            : {}),
     };
 }
 function resolveLiveAsyncResumeTarget(context) {
@@ -537,6 +558,7 @@ function buildTerminalAsyncResumeTarget(context, index, selectedStatusStep, sele
             selectedContinuation.claimToken.length > 0
             ? { claimed: true }
             : {}),
+        ...(context.telemetry !== undefined ? { telemetry: context.telemetry } : {}),
     };
     const diagnosticMetadata = resolveResumeDiagnosticMetadata(index, selectedStatusStep, context.resultSteps, context.result);
     return {
@@ -664,6 +686,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         deps,
         options,
     };
+    context.telemetry = resolveResumeTelemetry(context);
     if (state === "running") {
         const liveTarget = resolveLiveAsyncResumeTarget(context);
         if (liveTarget)

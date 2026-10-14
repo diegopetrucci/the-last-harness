@@ -27,6 +27,7 @@ import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
+import { captureSubagentTelemetryProvenance } from "./telemetry-provenance.js";
 import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, TEMP_ROOT_DIR, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
@@ -379,6 +380,7 @@ export default function registerSubagentExtension(pi) {
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
     scheduleDetachedRuntimeCleanup();
+    const telemetryProvenance = captureSubagentTelemetryProvenance();
     const config = loadConfig();
     const artifactConfig = resolveArtifactConfig(config.artifacts);
     const executionPolicy = resolveExecutionPolicy(config.execution);
@@ -457,6 +459,7 @@ export default function registerSubagentExtension(pi) {
         getSubagentSessionRoot,
         expandTilde,
         discoverAgents,
+        telemetryProvenance,
         getProjectAgentAccess: (request) => normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
     });
     pi.registerMessageRenderer(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {

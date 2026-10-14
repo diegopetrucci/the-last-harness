@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendSubagentTelemetryContinuation, continuationTelemetryMetadata, normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.js";
@@ -21,6 +22,30 @@ import { readModelRegistrySnapshot, providerFallbackModelsForTarget, resolveSing
 import { RESULTS_DIR, } from "../../shared/types.js";
 import { authorizePersistedProjectAgentRun } from "../shared/project-agent-control.js";
 import { resolveNestedResumeTarget, resumeLiveNestedRun, } from "../shared/nested-control.js";
+export function persistContinuationTelemetry(target, continuationRunId) {
+    try {
+        const sourceTelemetry = target.source === "async" && "telemetry" in target ? target.telemetry : undefined;
+        const asyncDir = target.source === "async" && "asyncDir" in target ? target.asyncDir : undefined;
+        if (!sourceTelemetry || !asyncDir)
+            return;
+        withLifecycleStatusLock(asyncDir, (current) => {
+            if (!current)
+                return;
+            if (current.state === "paused")
+                return;
+            const baseTelemetry = normalizeSubagentRunTelemetry(current.telemetry) ?? sourceTelemetry;
+            const telemetry = appendSubagentTelemetryContinuation(baseTelemetry, {
+                sourceStepIndex: "index" in target ? target.index : undefined,
+                continuationRunId,
+            });
+            if (!telemetry)
+                return;
+            writeNormalizedLifecycleStatus(asyncDir, { ...current, telemetry });
+        });
+    }
+    catch {
+    }
+}
 function priorTerminalResultForResume(target) {
     return target.kind === "revive" && target.terminalResult
         ? { priorTerminalResult: target.terminalResult }
@@ -638,6 +663,13 @@ export async function resumeAsyncRun(input) {
     const restoredModelIdentity = explicitResumeModel(input.params.model) || target.kind !== "revive"
         ? undefined
         : target.modelIdentity;
+    const sourceTelemetry = target.source === "async" && "telemetry" in target
+        ? normalizeSubagentRunTelemetry(target.telemetry)
+        : undefined;
+    const continuationTelemetry = continuationTelemetryMetadata(sourceTelemetry, target.runId, "index" in target ? target.index : undefined);
+    const continuationTelemetryProvenance = continuationTelemetry.provenance ?? input.deps.telemetryProvenance;
+    const continuationTelemetryLineage = continuationTelemetry.lineage;
+    persistContinuationTelemetry(target, runId);
     let result;
     try {
         result = (input.deps.executeAsyncSingle ?? executeAsyncSingle)(runId, {
@@ -689,6 +721,10 @@ export async function resumeAsyncRun(input) {
             availableModels,
             providerFallbackModels: providerFallbackModelsForTarget(input.params),
             modelFallbackNotice: input.params.modelFallbackNotice,
+            ...(continuationTelemetryProvenance
+                ? { telemetryProvenance: continuationTelemetryProvenance }
+                : {}),
+            ...(continuationTelemetryLineage ? { telemetryLineage: continuationTelemetryLineage } : {}),
         });
     }
     catch (error) {

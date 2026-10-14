@@ -74,6 +74,7 @@ interface BackgroundStatusOwnerInput {
   sessionId?: string | null;
   deadlineAt?: number;
   projectAgents?: ProjectAgentIdentity[];
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   nestedRoute?: NestedRouteInfo;
   nestedSelf?: NestedSelf;
   timeoutMessage?: string;
@@ -117,7 +118,7 @@ export interface BackgroundRunStatusOwner {
     sessionFile?: string,
   ): void;
   refreshTrackedSessionFile(index: number, fallback?: string): string | undefined;
-  writeStatusPayload(options?: { projectNested?: boolean }): void;
+  writeStatusPayload(options?: { projectNested?: boolean; lifecycleLocked?: boolean }): void;
   recordAttemptFacts(index: number, facts: SubagentAttemptFacts): void;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
   pausedStepResult(task: StatusTask): SingleStepResultValue;
@@ -262,7 +263,7 @@ function normalizeAttemptResult(
 const statusStepIsTerminal = (status: string): boolean =>
   isCompletedLifecycleStepState(status) || status === "failed" || status === "cancelled";
 
-type RunnerStatusPayload = AsyncStatus & {
+export type RunnerStatusPayload = AsyncStatus & {
   cwd: string;
   currentStep: number;
   steps: RunnerStatusStep[];
@@ -291,6 +292,7 @@ export function createBackgroundRunStatusOwner(
     sessionId,
     deadlineAt,
     projectAgents,
+    telemetry,
     nestedRoute,
     nestedSelf,
     timeoutMessage,
@@ -361,6 +363,7 @@ export function createBackgroundRunStatusOwner(
     currentStep: 0,
     steps: initialStatusSteps,
     ...(projectAgents ? { projectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
     artifactsDir,
     sessionDir,
     outputFile: path.join(asyncDir, "output-0.log"),
@@ -388,7 +391,6 @@ export function createBackgroundRunStatusOwner(
     abortTimeout: () => undefined,
   };
   let owner!: BackgroundRunStatusOwner;
-
   function listSessionFiles(dir: string | undefined): string[] {
     if (!dir) return [];
     try {
@@ -401,26 +403,41 @@ export function createBackgroundRunStatusOwner(
     }
   }
 
+  let lastEmittedNestedTerminalState: "complete" | "failed" | "paused" | undefined;
+
   function emitNestedSelfEvent(
     type: "subagent.nested.updated" | "subagent.nested.completed",
   ): void {
     if (!nestedRoute || !nestedSelf) return;
     try {
+      const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
+        id,
+        parentRunId: nestedSelf.parentRunId,
+        parentStepIndex: nestedSelf.parentStepIndex,
+        depth: nestedSelf.depth,
+        path: nestedSelf.path,
+        mode: statusPayload.mode,
+        ts: Date.now(),
+      });
+      // Status writes can happen more than once while a child drains, and a
+      // concurrent terminal adoption can make the final persistence path revisit
+      // the same lifecycle state. Nested completion is a terminal projection
+      // edge, so suppress only repeats of the same parent-visible state; a later
+      // paused -> continued/cancelled adoption must replace the parent snapshot.
+      const terminalState =
+        type === "subagent.nested.completed" &&
+        (child.state === "complete" || child.state === "failed" || child.state === "paused")
+          ? child.state
+          : undefined;
+      if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState) return;
       writeNestedEvent(nestedRoute, {
         type,
         ts: Date.now(),
         parentRunId: nestedSelf.parentRunId,
         parentStepIndex: nestedSelf.parentStepIndex,
-        child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-          id,
-          parentRunId: nestedSelf.parentRunId,
-          parentStepIndex: nestedSelf.parentStepIndex,
-          depth: nestedSelf.depth,
-          path: nestedSelf.path,
-          mode: statusPayload.mode,
-          ts: Date.now(),
-        }),
+        child,
       });
+      if (terminalState !== undefined) lastEmittedNestedTerminalState = terminalState;
     } catch {
       /* Nested projection is advisory. */
     }
@@ -494,7 +511,9 @@ export function createBackgroundRunStatusOwner(
     return statusPayload;
   }
 
-  function writeStatusPayload(options: { projectNested?: boolean } = {}): void {
+  function writeStatusPayload(
+    options: { projectNested?: boolean; lifecycleLocked?: boolean } = {},
+  ): void {
     if (statusPayload.currentStep !== undefined)
       refreshTrackedSessionFile(statusPayload.currentStep);
 

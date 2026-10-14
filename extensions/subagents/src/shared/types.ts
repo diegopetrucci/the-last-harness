@@ -12,6 +12,7 @@ import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
 import type { ProjectAgentIdentity } from "../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "./child-location.ts";
 import { MAX_TOP_LEVEL_PARALLEL_TASKS } from "./parallel-limits.ts";
+import type { SubagentRunTelemetry } from "./telemetry.ts";
 
 // ============================================================================
 // Basic Types
@@ -197,12 +198,25 @@ export function normalizeSubagentRunMode(value: unknown): SubagentRunMode {
 }
 
 /** Stable machine-readable reason why a child execution segment terminated. */
+/** Acceptance ledger status values; used by telemetry for schema compatibility. */
+export type AcceptanceLedgerStatus =
+  | "not-required"
+  | "claimed"
+  | "attested"
+  | "checked"
+  | "verified"
+  | "reviewed"
+  | "accepted"
+  | "rejected"
+  | "skipped";
+
 export type SubagentTerminationReason =
   | "completed"
   | "output_limit"
   | "model_error"
   | "interrupted"
   | "timed_out"
+  | "tool_budget_blocked"
   | "paused"
   | "cancelled"
   | "process_exit"
@@ -512,12 +526,18 @@ export interface SingleResult {
    */
   childLocation?: ChildLocationSnapshot;
   children?: NestedRunSummary[];
+  /** Active runtime tracking for telemetry; optional, not accumulated cumulatively. */
+  activeRuntimeMs?: number;
+  /** Acceptance ledger snapshot, when available from acceptance-aware callers. */
+  acceptance?: { status: AcceptanceLedgerStatus } & Record<string, unknown>;
 }
 
 export interface Details {
   mode: SubagentRunMode | "management";
   runId?: string;
   results: SingleResult[];
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   controlEvents?: ControlEvent[];
   asyncId?: string;
   asyncDir?: string;
@@ -542,6 +562,8 @@ export interface Details {
   totalChildUsage?: Usage;
   // Aggregated cost across all agents in the run
   totalCost?: CostSummary;
+  /** True when the parent blocked on this run (awaited path). Absent on detached runs. */
+  awaited?: boolean;
 }
 
 // ============================================================================
@@ -692,6 +714,7 @@ export interface SubagentModelResolution {
 
 export interface AsyncStartedEvent {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   /** Safe per-child project-agent captures; no opaque capability crosses this event. */
   projectAgents?: ProjectAgentIdentity[];
   id?: string;
@@ -710,6 +733,8 @@ export interface AsyncStatus {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
   /** Internal-only marker for a caller that owns terminal settlement. */
   awaited?: boolean;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: SubagentRunTelemetry;
   runId: string;
   sessionId?: string;
   mode: SubagentRunMode;
@@ -883,6 +908,7 @@ export interface AsyncResultArtifactResultItem {
   outputSaveError?: string;
   childLocation?: ChildLocationSnapshot;
   pause?: AsyncPauseMetadata;
+  cancel?: AsyncCancellationMetadata;
   /** Normalized ticket ID, when assigned. */
   ticketId?: string;
   /** Per-child terminal state and evidence-only facts, when persisted. */
@@ -904,6 +930,8 @@ export interface AsyncResultArtifact {
   /** Internal-only marker for an awaited caller; detached runs omit it. */
   awaited?: boolean;
   generation?: number;
+  /** Optional privacy-safe run-level telemetry envelope. */
+  telemetry?: SubagentRunTelemetry;
   id: string;
   agent: string;
   mode: SubagentRunMode;
@@ -938,6 +966,8 @@ export interface AsyncResultArtifact {
 }
 
 export interface AsyncJobState {
+  /** Optional privacy-safe run-level telemetry restored with the lifecycle. */
+  telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
   asyncId: string;
   asyncDir: string;
   /** Internal-only marker retained while an awaited run is visible. */

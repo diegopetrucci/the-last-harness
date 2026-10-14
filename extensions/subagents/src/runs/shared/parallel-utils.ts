@@ -85,6 +85,8 @@ export interface SubagentRunConfig {
   id: string;
   /** Internal-only opt-in: the parent owns terminal settlement and awaits it. */
   awaited?: boolean;
+  /** Optional parent-captured privacy-safe telemetry envelope (provenance, lineage). */
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   /** Canonical direct single/parallel execution plan. */
   plan: SubagentRunPlan;
   resultPath: string;

@@ -142,6 +142,8 @@ interface SingleStepContext {
   artifactConfig: ResolvedArtifactConfig;
   id: string;
   flatIndex: number;
+  /** Child-scoped telemetry envelope for this step's metadata artifact. */
+  childTelemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
   flatStepCount: number;
   outputFile: string;
   steerInboxDir?: string;
@@ -843,6 +845,7 @@ function finalizeSingleStepArtifacts(input: {
             timeoutMs: ctx.timeoutMs ?? step.timeoutMs,
             deadlineAt: childDeadlineAt,
             timestamp: Date.now(),
+            ...(ctx.childTelemetry ? { telemetry: ctx.childTelemetry } : {}),
           },
           null,
           2,

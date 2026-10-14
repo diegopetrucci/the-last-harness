@@ -10,18 +10,21 @@
  * the extension startup path.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, type Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
 
 import {
   aggregateCoverage,
-  extractSubagentCorrelations,
+  analyzeSubagentSessions,
+  extractSubagentCorrelationsWithStatus,
+  recordCorrelationEvidenceFailures,
   scanSessionFile,
   type ExtraCoverageData,
   type ScanCoverage,
   type SessionScanResult,
+  type SubagentAnalysisOutput,
 } from "./lib/session-analysis.mjs";
 import { resolveTlhAgentDir } from "./lib/tlh-install-utils.mjs";
 import { computeMedian } from "../extensions/the-last-harness/tool-pairing.js";
@@ -46,7 +49,7 @@ const RUN_HISTORY_FILENAME = "run-history.jsonl";
 // Types
 // ---------------------------------------------------------------------------
 
-type OutputMode = "per-session" | "per-tool";
+type OutputMode = "per-session" | "per-tool" | "subagents";
 
 // Fix 8: accurate provenance source values.
 type ProfileSource = "flag" | "PI_CODING_AGENT_DIR" | "TLH_AGENT_DIR" | "default";
@@ -78,6 +81,12 @@ interface PerToolOutput {
   tools: ToolRecord[];
 }
 
+type SubagentOutput = SubagentAnalysisOutput & {
+  generatedAt: string;
+  timingQualityNote: string;
+  provenance: ProvenanceRecord;
+};
+
 interface ProvenanceRecord {
   toolName: string;
   // Fix 8: reflects which source actually provided the agent dir.
@@ -101,6 +110,7 @@ interface SessionRecord {
   filePath?: string;
   // Fix 4: honest count of all observed tool calls (including unmatched).
   toolCallCount: number;
+  projectionGapCount: number;
   errorCount: number;
   observedLatencyMs: LatencyStats;
   malformedLines: number;
@@ -141,7 +151,7 @@ function usage(): string {
 Read-only session analysis. Emits JSON to stdout.
 
 Options:
-  --mode <mode>        Output mode: per-session (default) or per-tool
+  --mode <mode>        Output mode: per-session (default), per-tool, or subagents
   --agent-dir <dir>    Isolated tlh agent dir (default: PI_CODING_AGENT_DIR or ~/.the-last-harness/agent)
   --include-paths      Include raw file paths and cwd-derived project labels in output
   -h, --help           Show this help
@@ -149,6 +159,7 @@ Options:
 Output modes:
   per-session    One record per session file with tool pair statistics and coverage.
   per-tool       Aggregated statistics per tool name across all scanned sessions.
+  subagents      Foreground/async subagent runs, coverage, lineage, and wakeups.
 
 Notes:
   - Never reads run-history.jsonl.
@@ -178,10 +189,10 @@ function parseArgs(argv: readonly string[]): CliArgs {
     if (arg === "--mode") {
       const next = argv[i + 1];
       if (!next || next.startsWith("-")) {
-        throw new Error("--mode requires a value: per-session or per-tool");
+        throw new Error("--mode requires a value: per-session, per-tool, or subagents");
       }
-      if (next !== "per-session" && next !== "per-tool") {
-        throw new Error(`Unknown mode: ${next}. Expected per-session or per-tool`);
+      if (next !== "per-session" && next !== "per-tool" && next !== "subagents") {
+        throw new Error(`Unknown mode: ${next}. Expected per-session, per-tool, or subagents`);
       }
       args.mode = next as OutputMode;
       i++;
@@ -296,10 +307,14 @@ function projectLabelFromPath(filePath: string, sessionsDir: string): string | n
   return firstSegment ?? null;
 }
 
+type PublicCorrelationId = (value: string) => string;
+
 async function buildSessionRecord(
   scanResult: SessionScanResult,
+  coverage: ScanCoverage,
   sessionsDir: string,
   includePaths: boolean,
+  publicCorrelationId: PublicCorrelationId,
 ): Promise<SessionRecord> {
   // Fix 4: use observedToolCallCount so truncated sessions are not under-reported.
   const latencies = scanResult.toolPairs.map((p) => p.observedLatencyMs);
@@ -308,6 +323,7 @@ async function buildSessionRecord(
     sessionId: scanResult.sessionHeader?.id ?? null,
     startedAt: scanResult.sessionHeader?.timestamp ?? null,
     toolCallCount: scanResult.observedToolCallCount,
+    projectionGapCount: scanResult.projectionGapCount,
     errorCount: scanResult.toolPairs.filter((p) => p.isError).length,
     observedLatencyMs: computeLatencyStats(latencies),
     malformedLines: scanResult.malformedLines,
@@ -315,6 +331,10 @@ async function buildSessionRecord(
     unmatchedToolResults: scanResult.unmatchedToolResultCount,
     fileSizeChangedDuringScan: scanResult.fileSizeChangedDuringScan,
   };
+
+  const extraction = await extractSubagentCorrelationsWithStatus(scanResult, sessionsDir);
+  recordCorrelationEvidenceFailures(coverage, extraction.failureReasons);
+  const correlations = extraction.correlations;
 
   if (includePaths) {
     record.filePath = scanResult.filePath;
@@ -328,27 +348,38 @@ async function buildSessionRecord(
       record.projectLabel = basename(scanResult.sessionHeader.cwd);
     }
     // Fix 2: pass sessionsDir so child paths are validated against the boundary.
-    const correlations = await extractSubagentCorrelations(scanResult, sessionsDir);
     record.subagentCorrelationCount = correlations.length;
     record.subagentCorrelations = correlations.map((c) => ({
-      parentSessionId: c.parentSessionId,
-      toolCallId: c.toolCallId,
-      runId: c.runId,
+      // Aliases apply only to correlation fields; the established raw top-level
+      // sessionId compatibility field remains unchanged in per-session records.
+      parentSessionId: publicCorrelationId(c.parentSessionId),
+      toolCallId: publicCorrelationId(c.toolCallId),
+      runId: publicCorrelationId(c.runId),
       ...(c.agent !== undefined ? { agent: c.agent } : {}),
       parentSessionFile: c.parentSessionFile,
       childSessionFile: c.childSessionFile,
       childResolved: c.childResolved,
-      ...(c.childSessionId !== undefined ? { childSessionId: c.childSessionId } : {}),
+      ...(c.childSessionId !== undefined
+        ? { childSessionId: publicCorrelationId(c.childSessionId) }
+        : {}),
       ...(c.childStartedAt !== undefined ? { childStartedAt: c.childStartedAt } : {}),
     }));
   } else {
     // Always include a count of subagent correlations so callers know
     // whether child sessions exist, even without path details.
-    const correlations = await extractSubagentCorrelations(scanResult, sessionsDir);
     record.subagentCorrelationCount = correlations.length;
   }
 
   return record;
+}
+
+function createPublicCorrelationId(): PublicCorrelationId {
+  // A fresh report salt prevents the same opaque transcript identity from
+  // being correlated across separate CLI invocations while preserving joins
+  // between parent, child, run, and tool-call records in one report.
+  const salt = randomBytes(32);
+  return (value: string): string =>
+    `id-${createHash("sha256").update(salt).update("\0").update(value).digest("hex").slice(0, 16)}`;
 }
 
 function computeProfileId(agentDir: string): string {
@@ -380,9 +411,12 @@ async function buildPerSessionOutput(
   agentDir: string,
   includePaths: boolean,
   profileSource: ProfileSource,
+  publicCorrelationId: PublicCorrelationId,
 ): Promise<PerSessionOutput> {
   const sessions = await Promise.all(
-    scanResults.map((r) => buildSessionRecord(r, sessionsDir, includePaths)),
+    scanResults.map((r) =>
+      buildSessionRecord(r, coverage, sessionsDir, includePaths, publicCorrelationId),
+    ),
   );
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -444,6 +478,26 @@ function buildPerToolOutput(
   };
 }
 
+function buildSubagentOutput(
+  scanResults: SessionScanResult[],
+  coverage: ScanCoverage,
+  sessionsDir: string,
+  agentDir: string,
+  includePaths: boolean,
+  profileSource: ProfileSource,
+  publicCorrelationId: PublicCorrelationId,
+): SubagentOutput {
+  const analysis = analyzeSubagentSessions(scanResults, coverage, {
+    publicRunId: publicCorrelationId,
+  });
+  return {
+    ...analysis,
+    generatedAt: new Date().toISOString(),
+    timingQualityNote: TIMING_QUALITY_NOTE,
+    provenance: buildProvenance(agentDir, sessionsDir, includePaths, profileSource),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -492,8 +546,9 @@ async function main(): Promise<void> {
   }
 
   const coverage = aggregateCoverage(scanResults, extraCoverage);
+  const publicCorrelationId = createPublicCorrelationId();
 
-  let output: PerSessionOutput | PerToolOutput;
+  let output: PerSessionOutput | PerToolOutput | SubagentOutput;
   if (args.mode === "per-tool") {
     output = buildPerToolOutput(
       scanResults,
@@ -503,6 +558,16 @@ async function main(): Promise<void> {
       args.includePaths,
       profileSource,
     );
+  } else if (args.mode === "subagents") {
+    output = buildSubagentOutput(
+      scanResults,
+      coverage,
+      sessionsDir,
+      agentDir,
+      args.includePaths,
+      profileSource,
+      publicCorrelationId,
+    );
   } else {
     output = await buildPerSessionOutput(
       scanResults,
@@ -511,6 +576,7 @@ async function main(): Promise<void> {
       agentDir,
       args.includePaths,
       profileSource,
+      publicCorrelationId,
     );
   }
 

@@ -28,6 +28,10 @@ import {
   type SubagentTerminalResult,
 } from "../../shared/types.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
+import {
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.ts";
@@ -81,6 +85,8 @@ export interface SubagentNotifyDetails {
   sessionLabel?: string;
   sessionValue?: string;
   awaitingSupervisor?: boolean;
+  /** Privacy-safe run telemetry envelope, when available. */
+  telemetry?: SubagentRunTelemetry;
 }
 
 interface SubagentResult {
@@ -106,6 +112,7 @@ interface SubagentResult {
   awaited?: boolean;
   pause?: { kind?: string };
   terminalResult?: SubagentTerminalResult;
+  telemetry?: SubagentRunTelemetry | Record<string, unknown>;
 }
 
 function boundedSummary(value: string): string {
@@ -489,6 +496,9 @@ function serializableDetails(details: SubagentNotifyDetails): Record<string, unk
     ...(details.sessionValue ? { sessionValue: boundedReference(details.sessionValue) } : {}),
     ...(asyncId ? { asyncId } : {}),
     ...(resumeTarget ? { resumeTarget } : {}),
+    ...(normalizeSubagentRunTelemetry(details.telemetry)
+      ? { telemetry: normalizeSubagentRunTelemetry(details.telemetry) }
+      : {}),
   };
 }
 
@@ -562,6 +572,9 @@ export function buildCompletionDetails(result: SubagentResult): SubagentNotifyDe
     ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor"
       ? { awaitingSupervisor: true }
       : {}),
+    ...(normalizeSubagentRunTelemetry(result.telemetry)
+      ? { telemetry: normalizeSubagentRunTelemetry(result.telemetry) }
+      : {}),
   };
 }
 
@@ -607,4 +620,22 @@ export default function registerSubagentNotify(
   };
 
   globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
+}
+
+// Branch does not have completion batching; these type/guard stubs preserve
+// the index.ts import surface without requiring callers to change.
+export type SubagentCompletionBatchDetails = SubagentNotifyDetails;
+export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "agent" in value &&
+    "status" in value &&
+    "resultPreview" in value
+  );
+}
+export function isSubagentCompletionBatchDetails(
+  _value: unknown,
+): _value is SubagentCompletionBatchDetails {
+  return false;
 }

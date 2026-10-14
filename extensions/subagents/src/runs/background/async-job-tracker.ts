@@ -24,6 +24,7 @@ import { parsePersistedChildLocationSnapshot } from "../../shared/child-location
 import { isAwaitedRun } from "./awaited-run-registry.ts";
 import { canonicalLifecycleState } from "./async-status-boundary.ts";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.ts";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 
 interface AsyncJobTrackerOptions {
   completionRetentionMs?: number;
@@ -116,6 +117,7 @@ export function createAsyncJobTracker(
       ...(run.awaited ? { awaited: true } : {}),
       status: run.state,
       ...(run.lifecycle ? { lifecycle: run.lifecycle } : {}),
+      ...(run.telemetry ? { telemetry: run.telemetry } : {}),
       sessionId: run.sessionId,
       activityState: run.activityState,
       lastActivityAt: run.lastActivityAt,
@@ -391,6 +393,8 @@ export function createAsyncJobTracker(
             job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
             job.timedOut = status.timedOut ?? job.timedOut;
             job.sessionFile = status.sessionFile ?? job.sessionFile;
+            if (status.telemetry !== undefined)
+              job.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
             if (status.projectAgents !== undefined) job.projectAgents = status.projectAgents;
             const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
             if (liveNestedDescendants) cancelCleanup(job.asyncId);
@@ -441,6 +445,7 @@ export function createAsyncJobTracker(
   const handleStarted = (data: unknown) => {
     const info = data as AsyncStartedEvent;
     if (!info.id) return;
+    const telemetry = normalizeSubagentRunTelemetry(info.telemetry);
     if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
       return;
     const now = Date.now();
@@ -451,6 +456,7 @@ export function createAsyncJobTracker(
       asyncDir,
       ...(isAwaitedRun(info.id) ? { awaited: true } : {}),
       status: "queued",
+      ...(telemetry ? { telemetry } : {}),
       pid: typeof info.pid === "number" ? info.pid : undefined,
       ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
       mode: normalizeSubagentRunMode(info.mode),
@@ -478,12 +484,15 @@ export function createAsyncJobTracker(
       sessionId?: string;
       state?: AsyncJobState["status"];
       awaited?: boolean;
+      telemetry?: unknown;
     };
     if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId)
       return;
     const asyncId = result.id;
     if (!asyncId) return;
     const job = state.asyncJobs.get(asyncId);
+    const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
+    if (job && telemetry) job.telemetry = telemetry;
     let nestedRefreshFailed = false;
     if (job) {
       if (result.awaited) job.awaited = true;

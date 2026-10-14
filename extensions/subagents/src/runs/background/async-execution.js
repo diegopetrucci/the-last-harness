@@ -13,6 +13,7 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/
 import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, deduplicateModelCandidates, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { contextWindowsForChildModels, resolveEffectiveThinking, } from "../../shared/model-info.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
+import { buildSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { normalizeTicketId, readTicketBody, ticketLookupKey } from "../shared/ticket-context.js";
@@ -355,6 +356,27 @@ export function buildAsyncRunnerPlan(id, params) {
     };
     return { plan, runnerCwd };
 }
+function initialAsyncTelemetry(input) {
+    if (!input.provenance || !input.controls)
+        return undefined;
+    const planSteps = input.plan.kind === "single" ? [input.plan.task] : input.plan.tasks;
+    return buildSubagentRunTelemetry({
+        runId: input.id,
+        execution: input.execution ?? "async",
+        mode: input.mode,
+        provenance: input.provenance,
+        controls: input.controls,
+        startedAt: input.startedAt,
+        outcome: { state: "running" },
+        lineage: input.lineage,
+        steps: planSteps.map((step, index) => ({
+            index,
+            agent: step.agent,
+            model: step.modelIdentity,
+            outcome: { state: "queued" },
+        })),
+    });
+}
 export function executeAsyncParallel(id, params) {
     const { tasks, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, maxSubagentDepth, controlConfig, nestedRoute, ticketBodies, } = params;
     const runStartedAt = Date.now();
@@ -416,6 +438,16 @@ export function executeAsyncParallel(id, params) {
         return formatAsyncStartError("parallel", built.error);
     }
     const { plan, runnerCwd } = built;
+    const telemetry = initialAsyncTelemetry({
+        id,
+        execution: params.awaited ? "foreground" : "async",
+        mode: "parallel",
+        plan,
+        provenance: params.telemetryProvenance,
+        controls: params.controlConfig,
+        startedAt: runStartedAt,
+        lineage: params.telemetryLineage,
+    });
     const deadlineAt = runDeadlineAt;
     const projectAgents = [
         ...new Map(params.projectAgentIdentities?.map((identity) => [
@@ -454,6 +486,7 @@ export function executeAsyncParallel(id, params) {
         spawnResult = spawnRunner({
             id,
             ...(params.awaited === true ? { awaited: true } : {}),
+            ...(telemetry ? { telemetry } : {}),
             plan,
             resultPath,
             cwd: runnerCwd,
@@ -531,6 +564,7 @@ export function executeAsyncParallel(id, params) {
             sessionId: ctx.currentSessionId,
             mode: "parallel",
             agent: firstTask?.agent,
+            ...(telemetry ? { telemetry } : {}),
             agents: flatAgents,
             task: firstTask?.task?.slice(0, 50),
             cwd: runnerCwd,
@@ -553,6 +587,7 @@ export function executeAsyncParallel(id, params) {
             mode: "parallel",
             runId: id,
             results: [],
+            ...(telemetry ? { telemetry } : {}),
             asyncId: id,
             asyncDir,
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
@@ -747,6 +782,17 @@ export function executeAsyncSingle(id, params) {
         return formatAsyncStartError("single", launchPlan.error);
     }
     const { buildPlan, effectiveTimeoutMs, effectiveDeadlineAt } = launchPlan;
+    const plan = buildPlan();
+    const telemetry = initialAsyncTelemetry({
+        id,
+        execution: params.awaited ? "foreground" : "async",
+        mode: "single",
+        plan,
+        provenance: params.telemetryProvenance,
+        controls: params.controlConfig,
+        startedAt: runStartedAt,
+        lineage: params.telemetryLineage,
+    });
     const resultPath = inheritedNestedRoute
         ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
         : path.join(RESULTS_DIR, `${id}.json`);
@@ -756,7 +802,7 @@ export function executeAsyncSingle(id, params) {
             asyncDir,
             resultPath,
             mode: "single",
-            plan: buildPlan(),
+            plan,
             events: ctx.pi.events,
             sessionId: ctx.currentSessionId,
             cwd: runnerCwd,
@@ -776,7 +822,8 @@ export function executeAsyncSingle(id, params) {
         spawnResult = spawnRunner({
             id,
             ...(params.awaited === true ? { awaited: true } : {}),
-            plan: buildPlan(),
+            ...(telemetry ? { telemetry } : {}),
+            plan,
             resultPath,
             cwd: runnerCwd,
             maxOutput,
@@ -856,6 +903,7 @@ export function executeAsyncSingle(id, params) {
             sessionId: ctx.currentSessionId,
             mode: "single",
             agent,
+            ...(telemetry ? { telemetry } : {}),
             task: task?.slice(0, 50),
             cwd: runnerCwd,
             asyncDir,
@@ -874,6 +922,7 @@ export function executeAsyncSingle(id, params) {
             mode: "single",
             runId: id,
             results: [],
+            ...(telemetry ? { telemetry } : {}),
             asyncId: id,
             asyncDir,
             ...(effectiveTimeoutMs !== undefined

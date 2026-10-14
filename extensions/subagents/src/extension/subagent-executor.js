@@ -334,6 +334,7 @@ async function runAsyncPath(data, deps) {
             timeoutMs: data.timeoutMs,
             projectAgentIdentities: data.projectAgentIdentities,
             ticketBodies,
+            ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
         });
     }
     if (hasSingle) {
@@ -388,6 +389,7 @@ async function runAsyncPath(data, deps) {
             nestedRoute,
             timeoutMs: data.timeoutMs,
             projectAgent: data.projectAgentIdentities?.find((identity) => `embedded.${identity.slug}` === params.agent),
+            ...(deps.telemetryProvenance ? { telemetryProvenance: deps.telemetryProvenance } : {}),
         });
     }
     return null;

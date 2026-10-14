@@ -81,6 +81,16 @@ export function subagentToolResults(session: AgentSession): string[] {
   return results;
 }
 
+export function subagentToolResultDetails(session: AgentSession): unknown[] {
+  const details: unknown[] = [];
+  for (const message of session.messages) {
+    if (message.role !== "toolResult") continue;
+    if ((message as { toolName?: string }).toolName !== "subagent") continue;
+    details.push((message as { details?: unknown }).details);
+  }
+  return details;
+}
+
 function latestSubagentToolResultText(
   messages: Array<{ role?: string; toolName?: string; content?: unknown }>,
 ): string | undefined {

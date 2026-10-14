@@ -193,7 +193,7 @@ describe("awaited async-run owner", () => {
     assert.equal(result.details.results.length, 1);
     assert.equal(result.details.results[0]?.terminationReason, "completed");
     assert.equal(result.details.results[0]?.finalOutput, "awaited completion");
-    assert.equal("awaited" in result.details, false);
+    assert.equal(result.details.awaited, true, "awaited dispatch should persist awaited ownership");
     assert.equal(result.details.results[0]?.terminalResult?.state, "completed");
     assert.equal(result.details.results[0]?.terminalResult?.facts.attempts.length, 1);
     assert.deepEqual(channels, [SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT]);

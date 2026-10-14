@@ -8,6 +8,7 @@ import { checkPidLiveness, isCompletedLifecycleStepState, isTerminalLifecycleSta
 import { terminalResultForStatusStep } from "../../shared/terminal-result.js";
 import { boundChildError } from "../shared/child-protocol.js";
 import { isAsyncStatusReadError } from "./async-status-boundary.js";
+import { finalizeSubagentRunTelemetry, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, resolveSubagentTelemetryOutcome, resolveParallelSubagentTelemetryOutcome, } from "../../shared/telemetry.js";
 const STALE_MESSAGE_PREFIX = "Async runner process";
 const STALE_MESSAGE_SUFFIX = "exited before writing a result. Marked run failed by stale-run reconciliation.";
 const DEFAULT_STALE_ALIVE_PID_MS = 24 * 60 * 60 * 1000;
@@ -49,6 +50,13 @@ function failedStatus(status, now, message) {
             terminationReason: step.terminationReason ?? "process_exit",
             terminalResult: terminalResultForStatusStep(step, "failed"),
         });
+    const existingTelemetry = normalizeSubagentRunTelemetry(status.telemetry);
+    const repairedTelemetry = existingTelemetry
+        ? finalizeSubagentRunTelemetry(existingTelemetry, existingTelemetry.outcome?.state !== undefined &&
+            !["queued", "running"].includes(existingTelemetry.outcome.state)
+            ? existingTelemetry.outcome
+            : { state: "failed", terminationReason: "process_exit" }, now)
+        : undefined;
     return {
         ...status,
         state: "failed",
@@ -58,6 +66,7 @@ function failedStatus(status, now, message) {
         endedAt: status.endedAt ?? now,
         lastUpdate: now,
         ...(steps ? { steps } : {}),
+        ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
     };
 }
 function resultStep(step, message) {
@@ -99,6 +108,7 @@ function resultArtifact(status, asyncDir, now, message) {
         asyncDir,
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+        ...(status.telemetry ? { telemetry: status.telemetry } : {}),
     };
 }
 const protectedLifecycle = (status) => status.state === "pausing" || status.pause?.kind === "awaiting_supervisor";
@@ -189,14 +199,128 @@ export function reconcileNestedAsyncDescendants(route, options = {}) {
     }
 }
 export { checkPidLiveness };
+function readResultForRepair(resultPath) {
+    try {
+        if (!fs.existsSync(resultPath))
+            return undefined;
+        const parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+            return undefined;
+        const rec = parsed;
+        if (typeof rec.state !== "string")
+            return undefined;
+        return {
+            state: rec.state,
+            success: typeof rec.success === "boolean" ? rec.success : undefined,
+            results: Array.isArray(rec.results)
+                ? rec.results
+                : undefined,
+            telemetry: normalizeSubagentRunTelemetry(rec.telemetry),
+        };
+    }
+    catch {
+        return undefined;
+    }
+}
+function repairStatusFromResult(asyncDir, observed, resultPath, now) {
+    const repair = readResultForRepair(resultPath);
+    if (!repair)
+        return undefined;
+    const isComplete = repair.state === "complete" || repair.state === "completed";
+    const isFailed = repair.state === "failed";
+    if (!isComplete && !isFailed)
+        return undefined;
+    const mergedTelemetry = mergeSubagentRunTelemetry(repair.telemetry, observed.telemetry);
+    const isTerminalTelemetryState = (state) => state === "completed" || state === "failed" || state === "cancelled" || state === "paused";
+    const resultOutcome = mergedTelemetry?.outcome;
+    const runOutcome = resultOutcome && isTerminalTelemetryState(resultOutcome.state)
+        ? resultOutcome
+        : resolveSubagentTelemetryOutcome({
+            state: repair.state,
+            success: isComplete,
+            terminationReason: isFailed ? "process_exit" : undefined,
+        });
+    let repairedTelemetry = mergedTelemetry;
+    if (repairedTelemetry) {
+        const updatedSteps = repairedTelemetry.steps.map((step) => {
+            if (step.outcome && isTerminalTelemetryState(step.outcome.state))
+                return step;
+            const child = repair.results?.[step.index];
+            if (!child)
+                return { ...step, ...(runOutcome ? { outcome: runOutcome } : {}) };
+            const childOutcome = resolveSubagentTelemetryOutcome({
+                success: child.success === true,
+                terminationReason: typeof child.terminationReason === "string"
+                    ? child.terminationReason
+                    : isFailed
+                        ? "process_exit"
+                        : undefined,
+            });
+            return { ...step, ...(childOutcome ? { outcome: childOutcome } : {}) };
+        });
+        const aggregateOutcome = updatedSteps.length > 1
+            ? (resolveParallelSubagentTelemetryOutcome(updatedSteps.map((s) => (s.outcome ? { ...s.outcome } : {}))) ?? runOutcome)
+            : runOutcome;
+        repairedTelemetry = {
+            ...repairedTelemetry,
+            steps: updatedSteps,
+            ...(aggregateOutcome ? { outcome: aggregateOutcome } : {}),
+        };
+    }
+    const repairedSteps = observed.steps?.map((step) => {
+        if (isCompletedLifecycleStepState(step.status) || step.status === "failed")
+            return step;
+        const child = repair.results?.[observed.steps.indexOf(step)];
+        const childSuccess = child?.success === true;
+        return {
+            ...step,
+            status: childSuccess ? "complete" : "failed",
+            endedAt: step.endedAt ?? now,
+            exitCode: childSuccess ? (step.exitCode ?? 0) : (step.exitCode ?? 1),
+            ...(typeof child?.error === "string" ? { error: child.error } : {}),
+            terminationReason: step.terminationReason ?? (childSuccess ? undefined : "process_exit"),
+            terminalResult: terminalResultForStatusStep(step, childSuccess ? "complete" : "failed"),
+        };
+    });
+    const repairedStatus = {
+        ...observed,
+        state: isComplete ? "complete" : "failed",
+        pid: undefined,
+        error: isFailed ? (observed.error ?? "Async run failed.") : undefined,
+        endedAt: observed.endedAt ?? now,
+        lastUpdate: now,
+        ...(repairedSteps ? { steps: repairedSteps } : {}),
+        ...(repairedTelemetry ? { telemetry: repairedTelemetry } : {}),
+    };
+    try {
+        writeAtomicJson(path.join(asyncDir, "status.json"), repairedStatus);
+    }
+    catch {
+        return { status: observed, repaired: false, resultPath };
+    }
+    appendRepairEvent(path.join(asyncDir, "events.jsonl"), {
+        type: "subagent.run.repaired_stale",
+        ts: now,
+        runId: observed.runId,
+        resultPath,
+        message: `Stale run repaired from existing result artifact (state=${repairedStatus.state}).`,
+    });
+    return { status: repairedStatus, repaired: true, resultPath };
+}
 export function reconcileAsyncRun(asyncDir, options = {}) {
     const observed = safeStatus(asyncDir, options.statusRead);
     if (!observed)
         return { status: null, repaired: false };
     const runId = observed.runId || path.basename(asyncDir);
     const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
-    if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid))
+    if (isTerminalLifecycleState(observed.state) || !validPid(observed.pid)) {
+        if (!isTerminalLifecycleState(observed.state) && !validPid(observed.pid)) {
+            const resultRepair = repairStatusFromResult(asyncDir, observed, resultPath, options.now?.() ?? Date.now());
+            if (resultRepair)
+                return resultRepair;
+        }
         return { status: observed, repaired: false, resultPath };
+    }
     const liveness = checkPidLiveness(observed.pid, options.kill);
     if (liveness !== "dead" && observed.state !== "running")
         return { status: observed, repaired: false, resultPath };

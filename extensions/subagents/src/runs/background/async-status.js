@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
+import { parsePersistedChildLocationSnapshot, } from "../../shared/child-location.js";
 import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
@@ -12,6 +13,7 @@ import { formatUnreadableStatus, isAsyncStatusReadError, MAX_UNREADABLE_STATUS_R
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -65,6 +67,12 @@ function deriveAsyncActivityState(asyncDir, status) {
         activityState: status.activityState,
         lastActivityAt: latestTimestamp(status.startedAt, status.lastActivityAt, outputFileMtime(outputPath), currentStep?.startedAt, currentStep?.lastActivityAt),
     };
+}
+export function validatePersistedAsyncStatus(asyncDir, status) {
+    status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
+    for (const step of status.steps ?? []) {
+        step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+    }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
@@ -131,6 +139,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         };
     });
     attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
+    const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
     return {
         id: status.runId || path.basename(asyncDir),
         asyncDir,
@@ -169,6 +178,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
         ...(status.pause ? { pause: status.pause } : {}),
         ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
     };
 }
 function sortRuns(runs) {

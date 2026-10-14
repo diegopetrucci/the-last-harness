@@ -39,7 +39,11 @@ import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { parseSubagentTerminalResult } from "../../shared/terminal-result.ts";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE } from "./cancellation-projection.ts";
-
+import {
+  mergeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
 interface AsyncResumeParams {
   id?: string;
   dir?: string;
@@ -82,9 +86,10 @@ type AsyncResumeTarget = {
   claimed?: boolean;
   /** Persisted attempt facts carried into the continuation runner. */
   terminalResult?: SubagentTerminalResult;
-  projectAgent?: ProjectAgentIdentity;
-  /** Present only when the persisted run carried a run-level project inventory. */
+  projectAgent?: ProjectAgentIdentity /** Present only when the persisted run carried a run-level project inventory. */;
   projectAgents?: ProjectAgentIdentity[];
+  /** Validated source-run telemetry used to seed continuation lineage. */
+  telemetry?: SubagentRunTelemetry;
 };
 
 /**
@@ -122,6 +127,7 @@ type AsyncResultFile = Defensive<AsyncResultArtifact> & {
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   projectAgent?: ProjectAgentIdentity;
   projectAgents?: ProjectAgentIdentity[];
+  telemetry?: SubagentRunTelemetry;
   // Override results to add legacy per-item `thinking` field (written by
   // older runners but not part of the current canonical result item type).
   results?: Array<
@@ -159,9 +165,29 @@ interface AsyncResumeResolutionContext {
   requestedIndex?: number;
   deps: AsyncResumeDeps;
   options: AsyncResumeOptions;
+  telemetry?: SubagentRunTelemetry;
 }
 
 const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "failed", "paused"]);
+const RESUME_TERMINAL_RUN_STATES = new Set([
+  "complete",
+  "failed",
+  "paused",
+  "cancelled",
+  "continued",
+]);
+
+function resolveResumeTelemetry(
+  context: AsyncResumeResolutionContext,
+): SubagentRunTelemetry | undefined {
+  const resultTelemetry = normalizeSubagentRunTelemetry(context.result?.telemetry);
+  const statusTelemetry = normalizeSubagentRunTelemetry(context.status?.telemetry);
+  return mergeSubagentRunTelemetry(resultTelemetry, statusTelemetry, {
+    persistedOutcomeWins: Boolean(
+      context.status && RESUME_TERMINAL_RUN_STATES.has(context.status.state),
+    ),
+  });
+}
 
 export function continuationResumeBlock(
   continuation: ReturnType<typeof lifecycleContinuationForIndex>,
@@ -354,6 +380,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
     )
     .filter((capture): capture is ProjectAgentIdentity => Boolean(capture));
+  const telemetry = normalizeSubagentRunTelemetry(data.telemetry);
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -387,6 +414,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
     ...(results ? { results } : {}),
     ...(projectAgent ? { projectAgent } : {}),
     ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 
@@ -570,6 +598,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
   if (!status) return;
   if (status.lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure")
     throw new Error(ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE);
+  status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   if (typeof status.runId !== "string")
     throw new Error(`Invalid async status '${source}': runId must be a string.`);
   if (status.sessionId !== undefined && typeof status.sessionId !== "string")
@@ -809,6 +838,9 @@ function buildLiveAsyncResumeTarget(
     ...(resolveResumeTerminalResult(index, statusStep, context.resultSteps)
       ? { terminalResult: resolveResumeTerminalResult(index, statusStep, context.resultSteps) }
       : {}),
+    ...(resolveResumeTelemetry(context) !== undefined
+      ? { telemetry: resolveResumeTelemetry(context) }
+      : {}),
   };
 }
 
@@ -897,6 +929,7 @@ function buildTerminalAsyncResumeTarget(
     selectedContinuation.claimToken.length > 0
       ? { claimed: true }
       : {}),
+    ...(context.telemetry !== undefined ? { telemetry: context.telemetry } : {}),
   };
   const diagnosticMetadata = resolveResumeDiagnosticMetadata(
     index,
@@ -1074,6 +1107,7 @@ export function resolveAsyncResumeTarget(
     deps,
     options,
   };
+  context.telemetry = resolveResumeTelemetry(context);
   if (state === "running") {
     const liveTarget = resolveLiveAsyncResumeTarget(context);
     if (liveTarget) return liveTarget;

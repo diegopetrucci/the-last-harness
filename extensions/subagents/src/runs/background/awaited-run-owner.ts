@@ -47,6 +47,10 @@ import {
   type PidLiveness,
 } from "../shared/lifecycle-state.ts";
 import {
+  finalizeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+} from "../../shared/telemetry.ts";
+import {
   cleanupOwnedProcessGroup,
   normalizeChildProcessCleanup,
   PROCESS_GROUP_CLEANUP_MAX_WAIT_MS,
@@ -70,6 +74,8 @@ import {
 import { formatSupervisorPauseMessage } from "../../shared/pause-messages.ts";
 import { buildAwaitedProgressUpdate } from "./awaited-progress.ts";
 import { persistedTicketId } from "../shared/ticket-context.ts";
+import { computeAwaitedHardDeadlineAt } from "./awaited-run-deadline.ts";
+export { computeAwaitedHardDeadlineAt } from "./awaited-run-deadline.ts";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_ARTIFACT_GRACE_MS = 150;
@@ -159,30 +165,6 @@ function isRecord(value: unknown): value is RecordValue {
 
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/** Compute the bounded point at which cleanup and artifact grace have elapsed. */
-export function computeAwaitedHardDeadlineAt(input: {
-  deadlineAt?: number;
-  abortStartedAt?: number;
-  cleanupGraceMs: number;
-  artifactGraceMs: number;
-  /** Maximum wait for the cleanup primitive; defaults to its production bound. */
-  cleanupMaxWaitMs?: number;
-}): number | undefined {
-  const base = finiteNumber(input.abortStartedAt) ?? finiteNumber(input.deadlineAt);
-  if (base === undefined) return undefined;
-  const cleanupMaxWaitMs = Math.max(
-    0,
-    finiteNumber(input.cleanupMaxWaitMs) ?? PROCESS_GROUP_CLEANUP_MAX_WAIT_MS,
-  );
-  return Math.min(
-    Number.MAX_SAFE_INTEGER,
-    base +
-      cleanupMaxWaitMs +
-      Math.max(0, finiteNumber(input.cleanupGraceMs) ?? 0) +
-      Math.max(0, finiteNumber(input.artifactGraceMs) ?? 0),
-  );
 }
 
 function nonNegativeInteger(value: unknown): number | undefined {
@@ -796,6 +778,12 @@ function buildAwaitedResult(
       : {}),
     ...(artifact.totalTokens ? { totalChildUsage: usageFromArtifact(artifact) } : {}),
     totalSteps: results.length,
+    awaited: true,
+    ...(artifact.telemetry
+      ? {
+          telemetry: artifact.telemetry as import("../../shared/telemetry.ts").SubagentRunTelemetry,
+        }
+      : {}),
   };
   // The native result envelope has no `cancelled` status; retain its existing
   // failed rendering while the detailed result keeps terminationReason/cancel
@@ -1787,6 +1775,11 @@ export function createAwaitedRunOwner(input: AwaitedRunOwnerOptions): AwaitedRun
         mutate: (current) => {
           const cancelledAt = now();
           const summary = "Cancelled by parent abort.";
+          const cancelledTelemetry = finalizeSubagentRunTelemetry(
+            normalizeSubagentRunTelemetry(current.telemetry),
+            { state: "cancelled", terminationReason: "cancelled" },
+            cancelledAt,
+          );
           return {
             ...current,
             state: "cancelled",
@@ -1801,6 +1794,7 @@ export function createAwaitedRunOwner(input: AwaitedRunOwnerOptions): AwaitedRun
             endedAt: current.endedAt ?? cancelledAt,
             lastUpdate: cancelledAt,
             processCleanup: cloneCleanup(cleanupResult),
+            ...(cancelledTelemetry ? { telemetry: cancelledTelemetry } : {}),
             steps: current.steps?.map((step) =>
               step.status === "complete" || step.status === "failed"
                 ? step
@@ -1845,6 +1839,11 @@ export function createAwaitedRunOwner(input: AwaitedRunOwnerOptions): AwaitedRun
         expectedGeneration: lifecycleGeneration(status),
         mutate: (current) => {
           const endedAt = now();
+          const timedOutTelemetry = finalizeSubagentRunTelemetry(
+            normalizeSubagentRunTelemetry(current.telemetry),
+            { state: "failed", terminationReason: "timed_out" },
+            endedAt,
+          );
           return {
             ...current,
             state: "failed",
@@ -1860,6 +1859,7 @@ export function createAwaitedRunOwner(input: AwaitedRunOwnerOptions): AwaitedRun
             endedAt: current.endedAt ?? endedAt,
             lastUpdate: endedAt,
             processCleanup: cloneCleanup(cleanupResult),
+            ...(timedOutTelemetry ? { telemetry: timedOutTelemetry } : {}),
             steps: current.steps?.map((step) =>
               isCompletedLifecycleStepState(step.status) ||
               step.status === "failed" ||

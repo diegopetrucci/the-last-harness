@@ -7,7 +7,10 @@ import {
   shortenPath,
 } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
+import {
+  type ChildLocationSnapshot,
+  parsePersistedChildLocationSnapshot,
+} from "../../shared/child-location.ts";
 import {
   type ActivityState,
   type AsyncJobStep,
@@ -44,7 +47,7 @@ import type { AsyncStatusReadOptions } from "../../shared/utils.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
-
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
 interface AsyncRunStepSummary {
   index: number;
   agent: string;
@@ -132,6 +135,7 @@ export interface AsyncRunSummary {
   nestedChildren?: NestedRunSummary[];
   nestedWarnings?: string[];
   projectAgents?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity[];
+  telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
 }
 
 export interface AsyncRunUnreadableStatusIssue {
@@ -229,6 +233,18 @@ function deriveAsyncActivityState(
   };
 }
 
+export function validatePersistedAsyncStatus(
+  asyncDir: string,
+  status: AsyncStatus & { cwd?: string },
+): void {
+  // Telemetry is optional and independently schema-versioned. Invalid or
+  // unknown telemetry must not make an otherwise readable legacy lifecycle
+  // record unrecoverable; drop it at this persisted-data boundary.
+  status.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
+  for (const step of status.steps ?? []) {
+    step.childLocation = parsePersistedChildLocationSnapshot(step.childLocation);
+  }
+}
 function statusToSummary(
   asyncDir: string,
   status: AsyncStatus & { cwd?: string },
@@ -305,6 +321,7 @@ function statusToSummary(
     summarizedSteps,
     nestedChildren,
   );
+  const telemetry = normalizeSubagentRunTelemetry(status.telemetry);
   return {
     id: status.runId || path.basename(asyncDir),
     asyncDir,
@@ -343,6 +360,7 @@ function statusToSummary(
     ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
     ...(status.pause ? { pause: status.pause } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
+    ...(telemetry ? { telemetry } : {}),
   };
 }
 

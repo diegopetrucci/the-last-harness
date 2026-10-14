@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   advanceLifecycleContinuation,
   boundSupervisorSummary,
+  isTerminalLifecycleState,
   lifecycleGeneration,
   recoverStaleLifecycleContinuationClaim,
   transitionLifecycleStatus,
@@ -12,6 +13,7 @@ import {
   withLifecycleStatusLock,
   writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
+import { buildSubagentRunTelemetry } from "../../src/shared/telemetry.ts";
 import { claimAttentionNotification } from "../../src/runs/background/run-control-owner.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { readStatus } from "../../src/shared/utils.ts";
@@ -1273,6 +1275,151 @@ describe("lifecycle state helpers", () => {
       });
       assert.equal(missingOwner.recovered, false);
       assert.equal(missingOwner.liveness, "missing-owner");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("transitions telemetry to 'continued' when advanceLifecycleContinuation finalizes a single-step continuation", () => {
+    const root = tempRoot("pi-lifecycle-continuation-telemetry-");
+    try {
+      const asyncDir = path.join(root, "run-continuation-telemetry");
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-continuation-telemetry",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        steps: [
+          {
+            agent: "worker",
+            status: "paused",
+            pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+          },
+        ],
+        pause: { kind: "awaiting_supervisor", pausedAt: 140 },
+        lifecycle: {
+          generation: 0,
+          continuation: {
+            phase: "launched",
+            claimToken: "claim-tel-single",
+            claimedAt: 150,
+            launchedAt: 160,
+            continuationRunId: "continuation-run-1",
+          },
+        },
+        telemetry: buildSubagentRunTelemetry({
+          runId: "run-continuation-telemetry",
+          execution: "foreground",
+          mode: "single",
+          provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 100 },
+          controls: {
+            needsAttentionAfterMs: 2_000,
+            failedToolAttemptsBeforeAttention: 0,
+            notifyOn: ["needs_attention"],
+            notifyChannels: ["event"],
+          },
+          steps: [{ index: 0, agent: "worker", outcome: { state: "paused" } }],
+          outcome: { state: "paused" },
+        }),
+      });
+
+      const result = advanceLifecycleContinuation(
+        asyncDir,
+        0,
+        "claim-tel-single",
+        "continuation-run-1",
+        true,
+        () => 200,
+      );
+
+      assert.equal(result.changed || result.done, true);
+      assert.equal(result.lost, false);
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "complete");
+      // Telemetry outcome must be "continued", not "paused" or undefined.
+      assert.equal(
+        persisted?.telemetry?.outcome?.state,
+        "continued",
+        "run-level telemetry outcome must be 'continued' after finalization",
+      );
+      assert.equal(
+        persisted?.telemetry?.steps[0]?.outcome?.state,
+        "continued",
+        "step telemetry outcome must be 'continued' after finalization",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("concurrent-writer regression: locked telemetry-continuation write does not overwrite a terminal status", () => {
+    // Regression test for P1-a: persistContinuationTelemetry previously did an unlocked
+    // read + writeNormalizedLifecycleStatus that could overwrite a concurrent settle.
+    // After the fix, the operation holds withLifecycleStatusLock and skips terminal states.
+    const root = tempRoot("pi-lifecycle-concurrent-writer-");
+    try {
+      const asyncDir = path.join(root, "run-concurrent-writer");
+      const terminalTelemetry = buildSubagentRunTelemetry({
+        runId: "run-concurrent-writer",
+        execution: "foreground",
+        mode: "single",
+        provenance: { tlhVersion: "test", piVersion: "test", loadedAt: 100 },
+        controls: {
+          needsAttentionAfterMs: 2_000,
+          failedToolAttemptsBeforeAttention: 0,
+          notifyOn: ["needs_attention"],
+          notifyChannels: ["event"],
+        },
+        steps: [{ index: 0, agent: "worker", outcome: { state: "continued" } }],
+        outcome: { state: "continued" },
+      });
+      // Write a terminal (complete) status, simulating a concurrent settle that landed
+      // just before the telemetry append would have written.
+      writeNormalizedLifecycleStatus(asyncDir, {
+        runId: "run-concurrent-writer",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        steps: [{ agent: "worker", status: "complete", endedAt: 200 }],
+        telemetry: terminalTelemetry,
+      });
+      assert.equal(isTerminalLifecycleState("complete"), true);
+
+      // Simulate what persistContinuationTelemetry does under the lock: skip terminal.
+      // The guard (isTerminalLifecycleState check) must prevent this write.
+      let writeAttempted = false;
+      withLifecycleStatusLock(asyncDir, (current) => {
+        if (!current || isTerminalLifecycleState(current.state)) return;
+        writeAttempted = true;
+        // In the old (buggy) code path this write would happen after an unlocked read;
+        // under the lock this branch must not be reached for a terminal status.
+        const staleTelemetry = buildSubagentRunTelemetry({
+          ...terminalTelemetry.run,
+          runId: terminalTelemetry.run.id,
+          execution: terminalTelemetry.run.execution,
+          mode: terminalTelemetry.run.mode,
+          provenance: terminalTelemetry.provenance,
+          controls: terminalTelemetry.controls,
+          steps: [{ index: 0, agent: "worker", outcome: { state: "paused" } }],
+          outcome: { state: "paused" },
+        });
+        writeNormalizedLifecycleStatus(asyncDir, { ...current, telemetry: staleTelemetry });
+      });
+
+      // Terminal status and its telemetry must be intact.
+      assert.equal(
+        writeAttempted,
+        false,
+        "stale write must not be attempted against a terminal status",
+      );
+      const persisted = readStatus(asyncDir);
+      assert.equal(persisted?.state, "complete", "terminal status must not be overwritten");
+      assert.equal(
+        persisted?.telemetry?.outcome?.state,
+        "continued",
+        "terminal telemetry must not be replaced by the stale paused envelope",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -504,6 +504,7 @@ function finalizeSingleStepArtifacts(input) {
                 timeoutMs: ctx.timeoutMs ?? step.timeoutMs,
                 deadlineAt: childDeadlineAt,
                 timestamp: Date.now(),
+                ...(ctx.childTelemetry ? { telemetry: ctx.childTelemetry } : {}),
             }, null, 2), "utf-8");
         }
     }

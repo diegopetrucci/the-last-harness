@@ -20,6 +20,12 @@ import {
   canonicalLifecycleStepState,
 } from "../background/async-status-boundary.ts";
 import { normalizeIdleEpisodeId } from "./subagent-control.ts";
+import {
+  appendSubagentTelemetryContinuation,
+  mergeSubagentRunTelemetry,
+  normalizeSubagentRunTelemetry,
+  transitionSubagentRunTelemetryLifecycle,
+} from "../../shared/telemetry.ts";
 
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 
@@ -302,9 +308,12 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
     lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure"
       ? lifecycle.resumeBlockedReason
       : undefined;
+  const telemetry = normalizeSubagentRunTelemetry(raw.telemetry);
   result.state = canonicalLifecycleState(raw.state);
   if (pause) result.pause = pause;
   if (cancel) result.cancel = cancel;
+  if (telemetry) result.telemetry = telemetry;
+  else delete result.telemetry;
   if (Array.isArray(raw.steps)) result.steps = raw.steps.map(normalizeStep);
   result.lifecycle = {
     generation: lifecycleGeneration(status),
@@ -698,13 +707,32 @@ function mergeStatus(current: AsyncStatus, memory: AsyncStatus, changed: boolean
       ? { ...current }
       : immutable
         ? { ...current }
-        : { ...current, ...memory };
+        : {
+            ...current,
+            ...memory,
+            // Preserve the monotonically advancing lastUpdate when the disk
+            // has a newer value (e.g. from a concurrent writer under a lock).
+            ...(maxNumber(current.lastUpdate, memory.lastUpdate) !== memory.lastUpdate
+              ? { lastUpdate: maxNumber(current.lastUpdate, memory.lastUpdate) }
+              : {}),
+          };
   const rootRecord = root as AsyncStatus & AnyRecord;
   if (immutable) appendMissing(rootRecord, recordOf(memory), SAFE_ROOT_FACTS);
 
   const steps = memory.steps?.map((step, index) => mergeStep(current.steps?.[index], step, false));
+  // Authoritative telemetry (committed through lock/CAS lifecycle transitions)
+  // always wins over the source-runner in-memory envelope.
+  const mergedTelemetry = mergeSubagentRunTelemetry(memory.telemetry, current.telemetry, {
+    persistedOutcomeWins: immutable,
+    persistedTerminalStepOutcomesWin: true,
+  });
+  const mergedLastUpdate = immutable ? maxNumber(root.lastUpdate, memory.lastUpdate) : undefined;
   return {
     ...root,
+    ...(mergedLastUpdate !== undefined && mergedLastUpdate !== root.lastUpdate
+      ? { lastUpdate: mergedLastUpdate }
+      : {}),
+    ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
     lifecycle: immutable
       ? current.lifecycle
       : {
@@ -804,6 +832,15 @@ function continuationResult(
     steps?.some(
       (step) => step.status === "paused" || step.status === "pausing" || step.status === "pending",
     ) ?? false;
+  // Transition the telemetry to reflect that this step continued into a new run. The run-level
+  // outcome is "paused" when other steps remain actionable, "continued" otherwise.
+  const continuedTelemetry = transitionSubagentRunTelemetryLifecycle({
+    telemetry: status.telemetry,
+    runState: actionable ? "paused" : "continued",
+    stepIndex: index,
+    stepState: "continued",
+    endedAt: at,
+  });
   return {
     ...status,
     state: actionable ? "paused" : "complete",
@@ -819,6 +856,7 @@ function continuationResult(
       continuationRunId: runId,
     }),
     ...(steps ? { steps } : {}),
+    ...(continuedTelemetry ? { telemetry: continuedTelemetry } : {}),
   };
 }
 
@@ -876,17 +914,24 @@ export function advanceLifecycleContinuation(
       mutate: (status) =>
         finalize
           ? continuationResult(status, index, gate.continuation, at, runId)
-          : {
-              ...status,
-              lastUpdate: at,
-              lifecycle: withLifecycleContinuation(status, index, {
-                ...gate.continuation,
-                phase: "launched",
-                ownerPid: undefined,
-                launchedAt: at,
+          : (() => {
+              const continuationTelemetry = appendSubagentTelemetryContinuation(status.telemetry, {
+                sourceStepIndex: index,
                 continuationRunId: runId,
-              }),
-            },
+              });
+              return {
+                ...status,
+                lastUpdate: at,
+                ...(continuationTelemetry ? { telemetry: continuationTelemetry } : {}),
+                lifecycle: withLifecycleContinuation(status, index, {
+                  ...gate.continuation,
+                  phase: "launched",
+                  ownerPid: undefined,
+                  launchedAt: at,
+                  continuationRunId: runId,
+                }),
+              };
+            })(),
     });
 
     return { status: result.status, changed: true, done: false, lost: false };

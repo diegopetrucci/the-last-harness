@@ -18,6 +18,8 @@ export const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
   "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 
 export interface StepResult {
+  /** Flat plan index retained for telemetry step correlation. */
+  index?: number;
   agent: string;
   projectAgent?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity;
   /** Normalized ticket ID, when assigned. */

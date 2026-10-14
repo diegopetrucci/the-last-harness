@@ -1,4 +1,12 @@
 import { randomUUID } from "node:crypto";
+import {
+  appendSubagentTelemetryContinuation,
+  continuationTelemetryMetadata,
+  normalizeSubagentRunTelemetry,
+  type SubagentRunTelemetry,
+  type SubagentTelemetryLineage,
+  type SubagentTelemetryProvenance,
+} from "../../shared/telemetry.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -73,6 +81,44 @@ import {
 
 type AsyncResumeSourceTarget = ReturnType<typeof resolveAsyncResumeTarget> & { source: "async" };
 type ResumeSourceTarget = AsyncResumeSourceTarget | NestedResumeSourceTarget;
+
+/** Persist telemetry continuation metadata into the source run's status before launching.
+ * Holds the lifecycle lock while reading + writing so a concurrent settle cannot race between them.
+ * @internal Exported for regression testing only. */
+export function persistContinuationTelemetry(
+  target: ResumeSourceTarget,
+  continuationRunId: string,
+): void {
+  try {
+    const sourceTelemetry =
+      target.source === "async" && "telemetry" in target ? target.telemetry : undefined;
+    const asyncDir =
+      target.source === "async" && "asyncDir" in target ? target.asyncDir : undefined;
+    if (!sourceTelemetry || !asyncDir) return;
+    // Acquire the lifecycle lock so the read and write are atomic; a concurrent settle
+    // cannot land between them and be silently overwritten by this best-effort append.
+    withLifecycleStatusLock(asyncDir, (current) => {
+      if (!current) return;
+      // For paused-source continuations the continuation-launch transition already
+      // appends lineage atomically inside its own lock; skip to avoid a redundant
+      // write (appendSubagentTelemetryContinuation is idempotent, but a single
+      // writer per lifecycle event is cleaner and avoids the extra lock round-trip).
+      if (current.state === "paused") return;
+      // For revive targets (complete/failed/cancelled) and still-active states,
+      // append the continuation lineage now under the lock.
+      const baseTelemetry: SubagentRunTelemetry | undefined =
+        normalizeSubagentRunTelemetry(current.telemetry) ?? sourceTelemetry;
+      const telemetry = appendSubagentTelemetryContinuation(baseTelemetry, {
+        sourceStepIndex: "index" in target ? target.index : undefined,
+        continuationRunId,
+      });
+      if (!telemetry) return;
+      writeNormalizedLifecycleStatus(asyncDir, { ...current, telemetry });
+    });
+  } catch {
+    // Never block a resume on telemetry persistence.
+  }
+}
 
 function priorTerminalResultForResume(target: ResumeSourceTarget): {
   priorTerminalResult?: SubagentTerminalResult;
@@ -846,6 +892,20 @@ export async function resumeAsyncRun(input: {
     explicitResumeModel(input.params.model) || target.kind !== "revive"
       ? undefined
       : target.modelIdentity;
+  const sourceTelemetry: SubagentRunTelemetry | undefined =
+    target.source === "async" && "telemetry" in target
+      ? normalizeSubagentRunTelemetry(target.telemetry as SubagentRunTelemetry | undefined)
+      : undefined;
+  const continuationTelemetry = continuationTelemetryMetadata(
+    sourceTelemetry,
+    target.runId,
+    "index" in target ? target.index : undefined,
+  );
+  const continuationTelemetryProvenance: SubagentTelemetryProvenance | undefined =
+    continuationTelemetry.provenance ?? input.deps.telemetryProvenance;
+  const continuationTelemetryLineage: SubagentTelemetryLineage | undefined =
+    continuationTelemetry.lineage;
+  persistContinuationTelemetry(target, runId);
   let result: ReturnType<typeof executeAsyncSingle>;
   try {
     result = (input.deps.executeAsyncSingle ?? executeAsyncSingle)(runId, {
@@ -900,6 +960,10 @@ export async function resumeAsyncRun(input: {
       availableModels,
       providerFallbackModels: providerFallbackModelsForTarget(input.params),
       modelFallbackNotice: input.params.modelFallbackNotice,
+      ...(continuationTelemetryProvenance
+        ? { telemetryProvenance: continuationTelemetryProvenance }
+        : {}),
+      ...(continuationTelemetryLineage ? { telemetryLineage: continuationTelemetryLineage } : {}),
     });
   } catch (error) {
     claimedPause?.rollbackReserved();

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
+import { normalizeSubagentRunTelemetry, } from "../../shared/telemetry.js";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.js";
@@ -339,6 +340,9 @@ function serializableDetails(details) {
         ...(details.sessionValue ? { sessionValue: boundedReference(details.sessionValue) } : {}),
         ...(asyncId ? { asyncId } : {}),
         ...(resumeTarget ? { resumeTarget } : {}),
+        ...(normalizeSubagentRunTelemetry(details.telemetry)
+            ? { telemetry: normalizeSubagentRunTelemetry(details.telemetry) }
+            : {}),
     };
 }
 const NUDGE_TEXT = BACKGROUND_COMPLETION_NUDGE_TEXT;
@@ -400,6 +404,9 @@ export function buildCompletionDetails(result) {
         ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor"
             ? { awaitingSupervisor: true }
             : {}),
+        ...(normalizeSubagentRunTelemetry(result.telemetry)
+            ? { telemetry: normalizeSubagentRunTelemetry(result.telemetry) }
+            : {}),
     };
 }
 export default function registerSubagentNotify(pi, state) {
@@ -432,4 +439,14 @@ export default function registerSubagentNotify(pi, state) {
         sendCompletion(pi, buildCompletionDetails(result), { triggerTurn: true, isIdle });
     };
     globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
+}
+export function isSubagentNotifyDetails(value) {
+    return (typeof value === "object" &&
+        value !== null &&
+        "agent" in value &&
+        "status" in value &&
+        "resultPreview" in value);
+}
+export function isSubagentCompletionBatchDetails(_value) {
+    return false;
 }

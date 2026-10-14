@@ -12,14 +12,17 @@ export const suiteConfigs = {
   unit: {
     directory: join(repoRoot, "extensions/subagents/test/unit"),
     // Stage 1 (origin/main 0c8f4faa) measured pass count: 1159/1159.
+    // Stage 2 (origin/main 5bafc8d4) measured pass count: 1189/1189.
+    // Stage 2 fix (persistContinuationTelemetry regression test): 1197/1197.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 1159,
+    minimumTests: 1197,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
     // Stage 1 (origin/main 0c8f4faa) measured pass count: 508/508 (leak-fix regression test added).
+    // Stage 2 (origin/main 5bafc8d4) measured pass count: 514/514.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 508,
+    minimumTests: 514,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),

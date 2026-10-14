@@ -6,6 +6,7 @@ import { invalidateStatusCache, readStatus } from "../../shared/utils.js";
 import { boundSubagentAttemptFacts, parseSubagentTerminalResult, terminalResultForStatusStep, } from "../../shared/terminal-result.js";
 import { canonicalLifecycleState, canonicalLifecycleStepState, } from "../background/async-status-boundary.js";
 import { normalizeIdleEpisodeId } from "./subagent-control.js";
+import { appendSubagentTelemetryContinuation, mergeSubagentRunTelemetry, normalizeSubagentRunTelemetry, transitionSubagentRunTelemetryLifecycle, } from "../../shared/telemetry.js";
 const DEFAULT_MAX_SUMMARY_BYTES = 280;
 const DEFAULT_MAX_TOKEN_BYTES = 120;
 const SAFE_LIFECYCLE_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
@@ -217,11 +218,16 @@ export function normalizeAsyncLifecycleStatus(status) {
     const resumeBlockedReason = lifecycle?.resumeBlockedReason === "supervisor_lifecycle_failure"
         ? lifecycle.resumeBlockedReason
         : undefined;
+    const telemetry = normalizeSubagentRunTelemetry(raw.telemetry);
     result.state = canonicalLifecycleState(raw.state);
     if (pause)
         result.pause = pause;
     if (cancel)
         result.cancel = cancel;
+    if (telemetry)
+        result.telemetry = telemetry;
+    else
+        delete result.telemetry;
     if (Array.isArray(raw.steps))
         result.steps = raw.steps.map(normalizeStep);
     result.lifecycle = {
@@ -530,13 +536,28 @@ function mergeStatus(current, memory, changed) {
         ? { ...current }
         : immutable
             ? { ...current }
-            : { ...current, ...memory };
+            : {
+                ...current,
+                ...memory,
+                ...(maxNumber(current.lastUpdate, memory.lastUpdate) !== memory.lastUpdate
+                    ? { lastUpdate: maxNumber(current.lastUpdate, memory.lastUpdate) }
+                    : {}),
+            };
     const rootRecord = root;
     if (immutable)
         appendMissing(rootRecord, recordOf(memory), SAFE_ROOT_FACTS);
     const steps = memory.steps?.map((step, index) => mergeStep(current.steps?.[index], step, false));
+    const mergedTelemetry = mergeSubagentRunTelemetry(memory.telemetry, current.telemetry, {
+        persistedOutcomeWins: immutable,
+        persistedTerminalStepOutcomesWin: true,
+    });
+    const mergedLastUpdate = immutable ? maxNumber(root.lastUpdate, memory.lastUpdate) : undefined;
     return {
         ...root,
+        ...(mergedLastUpdate !== undefined && mergedLastUpdate !== root.lastUpdate
+            ? { lastUpdate: mergedLastUpdate }
+            : {}),
+        ...(mergedTelemetry ? { telemetry: mergedTelemetry } : {}),
         lifecycle: immutable
             ? current.lifecycle
             : {
@@ -606,6 +627,13 @@ function continuationResult(status, index, continuation, at, runId) {
         ? { ...step, status: "complete", endedAt: at, exitCode: 0, pause: undefined }
         : step);
     const actionable = steps?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
+    const continuedTelemetry = transitionSubagentRunTelemetryLifecycle({
+        telemetry: status.telemetry,
+        runState: actionable ? "paused" : "continued",
+        stepIndex: index,
+        stepState: "continued",
+        endedAt: at,
+    });
     return {
         ...status,
         state: actionable ? "paused" : "complete",
@@ -621,6 +649,7 @@ function continuationResult(status, index, continuation, at, runId) {
             continuationRunId: runId,
         }),
         ...(steps ? { steps } : {}),
+        ...(continuedTelemetry ? { telemetry: continuedTelemetry } : {}),
     };
 }
 function continuationGate(status, index, claimToken, runId) {
@@ -652,17 +681,24 @@ export function advanceLifecycleContinuation(asyncDir, index, claimToken, runId,
             expectedGeneration: lifecycleGeneration(current),
             mutate: (status) => finalize
                 ? continuationResult(status, index, gate.continuation, at, runId)
-                : {
-                    ...status,
-                    lastUpdate: at,
-                    lifecycle: withLifecycleContinuation(status, index, {
-                        ...gate.continuation,
-                        phase: "launched",
-                        ownerPid: undefined,
-                        launchedAt: at,
+                : (() => {
+                    const continuationTelemetry = appendSubagentTelemetryContinuation(status.telemetry, {
+                        sourceStepIndex: index,
                         continuationRunId: runId,
-                    }),
-                },
+                    });
+                    return {
+                        ...status,
+                        lastUpdate: at,
+                        ...(continuationTelemetry ? { telemetry: continuationTelemetry } : {}),
+                        lifecycle: withLifecycleContinuation(status, index, {
+                            ...gate.continuation,
+                            phase: "launched",
+                            ownerPid: undefined,
+                            launchedAt: at,
+                            continuationRunId: runId,
+                        }),
+                    };
+                })(),
         });
         return { status: result.status, changed: true, done: false, lost: false };
     }

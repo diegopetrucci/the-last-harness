@@ -11,6 +11,7 @@ import { parsePersistedChildLocationSnapshot } from "../../shared/child-location
 import { isAwaitedRun } from "./awaited-run-registry.js";
 import { canonicalLifecycleState } from "./async-status-boundary.js";
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.js";
+import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
@@ -74,6 +75,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             ...(run.awaited ? { awaited: true } : {}),
             status: run.state,
             ...(run.lifecycle ? { lifecycle: run.lifecycle } : {}),
+            ...(run.telemetry ? { telemetry: run.telemetry } : {}),
             sessionId: run.sessionId,
             activityState: run.activityState,
             lastActivityAt: run.lastActivityAt,
@@ -352,6 +354,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
                         job.timedOut = status.timedOut ?? job.timedOut;
                         job.sessionFile = status.sessionFile ?? job.sessionFile;
+                        if (status.telemetry !== undefined)
+                            job.telemetry = normalizeSubagentRunTelemetry(status.telemetry);
                         if (status.projectAgents !== undefined)
                             job.projectAgents = status.projectAgents;
                         const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
@@ -405,6 +409,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const info = data;
         if (!info.id)
             return;
+        const telemetry = normalizeSubagentRunTelemetry(info.telemetry);
         if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
             return;
         const now = Date.now();
@@ -415,6 +420,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             asyncDir,
             ...(isAwaitedRun(info.id) ? { awaited: true } : {}),
             status: "queued",
+            ...(telemetry ? { telemetry } : {}),
             pid: typeof info.pid === "number" ? info.pid : undefined,
             ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
             mode: normalizeSubagentRunMode(info.mode),
@@ -441,6 +447,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         if (!asyncId)
             return;
         const job = state.asyncJobs.get(asyncId);
+        const telemetry = normalizeSubagentRunTelemetry(result.telemetry);
+        if (job && telemetry)
+            job.telemetry = telemetry;
         let nestedRefreshFailed = false;
         if (job) {
             if (result.awaited)

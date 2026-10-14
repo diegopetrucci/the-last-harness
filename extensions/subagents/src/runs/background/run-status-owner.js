@@ -67,7 +67,7 @@ function normalizeAttemptResult(result) {
 }
 const statusStepIsTerminal = (status) => isCompletedLifecycleStepState(status) || status === "failed" || status === "cancelled";
 export function createBackgroundRunStatusOwner(input) {
-    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, projectAgents, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
+    const { id, asyncDir, cwd, plan, overallStartTime, shareEnabled, artifactConfig, artifactsDir, sessionDir, sessionId, deadlineAt, projectAgents, telemetry, nestedRoute, nestedSelf, timeoutMessage, appendEvent, appendDiagnosticEvent, } = input;
     const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
     const initialStatusSteps = flatSteps.map((task, index) => {
         const terminalResult = normalizeAttemptResult(task.terminalResult);
@@ -129,6 +129,7 @@ export function createBackgroundRunStatusOwner(input) {
         currentStep: 0,
         steps: initialStatusSteps,
         ...(projectAgents ? { projectAgents } : {}),
+        ...(telemetry ? { telemetry } : {}),
         artifactsDir,
         sessionDir,
         outputFile: path.join(asyncDir, "output-0.log"),
@@ -166,25 +167,35 @@ export function createBackgroundRunStatusOwner(input) {
             return [];
         }
     }
+    let lastEmittedNestedTerminalState;
     function emitNestedSelfEvent(type) {
         if (!nestedRoute || !nestedSelf)
             return;
         try {
+            const child = nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
+                id,
+                parentRunId: nestedSelf.parentRunId,
+                parentStepIndex: nestedSelf.parentStepIndex,
+                depth: nestedSelf.depth,
+                path: nestedSelf.path,
+                mode: statusPayload.mode,
+                ts: Date.now(),
+            });
+            const terminalState = type === "subagent.nested.completed" &&
+                (child.state === "complete" || child.state === "failed" || child.state === "paused")
+                ? child.state
+                : undefined;
+            if (terminalState !== undefined && terminalState === lastEmittedNestedTerminalState)
+                return;
             writeNestedEvent(nestedRoute, {
                 type,
                 ts: Date.now(),
                 parentRunId: nestedSelf.parentRunId,
                 parentStepIndex: nestedSelf.parentStepIndex,
-                child: nestedSummaryFromAsyncStatus(statusPayload, asyncDir, {
-                    id,
-                    parentRunId: nestedSelf.parentRunId,
-                    parentStepIndex: nestedSelf.parentStepIndex,
-                    depth: nestedSelf.depth,
-                    path: nestedSelf.path,
-                    mode: statusPayload.mode,
-                    ts: Date.now(),
-                }),
+                child,
             });
+            if (terminalState !== undefined)
+                lastEmittedNestedTerminalState = terminalState;
         }
         catch {
         }

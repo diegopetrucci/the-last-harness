@@ -30,7 +30,6 @@ import {
   type ResultArtifactClaim,
   type ResultArtifactFs,
 } from "./result-artifact-consumer.ts";
-
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 const RESULT_RETRY_MAX_ATTEMPTS = RESULT_ARTIFACT_CLAIM_CLEANUP_MAX_ATTEMPTS;
@@ -82,6 +81,7 @@ type ResultFileData = {
   lifecycleArtifactVersion?: number;
   generation?: number;
   awaited?: boolean;
+  telemetry?: unknown;
 };
 
 type ResultRetryState = {
