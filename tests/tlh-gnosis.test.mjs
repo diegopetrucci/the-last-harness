@@ -735,6 +735,41 @@ test(
   },
 );
 
+test("configure-install dry-run on unsupported platforms uses a valid PATH gn", () => {
+  const fixture = tempFixture();
+  const preload = writeUnsupportedPlatformPreload(fixture);
+  const pathBin = join(fixture.dir, "path-bin");
+  mkdirSync(pathBin, { recursive: true });
+  const pathGn = join(pathBin, "gn");
+  writeFileSync(pathGn, FAKE_GN_SCRIPT);
+  chmodSync(pathGn, 0o755);
+
+  const result = runGnosis(["--agent-dir", fixture.agent, "--dry-run", "configure-install"], {
+    env: { HOME: fixture.home, PATH: `${pathBin}:${dirname(process.execPath)}:/usr/bin:/bin` },
+    nodeArgs: ["--import", preload],
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Gnosis integration: ready \(.*path-bin\/gn\)/);
+  assert.doesNotMatch(result.stderr, /Would install Gnosis/);
+  assert.equal(existsSync(join(fixture.agent, "bin", "gn")), false);
+  assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
+});
+
+test("configure-install dry-run on unsupported platforms fails without a valid gn", () => {
+  const fixture = tempFixture();
+  const preload = writeUnsupportedPlatformPreload(fixture);
+
+  const result = runGnosis(["--agent-dir", fixture.agent, "--dry-run", "configure-install"], {
+    env: { HOME: fixture.home, PATH: "" },
+    nodeArgs: ["--import", preload],
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Unsupported platform for managed Gnosis install: freebsd\/x64\./);
+});
+
 test(
   "configure-install fails when the managed install fails and nothing valid exists",
   managedPinTest,

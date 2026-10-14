@@ -499,3 +499,91 @@ globalThis.fetch = async () => {
   const written = JSON.parse(readFileSync(settings, "utf8"));
   assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
 });
+
+function userTkFixture(settingsTickets, { validUser = true } = {}) {
+  const fixture = tempFixture();
+  const settings = join(fixture.agent, "settings.json");
+  const userTk = join(fixture.external, "tk");
+  if (validUser) writeValidTkLikeCommand(userTk);
+  const archive = createTicketArchive(fixture);
+  const preload = writeFetchPreload(fixture);
+  const fetchSentinel = join(fixture.dir, "fetch-called");
+  writeFileSync(
+    settings,
+    `${JSON.stringify({ tlh: { tickets: { enabled: true, installPath: userTk, ...settingsTickets } } })}\n`,
+  );
+  const run = () =>
+    runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        ...unsafeTicketSourceArgs({ checksum: archive.checksum }),
+        "configure-install",
+      ],
+      {
+        env: {
+          HOME: fixture.home,
+          PATH: "",
+          TLH_TEST_ARCHIVE: archive.archivePath,
+          TLH_TEST_FETCH_SENTINEL: fetchSentinel,
+        },
+        nodeArgs: ["--import", preload],
+      },
+    );
+  return { fixture, settings, userTk, fetchSentinel, run, checksum: archive.checksum };
+}
+
+test("enable --install-path records user source; enable without path clears it", () => {
+  const fixture = tempFixture();
+  const settings = join(fixture.agent, "settings.json");
+  const userTk = join(fixture.external, "tk");
+  writeValidTkLikeCommand(userTk);
+  const enabled = runTickets(
+    ["--settings", settings, "--agent-dir", fixture.agent, "--install-path", userTk, "enable"],
+    { env: { HOME: fixture.home, PATH: "" } },
+  );
+  assert.equal(enabled.status, 0, enabled.stderr);
+  let written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, userTk);
+  assert.equal(written.tlh.tickets.installPathSource, "user");
+
+  const cleared = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "enable"], {
+    env: { HOME: fixture.home, PATH: "" },
+  });
+  assert.equal(cleared.status, 0, cleared.stderr);
+  written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPathSource, undefined);
+});
+
+test("configure-install keeps a valid user-chosen tk without installing", () => {
+  const { fixture, settings, userTk, fetchSentinel, run } = userTkFixture({
+    installPathSource: "user",
+    installedSha256: "0".repeat(64),
+  });
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(fetchSentinel), false);
+  assert.equal(existsSync(join(fixture.agent, "bin", "tk")), false);
+  const written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, userTk);
+  assert.equal(written.tlh.tickets.installPathSource, "user");
+  assert.equal(written.tlh.tickets.installedSha256, undefined);
+});
+
+test("configure-install replaces an invalid user-chosen tk with the managed copy", () => {
+  const { fixture, settings, run, checksum } = userTkFixture(
+    { installPathSource: "user" },
+    { validUser: false },
+  );
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /user-chosen tk is no longer valid/);
+  const target = join(fixture.agent, "bin", "tk");
+  assert.equal(existsSync(target), true);
+  const written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, target);
+  assert.equal(written.tlh.tickets.installPathSource, undefined);
+  assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
+});

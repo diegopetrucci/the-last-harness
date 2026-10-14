@@ -583,6 +583,13 @@ async function commandConfigureInstall(args, agentDir) {
             console.log(`Gnosis integration: ready (${managedTarget})`);
             return;
         }
+        if (!gnosisPlatform()) {
+            const fallback = findValidGnosisForConfigure(args, agentDir);
+            if (!fallback)
+                throw new Error(unsupportedGnosisPlatformMessage());
+            console.log(`Gnosis integration: ready (${fallback})`);
+            return;
+        }
         await installManagedGnosis(args, agentDir);
         console.log(`Gnosis integration: ready (${managedTarget})`);
         return;

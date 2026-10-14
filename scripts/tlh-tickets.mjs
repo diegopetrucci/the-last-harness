@@ -1044,13 +1044,17 @@ function logWriteResult(args, writeResult) {
     if (writeResult === "unchanged")
         detailLog(args, "No settings changes were needed.");
 }
-function setTicketsEnabled(args, settingsPath, settings, previousRaw, installPath, installedSha256) {
+function setTicketsEnabled(args, settingsPath, settings, previousRaw, installPath, installedSha256, userChosenPath = false) {
     assertNotNormalPiSettings(settingsPath);
     ensureMutableSettings(settings);
     settings.tlh.tickets.enabled = true;
     const normalized = normalizedInstallPath(installPath);
     if (normalized)
         settings.tlh.tickets.installPath = normalized;
+    if (userChosenPath)
+        settings.tlh.tickets.installPathSource = "user";
+    else
+        delete settings.tlh.tickets.installPathSource;
     if (typeof installedSha256 === "string" && installedSha256.trim()) {
         settings.tlh.tickets.installedSha256 = installedSha256.trim().toLowerCase();
     }
@@ -1099,6 +1103,15 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
     const managedPinIsFresh = managedTkPinIsFresh(settings, args.ticketSourceSha256);
     const configured = configuredInstallPath(settings);
     const configuredIsManaged = !configured || samePathForCompare(configured, managedTarget);
+    if (settings.tlh?.tickets?.installPathSource === "user" && configured && !configuredIsManaged) {
+        if (hasTkCommandName(configured) && validateTkCommand(configured, agentDir)) {
+            detailLog(args, `Keeping user-chosen tk: ${configured}`);
+            setTicketsEnabled(args, settingsPath, settings, previousRaw, configured, undefined, true);
+            log(args, `Ticket CLI integration: enabled (${configured})`);
+            return;
+        }
+        warnStderr(args, `user-chosen tk is no longer valid (${configured}); installing the managed copy instead.`);
+    }
     if (managedPinIsFresh &&
         configuredIsManaged &&
         lstatIfExists(managedTarget) !== undefined &&
@@ -1147,7 +1160,9 @@ function commandEnable(args, settingsPath, settings, previousRaw, agentDir) {
     if (!validPath) {
         throw new Error("Refusing to enable tk integration because no valid tk command was found");
     }
-    setTicketsEnabled(args, settingsPath, settings, previousRaw, validPath);
+    const requested = args.installPath || args.commandArgs[0];
+    const userChosen = Boolean(requested) && !samePathForCompare(validPath, managedTkTargetPath(args, agentDir));
+    setTicketsEnabled(args, settingsPath, settings, previousRaw, validPath, undefined, userChosen);
     log(args, `${args.dryRun ? "Would enable" : "Enabled"} tk integration for the tlh profile.`);
 }
 async function main() {
