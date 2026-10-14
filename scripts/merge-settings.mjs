@@ -666,6 +666,40 @@ function applyBuiltinMcpExclusionSync(settings, disabledIds, existingSettings, d
         changes.push("clear builtin:mcp exclusion ownership");
     }
 }
+function compactionReserveTokensOf(settings) {
+    if (!isPlainObject(settings) || !isPlainObject(settings.compaction))
+        return undefined;
+    const value = settings.compaction.reserveTokens;
+    return typeof value === "number" ? value : undefined;
+}
+/**
+ * Record that TLH wrote the packaged compaction.reserveTokens value (#785). The
+ * marker is only set when this merge inserted or force-overwrote the value; a
+ * preserved user value never gets it, and it is never cleared here.
+ */
+function applyCompactionReserveTokensProvenance(settings, existingSettings, defaults, changes) {
+    const packaged = compactionReserveTokensOf(defaults);
+    if (packaged === undefined)
+        return;
+    if (compactionReserveTokensOf(existingSettings) === packaged)
+        return;
+    if (compactionReserveTokensOf(settings) !== packaged)
+        return;
+    const tlh = settings.tlh;
+    if (tlh === undefined) {
+        settings.tlh = { compactionReserveTokensManaged: true };
+    }
+    else if (!isPlainObject(tlh)) {
+        return;
+    }
+    else if (tlh.compactionReserveTokensManaged === true) {
+        return;
+    }
+    else {
+        tlh.compactionReserveTokensManaged = true;
+    }
+    changes.push("mark compaction.reserveTokens as TLH-managed");
+}
 function mergeSettings(existing, defaults, { force }) {
     if (!isPlainObject(existing)) {
         throw new Error("Existing settings must be a JSON object");
@@ -863,6 +897,7 @@ function main() {
     purgeForceRemovedRetiredDefaultExtensionPackages(next, changes);
     pruneVoiceTranscribeDisabledDefaultExtension(next, changes);
     applyBuiltinMcpExclusionSync(next, disabledIds, existing, defaultExtensions, changes);
+    applyCompactionReserveTokensProvenance(next, existing, rawDefaults, changes);
     syncDefaultExtensionProvenance(next, defaultExtensions, disabledIds, changes, mcpCutover);
     if (heldMcpState && mcporterEntry) {
         if (!sameMcpAdapterEntries(next, mcporterEntry, heldMcpState.packageEntries)) {
