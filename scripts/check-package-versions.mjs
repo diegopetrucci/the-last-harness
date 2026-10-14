@@ -838,6 +838,7 @@ function validateEarendilOverrides(manifestPath, overrides, lock, managedPiVersi
  * Validate config/pi-runtime/{package.json,package-lock.json}:
  * - manifest dependency matches the managed Pi pin
  * - lockfileVersion is 3
+ * - lock entry version and lock root dependency for pi-coding-agent match the managed Pi pin
  * - exactly one top-level node_modules entry (pi-coding-agent)
  * - every non-root entry has resolved
  * - the top-level entry and all packages not covered by a hasShrinkwrap parent have integrity
@@ -887,6 +888,21 @@ function validateRuntimeManifest(args, managedPiVersion, problems) {
 
   const packages = isPlainObject(lock.packages) ? lock.packages : {};
   const nonRootKeys = Object.keys(packages).filter((k) => k !== "");
+
+  if (managedPiVersion !== undefined) {
+    const lockEntryVersion = packages[PI_RUNTIME_TOP_LEVEL_KEY]?.version;
+    if (lockEntryVersion !== managedPiVersion) {
+      problems.push(
+        `${lockPath}#packages["${PI_RUNTIME_TOP_LEVEL_KEY}"].version must be ${JSON.stringify(managedPiVersion)} (matching managed Pi pin), found ${JSON.stringify(lockEntryVersion)}`,
+      );
+    }
+    const lockRootDep = packages[""]?.dependencies?.[PI_CODING_AGENT_PACKAGE];
+    if (lockRootDep !== managedPiVersion) {
+      problems.push(
+        `${lockPath}#packages[""].dependencies["${PI_CODING_AGENT_PACKAGE}"] must be ${JSON.stringify(managedPiVersion)} (matching managed Pi pin), found ${JSON.stringify(lockRootDep)}`,
+      );
+    }
+  }
 
   // Check exactly one top-level package
   const topLevelKeys = nonRootKeys.filter((k) => {
