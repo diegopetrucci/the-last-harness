@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.45.0] - 2026-10-14
+
 ### Fixed
 
 - Project-agent (`embedded.<slug>`) dispatch, resume, and steer now check the session UUID that TLH stamps on project-agent snapshots instead of the session file path, so they are no longer always rejected in persisted sessions. [#782](https://github.com/diegopetrucci/the-last-harness/issues/782)
