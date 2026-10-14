@@ -282,9 +282,29 @@ function deriveAgentEndOutcome(
   return "completed";
 }
 
+/** Agent names from status.json steps[].agent only (ordered, no dedup). Task text is never read. */
+function readStatusStepAgents(raw: Record<string, unknown>): string[] {
+  if (!Array.isArray(raw.steps)) return [];
+  return raw.steps.flatMap((step): string[] => {
+    if (!isRecord(step)) return [];
+    const agent = step.agent;
+    return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
+  });
+}
+
+/** Best-effort agent-name read for restored jobs; any failure yields no names. */
+function readAsyncDirAgentNames(asyncDir: string): string[] {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as unknown;
+    return isRecord(raw) ? readStatusStepAgents(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readRestorableAsyncJob(
   asyncDir: string,
-): { runId: string; sessionId: string; pid?: number } | undefined {
+): { runId: string; sessionId: string; pid?: number; agents?: string[] } | undefined {
   const statusPath = path.join(asyncDir, "status.json");
   const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as unknown;
   if (
@@ -298,9 +318,11 @@ function readRestorableAsyncJob(
     return undefined;
   }
   const pid = toValidPid(raw.pid);
+  const agents = readStatusStepAgents(raw);
   return {
     runId: raw.runId,
     sessionId: raw.sessionId,
+    ...(agents.length > 0 ? { agents } : {}),
     ...(pid !== undefined ? { pid } : {}),
   };
 }
@@ -456,7 +478,8 @@ export function createTlhEffectiveActivityTracker(
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
     const sessionId = incoming.sessionId ?? existing?.sessionId;
-    const agents = incoming.agents ?? existing?.agents;
+    const agents =
+      incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
     return {
       source: incoming.source,
       ...(agents && agents.length > 0 ? { agents } : {}),
@@ -486,6 +509,7 @@ export function createTlhEffectiveActivityTracker(
       asyncDir: string;
       sessionId?: string;
       pid?: number;
+      agents?: string[];
       source: "rehydrated" | "restored";
     }[],
   ): void => {
@@ -508,6 +532,7 @@ export function createTlhEffectiveActivityTracker(
       activeAsyncJobs.set(job.runId, {
         source: job.source,
         asyncDir: job.asyncDir,
+        ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
         ...(job.sessionId ? { sessionId: job.sessionId } : {}),
         ...(pid !== undefined ? { pid } : {}),
       });
@@ -740,6 +765,7 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
         source: "rehydrated";
       }> = [];
       const entries = (() => {
@@ -767,6 +793,7 @@ export function createTlhEffectiveActivityTracker(
               asyncDir: candidateAsyncDir,
               sessionId: status.sessionId,
               ...(status.pid !== undefined ? { pid: status.pid } : {}),
+              ...(status.agents ? { agents: status.agents } : {}),
               source: "rehydrated",
             });
           } catch {
@@ -919,6 +946,7 @@ export function createTlhEffectiveActivityTracker(
         asyncDir: string;
         sessionId: string;
         pid?: number;
+        agents?: string[];
         source: "restored";
       }> = [];
       for (const candidate of snapshot.jobs) {
@@ -928,11 +956,13 @@ export function createTlhEffectiveActivityTracker(
         const sessionId = readNonEmptyStringField(candidate, "sessionId");
         if (!runId || !asyncDir || sessionId !== activeSessionId) continue;
         const pid = toValidPid(candidate.pid);
+        const agents = readAsyncDirAgentNames(asyncDir);
         restoredJobs.push({
           runId,
           asyncDir,
           sessionId,
           ...(pid !== undefined ? { pid } : {}),
+          ...(agents.length > 0 ? { agents } : {}),
           source: "restored",
         });
       }

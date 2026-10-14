@@ -110,6 +110,25 @@ function deriveAgentEndOutcome(messages) {
     }
     return "completed";
 }
+function readStatusStepAgents(raw) {
+    if (!Array.isArray(raw.steps))
+        return [];
+    return raw.steps.flatMap((step) => {
+        if (!isRecord(step))
+            return [];
+        const agent = step.agent;
+        return typeof agent === "string" && agent.trim().length > 0 ? [agent.trim()] : [];
+    });
+}
+function readAsyncDirAgentNames(asyncDir) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
+        return isRecord(raw) ? readStatusStepAgents(raw) : [];
+    }
+    catch {
+        return [];
+    }
+}
 function readRestorableAsyncJob(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
     const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
@@ -122,9 +141,11 @@ function readRestorableAsyncJob(asyncDir) {
         return undefined;
     }
     const pid = toValidPid(raw.pid);
+    const agents = readStatusStepAgents(raw);
     return {
         runId: raw.runId,
         sessionId: raw.sessionId,
+        ...(agents.length > 0 ? { agents } : {}),
         ...(pid !== undefined ? { pid } : {}),
     };
 }
@@ -236,7 +257,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         const asyncDir = incomingAsyncDir ?? existingAsyncDir;
         const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
         const sessionId = incoming.sessionId ?? existing?.sessionId;
-        const agents = incoming.agents ?? existing?.agents;
+        const agents = incoming.agents && incoming.agents.length > 0 ? incoming.agents : existing?.agents;
         return {
             source: incoming.source,
             ...(agents && agents.length > 0 ? { agents } : {}),
@@ -276,6 +297,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             activeAsyncJobs.set(job.runId, {
                 source: job.source,
                 asyncDir: job.asyncDir,
+                ...(job.agents && job.agents.length > 0 ? { agents: [...job.agents] } : {}),
                 ...(job.sessionId ? { sessionId: job.sessionId } : {}),
                 ...(pid !== undefined ? { pid } : {}),
             });
@@ -463,6 +485,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                             asyncDir: candidateAsyncDir,
                             sessionId: status.sessionId,
                             ...(status.pid !== undefined ? { pid: status.pid } : {}),
+                            ...(status.agents ? { agents: status.agents } : {}),
                             source: "rehydrated",
                         });
                     }
@@ -607,11 +630,13 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                 if (!runId || !asyncDir || sessionId !== activeSessionId)
                     continue;
                 const pid = toValidPid(candidate.pid);
+                const agents = readAsyncDirAgentNames(asyncDir);
                 restoredJobs.push({
                     runId,
                     asyncDir,
                     sessionId,
                     ...(pid !== undefined ? { pid } : {}),
+                    ...(agents.length > 0 ? { agents } : {}),
                     source: "restored",
                 });
             }
