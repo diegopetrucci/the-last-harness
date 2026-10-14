@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
@@ -28,43 +28,8 @@ function localCheckPidLiveness(pid) {
         return "unknown";
     }
 }
-function sanitizeTempScopeSegment(value) {
-    const sanitized = value
-        .trim()
-        .replace(/[^A-Za-z0-9._-]+/g, "-")
-        .replace(/^-+|-+$/g, "");
-    return sanitized || "unknown";
-}
-function resolvePiSubagentsTempScopeId() {
-    if (typeof process.getuid === "function") {
-        return `uid-${process.getuid()}`;
-    }
-    for (const key of ["USERNAME", "USER", "LOGNAME"]) {
-        const value = process.env[key];
-        if (value)
-            return `user-${sanitizeTempScopeSegment(value)}`;
-    }
-    try {
-        const username = os.userInfo().username;
-        if (username)
-            return `user-${sanitizeTempScopeSegment(username)}`;
-    }
-    catch {
-    }
-    const homedir = process.env.USERPROFILE ?? process.env.HOME;
-    if (homedir)
-        return `home-${sanitizeTempScopeSegment(homedir)}`;
-    try {
-        const fallbackHomedir = os.homedir();
-        if (fallbackHomedir)
-            return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
-    }
-    catch {
-    }
-    return "shared";
-}
 function resolveDefaultAsyncDir() {
-    return path.join(os.tmpdir(), `pi-subagents-${resolvePiSubagentsTempScopeId()}`, "async-subagent-runs");
+    return path.join(resolveTempRootDir(), "async-subagent-runs");
 }
 function normalizeComparablePath(target) {
     const resolved = path.resolve(target);

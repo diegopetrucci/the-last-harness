@@ -50,6 +50,8 @@ npm run test:verbose
 
 Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
 
+Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache and `node-compile-cache`), then removes the per-run root unconditionally. A non-empty leak list causes a non-zero exit code even when all tests pass. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level.
+
 ## TypeScript scope
 
 `npm run typecheck` covers production subagent sources and all subagent test files under `extensions/subagents/test` (the exclusion that previously omitted that subtree has been removed). `npm run typecheck:runtime` covers runtime-specific sources. All 142 discovered subagent test files (102 unit, 39 integration, and 1 e2e) pass strict typechecking with zero errors; the `ScaledMs` branded type enforces that wait helpers receive a scaled timeout rather than a raw literal. `npm run typecheck:subagents-test` provides a developer-convenience target for running the subagents-test typecheck in isolation.
@@ -140,7 +142,7 @@ The following Pi 0.87.1 checks are also required release-preparation work, remai
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
 - **Published-ref update convergence:** once the release ref advertises Pi `0.87.1`, verify update convergence from that published ref.
 
-The live-provider checks are deferred because the approved verification excludes paid-provider execution and does not treat faux-provider seams as substitutes. Published-ref update convergence is deferred separately because no published ref currently advertises Pi `0.87.1`. Record all release outcomes in the release validation notes/current release tracking; the durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
+The live-provider checks passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. The published-ref update convergence check also passed after publication: a ticket-owned isolated `v0.42.1` latest-release install updated to ref `v0.43.0` with `track=latest-release` and private Pi `0.87.1`, then was cleaned up. The durable checklist is maintained in [docs/pin-bump-verification.md](docs/pin-bump-verification.md) and this section.
 
 ## Final validation guidance
 

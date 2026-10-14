@@ -1,11 +1,24 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { after } from "node:test";
 
 import { readDefaultExtensions } from "../../scripts/lib/default-extensions.mjs";
 
 export const repoRoot = resolve(import.meta.dirname, "../..");
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
 const defaultsScript = join(repoRoot, "scripts", "tlh-defaults.mjs");
 
@@ -24,6 +37,7 @@ export const piTranscribeNpmSource = "npm:@earendil-works/pi-transcribe@0.0.1";
 
 export function tempFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
+  _tmpDirs.push(dir);
   const defaults = join(dir, "settings.defaults.json");
   const extensions = join(dir, "default-extensions.json");
   const settings = join(dir, "settings.json");

@@ -8,15 +8,22 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { after } from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const ticketsScript = join(repoRoot, "scripts", "tlh-tickets.mjs");
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 function runTickets(args, options = {}) {
   const env = { ...process.env };
@@ -34,6 +41,7 @@ function runTickets(args, options = {}) {
 
 function tempFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tlh-tickets-test-"));
+  _tmpDirs.push(dir);
   const home = join(dir, "home");
   const agent = join(dir, "agent");
   const external = join(dir, "external");

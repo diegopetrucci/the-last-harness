@@ -9,7 +9,7 @@ import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.js"
 import { isCompletedLifecycleState, isCompletedLifecycleStepState, lifecycleContinuationForIndex, } from "../runs/shared/lifecycle-state.js";
 import { safeTerminalText } from "../shared/display-text.js";
 import { buildLiveStatusLine, childLocationLine, compactThinkingPhrase, isHealthActivityState, fitInlineActivity, fitInlineThinkingActivity, fitCompactToolStatus, formatCurrentToolLines, formatTokenStat, formatToolUseStat, getTermWidth, liveDetailHintText, liveDetailKeyText, modelThinkingBadge, runningGlyph, runningSeed, statJoin, themeBold, wrapDisplayLine, wrapDisplayLines, } from "./render-primitives.js";
-const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
+const WIDGET_ACTIVITY_PREFIX = "       ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 export function widgetRenderKey(job) {
     return JSON.stringify({
@@ -187,7 +187,7 @@ function widgetActivity(job, expanded = false) {
     return widgetActivityLines(job, expanded).join(" · ");
 }
 function widgetActivityDetailLines(job, theme, expanded = false) {
-    return widgetActivityLines(job, expanded).map((activity, index) => `  ${theme.fg("dim", index === 0 ? `⎿  ${activity}` : `   ${activity}`)}`);
+    return widgetActivityLines(job, expanded).map((activity) => `  ${theme.fg("dim", `   ${activity}`)}`);
 }
 function widgetStepRunningSeed(step, fallbackIndex) {
     return runningSeed(fallbackIndex, step.index, step.toolCount, step.turnCount, step.tokens?.total, step.lastActivityAt, step.currentToolStartedAt, step.durationMs);
@@ -677,7 +677,7 @@ function jobHealthWarningLines(job, theme) {
     if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job))
         return [];
     const warning = buildLiveStatusLine({ activityState: job.activityState, lastActivityAt: job.lastActivityAt }, job.updatedAt);
-    return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
+    return warning ? [`  ${theme.fg("dim", `   ${warning}`)}`] : [];
 }
 function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
     if (continuationIsActive(job))
@@ -699,7 +699,7 @@ function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
         if (stepActivityLines.includes(warning))
             return [];
     }
-    return [`    ${theme.fg("dim", `⎿  ${warning}`)}`];
+    return [`    ${theme.fg("dim", `   ${warning}`)}`];
 }
 function buildSingleWidgetLines(job, theme, contentWidth, expanded) {
     if (job.mode === "single") {

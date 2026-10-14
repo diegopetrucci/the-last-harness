@@ -741,3 +741,54 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
         };
     }, { kill: options.kill, now: options.now });
 }
+export function recoverStoppedLifecycleOwnership(status, options = {}) {
+    const normalized = normalizeAsyncLifecycleStatus(status);
+    if ((normalized.state !== "paused" &&
+        normalized.state !== "cancelled" &&
+        normalized.state !== "continued" &&
+        normalized.state !== "pausing") ||
+        typeof normalized.pid !== "number") {
+        return { status: normalized, repaired: false };
+    }
+    const now = options.now?.() ?? normalized.lastUpdate;
+    const pidLiveness = checkPidLiveness(normalized.pid, options.kill);
+    const pause = normalized.pause
+        ? {
+            ...normalized.pause,
+            ownerPid: undefined,
+        }
+        : undefined;
+    if (normalized.state === "pausing") {
+        if (pidLiveness !== "dead")
+            return { status: normalized, repaired: false, pidLiveness };
+        const hasResumeCheckpoint = Boolean(pause?.kind &&
+            (pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
+            (normalized.sessionFile ||
+                normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)));
+        if (!hasResumeCheckpoint)
+            return { status: normalized, repaired: false, pidLiveness };
+        const pausedAt = pause?.pausedAt ?? now ?? Date.now();
+        return {
+            status: {
+                ...normalized,
+                state: "paused",
+                pid: undefined,
+                endedAt: normalized.endedAt ?? pausedAt,
+                lastUpdate: now ?? pausedAt,
+                ...(pause ? { pause: { ...pause, pausedAt } } : {}),
+                steps: normalized.steps?.map((step) => step.status === "pausing"
+                    ? { ...step, status: "paused", endedAt: step.endedAt ?? pausedAt, exitCode: 0 }
+                    : step),
+            },
+            repaired: true,
+            pidLiveness,
+        };
+    }
+    const repaired = {
+        ...normalized,
+        pid: undefined,
+        ...(pause ? { pause } : {}),
+        lastUpdate: now,
+    };
+    return { status: repaired, repaired: true, pidLiveness };
+}

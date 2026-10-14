@@ -927,6 +927,43 @@ describe("awaited async-run owner", () => {
     assert.equal(status.steps?.[0]?.terminationReason, "cancelled");
   });
 
+  it("cleans up the prompt temp dir when the runner is killed during parent abort", async () => {
+    const id = `awaited-abort-tempdir-${Date.now().toString(36)}`;
+    const { bus } = recordEvents();
+    const controller = new AbortController();
+    // Use an isolated TMPDIR so we can assert no pi-subagent-* entries remain.
+    const tmpEnvKeys = ["TMPDIR", "TMP", "TEMP"] as const;
+    const savedTmpEnv = Object.fromEntries(tmpEnvKeys.map((k) => [k, process.env[k]])) as Record<
+      (typeof tmpEnvKeys)[number],
+      string | undefined
+    >;
+    const isolatedTmpDir = fs.mkdtempSync(path.join(tempDir, "isolated-tmpdir-"));
+    for (const k of tmpEnvKeys) process.env[k] = isolatedTmpDir;
+    mockPi.onCall({
+      output: "child stopped by parent",
+      ignoreSigint: true,
+      keepAliveAfterFinalMessageMs: 250,
+    });
+    try {
+      const pending = executeAsyncSingle(
+        id,
+        singleParams(bus, tempDir, id, { signal: controller.signal }),
+      );
+      await waitForMockPiCall(mockPi, 0);
+      controller.abort();
+      // Signal re-raise must not change cancellation classification.
+      assert.equal((await pending).details.results[0]?.terminationReason, "cancelled");
+    } finally {
+      for (const k of tmpEnvKeys) {
+        const v = savedTmpEnv[k];
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+    const leaked = fs.readdirSync(isolatedTmpDir).filter((e) => e.startsWith("pi-subagent-"));
+    assert.deepEqual(leaked, [], "runner must clean up pi-subagent-* temp dirs on parent abort");
+  });
+
   it("returns a durable supervisor pause with the resume command lines", async () => {
     const id = `awaited-paused-${Date.now().toString(36)}`;
     const { bus, channels } = recordEvents();

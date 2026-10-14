@@ -273,7 +273,7 @@ export function createHerdrActivityReporter(options = {}) {
     let displayMetadataInFlight = false;
     let outboundChain = Promise.resolve();
     const nextReportSeq = () => {
-        reportSeq += 1;
+        reportSeq = Math.max(reportSeq + 1, now() * 1000);
         return reportSeq;
     };
     const enqueueOutbound = (task) => {

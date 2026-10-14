@@ -6,6 +6,7 @@ import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
 import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "../../shared/display-text.js";
 import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.js";
+export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;

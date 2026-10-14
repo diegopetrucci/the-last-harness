@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 const { createHerdrActivityReporter, createCmuxActivityReporter } = await jiti.import(
   "../extensions/the-last-harness/activity-reporters.ts",
 );
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 function createFakeTimers() {
   let now = 0;
@@ -103,6 +108,7 @@ test("Herdr reporter no-ops without required env and when official reporter is i
   assert.deepEqual(calls, []);
 
   const agentDir = mkdtempSync(join(tmpdir(), "tlh-herdr-agent-dir-"));
+  _tmpDirs.push(agentDir);
   mkdirSync(join(agentDir, "extensions"), { recursive: true });
   writeFileSync(join(agentDir, "extensions", "herdr-agent-state.ts"), "// installed by herdr\n");
   const singleWriterCalls = [];
@@ -1409,6 +1415,124 @@ test("cmux reporter no-ops without workspace env", async () => {
   });
   await flushAsyncWork();
   assert.deepEqual(commands, []);
+});
+
+test("Herdr reporter nextReportSeq is strictly monotonic even when now() does not advance", async () => {
+  // Verifies criterion (a): seq strictly increases across reports when time is frozen.
+  // now() is pinned to 0 for the entire test; fake timers are used only to flush
+  // the idle-debounce setTimeout(fn, 0) that guards non-working transitions.
+  // Alternating working/idle snapshots produce distinct state transitions that
+  // bypass the same-state deduplication guard, so multiple pane.report_agent
+  // messages are actually emitted.
+  const fakeTimers = createFakeTimers();
+  const seqs = [];
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_TLH_HEARTBEAT_MS: "0", // disable heartbeat so it doesn't interfere
+    },
+    now: () => 0, // completely frozen — never advances
+    timers: fakeTimers,
+    idleDebounceMs: 0, // idle transitions are immediate (no real-time delay)
+    sendRequest: async (request) => {
+      if (request.method === "pane.report_agent") {
+        seqs.push(request.params.seq);
+      }
+    },
+  });
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" },
+  });
+
+  const workingSnapshot = {
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  };
+  const idleSnapshot = { inProgress: false, primaryReasons: [], activeAsyncJobIds: [] };
+
+  // Alternate working/idle three times. Each transition is a distinct state so
+  // the queued-reporter deduplication does not suppress any report. now() stays
+  // at 0 throughout: seq monotonicity must come from reportSeq + 1 alone.
+  for (let i = 0; i < 3; i++) {
+    reporter.handleSnapshot(workingSnapshot);
+    await flushAsyncWork();
+    reporter.handleSnapshot(idleSnapshot);
+    fakeTimers.advance(0); // fires the idle-debounce setTimeout(fn, 0)
+    await flushAsyncWork();
+  }
+
+  reporter.dispose();
+
+  assert.ok(
+    seqs.length >= 3,
+    `Expected at least 3 reports, got ${seqs.length}: ${JSON.stringify(seqs)}`,
+  );
+  for (let i = 1; i < seqs.length; i++) {
+    assert.ok(
+      seqs[i] > seqs[i - 1],
+      `seq must strictly increase: seqs[${i - 1}]=${seqs[i - 1]}, seqs[${i}]=${seqs[i]}`,
+    );
+  }
+});
+
+test("Herdr reporter seq reclaims authority when now() advances past a competing reporter", async () => {
+  // Verifies criterion (b): after now() jumps forward (simulating a competing reporter
+  // that ran while this session was paused), the next report seq is >= now()*1000.
+  const fakeTimers = createFakeTimers();
+  let nowMs = 1000; // start at t=1s so initial reportSeq = 1000*1000 = 1_000_000
+  const nowFn = () => nowMs;
+
+  const seqs = [];
+  const reporter = createHerdrActivityReporter({
+    env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
+    now: nowFn,
+    timers: fakeTimers,
+    idleDebounceMs: 0, // skip debounce so idle reports are sent immediately
+    sendRequest: async (request) => {
+      if (request.method === "pane.report_agent") {
+        seqs.push(request.params.seq);
+      }
+    },
+  });
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" },
+  });
+
+  // First report at t=1s: working state.
+  reporter.handleSnapshot({
+    inProgress: true,
+    primaryReasons: ["primary:agent-loop"],
+    activeAsyncJobIds: [],
+  });
+  await flushAsyncWork();
+
+  // Simulate time advancing to t=5s (a competing process ran reports up to
+  // seq ~5000*1000=5_000_000 while this session was paused).
+  nowMs = 5000;
+
+  // Send an idle snapshot to transition to a different state and emit a
+  // new report. With idleDebounceMs=0 it fires synchronously via timer.
+  reporter.handleSnapshot({
+    inProgress: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  fakeTimers.advance(0);
+  await flushAsyncWork();
+
+  reporter.handleSessionShutdown();
+  await flushAsyncWork();
+
+  assert.ok(seqs.length >= 2, `Expected at least 2 reports, got ${seqs.length}`);
+  const seqAfterAdvance = seqs[seqs.length - 1];
+  assert.ok(
+    seqAfterAdvance >= nowMs * 1000,
+    `seq after time advance (${seqAfterAdvance}) must be >= now()*1000 (${nowMs * 1000}) to reclaim authority`,
+  );
 });
 
 test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc, print)", async () => {

@@ -14,6 +14,7 @@ import {
   SUBAGENT_TK_TICKET_ID_ENV,
   applyThinkingSuffix,
   buildPiArgs,
+  cleanupTempDir,
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
 
@@ -46,14 +47,15 @@ describe("buildPiArgs session wiring", () => {
       "supervisor-channels",
       `${runId}-${childAgentName}-0`,
     );
-    fs.mkdirSync(path.dirname(channelDir), { recursive: true });
-    fs.writeFileSync(channelDir, "blocker", "utf-8");
     const tempEnvKeys = ["TMPDIR", "TMP", "TEMP"] as const;
     const originalTempEnv = Object.fromEntries(
       tempEnvKeys.map((key) => [key, process.env[key]]),
     ) as Record<(typeof tempEnvKeys)[number], string | undefined>;
     const isolatedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-cleanup-root-"));
     for (const key of tempEnvKeys) process.env[key] = isolatedTmpDir;
+
+    fs.mkdirSync(path.dirname(channelDir), { recursive: true });
+    fs.writeFileSync(channelDir, "blocker", "utf-8");
 
     try {
       assert.throws(
@@ -302,7 +304,7 @@ describe("buildPiArgs model wiring", () => {
 
 describe("buildPiArgs system prompt mode wiring", () => {
   it("uses --append-system-prompt by default", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -310,13 +312,16 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--append-system-prompt"));
-    assert.ok(!args.includes("--system-prompt"));
+    try {
+      assert.ok(result.args.includes("--append-system-prompt"));
+      assert.ok(!result.args.includes("--system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("uses --system-prompt when systemPromptMode=replace", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -325,9 +330,12 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--system-prompt"));
-    assert.ok(!args.includes("--append-system-prompt"));
+    try {
+      assert.ok(result.args.includes("--system-prompt"));
+      assert.ok(!result.args.includes("--append-system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("injects the subagent prompt runtime extension and env flags", () => {
@@ -675,7 +683,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
   });
 
   it("emits an empty prompt file when replace mode is used with an empty prompt", () => {
-    const { args } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -684,8 +692,11 @@ describe("buildPiArgs system prompt mode wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
     });
-
-    assert.ok(args.includes("--system-prompt"));
+    try {
+      assert.ok(result.args.includes("--system-prompt"));
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 });
 
@@ -715,7 +726,7 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
   });
 
   it("omits contact_supervisor runtime injection for an explicit supervisor opt-out", () => {
-    const { args, env } = buildPiArgs({
+    const result = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -725,10 +736,13 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       supervisorBridge: false,
       systemPrompt: "Prompt prose mentions contact_supervisor but is not a capability signal.",
     });
-
-    assert.equal(toolsFlag(args), "bash");
-    assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
-    assert.equal(env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
+    try {
+      assert.equal(toolsFlag(result.args), "bash");
+      assert.equal(result.args[result.args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+      assert.equal(result.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
+    } finally {
+      cleanupTempDir(result.tempDir);
+    }
   });
 
   it("does not create a native supervisor channel for an explicit supervisor opt-out", () => {

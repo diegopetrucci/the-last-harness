@@ -35,6 +35,7 @@ import { dispatchAwaitedRunCompletion } from "./awaited-run-registry.ts";
 
 // These limits are display/message trust boundaries for text originating in a
 // child result. They are deliberately independent of the awaited-result limit.
+export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
 export const MAX_COMPLETION_FACTS_CHARS = 1_200;
 const MAX_REFERENCE_CHARS = 500;

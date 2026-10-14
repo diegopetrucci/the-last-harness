@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 
 import { createJiti } from "jiti";
 
@@ -56,9 +56,16 @@ function codexSnapshot(options = {}) {
   };
 }
 
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
+
 /** Create a temp sessions root dir with a given structure. */
 function makeTempSessionsRoot() {
-  return mkdtempSync(join(tmpdir(), "tlh-scan-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "tlh-scan-test-"));
+  _tmpDirs.push(dir);
+  return dir;
 }
 
 /**

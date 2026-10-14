@@ -1,33 +1,30 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { readStatus } from "../shared/utils.ts";
+import { checkPidLiveness } from "../runs/background/stale-run-reconciler.ts";
+import { recoverStoppedLifecycleOwnership } from "../runs/shared/lifecycle-state.ts";
 import { NESTED_EVENTS_DIR } from "../runs/shared/nested-events.ts";
-import { isSafeNestedPathId } from "../runs/shared/nested-path.ts";
-import { isTerminalLifecycleState } from "../runs/shared/lifecycle-state.ts";
 import { ASYNC_DIR, TEMP_ROOT_DIR, type AsyncStatus } from "../shared/types.ts";
 
 const EMPTY_ASYNC_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
 const TERMINAL_ASYNC_DIR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
 const UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
 const NESTED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
-
 const ROUTE_FILE = "route.json";
 
-type RuntimeCleanupPaths = {
+type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+
+interface RuntimeCleanupPaths {
   asyncDir: string;
   nestedRunsDir: string;
   nestedEventsDir: string;
-};
+}
 
-type RuntimeCleanupResult = {
+interface RuntimeCleanupResult {
   removedAsyncDirs: number;
   removedNestedEventDirs: number;
-};
+}
 
-type RuntimeDirCounts = {
+interface RuntimeDirCounts {
   topLevelAsyncDirs: number;
   nestedAsyncDirs: number;
   retainedAsyncDirs: number;
@@ -35,28 +32,43 @@ type RuntimeDirCounts = {
   staleAsyncDirs: number;
   nestedEventDirs: number;
   unreferencedNestedEventDirs: number;
-};
+}
 
-type RuntimeCleanupDeps = {
+interface RuntimeCleanupDeps {
   now?: () => number;
-};
+  kill?: KillFn;
+}
 
-type AsyncRunDirEntry = {
+interface AsyncRunDirEntry {
   asyncDir: string;
   rootRunId: string;
   nested: boolean;
-};
+}
 
-type AsyncDirInspection = AsyncRunDirEntry & {
+interface AsyncStatusReadResult {
+  status: AsyncStatus | null;
+  statusMtimeMs?: number;
+  invalid: boolean;
+}
+
+interface AsyncDirInspection {
+  entry: AsyncRunDirEntry;
+  rootRunId: string;
   keep: boolean;
   activeOrLive: boolean;
-};
+}
 
-type NestedEventRouteInspection = {
+type PidRetentionState = "ownerless" | "alive" | "dead" | "unknown";
+
+interface NestedEventRouteEntry {
   dirPath: string;
   rootRunId?: string;
+  referenceMtimeMs: number;
+}
+
+interface NestedEventRouteInspection extends NestedEventRouteEntry {
   keep: boolean;
-};
+}
 
 const DEFAULT_PATHS: RuntimeCleanupPaths = {
   asyncDir: ASYNC_DIR,
@@ -64,10 +76,11 @@ const DEFAULT_PATHS: RuntimeCleanupPaths = {
   nestedEventsDir: NESTED_EVENTS_DIR,
 };
 
-function directoryEntries(dirPath: string, strict: boolean): fs.Dirent[] {
+function listDirectoryEntries(dirPath: string, strict: boolean): fs.Dirent[] {
   if (!fs.existsSync(dirPath)) return [];
   try {
-    if (!fs.statSync(dirPath).isDirectory()) throw new Error(`not a directory: ${dirPath}`);
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) throw new Error(`not a directory: ${dirPath}`);
     return fs.readdirSync(dirPath, { withFileTypes: true });
   } catch (error) {
     if (strict) throw error;
@@ -75,155 +88,243 @@ function directoryEntries(dirPath: string, strict: boolean): fs.Dirent[] {
   }
 }
 
-function asyncRunDirs(paths: RuntimeCleanupPaths, strict: boolean): AsyncRunDirEntry[] {
-  const result: AsyncRunDirEntry[] = [];
-  for (const item of directoryEntries(paths.asyncDir, strict))
-    if (item.isDirectory())
-      result.push({
-        asyncDir: path.join(paths.asyncDir, item.name),
-        rootRunId: item.name,
-        nested: false,
-      });
-
-  for (const root of directoryEntries(paths.nestedRunsDir, strict)) {
-    if (!root.isDirectory()) continue;
-    const rootDir = path.join(paths.nestedRunsDir, root.name);
-    for (const run of directoryEntries(rootDir, strict))
-      if (run.isDirectory())
-        result.push({ asyncDir: path.join(rootDir, run.name), rootRunId: root.name, nested: true });
+function listAsyncRunDirs(paths: RuntimeCleanupPaths, strict: boolean): AsyncRunDirEntry[] {
+  const entries: AsyncRunDirEntry[] = [];
+  for (const entry of listDirectoryEntries(paths.asyncDir, strict)) {
+    if (!entry.isDirectory()) continue;
+    entries.push({
+      asyncDir: path.join(paths.asyncDir, entry.name),
+      rootRunId: entry.name,
+      nested: false,
+    });
   }
-  return result;
+  for (const rootEntry of listDirectoryEntries(paths.nestedRunsDir, strict)) {
+    if (!rootEntry.isDirectory()) continue;
+    const rootDir = path.join(paths.nestedRunsDir, rootEntry.name);
+    for (const runEntry of listDirectoryEntries(rootDir, strict)) {
+      if (!runEntry.isDirectory()) continue;
+      entries.push({
+        asyncDir: path.join(rootDir, runEntry.name),
+        rootRunId: rootEntry.name,
+        nested: true,
+      });
+    }
+  }
+  return entries;
 }
 
-function newestMtime(dirPath: string): number {
+function listNestedEventRoutes(nestedEventsDir: string, strict: boolean): NestedEventRouteEntry[] {
+  const entries: NestedEventRouteEntry[] = [];
+  for (const entry of listDirectoryEntries(nestedEventsDir, strict)) {
+    if (!entry.isDirectory()) continue;
+    const dirPath = path.join(nestedEventsDir, entry.name);
+    let rootRunId: string | undefined;
+    try {
+      const route = JSON.parse(fs.readFileSync(path.join(dirPath, ROUTE_FILE), "utf-8")) as {
+        rootRunId?: unknown;
+      };
+      if (typeof route.rootRunId === "string" && route.rootRunId) rootRunId = route.rootRunId;
+    } catch {
+      // Leave invalid route dirs untouched during cleanup; they may still be inspected manually.
+    }
+    entries.push({ dirPath, rootRunId, referenceMtimeMs: newestTreeMtimeMs(dirPath) });
+  }
+  return entries;
+}
+
+function readAsyncStatus(asyncDir: string): AsyncStatusReadResult {
+  const statusPath = path.join(asyncDir, "status.json");
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(statusPath);
+    if (!stat.isFile()) return { status: null, invalid: true };
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as NodeJS.ErrnoException).code
+        : undefined;
+    if (code === "ENOENT") return { status: null, invalid: false };
+    return { status: null, invalid: true };
+  }
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+    if (parsed === null) {
+      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: false };
+    }
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+    }
+    return {
+      status: parsed as AsyncStatus,
+      statusMtimeMs: stat.mtimeMs,
+      invalid: false,
+    };
+  } catch {
+    return { status: null, statusMtimeMs: stat.mtimeMs, invalid: true };
+  }
+}
+
+function newestTreeMtimeMs(dirPath: string): number {
   let newest: number;
   try {
     newest = fs.statSync(dirPath).mtimeMs;
   } catch {
     return 0;
   }
-
-  for (const entry of directoryEntries(dirPath, false)) {
+  for (const entry of listDirectoryEntries(dirPath, false)) {
+    const childPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      newest = Math.max(newest, newestTreeMtimeMs(childPath));
+      continue;
+    }
     try {
-      const child = path.join(dirPath, entry.name);
-      const mtime = fs.statSync(child).mtimeMs;
-      newest = Math.max(newest, entry.isDirectory() ? newestMtime(child) : mtime);
+      newest = Math.max(newest, fs.statSync(childPath).mtimeMs);
     } catch {
-      /* Unreadable/disappearing children retain their parent. */
+      continue;
     }
   }
   return newest;
 }
 
-function readAsyncStatus(asyncDir: string): {
-  status?: AsyncStatus;
-  mtimeMs?: number;
-  readable: boolean;
-} {
-  const statusPath = path.join(asyncDir, "status.json");
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(statusPath);
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT"
-      ? { readable: true }
-      : { readable: false };
-  }
-
-  if (!stat.isFile()) return { readable: false };
-
-  try {
-    const status = readStatus(asyncDir, { cache: false });
-    return status ? { status, mtimeMs: stat.mtimeMs, readable: true } : { readable: false };
-  } catch {
-    return { readable: false };
-  }
+function isSignalSafePid(pid: unknown): pid is number {
+  return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
 }
 
-const terminalReferenceMs = (
+function pidRetentionState(status: AsyncStatus, kill: KillFn): PidRetentionState {
+  if (!isSignalSafePid(status.pid)) return "ownerless";
+  return checkPidLiveness(status.pid, kill);
+}
+
+function lifecycleTimestamp(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function retentionReferenceMs(
   status: AsyncStatus,
   statusMtimeMs: number | undefined,
   dirMtimeMs: number,
-): number =>
-  Math.max(
+): number {
+  return Math.max(
     dirMtimeMs,
     statusMtimeMs ?? 0,
-    status.endedAt ?? 0,
-    status.lastUpdate ?? 0,
-    status.startedAt ?? 0,
+    lifecycleTimestamp(status.endedAt),
+    lifecycleTimestamp(status.lastUpdate),
+    lifecycleTimestamp(status.startedAt),
   );
+}
 
-function inspectAsyncDir(entry: AsyncRunDirEntry, now: number): AsyncDirInspection {
-  const dirMtimeMs = newestMtime(entry.asyncDir);
-  const read = readAsyncStatus(entry.asyncDir);
+function isWithinRetentionWindow(
+  status: AsyncStatus,
+  statusMtimeMs: number | undefined,
+  dirMtimeMs: number,
+  now: number,
+): boolean {
+  return (
+    now - retentionReferenceMs(status, statusMtimeMs, dirMtimeMs) < TERMINAL_ASYNC_DIR_MAX_AGE_MS
+  );
+}
 
-  if (!read.readable) return { ...entry, keep: true, activeOrLive: false };
-  if (!read.status)
-    return { ...entry, keep: now - dirMtimeMs < EMPTY_ASYNC_DIR_MAX_AGE_MS, activeOrLive: false };
-  const rootRunId = entry.nested ? entry.rootRunId : read.status.runId || entry.rootRunId;
+function inspectKnownLifecycleState(
+  status: AsyncStatus,
+  statusMtimeMs: number | undefined,
+  dirMtimeMs: number,
+  now: number,
+  kill: KillFn,
+): Pick<AsyncDirInspection, "keep" | "activeOrLive"> {
+  switch (status.state) {
+    case "complete":
+    case "failed":
+    case "cancelled":
+    case "continued":
+      // Lifecycle state is authoritative: stale health metadata must not turn a
+      // terminal record back into an active one.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    case "paused":
+      // Paused runs are durable resume records and remain eligible for recovery
+      // even when their owner PID has exited or is no longer recorded.
+      return { keep: true, activeOrLive: true };
+    case "queued":
+    case "running": {
+      const pidState = pidRetentionState(status, kill);
+      if (pidState === "alive" || pidState === "unknown") {
+        return { keep: true, activeOrLive: true };
+      }
+      // A missing or dead owner may be a transient handoff/restart. Keep it for
+      // the same grace window as terminal records, then allow stale cleanup.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    }
+    case "pausing": {
+      let pidState: PidRetentionState;
+      if (isSignalSafePid(status.pid)) {
+        try {
+          const recovered = recoverStoppedLifecycleOwnership(status, {
+            kill,
+            now: () => now,
+          });
+          if (recovered.repaired) {
+            // Lifecycle recovery would finalize this checkpoint to paused. Keep
+            // the record even though cleanup itself must not rewrite its status.
+            return { keep: true, activeOrLive: true };
+          }
+          pidState = recovered.pidLiveness ?? "ownerless";
+        } catch {
+          // Malformed optional lifecycle metadata must not make best-effort
+          // cleanup fail; fall back to the existing PID retention policy.
+          pidState = pidRetentionState(status, kill);
+        }
+      } else {
+        pidState = "ownerless";
+      }
+      if (pidState === "alive" || pidState === "unknown") {
+        return { keep: true, activeOrLive: true };
+      }
+      // A missing or dead owner may be a transient handoff/restart. Keep it for
+      // the same grace window as terminal records, then allow stale cleanup.
+      return {
+        keep: isWithinRetentionWindow(status, statusMtimeMs, dirMtimeMs, now),
+        activeOrLive: false,
+      };
+    }
+    default:
+      // Unknown lifecycle states are not safe to classify as stale.
+      return { keep: true, activeOrLive: false };
+  }
+}
 
-  if (read.status.state === "paused" || !isTerminalLifecycleState(read.status.state))
-    return { ...entry, rootRunId, keep: true, activeOrLive: true };
+function inspectAsyncDir(entry: AsyncRunDirEntry, now: number, kill: KillFn): AsyncDirInspection {
+  const dirMtimeMs = newestTreeMtimeMs(entry.asyncDir);
+  const { status, statusMtimeMs, invalid } = readAsyncStatus(entry.asyncDir);
+  if (invalid) {
+    return {
+      entry,
+      rootRunId: entry.rootRunId,
+      keep: true,
+      activeOrLive: false,
+    };
+  }
+  if (!status) {
+    return {
+      entry,
+      rootRunId: entry.rootRunId,
+      keep: now - dirMtimeMs < EMPTY_ASYNC_DIR_MAX_AGE_MS,
+      activeOrLive: false,
+    };
+  }
+  const rootRunId = entry.nested ? entry.rootRunId : status.runId || entry.rootRunId;
   return {
-    ...entry,
+    entry,
     rootRunId,
-    keep:
-      now - terminalReferenceMs(read.status, read.mtimeMs, dirMtimeMs) <
-      TERMINAL_ASYNC_DIR_MAX_AGE_MS,
-    activeOrLive: false,
+    ...inspectKnownLifecycleState(status, statusMtimeMs, dirMtimeMs, now, kill),
   };
 }
 
-function inspectRoutes(
-  nestedEventsDir: string,
-  retainedRoots: Set<string>,
-  now: number,
-  strict: boolean,
-): NestedEventRouteInspection[] {
-  return directoryEntries(nestedEventsDir, strict)
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const dirPath = path.join(nestedEventsDir, entry.name);
-      let rootRunId: string | undefined;
-
-      try {
-        const route = JSON.parse(fs.readFileSync(path.join(dirPath, ROUTE_FILE), "utf8")) as Record<
-          string,
-          unknown
-        >;
-        if (isSafeNestedPathId(route.rootRunId) && isSafeNestedPathId(route.capabilityToken))
-          rootRunId = route.rootRunId;
-      } catch {
-        /* Invalid route metadata cannot prove ownership. */
-      }
-
-      const referenceMtimeMs = newestMtime(dirPath);
-      return {
-        dirPath,
-        rootRunId,
-        keep:
-          rootRunId === undefined ||
-          retainedRoots.has(rootRunId) ||
-          now - referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
-      };
-    });
-}
-
-const resolvePaths = (paths?: Partial<RuntimeCleanupPaths>): RuntimeCleanupPaths => ({
-  ...DEFAULT_PATHS,
-  ...paths,
-});
-
-function inspectRuntimeDirsInternal(paths: RuntimeCleanupPaths, now: number, strict: boolean) {
-  const asyncDirs = asyncRunDirs(paths, strict).map((entry) => inspectAsyncDir(entry, now));
-
-  const retainedRoots = new Set(
-    asyncDirs.filter((entry) => entry.keep).map((entry) => entry.rootRunId),
-  );
-  return { asyncDirs, routes: inspectRoutes(paths.nestedEventsDir, retainedRoots, now, strict) };
-}
-
-function removeDirectory(dirPath: string): boolean {
+function removeDir(dirPath: string): boolean {
   try {
     fs.rmSync(dirPath, { recursive: true, force: true });
     return true;
@@ -232,31 +333,71 @@ function removeDirectory(dirPath: string): boolean {
   }
 }
 
-function removeIfEmpty(dirPath: string): void {
+function removeIfEmpty(dirPath: string): boolean {
   try {
+    if (!fs.existsSync(dirPath)) return true;
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) return false;
+    if (fs.readdirSync(dirPath).length > 0) return false;
     fs.rmdirSync(dirPath);
+    return true;
   } catch {
-    /* Parent cleanup is best effort. */
+    return false;
   }
+}
+
+function resolvePaths(paths?: Partial<RuntimeCleanupPaths>): RuntimeCleanupPaths {
+  return {
+    asyncDir: paths?.asyncDir ?? DEFAULT_PATHS.asyncDir,
+    nestedRunsDir: paths?.nestedRunsDir ?? DEFAULT_PATHS.nestedRunsDir,
+    nestedEventsDir: paths?.nestedEventsDir ?? DEFAULT_PATHS.nestedEventsDir,
+  };
+}
+
+function inspectRuntimeDirsInternal(
+  paths: RuntimeCleanupPaths,
+  now: number,
+  kill: KillFn,
+  strict: boolean,
+): {
+  asyncDirs: AsyncDirInspection[];
+  nestedEventRoutes: NestedEventRouteInspection[];
+} {
+  const asyncDirs = listAsyncRunDirs(paths, strict).map((entry) =>
+    inspectAsyncDir(entry, now, kill),
+  );
+  const retainedRootRunIds = new Set(
+    asyncDirs.filter((entry) => entry.keep).map((entry) => entry.rootRunId),
+  );
+  const nestedEventRoutes = listNestedEventRoutes(paths.nestedEventsDir, strict).map((entry) => ({
+    ...entry,
+    keep:
+      !entry.rootRunId ||
+      retainedRootRunIds.has(entry.rootRunId) ||
+      now - entry.referenceMtimeMs < UNREFERENCED_NESTED_EVENT_DIR_MAX_AGE_MS,
+  }));
+  return {
+    asyncDirs,
+    nestedEventRoutes,
+  };
 }
 
 export function inspectRuntimeDirs(
   paths?: Partial<RuntimeCleanupPaths>,
   deps: RuntimeCleanupDeps = {},
 ): RuntimeDirCounts {
-  const inspection = inspectRuntimeDirsInternal(
-    resolvePaths(paths),
-    deps.now?.() ?? Date.now(),
-    true,
-  );
+  const now = deps.now?.() ?? Date.now();
+  const kill = deps.kill ?? process.kill;
+  const resolvedPaths = resolvePaths(paths);
+  const inspection = inspectRuntimeDirsInternal(resolvedPaths, now, kill, true);
   return {
-    topLevelAsyncDirs: inspection.asyncDirs.filter((entry) => !entry.nested).length,
-    nestedAsyncDirs: inspection.asyncDirs.filter((entry) => entry.nested).length,
+    topLevelAsyncDirs: inspection.asyncDirs.filter((entry) => !entry.entry.nested).length,
+    nestedAsyncDirs: inspection.asyncDirs.filter((entry) => entry.entry.nested).length,
     retainedAsyncDirs: inspection.asyncDirs.filter((entry) => entry.keep).length,
     activeOrLiveAsyncDirs: inspection.asyncDirs.filter((entry) => entry.activeOrLive).length,
     staleAsyncDirs: inspection.asyncDirs.filter((entry) => !entry.keep).length,
-    nestedEventDirs: inspection.routes.length,
-    unreferencedNestedEventDirs: inspection.routes.filter((entry) => !entry.keep).length,
+    nestedEventDirs: inspection.nestedEventRoutes.length,
+    unreferencedNestedEventDirs: inspection.nestedEventRoutes.filter((entry) => !entry.keep).length,
   };
 }
 
@@ -264,27 +405,37 @@ export function cleanupRuntimeDirs(
   paths?: Partial<RuntimeCleanupPaths>,
   deps: RuntimeCleanupDeps = {},
 ): RuntimeCleanupResult {
-  const resolved = resolvePaths(paths);
-  const inspection = inspectRuntimeDirsInternal(resolved, deps.now?.() ?? Date.now(), false);
-  const retainedRoots = new Set<string>();
+  const now = deps.now?.() ?? Date.now();
+  const kill = deps.kill ?? process.kill;
+  const resolvedPaths = resolvePaths(paths);
+  const inspection = inspectRuntimeDirsInternal(resolvedPaths, now, kill, false);
+  const retainedRootRunIds = new Set<string>();
   let removedAsyncDirs = 0;
-
-  for (const item of inspection.asyncDirs) {
-    if (item.keep || !removeDirectory(item.asyncDir)) {
-      retainedRoots.add(item.rootRunId);
+  for (const entry of inspection.asyncDirs) {
+    if (entry.keep) {
+      retainedRootRunIds.add(entry.rootRunId);
       continue;
     }
-    removedAsyncDirs++;
-    if (item.nested) {
-      removeIfEmpty(path.dirname(item.asyncDir));
-      removeIfEmpty(resolved.nestedRunsDir);
+    const latest = inspectAsyncDir(entry.entry, now, kill);
+    if (latest.keep) {
+      retainedRootRunIds.add(latest.rootRunId);
+      continue;
+    }
+    if (!removeDir(entry.entry.asyncDir)) {
+      retainedRootRunIds.add(entry.rootRunId);
+      continue;
+    }
+    removedAsyncDirs += 1;
+    if (entry.entry.nested) {
+      removeIfEmpty(path.dirname(entry.entry.asyncDir));
+      removeIfEmpty(resolvedPaths.nestedRunsDir);
     }
   }
-
   let removedNestedEventDirs = 0;
-  for (const route of inspection.routes) {
-    if (route.keep || (route.rootRunId && retainedRoots.has(route.rootRunId))) continue;
-    if (removeDirectory(route.dirPath)) removedNestedEventDirs++;
+  for (const route of inspection.nestedEventRoutes) {
+    if (route.keep || (route.rootRunId && retainedRootRunIds.has(route.rootRunId))) continue;
+    if (!removeDir(route.dirPath)) continue;
+    removedNestedEventDirs += 1;
   }
   return { removedAsyncDirs, removedNestedEventDirs };
 }

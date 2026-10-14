@@ -366,7 +366,13 @@ export function createHerdrActivityReporter(
   let outboundChain: Promise<void> = Promise.resolve();
 
   const nextReportSeq = (): number => {
-    reportSeq += 1;
+    // Anchor each seq to current time so a long-running session can reclaim
+    // authority over a competing reporter that ran while this session was idle.
+    // Herdr v0.9.1 silently drops reports whose seq <= last accepted seq for
+    // the same source/pane. Without the time anchor, a newer competing process
+    // (e.g. a test runner) permanently outranks this session after its first
+    // report. Math.max preserves strict monotonicity even when now() stalls.
+    reportSeq = Math.max(reportSeq + 1, now() * 1000);
     return reportSeq;
   };
 

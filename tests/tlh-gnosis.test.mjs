@@ -9,13 +9,19 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const gnosisScript = join(repoRoot, "scripts", "tlh-gnosis.mjs");
@@ -30,6 +36,7 @@ function runGnosis(args, options = {}) {
 
 function tempFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tlh-gnosis-test-"));
+  _tmpDirs.push(dir);
   const home = join(dir, "home");
   const agent = join(dir, "agent");
   const external = join(dir, "external");

@@ -5,6 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   TLH_LATEST_RELEASE_API_URL,
+  TLH_MAIN_COMPARE_API_URL,
   TLH_NAME,
   TLH_RELEASES_URL,
   TLH_UPDATE_CHECK_INTERVAL_MS,
@@ -16,6 +17,7 @@ import {
   isNewerTlhVersion,
   normalizeTlhVersion,
 } from "./package-version.js";
+import { readTlhInstallNotice } from "./install-state.js";
 import {
   readTlhInstallState,
   readTlhStartupState,
@@ -25,6 +27,7 @@ import {
 import { isRecord } from "./common.js";
 import type {
   TlhHeaderUpdate,
+  TlhInstallNotice,
   TlhInstallState,
   TlhLatestRelease,
   TlhSettings,
@@ -32,13 +35,23 @@ import type {
   TlhUpdateCheckConfig,
 } from "./types.js";
 
+type TlhMainTrackComparisonStatus = "behind" | "ahead" | "identical" | "diverged" | "unavailable";
+
+type TlhMainTrackComparison = {
+  status: Exclude<TlhMainTrackComparisonStatus, "unavailable">;
+  behindBy?: number;
+};
+
 type TlhUpdateCheckTestHooks = {
   now?: () => number;
   fetchLatestRelease?: (currentVersion: string) => Promise<TlhLatestRelease | undefined>;
+  fetchMainTrackComparison?: (commitSha: string) => Promise<TlhMainTrackComparison | undefined>;
 };
 
 type MaybeNotifyAvailableTlhUpdateOptions = {
   canNotify?: () => boolean;
+  installNotice?: TlhInstallNotice;
+  onMainTrackBehindCountChange?: (behindCount: number | undefined) => void;
 };
 
 type TlhUpdateCheckResult = {
@@ -46,9 +59,19 @@ type TlhUpdateCheckResult = {
   latestRelease?: TlhLatestRelease;
 };
 
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const MAIN_TRACK_COMPARISON_STATUSES = new Set<TlhMainTrackComparisonStatus>([
+  "behind",
+  "ahead",
+  "identical",
+  "diverged",
+  "unavailable",
+]);
+
 const defaultTlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = {
   now: () => Date.now(),
   fetchLatestRelease: fetchLatestTlhRelease,
+  fetchMainTrackComparison: fetchMainTrackComparison,
 };
 
 let tlhUpdateCheckHooks: Required<TlhUpdateCheckTestHooks> = defaultTlhUpdateCheckHooks;
@@ -118,6 +141,77 @@ function getCachedTlhLatestRelease(state: TlhStartupState): TlhLatestRelease | u
   return { version, tagName, releaseUrl };
 }
 
+function normalizedCommitSha(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return COMMIT_SHA_PATTERN.test(normalized) ? normalized : undefined;
+}
+
+function getMainTrackCommitSha(notice: TlhInstallNotice | undefined): string | undefined {
+  if (notice?.kind !== "ref" || notice.detail !== "main") {
+    return undefined;
+  }
+  return normalizedCommitSha(notice.commitSha);
+}
+
+function isValidMainTrackComparisonStatus(value: unknown): value is TlhMainTrackComparisonStatus {
+  return (
+    typeof value === "string" &&
+    MAIN_TRACK_COMPARISON_STATUSES.has(value as TlhMainTrackComparisonStatus)
+  );
+}
+
+function normalizeMainTrackComparison(
+  value: unknown,
+): TlhMainTrackComparison | { status: "unavailable" } | undefined {
+  if (!isRecord(value)) {
+    return { status: "unavailable" };
+  }
+
+  const status = value.status;
+  if (!isValidMainTrackComparisonStatus(status) || status === "unavailable") {
+    return { status: "unavailable" };
+  }
+  if (status !== "behind") {
+    return { status };
+  }
+
+  const behindBy = value.behindBy;
+  if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+    return { status: "unavailable" };
+  }
+  return { status, behindBy };
+}
+
+function getCachedTlhMainTrackComparison(
+  state: TlhStartupState,
+  commitSha: string,
+): TlhMainTrackComparisonStatus | TlhMainTrackComparison | undefined {
+  const updateCheck = getTlhUpdateCheckState(state);
+  if (normalizedCommitSha(updateCheck.mainTrackCommitSha) !== commitSha) {
+    return undefined;
+  }
+
+  const status = updateCheck.mainTrackStatus;
+  if (!isValidMainTrackComparisonStatus(status)) {
+    return undefined;
+  }
+  if (status === "unavailable") {
+    return "unavailable";
+  }
+  if (status !== "behind") {
+    return { status };
+  }
+
+  const behindBy = updateCheck.mainTrackBehindBy;
+  if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+    return "unavailable";
+  }
+  return { status, behindBy };
+}
+
 function shouldRefreshTlhLatestRelease(state: TlhStartupState): boolean {
   const checkedAt = getTlhUpdateCheckState(state).checkedAt;
   const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
@@ -166,6 +260,68 @@ async function fetchLatestTlhRelease(
       ? data.html_url.trim()
       : `${TLH_RELEASES_URL}/tag/${tagName}`;
   return { version, tagName, releaseUrl };
+}
+
+async function fetchMainTrackComparison(
+  commitSha: string,
+): Promise<TlhMainTrackComparison | undefined> {
+  const normalizedSha = normalizedCommitSha(commitSha);
+  if (!normalizedSha) {
+    return undefined;
+  }
+
+  const response = await fetch(`${TLH_MAIN_COMPARE_API_URL}/main...${normalizedSha}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": `${TLH_NAME}/${getTlhVersion()}`,
+    },
+    signal: AbortSignal.timeout(TLH_UPDATE_CHECK_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const data = (await response.json()) as { status?: unknown; behind_by?: unknown };
+  const status = data.status;
+  if (
+    status !== "behind" &&
+    status !== "ahead" &&
+    status !== "identical" &&
+    status !== "diverged"
+  ) {
+    return undefined;
+  }
+  if (status !== "behind") {
+    return { status };
+  }
+
+  const behindBy = data.behind_by;
+  if (typeof behindBy !== "number" || !Number.isSafeInteger(behindBy) || behindBy <= 0) {
+    return undefined;
+  }
+  return { status, behindBy };
+}
+
+export function getTlhMainTrackBehindCount(
+  cwd: string,
+  installNotice: TlhInstallNotice | undefined = readTlhInstallNotice(),
+): number | undefined {
+  if (shouldSkipTlhUpdateCheck(cwd)) {
+    return undefined;
+  }
+  const commitSha = getMainTrackCommitSha(installNotice);
+  if (!commitSha) {
+    return undefined;
+  }
+
+  const state = readTlhStartupState();
+  if (shouldRefreshTlhLatestRelease(state)) {
+    return undefined;
+  }
+  const comparison = getCachedTlhMainTrackComparison(state, commitSha);
+  return typeof comparison === "object" && comparison.status === "behind"
+    ? comparison.behindBy
+    : undefined;
 }
 
 function normalizeInstallStateValue(value: unknown): string | undefined {
@@ -243,8 +399,21 @@ function maybeNotifyCachedTlhUpdate(
   return true;
 }
 
-async function runMaybeNotifyAvailableTlhUpdate(): Promise<TlhUpdateCheckResult> {
+function safelyRunTlhUpdateCheck<T>(
+  operation: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  try {
+    return Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    return Promise.resolve(undefined);
+  }
+}
+
+async function runMaybeNotifyAvailableTlhUpdate(
+  installNotice: TlhInstallNotice | undefined,
+): Promise<TlhUpdateCheckResult> {
   const currentVersion = getTlhVersion();
+  const mainTrackCommitSha = getMainTrackCommitSha(installNotice);
   let state = readTlhStartupState();
   if (!shouldRefreshTlhLatestRelease(state)) {
     return {
@@ -260,23 +429,43 @@ async function runMaybeNotifyAvailableTlhUpdate(): Promise<TlhUpdateCheckResult>
     },
   });
 
-  let latestRelease: TlhLatestRelease | undefined;
-  try {
-    latestRelease = await tlhUpdateCheckHooks.fetchLatestRelease(currentVersion);
-  } catch {
-    return { currentVersion };
-  }
-  if (!latestRelease) {
-    return { currentVersion };
-  }
+  const latestReleasePromise = safelyRunTlhUpdateCheck(() =>
+    tlhUpdateCheckHooks.fetchLatestRelease(currentVersion),
+  );
+  const mainTrackComparisonPromise = mainTrackCommitSha
+    ? safelyRunTlhUpdateCheck(() =>
+        tlhUpdateCheckHooks.fetchMainTrackComparison(mainTrackCommitSha),
+      )
+    : Promise.resolve(undefined);
+  const [latestRelease, mainTrackComparison] = await Promise.all([
+    latestReleasePromise,
+    mainTrackComparisonPromise,
+  ]);
 
   state = readTlhStartupState();
+  const updateCheck = getTlhUpdateCheckState(state);
+  const normalizedComparison = mainTrackCommitSha
+    ? (normalizeMainTrackComparison(mainTrackComparison) ?? { status: "unavailable" as const })
+    : undefined;
   updateTlhStartupState({
     updateCheck: {
-      ...getTlhUpdateCheckState(state),
-      latestVersion: latestRelease.version,
-      latestTagName: latestRelease.tagName,
-      latestReleaseUrl: latestRelease.releaseUrl,
+      ...updateCheck,
+      ...(latestRelease
+        ? {
+            latestVersion: latestRelease.version,
+            latestTagName: latestRelease.tagName,
+            latestReleaseUrl: latestRelease.releaseUrl,
+          }
+        : {}),
+      ...(mainTrackCommitSha && normalizedComparison
+        ? {
+            mainTrackCommitSha,
+            mainTrackStatus: normalizedComparison.status,
+            ...(normalizedComparison.status === "behind"
+              ? { mainTrackBehindBy: normalizedComparison.behindBy }
+              : { mainTrackBehindBy: undefined }),
+          }
+        : {}),
     },
   });
 
@@ -297,16 +486,21 @@ export async function maybeNotifyAvailableTlhUpdate(
   if (shouldSkipTlhUpdateCheck(ctx.cwd)) {
     return;
   }
+  const installNotice = options.installNotice ?? readTlhInstallNotice();
   const inFlight =
     maybeNotifyAvailableTlhUpdateInFlight ??
-    runMaybeNotifyAvailableTlhUpdate().finally(() => {
+    runMaybeNotifyAvailableTlhUpdate(installNotice).finally(() => {
       if (maybeNotifyAvailableTlhUpdateInFlight === inFlight) {
         maybeNotifyAvailableTlhUpdateInFlight = undefined;
       }
     });
   maybeNotifyAvailableTlhUpdateInFlight = inFlight;
   const result = await inFlight;
-  maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, readTlhStartupState(), options);
+  const state = readTlhStartupState();
+  maybeNotifyCachedTlhUpdate(ctx, result.currentVersion, state, options);
+  if (options.onMainTrackBehindCountChange) {
+    options.onMainTrackBehindCountChange(getTlhMainTrackBehindCount(ctx.cwd, installNotice));
+  }
 }
 
 export function __setTlhUpdateCheckTestHooks(hooks: TlhUpdateCheckTestHooks = {}): void {

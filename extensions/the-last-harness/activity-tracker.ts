@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
 // Re-export so existing importers of activity-tracker.ts continue to work.
 export { TLH_EFFECTIVE_ACTIVITY_EVENT };
@@ -112,45 +112,8 @@ type AsyncJobRecord = {
   source: "started" | "control" | "rehydrated";
 };
 
-function sanitizeTempScopeSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return sanitized || "unknown";
-}
-
-function resolvePiSubagentsTempScopeId(): string {
-  if (typeof process.getuid === "function") {
-    return `uid-${process.getuid()}`;
-  }
-  for (const key of ["USERNAME", "USER", "LOGNAME"] as const) {
-    const value = process.env[key];
-    if (value) return `user-${sanitizeTempScopeSegment(value)}`;
-  }
-  try {
-    const username = os.userInfo().username;
-    if (username) return `user-${sanitizeTempScopeSegment(username)}`;
-  } catch {
-    // Fall through to home-directory-based scoping.
-  }
-  const homedir = process.env.USERPROFILE ?? process.env.HOME;
-  if (homedir) return `home-${sanitizeTempScopeSegment(homedir)}`;
-  try {
-    const fallbackHomedir = os.homedir();
-    if (fallbackHomedir) return `home-${sanitizeTempScopeSegment(fallbackHomedir)}`;
-  } catch {
-    // Fall through to the shared scope.
-  }
-  return "shared";
-}
-
 function resolveDefaultAsyncDir(): string {
-  return path.join(
-    os.tmpdir(),
-    `pi-subagents-${resolvePiSubagentsTempScopeId()}`,
-    "async-subagent-runs",
-  );
+  return path.join(resolveTempRootDir(), "async-subagent-runs");
 }
 
 function normalizeComparablePath(target: string): string {

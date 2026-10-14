@@ -6,11 +6,17 @@ import {
   lstatSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 import {
   packageIdentity,
@@ -322,6 +328,7 @@ test("tlh-defaults preserves settings and backup file modes when rewriting setti
 test("tlh-defaults rejects symlinked settings targets before creating backups", () => {
   const fixture = tempFixture();
   const externalDir = mkdtempSync(join(tmpdir(), "tlh-defaults-symlink-target-"));
+  _tmpDirs.push(externalDir);
   const externalSettings = join(externalDir, "settings.json");
   writeFileSync(
     fixture.extensions,

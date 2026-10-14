@@ -183,6 +183,12 @@ export type TlhStartupState = {
     latestTagName?: string;
     latestReleaseUrl?: string;
     lastNotifiedVersion?: string;
+    /** Installed official-main commit used for the cached GitHub comparison. */
+    mainTrackCommitSha?: string;
+    /** GitHub compare status for the cached official-main commit. */
+    mainTrackStatus?: "behind" | "ahead" | "identical" | "diverged" | "unavailable";
+    /** Number of commits by which main is ahead when status is `behind`. */
+    mainTrackBehindBy?: number;
   };
 };
 
@@ -194,6 +200,7 @@ export type TlhInstallState = {
   packageSource?: string;
   packageSourceIsDefault?: boolean;
   commitSubject?: string;
+  commitSha?: string;
   rawBase?: string;
   agentDir?: string;
   binDir?: string;
@@ -215,6 +222,8 @@ export type TlhInstallNotice = {
   detail?: string;
   /** Persisted checkout subject for the displayed `main` ref track, when available. */
   commitSubject?: string;
+  /** Persisted full checkout SHA for the official default `main` ref track, when available. */
+  commitSha?: string;
 };
 
 export type TlhTelemetryState = {

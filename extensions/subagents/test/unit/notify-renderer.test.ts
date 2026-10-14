@@ -70,7 +70,9 @@ describe("native completion notification renderer", () => {
       };
       const collapsed = notifyRenderer(message, { expanded: false }, theme).render(200).join("\n");
       const expanded = notifyRenderer(message, { expanded: true }, theme).render(200).join("\n");
-      const collapsedPreview = collapsed.split("⎿  ")[1]?.split("\n", 1)[0] ?? "";
+      if (collapsed.includes("⎿")) throw new Error("renderer added the branch glyph: " + collapsed);
+      const collapsedRows = collapsed.split("\n");
+      const collapsedPreview = collapsedRows[1] ?? "";
       if (!collapsedPreview.includes("Done")) throw new Error("collapsed preview was not result-first: " + collapsed);
       if (collapsedPreview.includes("Async id")) throw new Error("collapsed preview exposed async metadata: " + collapsed);
       if (!collapsed.includes("full notification")) throw new Error("missing expand hint: " + collapsed);

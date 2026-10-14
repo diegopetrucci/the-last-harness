@@ -19,6 +19,29 @@ import { parseSessionFacts, snapshotSessionFiles, } from "../../shared/session-t
 import { injectTicketBody } from "../shared/ticket-context.js";
 import { skipOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
 import { classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, mergeContextUsageDiagnostics, parseContextUsageDiagnostics, resolveSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+const activeTempDirs = new Set();
+let killCleanupInstalled = false;
+function ensureKillCleanup() {
+    if (killCleanupInstalled)
+        return;
+    killCleanupInstalled = true;
+    const sigintHandler = () => {
+        process.removeListener("SIGTERM", sigtermHandler);
+        for (const dir of activeTempDirs)
+            cleanupTempDir(dir);
+        activeTempDirs.clear();
+        process.kill(process.pid, "SIGINT");
+    };
+    const sigtermHandler = () => {
+        process.removeListener("SIGINT", sigintHandler);
+        for (const dir of activeTempDirs)
+            cleanupTempDir(dir);
+        activeTempDirs.clear();
+        process.kill(process.pid, "SIGTERM");
+    };
+    process.once("SIGINT", sigintHandler);
+    process.once("SIGTERM", sigtermHandler);
+}
 function costSummaryFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)
         return undefined;
@@ -663,6 +686,11 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
         let stopAttempt = false;
         let attemptFacts;
         let completedRun;
+        const attemptTempDir = attempt.tempDir;
+        if (attemptTempDir) {
+            activeTempDirs.add(attemptTempDir);
+            ensureKillCleanup();
+        }
         try {
             const run = await runPiStreaming(attempt.args, path.resolve(step.cwd ?? stepCtx.cwd), stepCtx.outputFile, appendDiagnosticJsonl, attempt.env, stepCtx.piPackageRoot, stepCtx.piArgv1, step.maxSubagentDepth, {
                 eventsPath: setup.eventsPath,
@@ -710,6 +738,10 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
         }
         finally {
             attemptTimeoutTimer?.cancel();
+            if (attemptTempDir) {
+                activeTempDirs.delete(attemptTempDir);
+                cleanupTempDir(attemptTempDir);
+            }
             if (!attemptFacts) {
                 attemptFacts = captureAttemptFactsForRun({
                     step,

@@ -7,11 +7,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
@@ -23,11 +24,17 @@ function resetTicketRuntimeTestState() {
   delete process.env.TICKETS_DIR;
 }
 
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
+
 test.beforeEach(resetTicketRuntimeTestState);
 test.afterEach(resetTicketRuntimeTestState);
 
 function tempFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tlh-ticket-runtime-test-"));
+  _tmpDirs.push(dir);
   const agent = join(dir, "agent");
   const external = join(dir, "external");
   mkdirSync(agent, { recursive: true });

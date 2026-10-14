@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +13,9 @@ const { __testing, default: theLastHarness } = await jiti.import(
 );
 const { TLH_STARTUP_TIPS } = await jiti.import("../extensions/the-last-harness/startup-tip.ts");
 const { getTlhVersion } = await jiti.import("../extensions/the-last-harness/package-version.ts");
+const { __resetTlhUpdateCheckForTests, __setTlhUpdateCheckTestHooks } = await jiti.import(
+  "../extensions/the-last-harness/update-check.js",
+);
 
 const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
 
@@ -180,11 +184,21 @@ function withProcessPath(path, callback) {
   }
 }
 
-function writeProfileFixture(agentDir, installState) {
+function writeProfileFixture(agentDir, installState, updateCheckEnabled = false) {
   mkdirSync(join(agentDir, "tlh"), { recursive: true });
   writeFileSync(
     join(agentDir, "settings.json"),
-    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" }, telemetry: { enabled: false }, updateCheck: { enabled: false } } }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        tlh: {
+          primaryAgent: { enabled: false, selected: "disabled" },
+          telemetry: { enabled: false },
+          updateCheck: updateCheckEnabled ? {} : { enabled: false },
+        },
+      },
+      null,
+      2,
+    )}\n`,
   );
   writeFileSync(
     join(agentDir, "tlh", "install-state.json"),
@@ -211,11 +225,28 @@ async function createExtensionHarness({
   deferredStartupTaskScheduler,
   terminalTitleScheduler,
   afterSessionStartHandler,
+  updateCheckEnabled = false,
 }) {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
   const emptyBinDir = join(tempDir, "empty-bin");
+  // Capture all terminal-integration env keys that activity-reporters.ts reads so
+  // tests cannot accidentally send real Herdr/cmux traffic when run from a live pane.
+  const HERDR_KEYS = [
+    "HERDR_ENV",
+    "HERDR_SOCKET_PATH",
+    "HERDR_PANE_ID",
+    "HERDR_TLH_HEARTBEAT_MS",
+    "HERDR_TLH_IDLE_DEBOUNCE_MS",
+  ];
+  const CMUX_KEYS = [
+    "CMUX_WORKSPACE_ID",
+    "CMUX_SURFACE_ID",
+    "CMUX_PI_CMUX_BIN",
+    "CMUX_BUNDLED_CLI_PATH",
+    "CMUX_BIN",
+  ];
   const previousEnv = {
     PATH: process.env.PATH,
     PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
@@ -223,15 +254,25 @@ async function createExtensionHarness({
     TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
     TLH_SKIP_TELEMETRY: process.env.TLH_SKIP_TELEMETRY,
   };
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    previousEnv[key] = process.env[key];
+  }
 
   delete process.env.PI_SUBAGENT_CHILD;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  if (updateCheckEnabled) {
+    delete process.env.TLH_SKIP_UPDATE_CHECK;
+  } else {
+    process.env.TLH_SKIP_UPDATE_CHECK = "1";
+  }
   process.env.TLH_SKIP_TELEMETRY = "1";
+  for (const key of [...HERDR_KEYS, ...CMUX_KEYS]) {
+    delete process.env[key];
+  }
   mkdirSync(cwd, { recursive: true });
   mkdirSync(emptyBinDir, { recursive: true });
   setupWorkspace?.(cwd);
-  writeProfileFixture(agentDir, installState);
+  writeProfileFixture(agentDir, installState, updateCheckEnabled);
   __testing.reset();
   const scheduleDeferredTask = deferredStartupTaskScheduler ?? ((task) => setImmediate(task));
   __testing.setDeferredStartupTaskSchedulerForTests((task) => {
@@ -281,6 +322,7 @@ async function createExtensionHarness({
       let headerFactory;
       let footerFactory;
       let requestRenderCalls = 0;
+      let footerRequestRenderCalls = 0;
       const ctx = createCtx({
         cwd: sessionCwd,
         notifications,
@@ -323,10 +365,19 @@ async function createExtensionHarness({
         },
         buildFooter() {
           return footerFactory
-            ? footerFactory({ requestRender() {} }, theme, undefined)
+            ? footerFactory(
+                {
+                  requestRender() {
+                    footerRequestRenderCalls += 1;
+                  },
+                },
+                theme,
+                undefined,
+              )
             : undefined;
         },
         requestRenderCalls: () => requestRenderCalls,
+        footerRequestRenderCalls: () => footerRequestRenderCalls,
       };
     },
     emit(event, payload, ctx) {
@@ -1223,6 +1274,43 @@ test("production footer wiring appends the persisted subject for a main ref inst
   assert.equal(footerLines.at(-1), "TLH main • Add the main footer subject");
 });
 
+test("production footer wiring hydrates main-track status and renders only after a useful change", async () => {
+  const scheduledTasks = [];
+  const harness = await createExtensionHarness({
+    installState: {
+      ...REF_INSTALL_STATE,
+      commitSha: "a".repeat(40),
+    },
+    updateCheckEnabled: true,
+    deferredStartupTaskScheduler: (task) => scheduledTasks.push(task),
+    startupResourceCollector: () => new Promise(() => {}),
+  });
+  __resetTlhUpdateCheckForTests();
+  __setTlhUpdateCheckTestHooks({
+    now: () => Date.parse("2026-07-17T12:00:00.000Z"),
+    fetchLatestRelease: async () => undefined,
+    fetchMainTrackComparison: async () => ({ status: "behind", behindBy: 2 }),
+  });
+
+  let footer;
+  try {
+    const session = await harness.startSession({ reason: "startup" });
+    footer = session.buildFooter();
+    assert.equal(footer?.render(200).at(-1), "TLH main");
+    assert.equal(scheduledTasks.length, 1);
+
+    scheduledTasks[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+    await Promise.resolve();
+    assert.equal(session.footerRequestRenderCalls(), 1);
+    assert.equal(footer?.render(200).at(-1), "TLH main • 2 commits behind origin/main");
+  } finally {
+    __resetTlhUpdateCheckForTests();
+    footer?.dispose?.();
+    harness.cleanup();
+  }
+});
+
 test("production footer wiring: footer remains visible on non-startup session reasons", async () => {
   const { footerLines, headerLines } = await runSessionStart({
     reason: "resume",
@@ -1244,4 +1332,71 @@ test("production footer wiring: footer remains visible on non-startup session re
     false,
     "header must not show the install-track warning",
   );
+});
+
+test("session_start sends zero Herdr requests even when HERDR_* env is set in the outer process", async () => {
+  // Regression: the harness must scrub HERDR_* so tests run from a live Herdr
+  // pane never send real pane.report_agent / pane.report_metadata traffic.
+  const tmpSocketDir = mkdtempSync(join(tmpdir(), "tlh-herdr-smoke-"));
+  const socketPath = join(tmpSocketDir, "herdr.sock");
+  let connectionCount = 0;
+  const server = net.createServer(() => {
+    connectionCount += 1;
+  });
+  await new Promise((resolve, reject) =>
+    server.listen(socketPath, (err) => (err ? reject(err) : resolve())),
+  );
+
+  // Save originals so we can restore them after the test (handles the case
+  // where the outer process already has HERDR_* set).
+  const origHerdrEnv = process.env.HERDR_ENV;
+  const origHerdrSocketPath = process.env.HERDR_SOCKET_PATH;
+  const origHerdrPaneId = process.env.HERDR_PANE_ID;
+
+  // Simulate being invoked from inside a Herdr-managed pane.
+  process.env.HERDR_ENV = "1";
+  process.env.HERDR_SOCKET_PATH = socketPath;
+  process.env.HERDR_PANE_ID = "FAKE";
+
+  let harness;
+  try {
+    // createExtensionHarness captures and clears HERDR_* before the extension runs.
+    harness = await createExtensionHarness({
+      installState: LATEST_STABLE_INSTALL_STATE,
+    });
+    await harness.startSession({ reason: "start" });
+    // Allow any in-flight async socket attempts to complete.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(
+      connectionCount,
+      0,
+      "extension must not contact the Herdr socket when HERDR_* env is scrubbed by the harness",
+    );
+  } finally {
+    try {
+      harness?.cleanup();
+    } finally {
+      // cleanup() restores the env to what was captured at harness creation time
+      // (i.e. the fake values we set above). Restore originals now so they
+      // don't bleed into subsequent tests, and so we don't clobber any
+      // pre-existing outer values.
+      if (origHerdrEnv === undefined) {
+        delete process.env.HERDR_ENV;
+      } else {
+        process.env.HERDR_ENV = origHerdrEnv;
+      }
+      if (origHerdrSocketPath === undefined) {
+        delete process.env.HERDR_SOCKET_PATH;
+      } else {
+        process.env.HERDR_SOCKET_PATH = origHerdrSocketPath;
+      }
+      if (origHerdrPaneId === undefined) {
+        delete process.env.HERDR_PANE_ID;
+      } else {
+        process.env.HERDR_PANE_ID = origHerdrPaneId;
+      }
+      await new Promise((resolve) => server.close(resolve));
+      rmSync(tmpSocketDir, { recursive: true, force: true });
+    }
+  }
 });

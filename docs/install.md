@@ -37,7 +37,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.42.1/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.43.0/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.42.1`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; older main-track state without that metadata continues to show `TLH main`.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.43.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip. A `main` ref install also appends its persisted installed checkout commit subject as a dim suffix, for example `TLH main • Add the main footer subject`; after the background GitHub comparison succeeds, it may append `1 commit behind origin/main` or `N commits behind origin/main`. Older main-track state without that metadata continues to show `TLH main`, and current, divergent, failed, or unavailable comparisons show no behind suffix.
 
 ## Installer options
 
@@ -85,14 +85,14 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.42.1/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.43.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.87.1 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.87.1 when needed. After the successful install/update work, TLH prunes only recognized Node/Bun version-key directories under the runtime's `node-compile-cache`, preserving unexpected entries and refusing symlinked cache paths; it then runs the pinned private `pi --version` once with the isolated compile-cache path to pre-warm the cache. This maintenance runs at install/update cadence, not during interactive launches. If you are updating from an older install without `tlh update`, rerun the latest-release installer once. Installer dry-runs report compile-cache keys that would be pruned and the pre-warm command without deleting or executing either action.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
@@ -136,7 +136,7 @@ The project custom-agent cutover is separate from retired external-package clean
 
 There is no `tlh defaults disable subagents` path. For a one-run diagnostic, `tlh --no-extensions` disables **all** extensions without changing settings. The upstream resource selector exposed by `tlh config` can persistently disable the root-package resource `./extensions/subagents/src/extension/index.js`, but doing so breaks architect delegation and is not a supported steady state; reopen `tlh config` and re-enable that same resource to recover. Use the full uninstall flow below to remove TLH persistently. See [subagents.md](subagents.md) for runtime behavior and diagnostic details.
 
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
+At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. Official `main` ref installs use that same non-blocking daily check to compare the persisted checkout commit with GitHub `main`; only an ancestor that is behind gets the footer count. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable both checks.
 
 Release builds with TelemetryDeck identifiers configured send pseudonymous telemetry from interactive `tlh` runs. `Tlh.launched` is sent at most once per interactive process start. The hashed random install ID means TelemetryDeck unique-user aggregation continues to represent installations rather than people or individual runs. Runtime provider and model values are privacy-filtered, only registered TLH experimental feature IDs are reported, and sensitive fields such as prompts, cwd, command arguments, repo names, file contents, settings contents, API keys, provider base URLs, auth state, headers, and account identifiers are omitted. See [`docs/telemetry.md`](telemetry.md) for the exact signal names, dimensions, filters, and semantics.
 

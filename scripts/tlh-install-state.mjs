@@ -9,6 +9,24 @@ import {
 } from "./lib/tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
+const TLH_REPO = "diegopetrucci/the-last-harness";
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+function normalizeCommitSha(value) {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return COMMIT_SHA_PATTERN.test(normalized) ? normalized : undefined;
+}
+
+function isOfficialMainRefState(args) {
+  return (
+    args.repo === TLH_REPO &&
+    args.ref === "main" &&
+    args.track === "ref" &&
+    String(args.packageSourceIsDefault).toLowerCase() === "true"
+  );
+}
+
 function usage() {
   return `Usage: tlh-install-state.mjs [options]
 
@@ -26,6 +44,7 @@ Options:
   --bin-dir DIR                     Wrapper install dir
   --wrapper-name NAME               Wrapper command name
   --commit-subject SUBJECT          Installed TLH checkout HEAD subject (optional)
+  --commit-sha SHA                  Installed TLH checkout HEAD SHA (optional)
   --pi-installed-by-tlh BOOL        Whether TLH installed Pi globally (true|false; omit to leave field absent)
   --dry-run                         Print intended changes without writing
   --quiet                           Suppress non-essential output
@@ -46,6 +65,7 @@ function parseArgs(argv) {
     binDir: undefined,
     wrapperName: undefined,
     commitSubject: undefined,
+    commitSha: undefined,
     piInstalledByTlh: undefined,
     dryRun: false,
     quiet: false,
@@ -139,6 +159,11 @@ function parseArgs(argv) {
       index = commitSubjectIndex;
       continue;
     }
+    const commitShaIndex = assignOptionValue(args, "commitSha", argv, index, "--commit-sha");
+    if (commitShaIndex !== undefined) {
+      index = commitShaIndex;
+      continue;
+    }
     const piInstalledByTlh = readOptionValue(argv, index, "--pi-installed-by-tlh");
     if (piInstalledByTlh) {
       const raw = piInstalledByTlh.value;
@@ -210,6 +235,10 @@ function buildState(args) {
   const commitSubject = args.commitSubject?.trim();
   if (commitSubject) {
     state.commitSubject = commitSubject;
+  }
+  const commitSha = isOfficialMainRefState(args) ? normalizeCommitSha(args.commitSha) : undefined;
+  if (commitSha) {
+    state.commitSha = commitSha;
   }
   if (args.piInstalledByTlh !== undefined) {
     state.piInstalledByTlh = args.piInstalledByTlh;

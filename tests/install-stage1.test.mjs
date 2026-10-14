@@ -247,7 +247,9 @@ test("stage-1 ignores an ancestor Git commit for a non-Git nested package source
   const output = `${result.stdout}\n${result.stderr}`;
 
   assert.equal(result.status, 0, output);
-  assert.equal(readJson(join(agentDir, "tlh", "install-state.json")).commitSubject, undefined);
+  const state = readJson(join(agentDir, "tlh", "install-state.json"));
+  assert.equal(state.commitSubject, undefined);
+  assert.equal(state.commitSha, undefined);
 });
 
 test("stage-1 rejects legacy ticket integration flags", () => {
@@ -730,6 +732,11 @@ test("stage-1 normalizes absolute file: sources for Pi while preserving raw inst
     execFileSync("git", ["-C", repoRoot, "log", "-1", "--format=%s"], {
       encoding: "utf8",
     }).trim(),
+  );
+  assert.equal(
+    state.commitSha,
+    undefined,
+    "custom package sources must not persist the main-track SHA",
   );
   const settings = readJson(join(agentDir, "settings.json"));
   assert.equal(settings.packages[0], repoRoot);

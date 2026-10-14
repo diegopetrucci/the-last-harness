@@ -33,3 +33,20 @@ if (!process.env.PI_SUBAGENTS_TEMP_ROOT?.trim()) {
     }
   });
 }
+
+// Seed a fresh runtime-cleanup marker so registration tests do not spawn
+// the real detached cleanup child process.
+// scheduleDetachedRuntimeCleanup() skips spawning when the marker mtime is
+// 0 <= age < 24h; writing it now (age = 0) keeps the window fresh for the
+// duration of any test process.
+{
+  const tempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT;
+  if (tempRoot) {
+    const markerPath = path.join(tempRoot, ".runtime-cleanup-marker");
+    try {
+      fs.writeFileSync(markerPath, "");
+    } catch {
+      // best-effort; test isolation is not broken if this fails
+    }
+  }
+}

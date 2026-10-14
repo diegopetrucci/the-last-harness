@@ -91,6 +91,33 @@ import {
 
 type AppendDiagnosticJsonl = (filePath: string, line: string, droppedEventType?: string) => void;
 
+/**
+ * Active prompt temp dirs for concurrent step executions in this runner process.
+ * A shared SIGTERM/SIGINT handler cleans all of them then re-raises the signal,
+ * ensuring that process-group kills (e.g. from an awaited-owner abort) don't
+ * leak temp files and the process still terminates with the correct signal.
+ */
+const activeTempDirs = new Set<string>();
+let killCleanupInstalled = false;
+function ensureKillCleanup(): void {
+  if (killCleanupInstalled) return;
+  killCleanupInstalled = true;
+  const sigintHandler = (): void => {
+    process.removeListener("SIGTERM", sigtermHandler);
+    for (const dir of activeTempDirs) cleanupTempDir(dir);
+    activeTempDirs.clear();
+    process.kill(process.pid, "SIGINT");
+  };
+  const sigtermHandler = (): void => {
+    process.removeListener("SIGINT", sigintHandler);
+    for (const dir of activeTempDirs) cleanupTempDir(dir);
+    activeTempDirs.clear();
+    process.kill(process.pid, "SIGTERM");
+  };
+  process.once("SIGINT", sigintHandler);
+  process.once("SIGTERM", sigtermHandler);
+}
+
 function costSummaryFromAttempts(attempts: ModelAttempt[] | undefined): CostSummary | undefined {
   if (!attempts || attempts.length === 0) return undefined;
   let inputTokens = 0;
@@ -1037,6 +1064,14 @@ export async function runSingleStep(
     let stopAttempt = false;
     let attemptFacts: SubagentAttemptFacts | undefined;
     let completedRun: SingleStepRuntimeResult | undefined;
+    // Track the prompt temp dir in the module-level set so the shared
+    // SIGTERM/SIGINT handler (installed by ensureKillCleanup) can remove it
+    // even when the runner's process group is killed on abort/cancellation.
+    const attemptTempDir = attempt.tempDir;
+    if (attemptTempDir) {
+      activeTempDirs.add(attemptTempDir);
+      ensureKillCleanup();
+    }
     try {
       // Keep this await in runSingleStep: settling a child attempt must not gain
       // a promise continuation from an extracted async helper.
@@ -1104,6 +1139,12 @@ export async function runSingleStep(
       });
     } finally {
       attemptTimeoutTimer?.cancel();
+      if (attemptTempDir) {
+        activeTempDirs.delete(attemptTempDir);
+        // Belt-and-suspenders: remove the temp dir in case assessSingleStepAttempt
+        // was not reached (e.g. runPiStreaming threw). cleanupTempDir is idempotent.
+        cleanupTempDir(attemptTempDir);
+      }
       // End operation-scoped health state before a fallback can start or the
       // step settles. The runner owns the transition and persistence callback.
       if (!attemptFacts) {

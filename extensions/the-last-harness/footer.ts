@@ -270,17 +270,41 @@ function sanitizeCommitSubject(text: string): string {
   );
 }
 
-function formatTlhInstallNoticeLine(notice: TlhInstallNotice, width: number, theme: Theme): string {
+type TlhMainTrackFooterState = {
+  behindCount?: number;
+};
+
+function formatTlhInstallNoticeLine(
+  notice: TlhInstallNotice,
+  width: number,
+  theme: Theme,
+  mainTrackBehindCount?: number,
+): string {
   const label = formatTlhInstallNoticeTrackLabel(notice);
+  const isMainRef = notice.kind === "ref" && label === "main";
+  const hasMainTrackCommitSha =
+    isMainRef &&
+    typeof notice.commitSha === "string" &&
+    /^[0-9a-f]{40}$/i.test(notice.commitSha.trim());
   const commitSubject =
-    notice.kind === "ref" && label === "main" && typeof notice.commitSubject === "string"
+    isMainRef && typeof notice.commitSubject === "string"
       ? sanitizeCommitSubject(notice.commitSubject)
       : "";
   const commitSubjectSuffix = commitSubject
     ? `${theme.fg("dim", " • ")}${theme.fg("dim", commitSubject)}`
     : "";
+  const behindSuffix =
+    hasMainTrackCommitSha &&
+    typeof mainTrackBehindCount === "number" &&
+    Number.isSafeInteger(mainTrackBehindCount) &&
+    mainTrackBehindCount > 0
+      ? `${theme.fg("dim", " • ")}${theme.fg(
+          "dim",
+          `${mainTrackBehindCount} commit${mainTrackBehindCount === 1 ? "" : "s"} behind origin/main`,
+        )}`
+      : "";
   const warningStr =
-    `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix;
+    `${theme.fg("dim", "TLH ")}${theme.fg("warning", label)}` + commitSubjectSuffix + behindSuffix;
   return truncateToWidth(warningStr, width, theme.fg("dim", "..."));
 }
 
@@ -294,6 +318,7 @@ export function createTlhFooter(
   gitCache?: FooterGitCache | null,
   installNotice?: TlhInstallNotice,
   providerAuthHealth?: ProviderAuthHealthStore,
+  mainTrackFooterState?: TlhMainTrackFooterState,
 ) {
   let mcpContextEstimateCache: McpFooterContextEstimateCache | undefined;
   return {
@@ -451,9 +476,16 @@ export function createTlhFooter(
       }
 
       // Install notice line (last line): shown when running from a non-release track.
-      // render() uses the value captured at session start — no file I/O.
+      // render() reads only in-memory session state — no file I/O.
       if (installNotice) {
-        lines.push(formatTlhInstallNoticeLine(installNotice, width, theme));
+        lines.push(
+          formatTlhInstallNoticeLine(
+            installNotice,
+            width,
+            theme,
+            mainTrackFooterState?.behindCount,
+          ),
+        );
       }
 
       return lines;

@@ -320,7 +320,7 @@ These commands are provided by bundled default extensions and are visible in TLH
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
+| `/fast` | `pi-fast` | Toggle Fast mode for supported direct OpenAI API, OpenAI Codex, and Anthropic Claude models |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 | `/voice-settings` | `pi-voice` | Configure local speech-to-text model, languages, microphone, and shortcut settings |

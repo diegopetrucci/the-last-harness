@@ -48,6 +48,7 @@ import {
 } from "./the-last-harness/usage-limits.js";
 import {
   getTlhHeaderUpdate,
+  getTlhMainTrackBehindCount,
   maybeNotifyAvailableTlhUpdate,
   persistTlhLastSeenVersion,
 } from "./the-last-harness/update-check.js";
@@ -452,10 +453,14 @@ export default function theLastHarness(pi: ExtensionAPI) {
       launchContextAllocation?: TlhLaunchContextAllocation;
       header?: ReturnType<typeof createTlhHeader>;
       requestRender?: () => void;
+      requestFooterRender?: () => void;
     } = { resources: EMPTY_STARTUP_RESOURCES };
     const headerUpdate = getTlhHeaderUpdate();
     const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
     const installNotice = readTlhInstallNotice();
+    const mainTrackFooterState = {
+      behindCount: getTlhMainTrackBehindCount(ctx.cwd, installNotice),
+    };
 
     // Create once per session so footer and dispatch-time probing share the
     // same store instance. The subscription unsubscribe and store disposal
@@ -466,6 +471,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
     if (typeof ctx.ui.setFooter === "function") {
       ctx.ui.setFooter((tui, theme, footerData) => {
         subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
+        sessionState.requestFooterRender = () => {
+          if (activeTlhHeaderSessionToken === sessionToken) {
+            tui.requestRender();
+          }
+        };
         const gitCache = new FooterGitCache({
           cwd: () => ctx.sessionManager.getCwd(),
           onChange: () => tui.requestRender(),
@@ -491,6 +501,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
           gitCache,
           installNotice,
           providerAuthHealthStore,
+          mainTrackFooterState,
         );
       });
     }
@@ -526,6 +537,14 @@ export default function theLastHarness(pi: ExtensionAPI) {
       maybeNotifyModelEffortDrift(ctx);
       void maybeNotifyAvailableTlhUpdate(ctx, {
         canNotify: () => activeTlhHeaderSessionToken === sessionToken,
+        installNotice,
+        onMainTrackBehindCountChange: (behindCount) => {
+          if (mainTrackFooterState.behindCount === behindCount) {
+            return;
+          }
+          mainTrackFooterState.behindCount = behindCount;
+          sessionState.requestFooterRender?.();
+        },
       }).catch(() => undefined);
       const launchContextInputs = (() => {
         try {

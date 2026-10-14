@@ -14,7 +14,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import test from "node:test";
+import { after, test } from "node:test";
+
+const _tmpDirs = [];
+after(() => {
+  for (const d of _tmpDirs) rmSync(d, { recursive: true, force: true });
+});
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
@@ -34,6 +39,7 @@ const changelogSentinel = "9999.0.0";
 
 function tempFixture(defaultsValue, settingsValue, extensionsValue = []) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-test-"));
+  _tmpDirs.push(dir);
   const defaults = join(dir, "settings.defaults.json");
   const extensions = join(dir, "default-extensions.json");
   const settings = join(dir, "settings.json");
@@ -141,6 +147,7 @@ test("merge preserves settings and backup file modes when rewriting settings", (
 test("merge rejects symlinked settings targets before creating backups", () => {
   const fixture = tempFixture({ packages: [], quietStartup: true }, { packages: [harnessPackage] });
   const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-symlink-target-"));
+  _tmpDirs.push(externalDir);
   const externalSettings = join(externalDir, "settings.json");
   writeFileSync(externalSettings, JSON.stringify({ packages: [harnessPackage] }, null, 2));
   rmSync(fixture.settings);
@@ -179,6 +186,7 @@ test(
       { packages: [harnessPackage] },
     );
     const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-backup-source-swap-"));
+    _tmpDirs.push(externalDir);
     const externalSettings = join(externalDir, "settings.json");
     const externalSource = { packages: ["npm:attacker"] };
     writeFileSync(externalSettings, JSON.stringify(externalSource, null, 2));
