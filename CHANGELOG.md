@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - TLH's OSC 7501 root record now carries a `msg` (compaction, session name, subagent count, prompt title, or first error line), and each active background subagent gets a child record (`id=subagent/<runId>`, `title` = agent names, cleared on removal, capped at 32). Prompts, assistant output, and subagent task text are never sent. `progress`, `kind=auth`, feature detection, and a root `title` are intentionally unsupported.
 
+### Fixed
+
+- `check-package-versions` now fails when the Pi version recorded in `config/pi-runtime/package-lock.json` (the `node_modules/@earendil-works/pi-coding-agent` entry or the root dependency) drifts from the managed Pi pin. [#760](https://github.com/diegopetrucci/the-last-harness/issues/760)
+
 ### Changed
 
 - Install and update now keep TLH's pinned `gn` and `tk` in the isolated profile `bin` up to date: the managed copies are reinstalled whenever the shipped pin differs from the recorded `tlh.gnosis.installedVersion` / `tlh.tickets.installedSha256` (upgrade or downgrade) or no record exists, instead of adopting an existing `PATH` copy. `PATH`/Homebrew binaries are never modified and are used only as a fallback if the managed install fails. A `tk` chosen explicitly with `tlh tickets enable --install-path` is recorded as `tlh.tickets.installPathSource: "user"` and preserved across updates while it validates. [#787](https://github.com/diegopetrucci/the-last-harness/issues/787)
