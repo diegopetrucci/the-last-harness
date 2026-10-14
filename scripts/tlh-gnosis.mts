@@ -23,7 +23,14 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 
-import { assignOptionValue, expandHomePath, resolveTlhAgentDir } from "./lib/tlh-install-utils.mjs";
+import {
+  assignOptionValue,
+  backupPathWithTimestamp,
+  expandHomePath,
+  readJsonFile,
+  resolveTlhAgentDir,
+} from "./lib/tlh-install-utils.mjs";
+import { writeProfileFileWithBackup } from "./lib/tlh-safe-profile-write.mjs";
 
 const VALIDATION_TIMEOUT_MS = 5_000;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -32,6 +39,7 @@ const DEFAULT_GNOSIS_VERSION = "0.5.4";
 
 interface CliArgs extends Record<string, unknown> {
   agentDir?: string;
+  settings?: string;
   target?: string;
   gnosisRepo: string;
   gnosisVersion: string;
@@ -60,6 +68,7 @@ Commands:
 
 Options:
   --agent-dir <dir>    Isolated Pi agent dir (default: ~/.the-last-harness/agent, or PI_CODING_AGENT_DIR)
+  --settings <path>    Isolated settings file used to record the managed gn version (default: <agent-dir>/settings.json)
   --target <path>      Managed gn install target (default: <agent-dir>/bin/gn)
   --gnosis-repo <r>    Gnosis GitHub repo, owner/name (default: skorokithakis/gnosis)
   --gnosis-version <v> Gnosis version to install (default: 0.5.4)
@@ -73,6 +82,7 @@ Options:
 function parseArgs(argv: readonly string[]): CliArgs {
   const args: CliArgs = {
     agentDir: undefined,
+    settings: undefined,
     target: undefined,
     gnosisRepo: process.env.TLH_GNOSIS_REPO || DEFAULT_GNOSIS_REPO,
     gnosisVersion: process.env.TLH_GNOSIS_VERSION || DEFAULT_GNOSIS_VERSION,
@@ -105,6 +115,11 @@ function parseArgs(argv: readonly string[]): CliArgs {
     const agentDirIndex = assignOptionValue(args, "agentDir", argv, index, "--agent-dir");
     if (agentDirIndex !== undefined) {
       index = agentDirIndex;
+      continue;
+    }
+    const settingsIndex = assignOptionValue(args, "settings", argv, index, "--settings");
+    if (settingsIndex !== undefined) {
+      index = settingsIndex;
       continue;
     }
     const targetIndex = assignOptionValue(args, "target", argv, index, "--target");
@@ -399,7 +414,11 @@ function copyFileExclusive(source: string, target: string, mode: number): void {
   }
 }
 
-async function installManagedGnosis(args: CliArgs, agentDir: string): Promise<string | undefined> {
+async function installManagedGnosis(
+  args: CliArgs,
+  agentDir: string,
+  resolvedVersion?: string,
+): Promise<string | undefined> {
   const target = validateManagedGnosisTarget(args, agentDir);
   const platform = gnosisPlatform();
   if (!platform) throw new Error(unsupportedGnosisPlatformMessage());
@@ -416,7 +435,7 @@ async function installManagedGnosis(args: CliArgs, agentDir: string): Promise<st
 
   let version: string;
   try {
-    version = await resolveGnosisVersion(args);
+    version = resolvedVersion ?? (await resolveGnosisVersion(args));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     warnStderr(
@@ -617,29 +636,144 @@ function gnosisInstallSkippedByEnv(): boolean {
   return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 }
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function gnosisSettingsPath(args: CliArgs, agentDir: string): string {
+  const settingsPath = resolve(
+    expandHomePath(args.settings || join(agentDir, "settings.json")) ??
+      join(agentDir, "settings.json"),
+  );
+  assertNotNormalPiPath(settingsPath, "settings");
+  return settingsPath;
+}
+
+function readGnosisSettings(settingsPath: string): JsonObject {
+  const settings = readJsonFile<unknown>(settingsPath, { missingValue: {} });
+  if (!isJsonObject(settings)) {
+    throw new Error(`Refusing to update settings because it is not a JSON object: ${settingsPath}`);
+  }
+  return settings;
+}
+
+function recordedGnosisVersion(settings: JsonObject): string | undefined {
+  const tlh = settings.tlh;
+  if (!isJsonObject(tlh) || !isJsonObject(tlh.gnosis)) return undefined;
+  const version = tlh.gnosis.installedVersion;
+  return typeof version === "string" && version.trim() ? version.trim() : undefined;
+}
+
+function recordGnosisVersion(settingsPath: string, settings: JsonObject, version: string): void {
+  if (settings.tlh !== undefined && !isJsonObject(settings.tlh)) {
+    throw new Error(`Refusing to update settings because "tlh" is not an object: ${settingsPath}`);
+  }
+  const tlh: JsonObject = isJsonObject(settings.tlh) ? settings.tlh : {};
+  if (tlh.gnosis !== undefined && !isJsonObject(tlh.gnosis)) {
+    throw new Error(
+      `Refusing to update settings because "tlh.gnosis" is not an object: ${settingsPath}`,
+    );
+  }
+  const gnosis: JsonObject = isJsonObject(tlh.gnosis) ? tlh.gnosis : {};
+  gnosis.installedVersion = version;
+  tlh.gnosis = gnosis;
+  settings.tlh = tlh;
+
+  const exists = lstatIfExists(settingsPath) !== undefined;
+  mkdirSync(dirname(settingsPath), { recursive: true });
+  writeProfileFileWithBackup(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, {
+    targetLabel: "settings",
+    sourceLabel: "settings",
+    backupLabel: "settings backup",
+    backupPath: exists
+      ? backupPathWithTimestamp(settingsPath, { marker: "tlh-gnosis" })
+      : undefined,
+  });
+}
+
 async function commandConfigureInstall(args: CliArgs, agentDir: string): Promise<void> {
   if (gnosisInstallSkippedByEnv()) {
     console.log("Gnosis integration: skipped (TLH_SKIP_GNOSIS_INSTALL is set)");
     return;
   }
 
-  const validPath = findValidGnosisForConfigure(args, agentDir);
-  if (validPath) {
-    detailLog(args, `Found valid Gnosis binary: ${validPath}`);
-    console.log(`Gnosis integration: ready (${validPath})`);
+  const managedTarget = validateManagedGnosisTarget(args, agentDir);
+  const settingsPath = gnosisSettingsPath(args, agentDir);
+  const settings = readGnosisSettings(settingsPath);
+  const recorded = recordedGnosisVersion(settings);
+  const managedValid =
+    lstatIfExists(managedTarget) !== undefined && validateGnosisCommand(managedTarget);
+
+  const fallbackOrFail = (reason: string): void => {
+    const fallback = findValidGnosisForConfigure(args, agentDir);
+    if (fallback) {
+      warnStderr(`${reason}; using existing Gnosis binary: ${fallback}`);
+      console.log(`Gnosis integration: ready (${fallback})`);
+      return;
+    }
+    process.stderr.write(
+      "error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n",
+    );
+    process.exitCode = 1;
+  };
+
+  if (args.dryRun) {
+    const requested = args.gnosisVersion.replace(/^v/, "");
+    if (managedValid && args.gnosisVersion !== "latest" && recorded === requested) {
+      detailLog(args, `Managed Gnosis ${requested} is already installed: ${managedTarget}`);
+      console.log(`Gnosis integration: ready (${managedTarget})`);
+      return;
+    }
+    if (!gnosisPlatform()) {
+      const fallback = findValidGnosisForConfigure(args, agentDir);
+      if (!fallback) throw new Error(unsupportedGnosisPlatformMessage());
+      console.log(`Gnosis integration: ready (${fallback})`);
+      return;
+    }
+    await installManagedGnosis(args, agentDir);
+    console.log(`Gnosis integration: ready (${managedTarget})`);
     return;
   }
 
-  const managedPath = await installManagedGnosis(args, agentDir);
+  // Throws on unsupported platforms; only fall back when a usable gn already exists.
+  if (!gnosisPlatform() && !findValidGnosisForConfigure(args, agentDir)) {
+    throw new Error(unsupportedGnosisPlatformMessage());
+  }
+
+  let version: string;
+  try {
+    version = await resolveGnosisVersion(args);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    fallbackOrFail(`could not resolve Gnosis release (${message})`);
+    return;
+  }
+
+  if (managedValid && recorded === version) {
+    detailLog(args, `Managed Gnosis ${version} is already installed: ${managedTarget}`);
+    console.log(`Gnosis integration: ready (${managedTarget})`);
+    return;
+  }
+
+  const managedPath = gnosisPlatform()
+    ? await installManagedGnosis(args, agentDir, version)
+    : undefined;
   if (managedPath) {
+    try {
+      recordGnosisVersion(settingsPath, settings, version);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warnStderr(`could not record managed Gnosis version in settings (${message})`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`Gnosis integration: ready (${managedPath})`);
     return;
   }
 
-  process.stderr.write(
-    "error: Gnosis managed install failed; cannot continue without a valid gn binary. Set TLH_SKIP_GNOSIS_INSTALL=1 to skip.\n",
-  );
-  process.exitCode = 1;
+  fallbackOrFail("managed Gnosis install failed");
 }
 
 function commandValidate(agentDir: string, commandArgs: readonly string[]): void {

@@ -4,7 +4,7 @@ TLH includes managed integrations for project memory and ticketed workflows. Gno
 
 ## Gnosis integration
 
-[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.4`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Installs and updates on unsupported platforms hard-fail.
+[Gnosis](https://github.com/skorokithakis/gnosis) is a small `gn` CLI for recording project decisions, constraints, rejected alternatives, and lessons that are not obvious from code alone. On supported platforms (linux/darwin × x64/arm64), TLH installs it automatically because `tlh` works better when agents can consult and update repo-local project memory. TLH currently pins the managed default to Gnosis `v0.5.4`, while installer-owned `TLH_GNOSIS_VERSION` and `TLH_GNOSIS_REPO` overrides still let maintainers point at a different release or repository when needed. Each install/update records the managed version in `settings.tlh.gnosis.installedVersion` and reinstalls `<agent>/bin/gn` whenever the shipped (or `TLH_GNOSIS_VERSION`-overridden) version differs from that record, whether it is an upgrade or a downgrade, or when no record exists. TLH never modifies `gn` binaries on your `PATH` or from Homebrew; they are only used as a fallback if the managed install fails and they validate. Setting `TLH_SKIP_GNOSIS_INSTALL=1` skips Gnosis setup entirely. Inside `tlh` sessions the managed `<agent>/bin` directory is first on `PATH`, so the pinned `gn` is preferred. Installs and updates on unsupported platforms hard-fail unless a valid `gn` already exists.
 
 When a valid Gnosis `gn` binary is present, TLH appends these instructions to the system prompt:
 
@@ -17,7 +17,7 @@ Gnosis project data lives in repo-local `.gnosis` directories. Removing `~/.the-
 
 ## Ticket integration
 
-TLH requires the `tk` ticket CLI for architect and product workflows. Rush is the exception in day-to-day usage: it edits directly for small bounded work and does not start with the default ticket/developer/review loop, even though the managed `tk` command is still installed for the rest of TLH. Install and update first reuse a valid configured or existing `tk`; if none is available, they place a managed copy at `~/.the-last-harness/agent/bin/tk`. TLH does not install `tk` globally or through Homebrew, and it never writes normal `~/.pi/agent` config.
+TLH requires the `tk` ticket CLI for architect and product workflows. Rush is the exception in day-to-day usage: it edits directly for small bounded work and does not start with the default ticket/developer/review loop, even though the managed `tk` command is still installed for the rest of TLH. Install and update place the pinned, SHA-256-verified managed copy at `~/.the-last-harness/agent/bin/tk`, point `settings.tlh.tickets.installPath` at it, and record the pin in `settings.tlh.tickets.installedSha256`. They reinstall it whenever the shipped pin differs from that record (upgrade or downgrade) or no record exists. If the managed install fails, TLH warns and falls back to a valid configured or `PATH` `tk`; it never modifies `PATH` or Homebrew copies. TLH does not install `tk` globally or through Homebrew, and it never writes normal `~/.pi/agent` config.
 
 Inspect or reconfigure the command after install:
 
@@ -26,7 +26,7 @@ tlh tickets status
 tlh tickets enable
 ```
 
-Legacy `settings.tlh.tickets.enabled=false` values are re-enabled during install/update because ticket support is required. The wrapper includes the managed `<agent>/bin` directory on `PATH` for the wrapped upstream Pi process, so subagents and shells launched from inside TLH can find a managed `tk` when TLH supplied one.
+Legacy `settings.tlh.tickets.enabled=false` values are re-enabled during install/update because ticket support is required. The wrapper includes the managed `<agent>/bin` directory on `PATH` for the wrapped upstream Pi process, so subagents and shells launched from inside TLH find the managed `tk` and `gn` first.
 
 At TLH session start, TLH also scopes `tk` to one ticket store for that session by exporting `TICKETS_DIR` before the ticket UI or agent prompts run. If `TICKETS_DIR` is already set, TLH preserves it. Otherwise TLH points `tk` at `<git-worktree-root>/.tickets`; outside Git it falls back to `<session-cwd>/.tickets`. This keeps architect sessions, child sessions, `/tickets`, and Bash-launched `tk` commands on the same repo-local ticket store without touching ancestor stores such as `~/Developer/.tickets`.
 
@@ -34,9 +34,9 @@ At TLH session start, TLH also scopes `tk` to one ticket store for that session 
 
 If TLH cannot validate a configured/existing `tk` and cannot install the managed copy, install or update fails with an actionable error instead of starting with an incomplete workflow. To recover, provide a valid `tk` command and run `tlh tickets enable --install-path /path/to/tk`, or rerun the installer/update once the managed download can succeed.
 
-Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it if no other valid `tk` is configured. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.
+Removing `~/.the-last-harness` removes any managed `tk` copy. To remove only the managed `tk` binary while keeping the rest of the profile, delete `~/.the-last-harness/agent/bin/tk`; the next install/update will recreate it. Running `tlh tickets enable` without a managed reinstall clears the recorded SHA-256, so the next install/update refreshes the managed binary when the managed path is in use.
 
-Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script; inherited environment variables cannot override those installer-owned source pins. TLH also records the SHA-256 of the managed binary in `settings.tlh.tickets.installedSha256`. When a future TLH release bumps the pinned SHA, the next `tlh update` or installer rerun reinstalls the managed binary and refreshes the recorded value. Custom (non-managed) `installPath` values are unaffected by this check.
+Managed installs download the pinned `wedow/ticket` source tarball (`v0.3.2`) and verify its SHA-256 before extracting the `ticket` script; inherited environment variables cannot override those installer-owned source pins. TLH also records the SHA-256 of the managed binary in `settings.tlh.tickets.installedSha256`. When a future TLH release bumps the pinned SHA, the next `tlh update` or installer rerun reinstalls the managed binary and refreshes the recorded value. A `tk` you deliberately choose with `tlh tickets enable --install-path /path/to/tk` is recorded as `tlh.tickets.installPathSource: "user"` and is kept across updates (the managed copy is not installed over it) as long as it still validates; if it stops validating, TLH warns and installs the managed copy. Other non-managed `installPath` values (auto-selected or from older releases) are migrated to the managed copy. Running `tlh tickets enable` without a path clears the user choice.
 
 ## Terminal activity bridge
 

@@ -520,3 +520,290 @@ test(
     assert.match(result.stderr, /error:.*[Gg]nosis/);
   },
 );
+
+// --- configure-install managed pin tracking ---------------------------------
+
+const FAKE_GN_SCRIPT = `#!/usr/bin/env node\nconst [, , first, second] = process.argv;\nprocess.exit(first === "help" && ["plan", "review"].includes(second) ? 0 : 1);\n`;
+
+function writeFakeGnosisArchives(fixture, versions) {
+  const archiveDir = join(fixture.dir, "archives");
+  mkdirSync(archiveDir, { recursive: true });
+  for (const version of versions) {
+    const source = join(fixture.dir, `archive-source-${version}`);
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "gn"), `${FAKE_GN_SCRIPT}// ${version}\n`);
+    chmodSync(join(source, "gn"), 0o755);
+    const assetName = gnosisAssetName(version);
+    const archivePath = join(archiveDir, assetName);
+    const tarResult = spawnSync("tar", ["-czf", archivePath, "-C", source, "gn"], {
+      encoding: "utf8",
+    });
+    assert.equal(tarResult.status, 0, tarResult.stderr || String(tarResult.error));
+    writeFileSync(
+      join(archiveDir, `checksums-${version}.txt`),
+      `${sha256File(archivePath)}  ${assetName}\n`,
+    );
+  }
+  return archiveDir;
+}
+
+function writeFakeReleaseFetchPreload(fixture) {
+  const preload = join(fixture.dir, "fake-release-fetch.mjs");
+  writeFileSync(
+    preload,
+    [
+      'import { appendFileSync, existsSync, readFileSync } from "node:fs";',
+      'import { join } from "node:path";',
+      "globalThis.fetch = async (url) => {",
+      "\tconst value = String(url);",
+      "\tconst dir = process.env.TLH_TEST_ARCHIVE_DIR;",
+      "\tconst version = /\\/download\\/v([^/]+)\\//.exec(value)?.[1];",
+      "\tif (!dir || !version) throw new Error(`unexpected fetch: ${value}`);",
+      '\tif (value.endsWith("/checksums.txt")) {',
+      "\t\tconst file = join(dir, `checksums-${version}.txt`);",
+      "\t\tif (!existsSync(file)) throw new Error(`no release ${version}`);",
+      '\t\treturn { ok: true, status: 200, statusText: "OK", text: async () => readFileSync(file, "utf8") };',
+      "\t}",
+      '\tconst asset = value.split("/").pop();',
+      "\tconst file = join(dir, asset);",
+      "\tif (!existsSync(file)) throw new Error(`no release asset ${asset}`);",
+      "\tappendFileSync(process.env.TLH_TEST_DOWNLOAD_LOG, `${asset}\\n`);",
+      "\tconst bytes = readFileSync(file);",
+      '\treturn { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };',
+      "};",
+      "",
+    ].join("\n"),
+  );
+  return preload;
+}
+
+function configureFixture(versions) {
+  const fixture = tempFixture();
+  const archiveDir = writeFakeGnosisArchives(fixture, versions);
+  const preload = writeFakeReleaseFetchPreload(fixture);
+  const downloadLog = join(fixture.dir, "downloads.log");
+  const settingsPath = join(fixture.agent, "settings.json");
+  const managedGn = join(fixture.agent, "bin", "gn");
+  const emptyPathDir = join(fixture.dir, "empty-path");
+  mkdirSync(emptyPathDir, { recursive: true });
+  const baseEnv = {
+    HOME: fixture.home,
+    PATH: `${emptyPathDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    TLH_TEST_ARCHIVE_DIR: archiveDir,
+    TLH_TEST_DOWNLOAD_LOG: downloadLog,
+  };
+  const configure = (version, { env = {}, extraArgs = [] } = {}) =>
+    runGnosis(
+      [
+        "--agent-dir",
+        fixture.agent,
+        "--settings",
+        settingsPath,
+        "--gnosis-version",
+        version,
+        ...extraArgs,
+        "configure-install",
+      ],
+      { env: { ...baseEnv, ...env }, nodeArgs: ["--import", preload] },
+    );
+  const downloads = () =>
+    existsSync(downloadLog) ? readFileSync(downloadLog, "utf8").trim().split("\n") : [];
+  const recordedVersion = () =>
+    JSON.parse(readFileSync(settingsPath, "utf8")).tlh?.gnosis?.installedVersion;
+  return { fixture, configure, downloads, recordedVersion, settingsPath, managedGn, baseEnv };
+}
+
+const managedPinTest = { skip: process.platform === "win32" || !gnosisAssetName("1.2.3") };
+
+test("configure-install fresh install records the managed Gnosis version", managedPinTest, () => {
+  const ctx = configureFixture(["1.2.3"]);
+
+  const result = ctx.configure("v1.2.3");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Gnosis integration: ready/);
+  assert.equal(ctx.recordedVersion(), "1.2.3");
+  assert.equal(existsSync(ctx.managedGn), true);
+  assert.equal(ctx.downloads().length, 1);
+});
+
+test("configure-install does not download again when the pin matches", managedPinTest, () => {
+  const ctx = configureFixture(["1.2.3"]);
+  assert.equal(ctx.configure("1.2.3").status, 0);
+  const settingsBefore = readFileSync(ctx.settingsPath, "utf8");
+
+  const result = ctx.configure("1.2.3");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(ctx.downloads().length, 1);
+  assert.equal(readFileSync(ctx.settingsPath, "utf8"), settingsBefore);
+});
+
+test(
+  "configure-install reinstalls on pin upgrade and downgrade, backing up settings",
+  managedPinTest,
+  () => {
+    const ctx = configureFixture(["1.2.3", "1.2.4"]);
+    assert.equal(ctx.configure("1.2.3").status, 0);
+
+    const upgrade = ctx.configure("1.2.4");
+    assert.equal(upgrade.status, 0, upgrade.stderr);
+    assert.equal(ctx.recordedVersion(), "1.2.4");
+    assert.equal(ctx.downloads().length, 2);
+    assert.match(readFileSync(ctx.managedGn, "utf8"), /\/\/ 1\.2\.4/);
+    assert.ok(
+      readdirSync(ctx.fixture.agent).some((name) => name.startsWith("settings.json.backup-")),
+    );
+
+    const downgrade = ctx.configure("1.2.3");
+    assert.equal(downgrade.status, 0, downgrade.stderr);
+    assert.equal(ctx.recordedVersion(), "1.2.3");
+    assert.equal(ctx.downloads().length, 3);
+    assert.match(readFileSync(ctx.managedGn, "utf8"), /\/\/ 1\.2\.3/);
+  },
+);
+
+test(
+  "configure-install treats an existing managed gn without a record as stale",
+  managedPinTest,
+  () => {
+    const ctx = configureFixture(["1.2.3"]);
+    mkdirSync(dirname(ctx.managedGn), { recursive: true });
+    writeFileSync(ctx.managedGn, `${FAKE_GN_SCRIPT}// legacy\n`);
+    chmodSync(ctx.managedGn, 0o755);
+    writeFileSync(ctx.settingsPath, JSON.stringify({ theme: "dark", tlh: { other: 1 } }));
+
+    const result = ctx.configure("1.2.3");
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(ctx.downloads().length, 1);
+    assert.match(readFileSync(ctx.managedGn, "utf8"), /\/\/ 1\.2\.3/);
+    const settings = JSON.parse(readFileSync(ctx.settingsPath, "utf8"));
+    assert.equal(settings.theme, "dark");
+    assert.equal(settings.tlh.other, 1);
+    assert.equal(settings.tlh.gnosis.installedVersion, "1.2.3");
+    assert.ok(
+      readdirSync(ctx.fixture.agent).some((name) => name.startsWith("settings.json.backup-")),
+    );
+  },
+);
+
+test(
+  "configure-install installs the managed gn even when a valid PATH gn exists",
+  managedPinTest,
+  () => {
+    const ctx = configureFixture(["1.2.3"]);
+    const pathBin = join(ctx.fixture.dir, "path-bin");
+    mkdirSync(pathBin, { recursive: true });
+    const pathGn = join(pathBin, "gn");
+    writeFileSync(pathGn, `${FAKE_GN_SCRIPT}// path\n`);
+    chmodSync(pathGn, 0o755);
+    const pathBefore = readFileSync(pathGn, "utf8");
+
+    const result = ctx.configure("1.2.3", {
+      env: { PATH: `${pathBin}:${dirname(process.execPath)}:/usr/bin:/bin` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(ctx.downloads().length, 1);
+    assert.equal(ctx.recordedVersion(), "1.2.3");
+    assert.equal(existsSync(ctx.managedGn), true);
+    assert.equal(readFileSync(pathGn, "utf8"), pathBefore);
+  },
+);
+
+test(
+  "configure-install warns and falls back to a valid PATH gn when the managed install fails",
+  managedPinTest,
+  () => {
+    const ctx = configureFixture([]);
+    const pathBin = join(ctx.fixture.dir, "path-bin");
+    mkdirSync(pathBin, { recursive: true });
+    const pathGn = join(pathBin, "gn");
+    writeFileSync(pathGn, FAKE_GN_SCRIPT);
+    chmodSync(pathGn, 0o755);
+
+    const result = ctx.configure("1.2.3", {
+      env: { PATH: `${pathBin}:${dirname(process.execPath)}:/usr/bin:/bin` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /warning:/i);
+    assert.match(result.stdout, /Gnosis integration: ready \(.*path-bin\/gn\)/);
+    assert.equal(existsSync(ctx.settingsPath), false);
+    assert.equal(existsSync(ctx.managedGn), false);
+  },
+);
+
+test("configure-install dry-run on unsupported platforms uses a valid PATH gn", () => {
+  const fixture = tempFixture();
+  const preload = writeUnsupportedPlatformPreload(fixture);
+  const pathBin = join(fixture.dir, "path-bin");
+  mkdirSync(pathBin, { recursive: true });
+  const pathGn = join(pathBin, "gn");
+  writeFileSync(pathGn, FAKE_GN_SCRIPT);
+  chmodSync(pathGn, 0o755);
+
+  const result = runGnosis(["--agent-dir", fixture.agent, "--dry-run", "configure-install"], {
+    env: { HOME: fixture.home, PATH: `${pathBin}:${dirname(process.execPath)}:/usr/bin:/bin` },
+    nodeArgs: ["--import", preload],
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Gnosis integration: ready \(.*path-bin\/gn\)/);
+  assert.doesNotMatch(result.stderr, /Would install Gnosis/);
+  assert.equal(existsSync(join(fixture.agent, "bin", "gn")), false);
+  assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
+});
+
+test("configure-install dry-run on unsupported platforms fails without a valid gn", () => {
+  const fixture = tempFixture();
+  const preload = writeUnsupportedPlatformPreload(fixture);
+
+  const result = runGnosis(["--agent-dir", fixture.agent, "--dry-run", "configure-install"], {
+    env: { HOME: fixture.home, PATH: "" },
+    nodeArgs: ["--import", preload],
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Unsupported platform for managed Gnosis install: freebsd\/x64\./);
+});
+
+test(
+  "configure-install fails when the managed install fails and nothing valid exists",
+  managedPinTest,
+  () => {
+    const ctx = configureFixture([]);
+
+    const result = ctx.configure("1.2.3");
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /error:.*[Gg]nosis/);
+    assert.equal(existsSync(ctx.settingsPath), false);
+  },
+);
+
+test("configure-install skip env leaves settings and bin untouched", managedPinTest, () => {
+  const ctx = configureFixture(["1.2.3"]);
+
+  const result = ctx.configure("1.2.3", { env: { TLH_SKIP_GNOSIS_INSTALL: "1" } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Gnosis integration: skipped/);
+  assert.equal(ctx.downloads().length, 0);
+  assert.equal(existsSync(ctx.settingsPath), false);
+  assert.equal(existsSync(ctx.managedGn), false);
+});
+
+test("configure-install dry-run reports the install without writing", managedPinTest, () => {
+  const ctx = configureFixture(["1.2.3"]);
+
+  const result = ctx.configure("1.2.3", { extraArgs: ["--dry-run"] });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Would install Gnosis/);
+  assert.equal(ctx.downloads().length, 0);
+  assert.equal(existsSync(ctx.settingsPath), false);
+  assert.equal(existsSync(ctx.managedGn), false);
+});

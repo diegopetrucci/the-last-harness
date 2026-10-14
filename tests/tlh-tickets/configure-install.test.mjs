@@ -16,36 +16,56 @@ import {
   writeValidTkLikeCommand,
 } from "./test-helpers.mjs";
 
-test("configure-install re-enables legacy disabled ticket settings", () => {
-  const fixture = tempFixture();
-  const settings = join(fixture.agent, "settings.json");
-  const customTk = join(fixture.external, "tk");
-  writeValidTkLikeCommand(customTk);
-  writeFileSync(
-    settings,
-    `${JSON.stringify({ tlh: { tickets: { enabled: false, installPath: customTk } } })}\n`,
-  );
+test(
+  "configure-install re-enables legacy disabled ticket settings",
+  { skip: process.platform === "win32" },
+  () => {
+    const fixture = tempFixture();
+    const settings = join(fixture.agent, "settings.json");
+    const customTk = join(fixture.external, "tk");
+    writeValidTkLikeCommand(customTk);
+    const { archivePath, checksum } = createTicketArchive(fixture);
+    const preload = writeFetchPreload(fixture);
+    const target = join(fixture.agent, "bin", "tk");
+    writeFileSync(
+      settings,
+      `${JSON.stringify({ tlh: { tickets: { enabled: false, installPath: customTk } } })}\n`,
+    );
 
-  const configured = runTickets(
-    ["--settings", settings, "--agent-dir", fixture.agent, "configure-install"],
-    {
-      env: { HOME: fixture.home, PATH: "" },
-    },
-  );
+    const configured = runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        ...unsafeTicketSourceArgs({ checksum }),
+        "configure-install",
+      ],
+      {
+        env: {
+          HOME: fixture.home,
+          PATH: "",
+          TLH_TEST_ARCHIVE: archivePath,
+          TLH_TEST_FETCH_SENTINEL: join(fixture.dir, "fetch-called"),
+        },
+        nodeArgs: ["--import", preload],
+      },
+    );
 
-  assert.equal(configured.status, 0, configured.stderr);
-  assert.match(configured.stdout, /enabled/);
-  const written = JSON.parse(readFileSync(settings, "utf8"));
-  assert.equal(written.tlh.tickets.enabled, true);
-  assert.equal(written.tlh.tickets.installPath, customTk);
+    assert.equal(configured.status, 0, configured.stderr);
+    assert.match(configured.stdout, /enabled/);
+    const written = JSON.parse(readFileSync(settings, "utf8"));
+    assert.equal(written.tlh.tickets.enabled, true);
+    assert.equal(written.tlh.tickets.installPath, target);
 
-  const status = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "status"], {
-    env: { HOME: fixture.home },
-  });
+    const status = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "status"], {
+      env: { HOME: fixture.home },
+    });
 
-  assert.equal(status.status, 0, status.stderr);
-  assert.match(status.stdout, /setting: enabled/);
-});
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /setting: enabled/);
+  },
+);
 
 test("configure-install fails when no valid tk is available and managed install fails", () => {
   const fixture = tempFixture();
@@ -221,7 +241,7 @@ globalThis.fetch = async (url) => {
       fixtureTicketSourceUrl,
       "expected reinstall to be attempted before reusing the old managed tk",
     );
-    assert.match(result.stderr, /tk pin changed but reinstall failed/);
+    assert.match(result.stderr, /managed tk install failed/);
     const written = JSON.parse(readFileSync(settings, "utf8"));
     assert.equal(written.tlh.tickets.enabled, true);
     assert.equal(written.tlh.tickets.installPath, target);
@@ -282,44 +302,156 @@ test(
   },
 );
 
-test("configure-install with a custom installPath does not write installedSha256 and clears any stale value", () => {
-  const fixture = tempFixture();
-  const settings = join(fixture.agent, "settings.json");
-  const customTk = join(fixture.external, "tk");
-  writeValidTkLikeCommand(customTk);
-  const staleSha = "a".repeat(64);
-  writeFileSync(
-    settings,
-    `${JSON.stringify({ tlh: { tickets: { installPath: customTk, installedSha256: staleSha } } })}\n`,
-  );
+test(
+  "configure-install replaces a non-managed installPath with the managed tk and leaves the user binary untouched",
+  { skip: process.platform === "win32" },
+  () => {
+    const fixture = tempFixture();
+    const settings = join(fixture.agent, "settings.json");
+    const customTk = join(fixture.external, "tk");
+    writeValidTkLikeCommand(customTk);
+    const customBefore = readFileSync(customTk, "utf8");
+    const { archivePath, checksum } = createTicketArchive(fixture);
+    const fetchSentinel = join(fixture.dir, "fetch-called");
+    const preload = writeFetchPreload(fixture);
+    const target = join(fixture.agent, "bin", "tk");
+    writeFileSync(
+      settings,
+      `${JSON.stringify({ tlh: { tickets: { installPath: customTk, installedSha256: "a".repeat(64) } } })}\n`,
+    );
 
-  const fetchSentinel = join(fixture.dir, "fetch-called");
-  const preload = join(fixture.dir, "fail-fetch.mjs");
-  writeFileSync(
-    preload,
-    `import { writeFileSync } from "node:fs";
-globalThis.fetch = async () => {
-	writeFileSync(${JSON.stringify(fetchSentinel)}, "called");
-	throw new Error("fetch should not be called");
-};
-`,
-  );
+    const result = runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        ...unsafeTicketSourceArgs({ checksum }),
+        "configure-install",
+      ],
+      {
+        env: {
+          HOME: fixture.home,
+          TLH_TEST_ARCHIVE: archivePath,
+          TLH_TEST_FETCH_SENTINEL: fetchSentinel,
+        },
+        nodeArgs: ["--import", preload],
+      },
+    );
 
-  const result = runTickets(
-    ["--settings", settings, "--agent-dir", fixture.agent, "configure-install"],
-    {
-      env: { HOME: fixture.home },
-      nodeArgs: ["--import", preload],
-    },
-  );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(readFileSync(fetchSentinel, "utf8"), fixtureTicketSourceUrl);
+    assert.equal(readFileSync(customTk, "utf8"), customBefore);
+    const written = JSON.parse(readFileSync(settings, "utf8"));
+    assert.equal(written.tlh.tickets.installPath, target);
+    assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
+  },
+);
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(existsSync(fetchSentinel), false, "custom installPath must not trigger a reinstall");
-  const written = JSON.parse(readFileSync(settings, "utf8"));
-  assert.equal(written.tlh.tickets.enabled, true);
-  assert.equal(written.tlh.tickets.installPath, customTk);
-  assert.equal(Object.hasOwn(written.tlh.tickets, "installedSha256"), false);
-});
+test(
+  "configure-install installs managed tk instead of adopting a PATH tk",
+  { skip: process.platform === "win32" },
+  () => {
+    const fixture = tempFixture();
+    const settings = join(fixture.agent, "settings.json");
+    const pathDir = join(fixture.external, "bin");
+    mkdirSync(pathDir, { recursive: true });
+    const pathTk = join(pathDir, "tk");
+    writeValidTkLikeCommand(pathTk);
+    const pathBefore = readFileSync(pathTk, "utf8");
+    const { archivePath, checksum } = createTicketArchive(fixture);
+    const preload = writeFetchPreload(fixture);
+    const target = join(fixture.agent, "bin", "tk");
+
+    const result = runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        ...unsafeTicketSourceArgs({ checksum }),
+        "configure-install",
+      ],
+      {
+        env: {
+          HOME: fixture.home,
+          PATH: `${pathDir}:/usr/bin:/bin`,
+          TLH_TEST_ARCHIVE: archivePath,
+          TLH_TEST_FETCH_SENTINEL: join(fixture.dir, "fetch-called"),
+        },
+        nodeArgs: ["--import", preload],
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(target), true);
+    assert.equal(readFileSync(pathTk, "utf8"), pathBefore);
+    const written = JSON.parse(readFileSync(settings, "utf8"));
+    assert.equal(written.tlh.tickets.installPath, target);
+    assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
+  },
+);
+
+test(
+  "configure-install falls back to a PATH tk with a warning when managed install fails",
+  { skip: process.platform === "win32" },
+  () => {
+    const fixture = tempFixture();
+    const settings = join(fixture.agent, "settings.json");
+    const pathDir = join(fixture.external, "bin");
+    mkdirSync(pathDir, { recursive: true });
+    const pathTk = join(pathDir, "tk");
+    writeValidTkLikeCommand(pathTk);
+    const preload = join(fixture.dir, "fail-fetch.mjs");
+    writeFileSync(
+      preload,
+      `globalThis.fetch = async () => { throw new Error("managed tk unavailable"); };\n`,
+    );
+
+    const result = runTickets(
+      ["--settings", settings, "--agent-dir", fixture.agent, "configure-install"],
+      {
+        env: { HOME: fixture.home, PATH: `${pathDir}:/usr/bin:/bin` },
+        nodeArgs: ["--import", preload],
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /managed tk install failed/);
+    const written = JSON.parse(readFileSync(settings, "utf8"));
+    assert.equal(written.tlh.tickets.enabled, true);
+    assert.equal(written.tlh.tickets.installPath, pathTk);
+    assert.equal(Object.hasOwn(written.tlh.tickets, "installedSha256"), false);
+  },
+);
+
+test(
+  "configure-install --dry-run writes nothing and does not install managed tk",
+  { skip: process.platform === "win32" },
+  () => {
+    const fixture = tempFixture();
+    const settings = join(fixture.agent, "settings.json");
+    const { checksum } = createTicketArchive(fixture);
+    const target = join(fixture.agent, "bin", "tk");
+
+    const result = runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        "--dry-run",
+        ...unsafeTicketSourceArgs({ checksum }),
+        "configure-install",
+      ],
+      { env: { HOME: fixture.home, PATH: "/usr/bin:/bin" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(settings), false);
+    assert.equal(existsSync(target), false);
+  },
+);
 
 test("configure-install does not reinstall managed tk when installedSha256 already matches the canonical pin", () => {
   const fixture = tempFixture();
@@ -365,5 +497,93 @@ globalThis.fetch = async () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(fetchSentinel), false, "fresh pin must not trigger a reinstall");
   const written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
+});
+
+function userTkFixture(settingsTickets, { validUser = true } = {}) {
+  const fixture = tempFixture();
+  const settings = join(fixture.agent, "settings.json");
+  const userTk = join(fixture.external, "tk");
+  if (validUser) writeValidTkLikeCommand(userTk);
+  const archive = createTicketArchive(fixture);
+  const preload = writeFetchPreload(fixture);
+  const fetchSentinel = join(fixture.dir, "fetch-called");
+  writeFileSync(
+    settings,
+    `${JSON.stringify({ tlh: { tickets: { enabled: true, installPath: userTk, ...settingsTickets } } })}\n`,
+  );
+  const run = () =>
+    runTickets(
+      [
+        "--settings",
+        settings,
+        "--agent-dir",
+        fixture.agent,
+        ...unsafeTicketSourceArgs({ checksum: archive.checksum }),
+        "configure-install",
+      ],
+      {
+        env: {
+          HOME: fixture.home,
+          PATH: "",
+          TLH_TEST_ARCHIVE: archive.archivePath,
+          TLH_TEST_FETCH_SENTINEL: fetchSentinel,
+        },
+        nodeArgs: ["--import", preload],
+      },
+    );
+  return { fixture, settings, userTk, fetchSentinel, run, checksum: archive.checksum };
+}
+
+test("enable --install-path records user source; enable without path clears it", () => {
+  const fixture = tempFixture();
+  const settings = join(fixture.agent, "settings.json");
+  const userTk = join(fixture.external, "tk");
+  writeValidTkLikeCommand(userTk);
+  const enabled = runTickets(
+    ["--settings", settings, "--agent-dir", fixture.agent, "--install-path", userTk, "enable"],
+    { env: { HOME: fixture.home, PATH: "" } },
+  );
+  assert.equal(enabled.status, 0, enabled.stderr);
+  let written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, userTk);
+  assert.equal(written.tlh.tickets.installPathSource, "user");
+
+  const cleared = runTickets(["--settings", settings, "--agent-dir", fixture.agent, "enable"], {
+    env: { HOME: fixture.home, PATH: "" },
+  });
+  assert.equal(cleared.status, 0, cleared.stderr);
+  written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPathSource, undefined);
+});
+
+test("configure-install keeps a valid user-chosen tk without installing", () => {
+  const { fixture, settings, userTk, fetchSentinel, run } = userTkFixture({
+    installPathSource: "user",
+    installedSha256: "0".repeat(64),
+  });
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(fetchSentinel), false);
+  assert.equal(existsSync(join(fixture.agent, "bin", "tk")), false);
+  const written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, userTk);
+  assert.equal(written.tlh.tickets.installPathSource, "user");
+  assert.equal(written.tlh.tickets.installedSha256, undefined);
+});
+
+test("configure-install replaces an invalid user-chosen tk with the managed copy", () => {
+  const { fixture, settings, run, checksum } = userTkFixture(
+    { installPathSource: "user" },
+    { validUser: false },
+  );
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /user-chosen tk is no longer valid/);
+  const target = join(fixture.agent, "bin", "tk");
+  assert.equal(existsSync(target), true);
+  const written = JSON.parse(readFileSync(settings, "utf8"));
+  assert.equal(written.tlh.tickets.installPath, target);
+  assert.equal(written.tlh.tickets.installPathSource, undefined);
   assert.equal(written.tlh.tickets.installedSha256, checksum.toLowerCase());
 });

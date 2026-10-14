@@ -1266,6 +1266,8 @@ function configureGnosis(config) {
     const args = [
         "--agent-dir",
         config.agentDir,
+        "--settings",
+        config.settingsPath,
         "--target",
         join(config.agentDir, "bin", "gn"),
         "--gnosis-repo",
