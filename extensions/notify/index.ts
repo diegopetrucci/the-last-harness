@@ -96,18 +96,104 @@ const DEFAULT_CONFIG: NotifyConfig = {
   },
 };
 
-function readConfigFile(path: string): Partial<NotifyConfig> {
+type NotifyConfigPatch = {
+  enabled?: boolean;
+  onlyWhenInteractive?: boolean;
+  suppressWhileActive?: boolean;
+  title?: string;
+  body?: string;
+  channels?: Partial<NotifyConfig["channels"]>;
+  terminal?: Partial<NotifyConfig["terminal"]>;
+  desktop?: Partial<NotifyConfig["desktop"]>;
+  sound?: Partial<NotifyConfig["sound"]>;
+};
+
+const TERMINAL_BACKENDS = ["auto", "osc777", "osc99", "none"] as const;
+const DESKTOP_BACKENDS = ["auto", "macos", "linux", "windows-toast", "none"] as const;
+const SOUND_BACKENDS = ["auto", "macos", "linux", "windows-beep", "command", "none"] as const;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readStringEnum<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  if (typeof value !== "string") return undefined;
+  for (const candidate of allowed) {
+    if (value === candidate) return candidate;
+  }
+  return undefined;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function narrowChannels(value: Record<string, unknown>): Partial<NotifyConfig["channels"]> {
+  const channels: Partial<NotifyConfig["channels"]> = {};
+  if (typeof value.terminal === "boolean") channels.terminal = value.terminal;
+  if (typeof value.desktop === "boolean") channels.desktop = value.desktop;
+  if (typeof value.bell === "boolean") channels.bell = value.bell;
+  if (typeof value.sound === "boolean") channels.sound = value.sound;
+  return channels;
+}
+
+function narrowTerminal(value: Record<string, unknown>): Partial<NotifyConfig["terminal"]> {
+  const backend = readStringEnum(value.backend, TERMINAL_BACKENDS);
+  return backend === undefined ? {} : { backend };
+}
+
+function narrowDesktop(value: Record<string, unknown>): Partial<NotifyConfig["desktop"]> {
+  const backend = readStringEnum(value.backend, DESKTOP_BACKENDS);
+  return backend === undefined ? {} : { backend };
+}
+
+function narrowSound(value: Record<string, unknown>): Partial<NotifyConfig["sound"]> {
+  const sound: Partial<NotifyConfig["sound"]> = {};
+  const backend = readStringEnum(value.backend, SOUND_BACKENDS);
+  if (backend !== undefined) sound.backend = backend;
+  if (typeof value.name === "string") sound.name = value.name;
+  if (typeof value.linuxSoundId === "string") sound.linuxSoundId = value.linuxSoundId;
+  const frequencyHz = readFiniteNumber(value.frequencyHz);
+  if (frequencyHz !== undefined) sound.frequencyHz = frequencyHz;
+  const durationMs = readFiniteNumber(value.durationMs);
+  if (durationMs !== undefined) sound.durationMs = durationMs;
+  if (typeof value.command === "string") sound.command = value.command;
+  return sound;
+}
+
+function narrowNotifyConfig(value: unknown): NotifyConfigPatch {
+  if (!isPlainObject(value)) return {};
+
+  const patch: NotifyConfigPatch = {};
+  if (typeof value.enabled === "boolean") patch.enabled = value.enabled;
+  if (typeof value.onlyWhenInteractive === "boolean") {
+    patch.onlyWhenInteractive = value.onlyWhenInteractive;
+  }
+  if (typeof value.suppressWhileActive === "boolean") {
+    patch.suppressWhileActive = value.suppressWhileActive;
+  }
+  if (typeof value.title === "string") patch.title = value.title;
+  if (typeof value.body === "string") patch.body = value.body;
+  if (isPlainObject(value.channels)) patch.channels = narrowChannels(value.channels);
+  if (isPlainObject(value.terminal)) patch.terminal = narrowTerminal(value.terminal);
+  if (isPlainObject(value.desktop)) patch.desktop = narrowDesktop(value.desktop);
+  if (isPlainObject(value.sound)) patch.sound = narrowSound(value.sound);
+  return patch;
+}
+
+function readConfigFile(path: string): NotifyConfigPatch {
   if (!existsSync(path)) return {};
 
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as Partial<NotifyConfig>;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    return narrowNotifyConfig(parsed);
   } catch (error) {
     console.error(`Warning: Could not parse ${path}: ${error}`);
     return {};
   }
 }
 
-function mergeConfig(base: NotifyConfig, overrides: Partial<NotifyConfig>): NotifyConfig {
+function mergeConfig(base: NotifyConfig, overrides: NotifyConfigPatch): NotifyConfig {
   return {
     ...base,
     ...overrides,
@@ -337,17 +423,6 @@ export function createNotifyExtension(
   const onNotify = options.onNotify;
 
   return function notifyExtension(pi: ExtensionAPI) {
-    /**
-     * Latest activeAsyncJobIds from the TLH activity tracker.
-     * undefined = no signal ever received (tracker absent or no events bus).
-     * Graceful-degradation rule: undefined must NOT be treated as "in flight",
-     * or notify would go permanently silent when running without TLH.
-     *
-     * We gate on this array rather than the aggregate `inProgress` flag so that
-     * primary-agent-loop reasons (e.g. retry-grace) do not suppress notifications.
-     * Suppression must only apply while background subagent work is actually
-     * in flight, matching the original ts-vy9k spec.
-     */
     let latestActiveAsyncJobIds: string[] | undefined = undefined;
 
     /** Pending settle-debounce timer. Replaced on each agent_settled. */
@@ -356,15 +431,6 @@ export function createNotifyExtension(
     /** Unsubscribe handle for the TLH activity event subscription. */
     let activityUnsubscribe: (() => void) | undefined;
 
-    /**
-     * When a settle is suppressed because background work was in flight, we
-     * remember the settle context here so we can re-evaluate and notify when
-     * the activity signal later reports no background work.
-     *
-     * Cleared on: new agent run (before_agent_start), session_shutdown, and
-     * after it fires — so it can neither leak nor double-fire.
-     * Also cleared when a new agent_settled supersedes it.
-     */
     let pendingSettleCtx: SettleCtx | undefined;
 
     /**
@@ -409,28 +475,10 @@ export function createNotifyExtension(
         if (isActivityPayload(data)) {
           latestActiveAsyncJobIds = data.activeAsyncJobIds;
 
-          // Re-evaluate a suppressed settle when background work just cleared.
-          // This is the falling-edge path: the periodic liveness drain fired,
-          // detected a dead child, and emitted an updated snapshot.
-          //
-          // IMPORTANT: do NOT send synchronously here. On a normal async child
-          // completion the tracker emits this falling edge from handleAsyncComplete
-          // before the completion has woken the parent, so ctx.isIdle() is still
-          // true at this point. Sending synchronously would produce a notification
-          // immediately, and then the woken turn's own agent_settled would produce
-          // a second one — the exact double-ping this feature exists to eliminate.
-          //
-          // Instead, re-arm the existing settle debounce with the stored ctx. This
-          // gives the parent wake a chance to land first. If it does,
-          // before_agent_start will cancel this timer and the woken turn's own
-          // agent_settled becomes the single notification. If the parent does not
-          // wake (background-only child completion), the debounce fires and the
-          // isIdle() guard passes, producing exactly one notification.
+          // A falling edge must re-arm the debounce because a native wake can still look idle.
           if (pendingSettleCtx !== undefined && data.activeAsyncJobIds.length === 0) {
             const ctx = pendingSettleCtx;
-            // Clear now so another activity event cannot double-schedule.
             pendingSettleCtx = undefined;
-            // Cancel any existing debounce before re-arming.
             if (debounceTimer !== undefined) {
               clearTimeoutImpl(debounceTimer);
             }
@@ -467,11 +515,6 @@ export function createNotifyExtension(
       }
     });
 
-    // Clear the pending settle when a new agent run starts so a superseded
-    // settle cannot fire after the new run begins.  Also cancel the debounce
-    // timer — the pending-settle path now re-arms it, so an in-flight re-arm
-    // must be cancelled here too, or the woken turn's settle would race with
-    // the re-armed release and produce two notifications.
     pi.on("before_agent_start", () => {
       pendingSettleCtx = undefined;
       if (debounceTimer !== undefined) {
@@ -481,40 +524,23 @@ export function createNotifyExtension(
     });
 
     pi.on("agent_settled", (_event, ctx) => {
-      // A new settle supersedes any earlier pending-settle state.
       pendingSettleCtx = undefined;
-      // Cancel any pending notification from a prior settle.
       if (debounceTimer !== undefined) {
         clearTimeoutImpl(debounceTimer);
       }
 
-      // Schedule the notification after a short delay. This absorbs the
-      // rapid settle-then-child-complete flap: if the child finishes and
-      // updates inProgress before the timer fires, we read the fresh value.
       debounceTimer = setTimeoutImpl(async () => {
         debounceTimer = undefined;
         const config = loadConfig(ctx);
         if (!config.enabled) return;
         if (config.onlyWhenInteractive && !ctx.hasUI) return;
-
-        // If the agent is no longer idle, a new turn has started (e.g. a child
-        // completing woke the parent). Do not notify — the new turn's own
-        // eventual agent_settled will be responsible for notification.
         if (typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
 
-        // Suppress only when background subagent work is in flight.
-        // Primary-agent-loop reasons (e.g. retry-grace) must NOT suppress.
-        // Never suppress when no signal has been received (graceful degradation:
-        // undefined means tracker is absent, not that work is in flight).
         if (
           config.suppressWhileActive &&
           latestActiveAsyncJobIds !== undefined &&
           latestActiveAsyncJobIds.length > 0
         ) {
-          // Remember this suppressed settle so the activity falling-edge can
-          // re-evaluate it once background work clears.  Store a snapshot of
-          // the ctx fields we need; isIdle() is a live function so it reflects
-          // the current state when evaluated later.
           pendingSettleCtx = {
             cwd: ctx.cwd,
             hasUI: ctx.hasUI,
