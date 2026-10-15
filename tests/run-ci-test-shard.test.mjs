@@ -8,6 +8,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildLanes, parseShard, registerTmpdirCleanup } from "../scripts/run-ci-test-shard.mjs";
 import { runLane, runLanes, spawnBuffered } from "../scripts/run-lane.mjs";
+import { isProcessAlive as processIsAlive } from "./process-liveness.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const runLanePath = resolve(testDir, "../scripts/run-lane.mjs");
@@ -68,16 +69,6 @@ const cleanLaneEnv = scrubLaneEnv();
 
 function isNumericPid(pid) {
   return Number.isInteger(pid) && pid > 0;
-}
-
-function processIsAlive(pid) {
-  if (!isNumericPid(pid)) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
 }
 
 async function waitForProcessGone(pid, timeoutMs = 3000) {

@@ -26,6 +26,7 @@ import {
   resolveTestConcurrency,
   testConcurrencyArgs,
 } from "../scripts/test-concurrency.mjs";
+import { isProcessAlive as processIsAlive } from "./process-liveness.mjs";
 
 // Absolute path to the guard script — used by subprocess signal tests to
 // construct harness code that imports it by absolute path.
@@ -474,16 +475,6 @@ function signalTestEnv(root, pidFile) {
   env.TEMP = root;
   env.TLH_SIGNAL_PID_FILE = pidFile;
   return env;
-}
-
-function processIsAlive(pid) {
-  if (!isNumericPid(pid)) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
 }
 
 async function waitForProcessGone(pid, timeoutMs = 5000) {
