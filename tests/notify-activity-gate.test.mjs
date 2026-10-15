@@ -11,7 +11,7 @@
  * - Regression (ts-hehb): primary-only activity never suppresses notifications
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
@@ -49,6 +49,7 @@ after(() => {
 
 const jiti = createJiti(import.meta.url);
 const { createNotifyExtension } = await jiti.import("../extensions/notify/index.ts");
+const { CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 const { TLH_EFFECTIVE_ACTIVITY_EVENT } = await jiti.import(
   "../extensions/shared/tlh-effective-activity.ts",
 );
@@ -709,4 +710,69 @@ test("notify stays silent when new agent run starts before pending settle fires"
 
   // No notification — the pending settle was cleared by before_agent_start.
   assert.equal(notifyCount, 0, "no notification when new agent run started before work cleared");
+});
+
+test("malformed notify.json is ignored and valid fields still apply", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "tlh-notify-malformed-"));
+  const configPath = join(projectDir, CONFIG_DIR_NAME, "notify.json");
+  mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
+
+  async function settleWith(configText, ctxOverrides = {}) {
+    writeFileSync(configPath, configText);
+    const timers = createFakeTimers();
+    const pi = createPiHarness();
+    let notifyCount = 0;
+    const ext = createNotifyExtension({
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+      settleDebounceMs: 50,
+      onNotify: () => {
+        notifyCount += 1;
+      },
+    });
+    ext(pi);
+    pi.fireEvent(
+      "agent_settled",
+      {},
+      makeCtx({
+        cwd: projectDir,
+        isProjectTrusted: () => true,
+        ...ctxOverrides,
+      }),
+    );
+    await timers.advance(50);
+    return notifyCount;
+  }
+
+  try {
+    assert.equal(await settleWith("null"), 1, "null config falls back to defaults");
+    assert.equal(await settleWith("[]"), 1, "array config falls back to defaults");
+    assert.equal(
+      await settleWith(
+        JSON.stringify({
+          onlyWhenInteractive: false,
+          channels: 1,
+          terminal: [],
+          desktop: "nope",
+          sound: null,
+        }),
+        { hasUI: false },
+      ),
+      1,
+      "valid fields apply and non-object channel settings are ignored",
+    );
+    assert.equal(
+      await settleWith(
+        JSON.stringify({
+          enabled: false,
+          channels: { bell: "yes" },
+          sound: true,
+        }),
+      ),
+      0,
+      "enabled:false still suppresses when nested fields are malformed",
+    );
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
 });
