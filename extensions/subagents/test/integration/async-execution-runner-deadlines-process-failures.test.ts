@@ -1,7 +1,7 @@
 /**
  * Integration tests for async execution – deadlines and process failures.
  *
- * Requires pi packages to be importable. Skips gracefully if unavailable.
+ * Requires pi packages to be importable.
  */
 
 import { spawnSync } from "node:child_process";

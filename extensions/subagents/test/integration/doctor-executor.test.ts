@@ -7,7 +7,6 @@ import {
   createTempDir,
   makeMinimalCtx,
   removeTempDir,
-  tryImport,
 } from "../support/helpers.ts";
 
 const originalHome = process.env.HOME;
@@ -18,7 +17,7 @@ process.env.HOME = importHome;
 process.env.USERPROFILE = importHome;
 let executorMod: any;
 try {
-  executorMod = await tryImport<any>("./src/runs/foreground/subagent-executor.ts");
+  executorMod = await import("../../src/runs/foreground/subagent-executor.ts");
 } finally {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
@@ -26,7 +25,7 @@ try {
   else process.env.USERPROFILE = originalUserProfile;
   removeTempDir(importHome);
 }
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
+const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 function makeState(cwd: string) {
   return {
@@ -45,95 +44,89 @@ function makeState(cwd: string) {
   };
 }
 
-describe(
-  "doctor action executor routing",
-  {
-    skip: !createSubagentExecutor ? "executor not importable" : undefined,
-  },
-  () => {
-    let tempDir = "";
-    let tempHome = "";
+describe("doctor action executor routing", () => {
+  let tempDir = "";
+  let tempHome = "";
 
-    beforeEach(() => {
-      tempDir = createTempDir("pi-doctor-executor-project-");
-      tempHome = createTempDir("pi-doctor-executor-home-");
-      process.env.HOME = tempHome;
-      process.env.USERPROFILE = tempHome;
+  beforeEach(() => {
+    tempDir = createTempDir("pi-doctor-executor-project-");
+    tempHome = createTempDir("pi-doctor-executor-home-");
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
+    removeTempDir(tempDir);
+    removeTempDir(tempHome);
+  });
+
+  it("returns a doctor report for the tool action", async () => {
+    const sessionFile = path.join(tempDir, "sessions", "parent.jsonl");
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(sessionFile, "");
+    const executor = createSubagentExecutor({
+      pi: { events: createEventBus(), getSessionName: () => undefined },
+      state: makeState(tempDir),
+      config: {},
+      tempArtifactsDir: tempDir,
+      getSubagentSessionRoot: () => tempDir,
+      expandTilde: (value: string) => value,
+      discoverAgents: () => ({ agents: [] }),
     });
+    const ctx = makeMinimalCtx(tempDir);
+    ctx.sessionManager.getSessionFile = () => sessionFile;
+    ctx.sessionManager.getSessionId = () => "session-doctor";
 
-    afterEach(() => {
-      if (originalHome === undefined) delete process.env.HOME;
-      else process.env.HOME = originalHome;
-      if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = originalUserProfile;
-      if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
-      removeTempDir(tempDir);
-      removeTempDir(tempHome);
+    const result = await executor.execute(
+      "doctor-id",
+      { action: "doctor" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
+
+    assert.equal(result.isError, undefined);
+    const text = result.content[0]?.text ?? "";
+    assert.match(text, /^Subagents doctor report/);
+    assert.doesNotMatch(text, /configured session dir/);
+  });
+
+  it("reports session manager failures without failing the doctor action", async () => {
+    const executor = createSubagentExecutor({
+      pi: { events: createEventBus(), getSessionName: () => undefined },
+      state: makeState(tempDir),
+      config: {},
+      tempArtifactsDir: tempDir,
+      getSubagentSessionRoot: () => tempDir,
+      expandTilde: (value: string) => value,
+      discoverAgents: () => ({ agents: [] }),
     });
+    const ctx = makeMinimalCtx(tempDir);
+    ctx.sessionManager.getSessionFile = () => {
+      throw new Error("session unavailable");
+    };
+    ctx.sessionManager.getSessionId = () => {
+      throw new Error("session unavailable");
+    };
 
-    it("returns a doctor report for the tool action", async () => {
-      const sessionFile = path.join(tempDir, "sessions", "parent.jsonl");
-      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-      fs.writeFileSync(sessionFile, "");
-      const executor = createSubagentExecutor({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state: makeState(tempDir),
-        config: {},
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents: [] }),
-      });
-      const ctx = makeMinimalCtx(tempDir);
-      ctx.sessionManager.getSessionFile = () => sessionFile;
-      ctx.sessionManager.getSessionId = () => "session-doctor";
+    const result = await executor.execute(
+      "doctor-id",
+      { action: "doctor" },
+      new AbortController().signal,
+      undefined,
+      ctx,
+    );
 
-      const result = await executor.execute(
-        "doctor-id",
-        { action: "doctor" },
-        new AbortController().signal,
-        undefined,
-        ctx,
-      );
-
-      assert.equal(result.isError, undefined);
-      const text = result.content[0]?.text ?? "";
-      assert.match(text, /^Subagents doctor report/);
-      assert.doesNotMatch(text, /configured session dir/);
-    });
-
-    it("reports session manager failures without failing the doctor action", async () => {
-      const executor = createSubagentExecutor({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state: makeState(tempDir),
-        config: {},
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents: [] }),
-      });
-      const ctx = makeMinimalCtx(tempDir);
-      ctx.sessionManager.getSessionFile = () => {
-        throw new Error("session unavailable");
-      };
-      ctx.sessionManager.getSessionId = () => {
-        throw new Error("session unavailable");
-      };
-
-      const result = await executor.execute(
-        "doctor-id",
-        { action: "doctor" },
-        new AbortController().signal,
-        undefined,
-        ctx,
-      );
-
-      assert.equal(result.isError, undefined);
-      const text = result.content[0]?.text ?? "";
-      assert.match(text, /^Subagents doctor report/);
-      assert.match(text, /- session manager: failed — Error: session unavailable/);
-      assert.match(text, /- current session file: not available/);
-    });
-  },
-);
+    assert.equal(result.isError, undefined);
+    const text = result.content[0]?.text ?? "";
+    assert.match(text, /^Subagents doctor report/);
+    assert.match(text, /- session manager: failed — Error: session unavailable/);
+    assert.match(text, /- current session file: not available/);
+  });
+});

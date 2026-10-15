@@ -11,7 +11,7 @@
  *
  * `scaleTestTimeout` returns a `ScaledMs` branded value so that raw numeric
  * literals cannot accidentally be passed where a scaled budget is expected.
- * The 8 wait helpers in `async-execution-helpers.ts` require `ScaledMs` for
+ * The wait helpers in `async-execution-helpers.ts` require `ScaledMs` for
  * their `timeoutMs` parameter — passing a plain `number` is a compile error.
  */
 

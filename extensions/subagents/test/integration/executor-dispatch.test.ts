@@ -11,6 +11,7 @@ import {
   RESULTS_DIR,
   type ExtensionConfig,
 } from "../../src/shared/types.ts";
+import * as executorMod from "../../src/runs/foreground/subagent-executor.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import {
   createEventBus,
@@ -59,9 +60,7 @@ interface ExecutorModule {
   };
 }
 
-const { createSubagentExecutor } = await tryImport<ExecutorModule>(
-  "./src/runs/foreground/subagent-executor.ts",
-);
+const { createSubagentExecutor } = executorMod as ExecutorModule;
 
 interface ProviderAwareModelDefaultsModule {
   applyProviderAwareSubagentModels(

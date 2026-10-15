@@ -1,7 +1,7 @@
 /**
  * Register the .js → .ts loader hook for source-loading tests.
  *
- * Usage: node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts
+ * Usage: node --experimental-strip-types --import ./extensions/subagents/test/support/register-loader.mjs --test <files> (see scripts/run-subagents-tests.mjs)
  *
  * Source files use .js import extensions (TypeScript ESM convention) but files
  * on disk are .ts — the loader rewrites .js → .ts at resolve time. Keep loaded

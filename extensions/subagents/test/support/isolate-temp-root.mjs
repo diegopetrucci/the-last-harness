@@ -1,7 +1,7 @@
 /**
  * Isolate test runs onto a per-process temp root (issue #45).
  *
- * Usage: node --experimental-strip-types --import ./test/support/isolate-temp-root.mjs --test test/unit/*.test.ts
+ * Loaded via register-loader.mjs, which scripts/run-subagents-tests.mjs imports.
  *
  * Tests import ASYNC_DIR/RESULTS_DIR/etc. from src/shared/types.ts, which
  * otherwise resolve under the shared uid-scoped temp root
