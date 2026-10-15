@@ -30,7 +30,10 @@ import {
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   SUBAGENT_TK_TICKET_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import {
+  waitForAsyncResultFile,
+  waitForTestCondition,
+} from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
 import {
@@ -1015,15 +1018,14 @@ describe(
             makeMinimalCtx(tempDir),
           );
 
-          const deadline = Date.now() + 5_000;
-          while (
-            Date.now() < deadline &&
-            !updates.some((update) =>
-              update.details?.results?.some((result) => result.progress?.status === "running"),
-            )
-          ) {
-            await new Promise((resolve) => setTimeout(resolve, 10));
-          }
+          await waitForTestCondition(
+            () =>
+              updates.some((update) =>
+                update.details?.results?.some((result) => result.progress?.status === "running"),
+              ),
+            "active foreground single update",
+            scaleTestTimeout(5_000),
+          );
           const running = updates.find((update) =>
             update.details?.results?.some((result) => result.progress?.status === "running"),
           );

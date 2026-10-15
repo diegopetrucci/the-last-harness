@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import {
   createProjectAgentRunCapture,
   getProjectAgentRunReferenceMetadata,
@@ -40,10 +40,24 @@ import {
 } from "../support/project-agent-control-fixtures.ts";
 
 const testEnvironment = createProjectAgentControlEnvironment();
+const CONTROLLED_RETENTION_CLOCK_START = 1_000_000;
+
+function enableControlledRetentionClock(): void {
+  mock.timers.enable({
+    apis: ["Date", "setTimeout"],
+    now: CONTROLLED_RETENTION_CLOCK_START,
+  });
+}
 
 describe("project-agent control reference lifetime and continuation", () => {
   beforeEach(testEnvironment.setup);
-  afterEach(testEnvironment.teardown);
+  afterEach(() => {
+    try {
+      testEnvironment.teardown();
+    } finally {
+      mock.timers.reset();
+    }
+  });
 
   it("persists a foreground pause capture and resumes it after a generation reload", async () => {
     const root = fs.realpathSync(
@@ -181,6 +195,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("retains complete and failed project generations beyond the UI cleanup window", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-terminal-retention-")),
     );
@@ -223,14 +238,17 @@ describe("project-agent control reference lifetime and continuation", () => {
           success,
           sessionId: "session-project",
         });
-        await new Promise((resolve) => setTimeout(resolve, 15));
+        mock.timers.tick(5);
         assert.equal(lookupProjectAgentRunReference(runId).status, "found");
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        mock.timers.tick(34);
+        assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+        mock.timers.tick(1);
         assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
         fs.rmSync(asyncDir, { recursive: true, force: true });
       }
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       for (const runId of runIds) {
         releaseProjectAgentRunReference(runId);
         fs.rmSync(runAsyncDir(runId), { recursive: true, force: true });
@@ -241,6 +259,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("preserves pending terminal cleanup across a same-session tracker reset", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-tracker-reset-")),
     );
@@ -270,18 +289,18 @@ describe("project-agent control reference lifetime and continuation", () => {
         success: true,
         sessionId: "/sessions/session-project.jsonl",
       });
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      mock.timers.tick(5);
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
 
       tracker.resetJobs(makeContext(root, "session-project"));
       assert.equal(state.asyncJobs.size, 0, "reset still clears UI job state");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      mock.timers.tick(54);
       assert.equal(
         lookupProjectAgentRunReference(runId).status,
         "found",
         "same-session reset must not release before the terminal window",
       );
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      mock.timers.tick(1);
       assert.equal(
         lookupProjectAgentRunReference(runId).status,
         "missing",
@@ -289,6 +308,7 @@ describe("project-agent control reference lifetime and continuation", () => {
       );
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       releaseProjectAgentRunReference(runId);
       revokeIfRegistered(generation.capability);
       fs.rmSync(asyncDir, { recursive: true, force: true });
@@ -296,6 +316,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("clears pending terminal cleanup when reset has no ctx", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-tracker-noctx-")),
     );
@@ -324,10 +345,10 @@ describe("project-agent control reference lifetime and continuation", () => {
         success: true,
         sessionId: "/sessions/session-project.jsonl",
       });
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      mock.timers.tick(5);
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
       tracker.resetJobs();
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      mock.timers.tick(50);
       assert.equal(
         lookupProjectAgentRunReference(runId).status,
         "found",
@@ -335,6 +356,7 @@ describe("project-agent control reference lifetime and continuation", () => {
       );
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       releaseProjectAgentRunReference(runId);
       revokeIfRegistered(generation.capability);
       fs.rmSync(asyncDir, { recursive: true, force: true });
@@ -342,6 +364,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("does not let reset cleanup release a reference reused in another session", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-tracker-reuse-")),
     );
@@ -384,20 +407,14 @@ describe("project-agent control reference lifetime and continuation", () => {
         success: true,
         sessionId: "session-project-old",
       });
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      mock.timers.tick(5);
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
 
       state.currentSessionId = "/sessions/session-project-new.jsonl";
       tracker.resetJobs(makeContext(root, "session-project-new"));
       releaseProjectAgentRunReference(runId);
       retainProjectAgentRunReference(nextGeneration.capability, runId, [nextGeneration.capture]);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(
-        lookupProjectAgentRunReference(runId).status,
-        "found",
-        "a session reset must not prematurely release the reused id",
-      );
-      await new Promise((resolve) => setTimeout(resolve, 45));
+      mock.timers.tick(45);
       assert.equal(
         lookupProjectAgentRunReference(runId).status,
         "found",
@@ -405,6 +422,7 @@ describe("project-agent control reference lifetime and continuation", () => {
       );
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       releaseProjectAgentRunReference(runId);
       releaseProjectAgentSnapshotReference("tracker-reuse-next-owner");
       revokeIfRegistered(previousGeneration.capability);
@@ -465,7 +483,6 @@ describe("project-agent control reference lifetime and continuation", () => {
         success: false,
         sessionId: "session-project",
       });
-      await new Promise((resolve) => setTimeout(resolve, 20));
       assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
     } finally {
       tracker.resetJobs();
@@ -476,6 +493,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("retains continued/cancelled cohorts for terminal project siblings with usable sessions", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-terminal-sibling-")),
     );
@@ -556,9 +574,9 @@ describe("project-agent control reference lifetime and continuation", () => {
             success: false,
             sessionId: "session-project",
           });
-          await new Promise((resolve) => setTimeout(resolve, 15));
+          mock.timers.tick(39);
           assert.equal(lookupProjectAgentRunReference(runId).status, "found");
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          mock.timers.tick(1);
           assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
           releaseProjectAgentRunReference(runId);
           state.asyncJobs.clear();
@@ -567,6 +585,7 @@ describe("project-agent control reference lifetime and continuation", () => {
       }
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       for (const runId of runIds) {
         releaseProjectAgentRunReference(runId);
         fs.rmSync(runAsyncDir(runId), { recursive: true, force: true });
@@ -577,6 +596,7 @@ describe("project-agent control reference lifetime and continuation", () => {
     }
   });
   it("does not release a continued async reference while a sibling remains resumable", async () => {
+    enableControlledRetentionClock();
     const root = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-control-tracker-")),
     );
@@ -610,7 +630,11 @@ describe("project-agent control reference lifetime and continuation", () => {
       { events: { emit() {} } } as any,
       state,
       path.dirname(asyncDir),
-      { completionRetentionMs: 5, resultsDir: path.join(root, "results") },
+      {
+        completionRetentionMs: 5,
+        projectAgentTerminalRetentionMs: 40,
+        resultsDir: path.join(root, "results"),
+      },
     );
     try {
       state.asyncJobs.set(runId, {
@@ -626,7 +650,7 @@ describe("project-agent control reference lifetime and continuation", () => {
         success: false,
         sessionId: "session-project",
       });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      mock.timers.tick(39);
       assert.equal(lookupProjectAgentRunReference(runId).status, "found");
 
       writeJson(path.join(asyncDir, "status.json"), {
@@ -656,6 +680,7 @@ describe("project-agent control reference lifetime and continuation", () => {
       assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
     } finally {
       tracker.resetJobs();
+      mock.timers.reset();
       releaseProjectAgentRunReference(runId);
       revokeIfRegistered(generation.capability);
       fs.rmSync(asyncDir, { recursive: true, force: true });
