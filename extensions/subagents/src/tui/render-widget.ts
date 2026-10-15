@@ -820,34 +820,6 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
   ];
 }
 
-// Job-level health state (needs_attention) is a staleness signal, not flavour
-// text: it tells the user a run may be stuck. The step-detail
-// render paths (singleWidgetAgentDetails' `if (step)` branch,
-// foregroundStyleWidgetDetails' steps branch, and compactSingleWidgetLines' own
-// loop) build rows per step and never call widgetActivityDetailLines(job, ...),
-// so a job-level health state with no step-level counterpart would be dropped
-// entirely. The no-steps branches already surface it via widgetActivityDetailLines,
-// and multi-job rows surface it per job, so only the with-steps case needs this.
-//
-// fitWidgetLineBudget is a prefix-keep truncator: it keeps a prefix of the
-// already-wrapped physical lines and appends a "N lines hidden" hint. The
-// collapsed budget floor is 10 physical rows and the expanded floor is 12, but
-// these are physical rows after wrapping, so no fixed logical line position is
-// unconditionally safe at every terminal width.
-//
-// For multi-agent and parallel jobs the warning is emitted unconditionally
-// (subject only to the pausing guard below) and placed directly under the
-// header. These jobs may enter the progressive tier or accumulate many step rows
-// that fitWidgetLineBudget truncates; a step carrying the same health state may
-// be scrolled off, making a step-level dedup unsound for those modes.
-//
-// For single-agent jobs (job.mode === 'single') the health line is the 3rd
-// logical line in the render — only the header and the agent row precede it.
-// At normal terminal widths it is far inside the kept prefix. buildSingleWidgetLines
-// splices it immediately after the agent row, and singleModeHealthWarningLines
-// handles placement under the agent row at 4-space indent with
-// step-level dedup: when the step's widgetStepActivityLines already surfaces the
-// same health text, the job-level line is suppressed to avoid a duplicate.
 function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
   if (job.status === "continued") return [];
   if (!isHealthActivityState(job.activityState)) return [];
@@ -862,21 +834,6 @@ function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
   return warning ? [`  ${theme.fg("dim", `   ${warning}`)}`] : [];
 }
 
-// Health warning for single-agent (job.mode === 'single') jobs with steps. Emits
-// the line at 4-space indent (one level deeper than the agent row at 2-space indent)
-// so it visually belongs to the agent rather than the header. buildSingleWidgetLines
-// splices this output immediately after details[0] (the agent row): the health line
-// is the 3rd logical line of the render (after the header and the agent row), so at
-// normal terminal widths it is well inside the kept prefix. Deduplicates against
-// the step's own widgetStepActivityLines: if the step already surfaces the same
-// health text, the job-level line is suppressed to avoid a duplicate.
-//
-// Known limitation: in the dedup case the retained health text is the step's own
-// activity line, which sits after the ticket line. At very narrow widths, wrapping
-// of the preceding agent row and ticket line can push the step-level health line out
-// of the kept prefix; the dedup does not protect against that. This risk is accepted
-// because it requires an unusually narrow terminal, and the pre-existing multi-agent
-// path carries the same class of exposure.
 function singleModeHealthWarningLines(
   job: AsyncJobState,
   theme: Theme,
