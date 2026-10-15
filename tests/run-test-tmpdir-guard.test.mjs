@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn as childSpawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
@@ -18,6 +26,7 @@ import {
   resolveTestConcurrency,
   testConcurrencyArgs,
 } from "../scripts/test-concurrency.mjs";
+import { isProcessAlive as processIsAlive } from "./process-liveness.mjs";
 
 // Absolute path to the guard script — used by subprocess signal tests to
 // construct harness code that imports it by absolute path.
@@ -200,9 +209,9 @@ function fakeChild(code = 0, signal = null) {
  */
 function fakeSpawn(results) {
   const calls = [];
-  function spawn(cmd, args, _opts) {
+  function spawn(cmd, args, opts) {
     const { code = 0, signal = null } = results[calls.length] ?? {};
-    calls.push({ cmd, args });
+    calls.push({ cmd, args, opts });
     return fakeChild(code, signal);
   }
   spawn.calls = calls;
@@ -213,7 +222,7 @@ test("runWithTmpdirGuard returns 0 when both suites pass and no leaks occur", as
   const spawn = fakeSpawn([{ code: 0 }, { code: 0 }]);
   const code = await runWithTmpdirGuard({ spawn });
   assert.equal(code, 0);
-  assert.equal(spawn.calls.length, 2);
+  assert.equal(spawn.calls.length, 4);
 });
 
 test("runWithTmpdirGuard preserves non-zero exit from root Node tests", async () => {
@@ -234,6 +243,8 @@ test("runWithTmpdirGuard preserves non-zero exit from subagent suite", async () 
   const spawn = fakeSpawn([{ code: 0 }, { code: 3 }]);
   const code = await runWithTmpdirGuard({ spawn });
   assert.equal(code, 3);
+  // Later suites must not run after a failing suite.
+  assert.equal(spawn.calls.length, 2);
 });
 
 test("runWithTmpdirGuard passes --test-reporter=dot when dot flag is set", async () => {
@@ -260,6 +271,19 @@ test("runWithTmpdirGuard projects the shared concurrency override to root tests"
   assert.ok(mainCall.args.includes("--test-concurrency=5"));
 });
 
+test("runWithTmpdirGuard runs subagent suites in order with fail-fast semantics", async () => {
+  const spawn = fakeSpawn([{ code: 0 }, { code: 0 }, { code: 0 }, { code: 0 }]);
+  await runWithTmpdirGuard({ spawn });
+  assert.deepEqual(
+    spawn.calls.slice(1).map(({ args }) => args),
+    [
+      ["run", "test:subagents:unit"],
+      ["run", "test:subagents:integration"],
+      ["run", "test:subagents:e2e"],
+    ],
+  );
+});
+
 test("runWithTmpdirGuard sets TMPDIR/TMP/TEMP in child env", async () => {
   /** @type {Array<{ cmd: string; args: string[]; env?: Record<string, string | undefined> }>} */
   const calls = [];
@@ -268,6 +292,7 @@ test("runWithTmpdirGuard sets TMPDIR/TMP/TEMP in child env", async () => {
     return fakeChild(0);
   }
   await runWithTmpdirGuard({ spawn });
+  assert.equal(calls.length, 4);
   for (const call of calls) {
     assert.ok(typeof call.env?.TMPDIR === "string" && call.env.TMPDIR.length > 0);
     assert.equal(call.env?.TMPDIR, call.env?.TMP);
@@ -284,6 +309,16 @@ test("runWithTmpdirGuard removes the per-run root even when tests fail", async (
   await runWithTmpdirGuard({ spawn });
   assert.ok(capturedRoot, "expected TMPDIR to be captured");
   assert.equal(existsSync(capturedRoot), false, "per-run root must be removed");
+});
+
+test("runWithTmpdirGuard uses detached POSIX process groups for owned children", async () => {
+  const spawn = fakeSpawn([{ code: 0 }, { code: 0 }, { code: 0 }, { code: 0 }]);
+  await runWithTmpdirGuard({ spawn });
+  if (process.platform === "win32") {
+    assert.equal(spawn.calls[0].opts?.detached, undefined);
+  } else {
+    assert.equal(spawn.calls[0].opts?.detached, true);
+  }
 });
 
 test("runWithTmpdirGuard maps a signal-killed child to the conventional exit code", async () => {
@@ -378,52 +413,20 @@ test("tmpdir guard reports invalid concurrency overrides without a stack", () =>
 // ---------------------------------------------------------------------------
 // Real subprocess signal tests
 //
-// These tests launch a small harness process (via node --input-type=module
-// with piped stdin) that invokes runWithTmpdirGuard with an injected spawn.
-// The injected spawn starts a long-running child and writes "ready:<pid>\n"
-// to stdout after the child's 'spawn' event fires. The test polls for that
-// marker, extracts the child PID, sends the required signal(s) to the
-// harness, waits for it to finish, then asserts:
-//   - exit code matches expectedCode
-//   - child PID is gone (process.kill(pid,0) throws ESRCH)
-//   - no tlh-test-run-* dirs were leaked
-// Each test is wrapped in try/finally that kills any surviving processes.
+// These tests use bounded synthetic fixtures only.  The fixture leader starts
+// a grandchild, both install soft-signal no-op handlers before the ready
+// handshake, and one case exits early while its grandchild remains in the
+// owned group.  Each helper owns its harness, PID record, HOME/profile, and
+// TMPDIR, and independently cleans every discovered PID on all failure paths.
 // ---------------------------------------------------------------------------
 
 /**
- * Build ESM harness source code. The inner child runs childScript.
+ * Build ESM harness source code. The injected guard spawn runs childScript and
+ * relays its complete `ready:<leader>:<grandchild>` handshake.
  *
- * readyViaChildStdout=false (default): harness announces "ready:<pid>" after
- * the child's 'spawn' event. Suitable when the child will die on the first
- * signal (default SIGINT/SIGTERM disposition).
- *
- * readyViaChildStdout=true: inner child's stdout is piped; harness announces
- * only after it receives the first byte from the child. The child script must
- * write something to stdout once its signal handlers are registered. Use this
- * when the child must survive the first signal (e.g. SIGINT ignored).
- *
- * @param {string} [childScript]
- * @param {{ readyViaChildStdout?: boolean }} [opts]
+ * @param {string} childScript
  */
-function buildHarnessCode(
-  childScript = "setTimeout(()=>{},30000)",
-  { readyViaChildStdout = false } = {},
-) {
-  const childStdio = readyViaChildStdout
-    ? '["ignore","pipe","ignore"]'
-    : '["ignore","ignore","ignore"]';
-  const announceBlock = readyViaChildStdout
-    ? [
-        `    child.stdout.once("data", () => {`,
-        `      process.stdout.write("ready:" + child.pid + "\\n");`,
-        `    });`,
-      ].join("\n")
-    : [
-        `    child.once("spawn", () => {`,
-        `      process.stdout.write("ready:" + child.pid + "\\n");`,
-        `    });`,
-      ].join("\n");
-
+function buildHarnessCode(childScript) {
   return [
     `import { runWithTmpdirGuard } from ${JSON.stringify(guardScriptPath)};`,
     `import { spawn as nodeSpawn } from "node:child_process";`,
@@ -432,12 +435,17 @@ function buildHarnessCode(
     `  const child = nodeSpawn(`,
     `    process.execPath,`,
     `    ["-e", ${JSON.stringify(childScript)}],`,
-    `    { ...opts, stdio: ${childStdio} }`,
+    `    { ...opts, stdio: ["ignore", "pipe", "ignore"] }`,
     `  );`,
-    `  if (!announced) {`,
-    `    announced = true;`,
-    announceBlock,
-    `  }`,
+    `  let output = "";`,
+    `  child.stdout.on("data", (chunk) => {`,
+    `    output += chunk.toString();`,
+    `    const match = output.match(/ready:(\\d+):(\\d+)\\n/);`,
+    `    if (match && !announced) {`,
+    `      announced = true;`,
+    `      process.stdout.write("ready:" + match[1] + ":" + match[2] + "\\n");`,
+    `    }`,
+    `  });`,
     `  return child;`,
     `};`,
     `const code = await runWithTmpdirGuard({ spawn: customSpawn });`,
@@ -445,135 +453,277 @@ function buildHarnessCode(
   ].join("\n");
 }
 
+function isNumericPid(pid) {
+  return Number.isInteger(pid) && pid > 0;
+}
+
+function signalTestEnv(root, pidFile) {
+  const env = { ...process.env };
+  delete env.TICKETS_DIR;
+  delete env.NODE_TEST_CONTEXT;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
+  }
+  const home = join(root, "home");
+  const profile = join(root, "profile");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(profile, { recursive: true });
+  env.HOME = home;
+  env.PI_CODING_AGENT_DIR = profile;
+  env.TMPDIR = root;
+  env.TMP = root;
+  env.TEMP = root;
+  env.TLH_SIGNAL_PID_FILE = pidFile;
+  return env;
+}
+
+async function waitForProcessGone(pid, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (processIsAlive(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !processIsAlive(pid);
+}
+
 /**
- * Spawn the harness, wait for "ready:<pid>", run signalFn, wait for exit,
- * then assert exit code, child gone, and no leaked tlh-test-run-* dirs.
+ * Independently kill one owned PID and its POSIX group.  The direct PID kill
+ * remains explicit for the Windows fallback and for a group that disappeared
+ * during the teardown race.
+ */
+function killOwnedPid(pid) {
+  if (!isNumericPid(pid)) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch (error) {
+      if (error?.code !== "ESRCH") {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The bounded liveness check reports any survivor.
+        }
+      }
+    }
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone is the expected case after group delivery.
+  }
+}
+
+function readOwnedPids(pidFile) {
+  try {
+    const value = JSON.parse(readFileSync(pidFile, "utf8"));
+    return [value.leaderPid, value.grandchildPid].filter(isNumericPid);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Spawn the harness, install its close observer before signaling, wait for a
+ * fixture-level ready handshake, deliver exactly one PID-targeted signal, and
+ * then assert bounded exit, child+grandchild teardown, and TMPDIR cleanup.
  *
  * @param {number} expectedCode
  * @param {string} harnessCode
- * @param {(harness: import("node:child_process").ChildProcess) => Promise<void>} signalFn
+ * @param {(harness: import("node:child_process").ChildProcess) => void | Promise<void>} signalFn
  */
 async function runHarnessTest(expectedCode, harnessCode, signalFn) {
   const harnessTmpdir = mkdtempSync(join(tmpdir(), "tlh-sig-test-"));
-  _tmpDirs.push(harnessTmpdir);
-
+  const pidFile = join(harnessTmpdir, "owned-pids.json");
+  const ownedPids = new Set();
   /** @type {import("node:child_process").ChildProcess | null} */
   let harness = null;
-  let childPid = /** @type {number | null} */ (null);
+  let stderrBuf = "";
+  let primaryError = null;
+  let cleanupError = null;
+  const closeWaitMs = 5000;
 
+  let closePromise;
   try {
     harness = childSpawn(process.execPath, ["--input-type=module"], {
+      ...(process.platform !== "win32" ? { detached: true } : {}),
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, TMPDIR: harnessTmpdir, TMP: harnessTmpdir, TEMP: harnessTmpdir },
+      env: signalTestEnv(harnessTmpdir, pidFile),
+    });
+
+    // Install this observer immediately after spawn, before writing the
+    // harness program, waiting for ready, or delivering the test signal.
+    closePromise = new Promise((resolve) => {
+      harness.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    harness.stderr.on("data", (chunk) => {
+      stderrBuf += chunk.toString();
     });
     harness.stdin.end(harnessCode);
 
-    let stderrBuf = "";
-    harness.stderr.on("data", (d) => {
-      stderrBuf += d.toString();
-    });
-
-    // Wait for "ready:<pid>" marker emitted after child's 'spawn' event.
-    childPid = await new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
+      let output = "";
       let settled = false;
-      let stdoutBuf = "";
-      harness.stdout.on("data", (chunk) => {
-        stdoutBuf += chunk.toString();
-        const m = stdoutBuf.match(/ready:(\d+)\n/);
-        if (m && !settled) {
-          settled = true;
-          resolve(parseInt(m[1], 10));
-        }
-      });
-      harness.once("close", (code) => {
+      const timer = setTimeout(() => {
+        finish(new Error(`Timed out waiting for fixture ready handshake.\nstderr:\n${stderrBuf}`));
+      }, closeWaitMs);
+      const finish = (error, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        harness.stdout.off("data", onData);
+        if (error) reject(error);
+        else resolve(value);
+      };
+      const onData = (chunk) => {
+        output += chunk.toString();
+        const match = output.match(/ready:(\d+):(\d+)\n/);
+        if (!match) return;
+        ownedPids.add(Number.parseInt(match[1], 10));
+        ownedPids.add(Number.parseInt(match[2], 10));
+        finish(null, true);
+      };
+      harness.stdout.on("data", onData);
+      closePromise.then(({ code, signal }) => {
         if (!settled) {
-          settled = true;
-          reject(
+          finish(
             new Error(
-              `Harness exited (code=${code}) before writing "ready:<pid>".\nstderr:\n${stderrBuf}`,
+              `Harness exited (code=${code}, signal=${signal}) before ready.\nstderr:\n${stderrBuf}`,
             ),
           );
         }
       });
     });
 
-    // Run caller-defined signal sequence.
     await signalFn(harness);
-
-    // Wait for the harness to finish.
-    const exitCode = await new Promise((resolve) => {
-      harness.once("close", (code) => resolve(code));
-    });
-
-    assert.equal(exitCode, expectedCode, `Guard must exit ${expectedCode}.\nstderr:\n${stderrBuf}`);
-
-    // Child process must be gone.
-    assert.throws(
-      () => process.kill(childPid, 0),
-      { code: "ESRCH" },
-      `Child process ${childPid} must not be alive after guard exits`,
+    const closeResult = await Promise.race([
+      closePromise,
+      new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`Timed out waiting for harness close.\nstderr:\n${stderrBuf}`)),
+          closeWaitMs,
+        );
+      }),
+    ]);
+    assert.equal(
+      closeResult.code,
+      expectedCode,
+      `Guard must exit ${expectedCode}; signal=${closeResult.signal}\nstderr:\n${stderrBuf}`,
     );
 
-    // No tlh-test-run-* dirs should remain.
-    const leaked = readdirSync(harnessTmpdir).filter((e) => e.startsWith("tlh-test-run-"));
+    const pids = [...ownedPids];
+    assert.equal(await waitForProcessGone(pids[0]), true, `Child process ${pids[0]} must be gone`);
+    assert.equal(
+      await waitForProcessGone(pids[1]),
+      true,
+      `Grandchild process ${pids[1]} must be gone`,
+    );
+
+    const leaked = existsSync(harnessTmpdir)
+      ? readdirSync(harnessTmpdir).filter((entry) => entry.startsWith("tlh-test-run-"))
+      : [];
     assert.deepEqual(
       leaked,
       [],
       `No tlh-test-run-* dirs should remain in TMPDIR.\nstderr:\n${stderrBuf}`,
     );
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    // Kill the harness if it is still alive (e.g. an assertion threw early).
-    harness?.kill("SIGKILL");
-    // Kill the child PID if still alive.
-    if (childPid !== null) {
-      try {
-        process.kill(childPid, "SIGKILL");
-      } catch {
-        // ESRCH means already gone — expected in normal flow.
-      }
+    // PID publication is independent of ready/close assertions, so a failed
+    // await cannot strand a child or grandchild.  Harness cleanup is separate
+    // from fixture cleanup because the fixture owns a detached group.
+    for (const pid of readOwnedPids(pidFile)) ownedPids.add(pid);
+    if (harness?.pid) ownedPids.add(harness.pid);
+    for (const pid of ownedPids) killOwnedPid(pid);
+    const cleanupResults = await Promise.all(
+      [...ownedPids].map(async (pid) => ({ pid, gone: await waitForProcessGone(pid) })),
+    );
+    const survivors = cleanupResults.filter(({ gone }) => !gone).map(({ pid }) => pid);
+    if (survivors.length > 0) {
+      cleanupError = new Error(
+        `Owned signal-test processes survived cleanup: ${survivors.join(", ")}`,
+      );
+      if (primaryError !== null) process.stderr.write(`${cleanupError.message}\n`);
+    } else {
+      // Removing this owned root is safe only after every owned writer was
+      // observed gone.  Leave it for diagnosis if cleanup itself failed.
+      rmSync(harnessTmpdir, { recursive: true, force: true });
     }
   }
+  if (cleanupError !== null && primaryError === null) throw cleanupError;
 }
 
-test("guard exits 130 and removes per-run root on SIGINT", { timeout: 8000 }, async () => {
-  await runHarnessTest(130, buildHarnessCode(), async (harness) => {
-    harness.kill("SIGINT");
-  });
-});
+function buildStubbornTreeScript({ leaderClosesEarly = false } = {}) {
+  const grandchildScript = [
+    "process.on('SIGINT', () => {});",
+    "process.on('SIGTERM', () => {});",
+    "process.stdout.write('grandchild-ready\\n');",
+    "setInterval(() => {}, 1000);",
+  ].join(" ");
+  return [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    "process.on('SIGINT', () => {});",
+    "process.on('SIGTERM', () => {});",
+    `const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify(grandchildScript)}], { stdio: ['ignore', 'pipe', 'ignore'] });`,
+    "writeFileSync(process.env.TLH_SIGNAL_PID_FILE, JSON.stringify({ leaderPid: process.pid, grandchildPid: grandchild.pid }));",
+    "let output = '';",
+    "grandchild.stdout.on('data', (chunk) => {",
+    "  output += chunk.toString();",
+    "  if (!output.includes('grandchild-ready')) return;",
+    "  process.stdout.write('ready:' + process.pid + ':' + grandchild.pid + '\\n', () => {",
+    leaderClosesEarly
+      ? "    setImmediate(() => process.exit(0));"
+      : "    setInterval(() => {}, 1000);",
+    "  });",
+    "});",
+  ].join("\n");
+}
 
-test("guard exits 143 and removes per-run root on SIGTERM", { timeout: 8000 }, async () => {
-  await runHarnessTest(143, buildHarnessCode(), async (harness) => {
-    harness.kill("SIGTERM");
-  });
-});
+const posixSignalTestOptions = {
+  timeout: 10000,
+  skip: process.platform === "win32" ? "POSIX process-group ownership is unavailable" : false,
+};
 
 test(
-  "guard escalates to SIGKILL and exits 130 when child ignores SIGINT and second SIGINT arrives",
-  { timeout: 8000 },
+  "guard exits 130 and tears down a stubborn child tree on one SIGINT",
+  posixSignalTestOptions,
   async () => {
-    // Child registers a no-op SIGINT handler so the first forwarded SIGINT is
-    // ignored, keeping the child alive. The second SIGINT sent to the guard
-    // triggers SIGKILL escalation, terminating the child immediately.
-    //
-    // We use readyViaChildStdout=true so the harness announces "ready:<pid>"
-    // only AFTER the child writes to its stdout — which happens after
-    // process.on('SIGINT') is registered. This avoids the race where 'spawn'
-    // fires before the child's SIGINT handler is set up, causing the child to
-    // exit on the first forwarded SIGINT via the default disposition.
-    const childScript =
-      "process.on('SIGINT',()=>{}); process.stdout.write('r'); setTimeout(()=>{},30000)";
+    await runHarnessTest(130, buildHarnessCode(buildStubbornTreeScript()), (harness) => {
+      assert.equal(harness.kill("SIGINT"), true);
+    });
+  },
+);
+
+test(
+  "guard exits 143 and tears down a stubborn child tree on one SIGTERM",
+  posixSignalTestOptions,
+  async () => {
+    await runHarnessTest(143, buildHarnessCode(buildStubbornTreeScript()), (harness) => {
+      assert.equal(harness.kill("SIGTERM"), true);
+    });
+  },
+);
+
+test(
+  "guard exits 129 and tears down an owned child tree on one SIGHUP",
+  posixSignalTestOptions,
+  async () => {
+    await runHarnessTest(129, buildHarnessCode(buildStubbornTreeScript()), (harness) => {
+      assert.equal(harness.kill("SIGHUP"), true);
+    });
+  },
+);
+
+test(
+  "guard escalates after the group leader closes and removes the temp root",
+  posixSignalTestOptions,
+  async () => {
     await runHarnessTest(
-      130,
-      buildHarnessCode(childScript, { readyViaChildStdout: true }),
-      async (harness) => {
-        // First SIGINT: guard records it and forwards to child (child ignores it).
-        harness.kill("SIGINT");
-        // Brief pause so the guard's event loop processes the first signal and
-        // sets pendingSignal before the second arrives (POSIX standard signals
-        // are not queued, so rapid delivery could collapse into one).
-        await new Promise((r) => setTimeout(r, 100));
-        // Second SIGINT: guard escalates to SIGKILL.
-        harness.kill("SIGINT");
+      143,
+      buildHarnessCode(buildStubbornTreeScript({ leaderClosesEarly: true })),
+      (harness) => {
+        assert.equal(harness.kill("SIGTERM"), true);
       },
     );
   },

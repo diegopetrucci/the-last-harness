@@ -204,7 +204,7 @@ See [subagents.md](subagents.md#prompt-cache-warming) for the child-wait escalat
 
 TLH ships `compaction.reserveTokens: 49152` as a packaged default, a mitigation for compaction summaries hitting the token cap on reasoning models ([#785](https://github.com/diegopetrucci/the-last-harness/issues/785); upstream [earendil-works/pi#9075](https://github.com/earendil-works/pi/issues/9075), [#9512](https://github.com/earendil-works/pi/issues/9512)). Pi caps the compaction summary at 0.8 × `reserveTokens` and the split-turn prefix at 0.5 × `reserveTokens`; with Pi's default of 16,384 that is 13,107 tokens, and on adaptive-thinking models thinking shares that cap, so long high/xhigh/max sessions can fail every `/compact`. At 49,152 the limits are 39,321 (summary) and 24,576 (split-turn prefix).
 
-Trade-off: auto-compaction triggers about 32,768 tokens earlier, roughly 251k under the 300k context cap and roughly 223k for 272k developer children. The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
+Trade-off: auto-compaction triggers about 32,768 tokens earlier, roughly 301k under the 350k context cap and roughly 223k for 272k developer children. The parent and children share the isolated profile, so the value applies to both. It is global, not per-model.
 
 Small-window caveat: Pi does not scale the reserve to the model's window, so models with windows of 64k or less need their own override. The example below uses `16384`, which restores Pi's own default for that model:
 
