@@ -46,6 +46,7 @@ import {
 import {
   waitForAsyncResultFile,
   waitForMockPiCall,
+  waitForTestCondition,
   startedMockPiPids,
   waitForPidsToExit,
 } from "../support/async-execution-helpers.ts";
@@ -64,8 +65,12 @@ describe(
       mockPi.install();
     });
 
-    after(() => {
-      mockPi.uninstall();
+    after(async () => {
+      try {
+        await mockPi.cleanup();
+      } finally {
+        mockPi.uninstall();
+      }
     });
 
     beforeEach(() => {
@@ -73,7 +78,8 @@ describe(
       mockPi.reset();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      await mockPi.cleanup();
       removeTempDir(tempDir);
     });
 
@@ -855,17 +861,15 @@ describe(
           makeMinimalCtx(tempDir),
         );
 
-        const readyDeadline = Date.now() + scaleTestTimeout(5_000);
-        while (Date.now() < readyDeadline) {
-          if (
+        await waitForTestCondition(
+          () =>
             mockPi.callCount() === 1 &&
             typeof (
               [...state.foregroundControls.values()][0] as { interrupt?: unknown } | undefined
-            )?.interrupt === "function"
-          )
-            break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+            )?.interrupt === "function",
+          "foreground pause control",
+          scaleTestTimeout(5_000),
+        );
         await executor.execute(
           "producer-pause-interrupt",
           { action: "interrupt" },
