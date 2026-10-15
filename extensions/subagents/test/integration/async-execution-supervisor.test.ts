@@ -63,8 +63,12 @@ describe("async execution supervisor", () => {
     mockPi.install();
   });
 
-  after(() => {
-    mockPi.uninstall();
+  after(async () => {
+    try {
+      await mockPi.cleanup();
+    } finally {
+      mockPi.uninstall();
+    }
   });
 
   beforeEach(() => {
@@ -72,7 +76,8 @@ describe("async execution supervisor", () => {
     mockPi.reset();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await mockPi.cleanup();
     removeTempDir(tempDir);
   });
 
@@ -1025,6 +1030,11 @@ describe("async execution supervisor", () => {
           descendants.grandchildPid,
         ],
         `hard-killed async supervisor pause ${id}`,
+      );
+      assert.deepEqual(
+        fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("emergency-exit-")),
+        [],
+        "stubborn descendants must be reaped before their emergency lifetime expires",
       );
       assertPidExited(runnerPid, "runner");
       assertPidExited(childPids[0], "child");

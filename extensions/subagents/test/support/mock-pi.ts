@@ -16,6 +16,10 @@ interface MockPiResponse {
   ignoreSigterm?: boolean;
   ignoreSigint?: boolean;
   spawnStubbornDescendants?: boolean;
+  /** Wait for this marker before spawning stubborn descendants. */
+  stubbornDescendantStartMarker?: string;
+  /** Wait for this marker after descendants start but before publishing the call. */
+  stubbornDescendantCallMarker?: string;
   jsonl?: unknown[];
   /** Write a marker file at this path before any delay or jsonl output. */
   writeMarker?: string;
@@ -42,6 +46,7 @@ export interface MockPi {
   readonly dir: string;
   install(): void;
   uninstall(): void;
+  cleanup(): Promise<void>;
   onCall(response: MockPiResponse): void;
   reset(): void;
   callCount(): number;
@@ -53,6 +58,16 @@ const CALL_PREFIX = "call-";
 const DEFAULT_RESPONSE_FILE = "default-response.json";
 const CURRENT_GENERATION_FILE = "current-generation.txt";
 const QUEUED_PREFIX = "pending-";
+const CLEANUP_INT_GRACE_MS = 250;
+const CLEANUP_TERM_GRACE_MS = 250;
+const CLEANUP_KILL_GRACE_MS = 2_000;
+const CLEANUP_LATE_START_GRACE_MS = 500;
+const CLEANUP_POLL_INTERVAL_MS = 25;
+
+const CALL_RECORD_PATTERN = /^(?:call|stale-call)-\d+-(\d+)-.+\.json$/;
+const DESCENDANT_RECORD_PATTERN = /^descendants-(\d+)\.json$/;
+const OWNER_RECORD_PATTERN = /^owner-(\d+)\.json$/;
+const EMERGENCY_EXIT_PATTERN = /^emergency-exit-(\d+)\.json$/;
 
 function ensureDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
@@ -71,6 +86,206 @@ function listQueueFiles(queueDir: string, prefix: string): string[] {
       .sort();
   } catch {
     return [];
+  }
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ESRCH",
+  );
+}
+
+function addOwnedPid(pids: Set<number>, value: unknown): void {
+  const pid = typeof value === "string" ? Number(value) : value;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || pid === process.pid) return;
+  pids.add(pid);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readJsonRecord(filePath: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    // Atomic publication may be in flight or the record may already be gone.
+    return undefined;
+  }
+}
+
+interface OwnershipScan {
+  pids: Set<number>;
+  pending: boolean;
+  emergencyMarkers: string[];
+}
+
+function scanOwnership(queueDir: string): OwnershipScan {
+  const scan: OwnershipScan = { pids: new Set(), pending: false, emergencyMarkers: [] };
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(queueDir);
+  } catch {
+    return scan;
+  }
+
+  for (const entry of entries) {
+    const callMatch = entry.match(CALL_RECORD_PATTERN);
+    if (callMatch) addOwnedPid(scan.pids, callMatch[1]);
+
+    const ownerMatch = entry.match(OWNER_RECORD_PATTERN);
+    if (ownerMatch) {
+      addOwnedPid(scan.pids, ownerMatch[1]);
+      const owner = readJsonRecord(path.join(queueDir, entry));
+      if (owner?.state === "starting" || owner?.state === "spawning") scan.pending = true;
+    }
+
+    const descendantMatch = entry.match(DESCENDANT_RECORD_PATTERN);
+    if (descendantMatch) {
+      addOwnedPid(scan.pids, descendantMatch[1]);
+      const record = readJsonRecord(path.join(queueDir, entry));
+      if (record) {
+        addOwnedPid(scan.pids, record.childPid);
+        addOwnedPid(scan.pids, record.grandchildPid);
+      }
+    }
+
+    if (EMERGENCY_EXIT_PATTERN.test(entry)) scan.emergencyMarkers.push(entry);
+  }
+
+  return scan;
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isMissingProcessError(error)) return false;
+    throw error;
+  }
+}
+
+function signalOwnedPids(pids: Iterable<number>, signal: NodeJS.Signals): Set<number> {
+  const signaled = new Set<number>();
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+      signaled.add(pid);
+    } catch (error) {
+      if (isMissingProcessError(error)) continue;
+      throw error;
+    }
+  }
+  return signaled;
+}
+
+async function waitForOwnedPidsExit(
+  queueDir: string,
+  pids: Set<number>,
+  timeoutMs: number,
+  signal: NodeJS.Signals,
+  signaledPids: Set<number>,
+): Promise<number[]> {
+  const deadline = Date.now() + Math.max(timeoutMs, CLEANUP_LATE_START_GRACE_MS);
+  let noLiveSince: number | undefined;
+  while (true) {
+    const scan = scanOwnership(queueDir);
+    for (const pid of scan.pids) pids.add(pid);
+    const live = [...pids].filter(isPidAlive);
+    const lateLivePids = live.filter((pid) => !signaledPids.has(pid));
+    for (const pid of signalOwnedPids(lateLivePids, signal)) signaledPids.add(pid);
+    if (live.length === 0) {
+      if (!scan.pending) return [];
+      noLiveSince ??= Date.now();
+      if (Date.now() - noLiveSince >= CLEANUP_LATE_START_GRACE_MS) return [];
+    } else {
+      noLiveSince = undefined;
+    }
+    if (Date.now() >= deadline) return live;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(CLEANUP_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now()))),
+    );
+  }
+}
+
+function throwIfEmergencyExpiry(queueDir: string): void {
+  const markers = scanOwnership(queueDir).emergencyMarkers;
+  if (markers.length > 0) {
+    throw new Error(`Mock Pi descendant emergency expiry observed: ${markers.join(", ")}`);
+  }
+}
+
+async function cleanupOwnedPids(queueDir: string): Promise<void> {
+  const initialScan = scanOwnership(queueDir);
+  const ownedPids = initialScan.pids;
+  if (ownedPids.size === 0) {
+    throwIfEmergencyExpiry(queueDir);
+    return;
+  }
+
+  let signaledPids = signalOwnedPids(ownedPids, "SIGINT");
+  let live = await waitForOwnedPidsExit(
+    queueDir,
+    ownedPids,
+    CLEANUP_INT_GRACE_MS,
+    "SIGINT",
+    signaledPids,
+  );
+  if (live.length === 0) {
+    throwIfEmergencyExpiry(queueDir);
+    return;
+  }
+
+  const termScan = scanOwnership(queueDir);
+  for (const pid of termScan.pids) ownedPids.add(pid);
+  live = [...ownedPids].filter(isPidAlive);
+  signaledPids = signalOwnedPids(live, "SIGTERM");
+  live = await waitForOwnedPidsExit(
+    queueDir,
+    ownedPids,
+    CLEANUP_TERM_GRACE_MS,
+    "SIGTERM",
+    signaledPids,
+  );
+  if (live.length === 0) {
+    throwIfEmergencyExpiry(queueDir);
+    return;
+  }
+
+  const killScan = scanOwnership(queueDir);
+  for (const pid of killScan.pids) ownedPids.add(pid);
+  live = [...ownedPids].filter(isPidAlive);
+  signaledPids = signalOwnedPids(live, "SIGKILL");
+  live = await waitForOwnedPidsExit(
+    queueDir,
+    ownedPids,
+    CLEANUP_KILL_GRACE_MS,
+    "SIGKILL",
+    signaledPids,
+  );
+  if (live.length > 0) {
+    throw new Error(`Mock Pi fixture could not reap owned processes: ${live.join(", ")}`);
+  }
+  throwIfEmergencyExpiry(queueDir);
+}
+
+function writeAtomicJson(filePath: string, value: unknown): void {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  fs.writeFileSync(tempPath, JSON.stringify(value), "utf-8");
+  try {
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Preserve the publication error if cleanup also fails.
+    }
+    throw error;
   }
 }
 
@@ -108,12 +323,17 @@ export function createMockPi(): MockPi {
   let originalArgv1: string | undefined;
   let originalQueueEnv: string | undefined;
   let originalGenerationEnv: string | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  let cleanupFailed = false;
 
   const publishGeneration = () => {
     ensureDir(queueDir);
     fs.writeFileSync(path.join(queueDir, CURRENT_GENERATION_FILE), String(generation), "utf-8");
     process.env.MOCK_PI_GENERATION = String(generation);
   };
+
+  const hasSurvivingOwnershipEvidence = (): boolean =>
+    cleanupFailed || scanOwnership(queueDir).emergencyMarkers.length > 0;
 
   return {
     get dir() {
@@ -133,6 +353,7 @@ export function createMockPi(): MockPi {
     },
     uninstall() {
       if (!installed) return;
+      const preserveEvidence = hasSurvivingOwnershipEvidence();
       installed = false;
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
@@ -142,11 +363,27 @@ export function createMockPi(): MockPi {
       else process.env.MOCK_PI_GENERATION = originalGenerationEnv;
       if (originalArgv1 === undefined) delete process.argv[1];
       else process.argv[1] = originalArgv1;
+      if (preserveEvidence) return;
       try {
         fs.rmSync(rootDir, { recursive: true, force: true });
       } catch {
         // Test cleanup is best effort.
       }
+    },
+    cleanup() {
+      if (cleanupPromise) return cleanupPromise;
+      cleanupPromise = cleanupOwnedPids(queueDir)
+        .then(() => {
+          cleanupFailed = false;
+        })
+        .catch((error: unknown) => {
+          cleanupFailed = true;
+          throw error;
+        })
+        .finally(() => {
+          cleanupPromise = undefined;
+        });
+      return cleanupPromise;
     },
     onCall(response) {
       ensureDir(queueDir);
@@ -156,13 +393,14 @@ export function createMockPi(): MockPi {
       const finalPath = path.join(queueDir, fileName);
       fs.writeFileSync(tempPath, JSON.stringify(response), "utf-8");
       fs.renameSync(tempPath, finalPath);
-      fs.writeFileSync(
-        path.join(queueDir, DEFAULT_RESPONSE_FILE),
-        JSON.stringify(response),
-        "utf-8",
-      );
+      writeAtomicJson(path.join(queueDir, DEFAULT_RESPONSE_FILE), response);
     },
     reset() {
+      if (cleanupFailed) {
+        throw new Error(
+          "Mock Pi fixture cleanup failed; refusing to delete surviving ownership evidence.",
+        );
+      }
       nextSequence = 0;
       generation += 1;
       publishGeneration();
