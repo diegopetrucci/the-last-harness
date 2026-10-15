@@ -23,6 +23,7 @@ import {
   safeMetadataString,
   safeRunId,
   safeStepIndex,
+  telemetryExecutionFromRaw,
   type ParsedCallOperation,
 } from "./subagent-analysis-parser.mjs";
 import type {
@@ -72,12 +73,6 @@ function parseSubagentToolResultDetails(
   message: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
   return isObject(message.details) ? message.details : undefined;
-}
-function telemetryExecutionFromRaw(value: unknown): SubagentExecution {
-  if (!isObject(value) || !isObject(value.run)) return "unknown";
-  return value.run.execution === "foreground" || value.run.execution === "async"
-    ? value.run.execution
-    : "unknown";
 }
 
 function addLegacyDetailsToRun(

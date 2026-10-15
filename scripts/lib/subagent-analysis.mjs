@@ -5,19 +5,12 @@
  * never opens session files, async artifacts, or run-history.jsonl itself.
  */
 import { aggregateCoverage } from "./session-analysis-coverage.mjs";
-import { SUBAGENT_ACTIONS, TARGETING_ACTIONS, finiteNonNegativeNumber, hasOwn, isObject, mergeTelemetrySnapshots, parseLegacyModel, parseLegacyOutcome, parseLegacyStepTiming, parseLegacyUsage, parseNormalizedTelemetry, parsedCallOperation, safeMetadataString, safeRunId, safeStepIndex, } from "./subagent-analysis-parser.mjs";
+import { SUBAGENT_ACTIONS, TARGETING_ACTIONS, finiteNonNegativeNumber, hasOwn, isObject, mergeTelemetrySnapshots, parseLegacyModel, parseLegacyOutcome, parseLegacyStepTiming, parseLegacyUsage, parseNormalizedTelemetry, parsedCallOperation, safeMetadataString, safeRunId, safeStepIndex, telemetryExecutionFromRaw, } from "./subagent-analysis-parser.mjs";
 import { addStepMetrics, addSubagentUsage, collectRunLineage, createAggregate, createRunCoverageBucket, createTelemetryCoverageBucket, effectiveRunSteps, emptySubagentUsage, groupMapToObject, incrementAggregateMap, modelKey, outcomeForRun, runContinuation, runRuntime, runUsage, } from "./subagent-analysis-aggregation.mjs";
 import { analyzeWakeupsForScan } from "./subagent-analysis-wakeup.mjs";
 import { tupleKey } from "./subagent-analysis-keys.mjs";
 function parseSubagentToolResultDetails(message) {
     return isObject(message.details) ? message.details : undefined;
-}
-function telemetryExecutionFromRaw(value) {
-    if (!isObject(value) || !isObject(value.run))
-        return "unknown";
-    return value.run.execution === "foreground" || value.run.execution === "async"
-        ? value.run.execution
-        : "unknown";
 }
 function addLegacyDetailsToRun(run, details, sourceKind) {
     run.sourceKinds.add(sourceKind);
