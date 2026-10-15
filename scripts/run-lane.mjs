@@ -382,6 +382,9 @@ export async function runLanes(lanes, { baseHomeDir, cwd }, opts = {}) {
       return runLane(lane, laneHomeDir, { cwd, ...opts });
     }),
   );
-  if (_shutdownRequested && _shutdownComplete !== null) await _shutdownComplete;
+  if (_shutdownRequested) {
+    if (_shutdownComplete !== null) await _shutdownComplete;
+    return 1;
+  }
   return results.every((r) => r.status === "fulfilled" && r.value === true) ? 0 : 1;
 }

@@ -1017,6 +1017,7 @@ test(
     const readyMarker = join(base, "child-ready.txt");
     const commandReadyMarker = join(base, "command-ready.txt");
     const commandTermMarker = join(base, "command-term.txt");
+    const commandExitMarker = join(base, "command-exit.txt");
     const commandPidMarker = join(base, "command-pid.txt");
     const grandchildPidMarker = join(base, "grandchild-pid.txt");
     const grandchildReadyMarker = join(base, "grandchild-ready.txt");
@@ -1029,6 +1030,9 @@ test(
     const longLivedCommand = [
       `import { existsSync, writeFileSync } from "node:fs";`,
       `import { spawn } from "node:child_process";`,
+      `process.on("exit", (code) => {`,
+      `  writeFileSync(process.env.TLH_CI_SHARD_COMMAND_EXIT_MARKER, String(code));`,
+      `});`,
       `process.on("SIGTERM", () => {`,
       `  writeFileSync(process.env.TLH_CI_SHARD_COMMAND_TERM_MARKER, "term");`,
       `  process.exit(0);`,
@@ -1106,6 +1110,7 @@ test(
       TLH_CI_SHARD_READY_MARKER: readyMarker,
       TLH_CI_SHARD_COMMAND_READY_MARKER: commandReadyMarker,
       TLH_CI_SHARD_COMMAND_TERM_MARKER: commandTermMarker,
+      TLH_CI_SHARD_COMMAND_EXIT_MARKER: commandExitMarker,
       TLH_CI_SHARD_COMMAND_PID_MARKER: commandPidMarker,
       TLH_CI_SHARD_GRANDCHILD_PID_MARKER: grandchildPidMarker,
       TLH_CI_SHARD_GRANDCHILD_READY_MARKER: grandchildReadyMarker,
@@ -1155,10 +1160,14 @@ test(
       const output = Buffer.concat(stdout).toString("utf8");
       const errorOutput = Buffer.concat(stderr).toString("utf8");
       const exitEvidence = existsSync(exitMarker) ? readFileSync(exitMarker, "utf8") : "missing";
+      const commandExitEvidence = existsSync(commandExitMarker)
+        ? readFileSync(commandExitMarker, "utf8")
+        : "missing";
       const evidence = [
         `ready=${existsSync(readyMarker)}`,
         `commandReady=${existsSync(commandReadyMarker)}`,
         `commandTerm=${existsSync(commandTermMarker)}`,
+        `commandExit=${commandExitEvidence}`,
         `grandchildReady=${existsSync(grandchildReadyMarker)}`,
         `rootMissing=${existsSync(rootMissingMarker)}`,
         `cleanupStarted=${existsSync(cleanupStartedMarker)}`,
@@ -1191,8 +1200,13 @@ test(
       );
       assert.equal(
         readFileSync(completedMarker, "utf8"),
+        "1",
+        `runLanes should report interruption even though the TERM handler's command exits 0; ${evidence}`,
+      );
+      assert.equal(
+        commandExitEvidence,
         "0",
-        `the TERM handler's zero exit should settle the active command; ${evidence}`,
+        `the TERM handler's command should exit 0 before aggregate shutdown failure; ${evidence}`,
       );
       assert.match(output, /term-exiting leader partial output/);
       assert.equal(
