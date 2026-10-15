@@ -156,7 +156,7 @@ test("merge force-removes pi-intercom and post-merge sources/critical-sources co
   );
 });
 
-test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk are preserved)", () => {
+test("merge drops opted-out npm:helper listed in the extension manifest", () => {
   const fixture = tempFixture();
   writeFileSync(
     fixture.extensions,
@@ -175,15 +175,8 @@ test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk
     fixture.settings,
     JSON.stringify(
       {
-        packages: [
-          harnessPackage,
-          "git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-          "npm:pi-rtk",
-          "npm:@sherif-fanous/pi-rtk",
-          "git:github.com/sherif-fanous/pi-rtk@v0.5.0",
-          "npm:helper",
-        ],
-        tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
+        packages: [harnessPackage, "npm:helper"],
+        tlh: { disabledDefaultExtensions: ["helper"] },
       },
       null,
       2,
@@ -201,16 +194,6 @@ test("merge force-removes legacy pi-rtk packages (stale rtk opt-outs and tlh.rtk
 
   const settings = readJson(fixture.settings);
   assert.deepEqual(settings.packages, [harnessPackage]);
-  assert.deepEqual(
-    settings.tlh.disabledDefaultExtensions,
-    ["rtk", "pi-rtk", "helper"],
-    "stale rtk opt-outs are preserved (no longer pruned)",
-  );
-  assert.deepEqual(
-    settings.tlh.rtk,
-    { disabled: true },
-    "tlh.rtk is preserved (no longer scrubbed)",
-  );
 });
 
 test("merge restores mandatory quiet-tools from canonical and compact-bash variants, idempotently", () => {

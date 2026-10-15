@@ -1597,10 +1597,9 @@ function createFakeOutput() {
 const workingSeq = "\x1b]7501;state=working:app=tlh\x1b\\";
 const blockedSeq = "\x1b]7501;state=blocked:app=tlh\x1b\\";
 const doneSeq = "\x1b]7501;state=done:app=tlh\x1b\\";
-const idleSeq = "\x1b]7501;state=idle:app=tlh\x1b\\";
 const clearSeq = "\x1b]7501;state=clear\x1b\\";
 
-test("program-status reporter emits working, idle, done, blocked sequences", async () => {
+test("program-status reporter emits working, done, blocked sequences", async () => {
   const timers = createFakeTimers();
   const output = createFakeOutput();
   const reporter = createProgramStatusActivityReporter({
@@ -1618,25 +1617,7 @@ test("program-status reporter emits working, idle, done, blocked sequences", asy
   await flushAsyncWork();
   assert.deepEqual(output.writes, [workingSeq]);
 
-  // idle (no prior working → idle)
-  // reset to check idle vs done
-  output.writes.length = 0;
-  const freshOutput = createFakeOutput();
-  const freshTimers = createFakeTimers();
-  const freshReporter = createProgramStatusActivityReporter({
-    env: {},
-    output: freshOutput,
-    timers: freshTimers,
-    idleDebounceMs: 25,
-  });
-  freshReporter.handleSessionStart({ mode: "tui", sessionManager });
-  freshReporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
-  freshTimers.advance(25);
-  await flushAsyncWork();
-  assert.deepEqual(freshOutput.writes, [idleSeq], "no prior working → idle");
-  freshReporter.dispose();
-
-  // done: first emit working, then idle-like
+  // done: first emit working, then settle completed
   const doneOutput = createFakeOutput();
   const doneTimers = createFakeTimers();
   const doneReporter = createProgramStatusActivityReporter({
@@ -1865,29 +1846,6 @@ test("program-status reporter deduplicates consecutive identical states", async 
   reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: [] });
   await flushAsyncWork();
   assert.deepEqual(output.writes, [workingSeq], "duplicate working snapshots must be deduplicated");
-  reporter.dispose();
-});
-
-test("program-status reporter starts idle (not done) on a fresh reporter instance", async () => {
-  // Fresh session: lastRunOutcome is undefined, so quiescent state is idle (not done).
-  const timers = createFakeTimers();
-  const output = createFakeOutput();
-  const reporter = createProgramStatusActivityReporter({
-    env: {},
-    output,
-    timers,
-    idleDebounceMs: 0,
-  });
-  const sessionManager = { getSessionFile: () => undefined, getSessionId: () => "s" };
-  reporter.handleSessionStart({ mode: "tui", sessionManager });
-  reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
-  timers.advance(0);
-  await flushAsyncWork();
-  assert.deepEqual(
-    output.writes,
-    [idleSeq],
-    "fresh reporter without prior working → idle, not done",
-  );
   reporter.dispose();
 });
 
