@@ -52,7 +52,20 @@ npm run test:subagents:e2e
 
 On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests.
 
-CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.
+CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts. The CI `tests` job has a 30-minute job timeout; this is not a per-test or product deadline.
+
+### Focused diagnostic runs
+
+Use `--test-name-pattern` only for an explicitly labeled focused diagnostic, for example:
+
+```sh
+node scripts/run-subagents-tests.mjs integration --test-name-pattern='processes all items'
+node scripts/run-subagents-tests.mjs integration --test-name-pattern 'processes all items'
+```
+
+The runner accepts those equals and separate forms only for this diagnostic mode. A selected passing test may pass below the full-suite minimum, but failures, cancellations, skips, todos, and a pattern with zero selected passing tests still fail. Node can report a file with no name match as a passing wrapper around an empty `1..0` plan; the runner removes only that narrow exclusion wrapper and does not remove real skip/cancel/todo results. Other reduced-selection options such as `--test-only`, `--test-skip-pattern`, rerun-failures, tag filters, and those selection filters inherited through `NODE_OPTIONS` are rejected rather than certified accidentally.
+
+A focused diagnostic is not validation and an isolated pass is not proof of correctness or full-suite coverage. Full and sharded runs retain their existing minimum-count and zero-non-pass gates. A failed or cancelled child, signal termination, invalid TAP summary, or nonzero test result remains a failure. The direct focused runner uses synchronous `spawnSync` without signal handlers: Ctrl-C normally reaches the foreground process group, but a SIGTERM delivered only to the runner PID can leave its test child running and its `tlh-subagents-tests-*` root behind. The runner's guarantee is exit/TAP accounting, not descendant process or handle cleanup. To undo this behavior, revert this repository change only; it does not modify an installed profile or user configuration.
 
 For expanded output from the root Node tests, use:
 
@@ -62,7 +75,7 @@ npm run test:verbose
 
 Subagent successes remain concise in that aggregate command. Subagent failures automatically include their full TAP output.
 
-Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache and `node-compile-cache`), then removes the per-run root unconditionally. A non-empty leak list causes a non-zero exit code even when all tests pass. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level.
+Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-guard.mjs`, which creates an isolated per-run `TMPDIR`, runs the suites inside it, and reports any temp-directory entries that remain after the run (excluding the documented allowlist: `jiti` transform cache and `node-compile-cache`). After the owned process tree is gone, the guard removes the per-run root; if bounded teardown cannot prove that tree is gone, it retains the root for diagnosis and exits non-zero. A non-empty leak list also causes a non-zero exit code even when all tests pass. On POSIX, cancellation tears down the owned process group with the incoming SIGINT/SIGTERM/SIGHUP and escalates to SIGKILL after a bounded grace period; those signals return conventional exit codes 130/143/129. An uncatchable SIGKILL delivered to the guard or an owned group, including an agent timeout/abort group-kill, bypasses this cleanup and may leave detached suite groups and the per-run temporary root alive. On Windows, the guard can signal only the direct child, not its descendants. The CI shard runner (`scripts/run-ci-test-shard.mjs`) applies the same isolation and leak check at the shard level. These guards detect entries left under their owned temporary root; they do not certify process or handle cleanliness, and they do not certify short socket-root behavior on platforms with socket-path limits.
 
 ## TypeScript scope
 

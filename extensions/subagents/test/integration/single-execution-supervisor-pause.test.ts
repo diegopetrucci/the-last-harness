@@ -5,10 +5,14 @@
  * interruption paths in runSync without a real LLM.
  */
 
+import { spawn } from "node:child_process";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import fsDefault from "node:fs";
 import * as path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+import { fileURLToPath } from "node:url";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -21,6 +25,7 @@ import {
   tryImport,
 } from "../support/helpers.ts";
 import { makeExecutor } from "../support/single-execution-fixtures.ts";
+import { waitForMockPiSignal } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface RunSyncResult {
@@ -82,6 +87,10 @@ interface ExecutorModule {
   };
 }
 
+const MOCK_PI_SCRIPT_PATH = fileURLToPath(
+  new URL("../support/mock-pi-script.mjs", import.meta.url),
+);
+
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<unknown>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
@@ -142,6 +151,67 @@ async function waitForPidExit(pid: number, timeoutMs = scaleTestTimeout(10_000))
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRecord(filePath: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPositivePid(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function readOwnedFixturePids(queueDir: string): number[] {
+  const pids = new Set<number>();
+  for (const entry of fs.readdirSync(queueDir)) {
+    const ownerMatch = entry.match(/^(?:owner|descendants)-(\d+)\.json$/);
+    if (!ownerMatch) continue;
+    const ownerPid = Number(ownerMatch[1]);
+    if (isPositivePid(ownerPid) && ownerPid !== process.pid) pids.add(ownerPid);
+    if (!entry.startsWith("descendants-")) continue;
+    const record = readRecord(path.join(queueDir, entry));
+    for (const value of [record?.childPid, record?.grandchildPid]) {
+      if (isPositivePid(value) && value !== process.pid) pids.add(value);
+    }
+  }
+  return [...pids];
+}
+
+async function forceKillAndWait(pids: Iterable<number>, label: string): Promise<void> {
+  const owned = [...new Set(pids)].filter((pid) => pid > 0 && pid !== process.pid);
+  for (const pid of owned) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
+  await Promise.all(
+    owned.map((pid) =>
+      waitForPidExit(pid, scaleTestTimeout(5_000)).catch((error: unknown) => {
+        throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      }),
+    ),
+  );
+}
+
+async function waitForOwnerState(ownerPath: string, state: string): Promise<void> {
+  const deadline = Date.now() + scaleTestTimeout(5_000);
+  while (true) {
+    const record = readRecord(ownerPath);
+    if (record?.state === state) return;
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for owner state '${state}'`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 describe(
   "single sync execution",
   { skip: !available ? "pi packages not available" : undefined },
@@ -154,8 +224,12 @@ describe(
       mockPi.install();
     });
 
-    after(() => {
-      mockPi.uninstall();
+    after(async () => {
+      try {
+        await mockPi.cleanup();
+      } finally {
+        mockPi.uninstall();
+      }
     });
 
     beforeEach(() => {
@@ -163,9 +237,126 @@ describe(
       mockPi.reset();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+      await mockPi.cleanup();
       removeTempDir(tempDir);
     });
+
+    it("publishes mock fallback responses atomically", () => {
+      const originalWriteFileSync = fsDefault.writeFileSync;
+      const directDefaultWrites: string[] = [];
+      const patchedWriteFileSync = (...args: Parameters<typeof fsDefault.writeFileSync>) => {
+        const target = args[0];
+        if (typeof target === "string" && path.basename(target) === "default-response.json") {
+          directDefaultWrites.push(target);
+        }
+        return originalWriteFileSync(...args);
+      };
+      Object.defineProperty(fsDefault, "writeFileSync", {
+        configurable: true,
+        value: patchedWriteFileSync,
+      });
+      syncBuiltinESMExports();
+      try {
+        const response = { output: "atomic fallback", exitCode: 0 };
+        mockPi.onCall(response);
+        const persisted: unknown = JSON.parse(
+          fs.readFileSync(path.join(mockPi.dir, "default-response.json"), "utf-8"),
+        );
+        assert.deepEqual(persisted, response);
+        assert.deepEqual(
+          directDefaultWrites,
+          [],
+          "fallback publication must rename a complete temporary file into place",
+        );
+      } finally {
+        Object.defineProperty(fsDefault, "writeFileSync", {
+          configurable: true,
+          value: originalWriteFileSync,
+        });
+        syncBuiltinESMExports();
+      }
+    });
+
+    it(
+      "reaps stubborn descendants when cleanup starts before call publication",
+      {
+        skip: process.platform === "win32" ? "POSIX signal cleanup fixture" : undefined,
+      },
+      async () => {
+        const startMarker = path.join(tempDir, "release-stubborn-descendant-start");
+        const callMarker = path.join(tempDir, "release-stubborn-call-publication");
+        mockPi.onCall({
+          output: "abandoned",
+          ignoreSigint: true,
+          ignoreSigterm: true,
+          spawnStubbornDescendants: true,
+          stubbornDescendantStartMarker: startMarker,
+          stubbornDescendantCallMarker: callMarker,
+          keepAliveAfterFinalMessageMs: 30_000,
+        });
+        const childEnv = { ...process.env };
+        for (const key of Object.keys(childEnv)) {
+          if (
+            key === "TICKETS_DIR" ||
+            key === "NODE_TEST_CONTEXT" ||
+            key.startsWith("PI_SUBAGENT_") ||
+            key.startsWith("PI_SUBAGENTS_")
+          )
+            delete childEnv[key];
+        }
+        const child = spawn(process.execPath, [MOCK_PI_SCRIPT_PATH], {
+          env: childEnv,
+          stdio: "ignore",
+        });
+        const childDone = new Promise<void>((resolve) => {
+          child.once("error", () => resolve());
+          child.once("exit", () => resolve());
+        });
+        const parentPid = child.pid;
+        const ownerPath = path.join(mockPi.dir, `owner-${parentPid}.json`);
+        let ownedPids = isPositivePid(parentPid) ? [parentPid] : [];
+        try {
+          assert.ok(isPositivePid(parentPid), "expected mock process pid");
+          await waitForOwnerState(ownerPath, "spawning");
+          assert.equal(mockPi.callCount(), 0, "ownership must precede call publication");
+
+          const cleanupPromise = mockPi.cleanup();
+          // cleanup() has synchronously sent its first signal before returning;
+          // release startup now through a marker instead of a wall-clock delay.
+          fs.writeFileSync(startMarker, "", "utf-8");
+          await waitForMockPiSignal(mockPi, parentPid, "SIGINT");
+
+          const childDeadline = Date.now() + scaleTestTimeout(5_000);
+          let childPid: number | undefined;
+          while (childPid === undefined) {
+            childPid = readOwnedFixturePids(mockPi.dir).find((pid) => pid !== parentPid);
+            if (childPid !== undefined) break;
+            if (Date.now() >= childDeadline) {
+              throw new Error("Timed out waiting for parent-published stubborn child ownership");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          ownedPids = [parentPid, childPid];
+          assert.equal(mockPi.callCount(), 0, "early teardown must abort before call publication");
+
+          await cleanupPromise;
+          await childDone;
+          for (const pid of ownedPids) {
+            assert.throws(() => process.kill(pid, 0), /ESRCH/);
+          }
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          const fallbackPids = new Set([
+            ...ownedPids,
+            ...readOwnedFixturePids(mockPi.dir),
+            ...(isPositivePid(child.pid) ? [child.pid] : []),
+          ]);
+          await forceKillAndWait(fallbackPids, "independent stubborn descendant teardown");
+          await childDone;
+        }
+      },
+    );
 
     it("interrupts acceptance verification and returns a paused foreground result", async () => {
       const report = [
