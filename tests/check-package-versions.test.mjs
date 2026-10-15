@@ -843,6 +843,10 @@ function makeRuntimeManifestDir({
    * - object: used as-is.
    */
   overrides = undefined,
+  /** Override only packages[PI_RUNTIME_TOP_LEVEL_KEY].version in the lock. */
+  lockEntryVersion = undefined,
+  /** Override only packages[""].dependencies[pi-coding-agent] in the lock. */
+  lockRootDependency = undefined,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-runtime-manifest-test-"));
   _tmpDirs.push(dir);
@@ -906,6 +910,14 @@ function makeRuntimeManifestDir({
       integrity:
         "sha512-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ==",
     };
+  }
+
+  if (lockEntryVersion !== undefined) {
+    packages[PI_RUNTIME_TOP_LEVEL_KEY].version = lockEntryVersion;
+  }
+
+  if (lockRootDependency !== undefined) {
+    packages[""].dependencies[PI_CODING_AGENT_PACKAGE] = lockRootDependency;
   }
 
   if (missingResolved) {
@@ -978,6 +990,36 @@ test("check-package-versions fails when runtime manifest dep version mismatches 
   assert.match(result.stderr, /dependencies\["@earendil-works\/pi-coding-agent"\]/);
   assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_DRIFT_VERSION));
   assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_VERSION));
+});
+
+test("check-package-versions fails when runtime lock entry version drifts from managed Pi pin", () => {
+  const runtimeDir = makeRuntimeManifestDir({ lockEntryVersion: FIXTURE_MANAGED_PI_DRIFT_VERSION });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /package-lock\.json#packages\["node_modules\/@earendil-works\/pi-coding-agent"\]\.version/,
+  );
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_DRIFT_VERSION));
+});
+
+test("check-package-versions fails when runtime lock root dependency drifts from managed Pi pin", () => {
+  const runtimeDir = makeRuntimeManifestDir({
+    lockRootDependency: FIXTURE_MANAGED_PI_DRIFT_VERSION,
+  });
+  const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+  const result = runCheckPackageVersions(fixture, ["--runtime-manifest-dir", runtimeDir]);
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /package-lock\.json#packages\[""\]\.dependencies\["@earendil-works\/pi-coding-agent"\]/,
+  );
+  assert.match(result.stderr, new RegExp(FIXTURE_MANAGED_PI_DRIFT_VERSION));
 });
 
 test("check-package-versions fails when runtime lockfile has wrong lockfileVersion", () => {
