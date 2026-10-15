@@ -22,9 +22,7 @@ type TlhFooterFirstLineInput = {
  *
  * Falls back to `fallbackBranch` (typically `footerData.getGitBranch()`) only
  * when the cached status snapshot is `undefined`, i.e. the git cache has not
- * been wired or its first refresh has not completed yet. The legacy
- * parenthesized `(branch)` format is intentionally gone — the bullet style is
- * the new canonical look.
+ * been wired or its first refresh has not completed yet.
  */
 export function composeTlhFooterFirstLine(input: TlhFooterFirstLineInput): string {
   const segments: string[] = [input.cwd];

@@ -487,8 +487,8 @@ function createModelSelectionPersistencePatch(): TlhModelSelectionPersistencePat
 }
 
 /**
- * Install TLH's narrow model provenance wrapper. Pi 0.99.2 owns model
- * persistence and dispatches model_select from AgentSession.setModel; the
+ * Install TLH's narrow model provenance wrapper. The pinned Pi runtime owns
+ * model persistence and dispatches model_select from AgentSession.setModel; the
  * public method's awaited call boundary is the only place where `persist` is
  * available throughout the complete extension dispatch.
  *
