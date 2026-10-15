@@ -17,6 +17,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Install and update now keep TLH's pinned `gn` and `tk` in the isolated profile `bin` up to date: the managed copies are reinstalled whenever the shipped pin differs from the recorded `tlh.gnosis.installedVersion` / `tlh.tickets.installedSha256` (upgrade or downgrade) or no record exists, instead of adopting an existing `PATH` copy. `PATH`/Homebrew binaries are never modified and are used only as a fallback if the managed install fails. A `tk` chosen explicitly with `tlh tickets enable --install-path` is recorded as `tlh.tickets.installPathSource: "user"` and preserved across updates while it validates. [#787](https://github.com/diegopetrucci/the-last-harness/issues/787)
 - TLH now ships `compaction.reserveTokens: 49152` as a packaged default (inserted only when absent, recorded with a `tlh.compactionReserveTokensManaged` marker) to mitigate compaction summaries hitting the token cap on reasoning models. Auto-compaction triggers about 32,768 tokens earlier; see [`docs/install.md`](docs/install.md#compaction-reserve-default). [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
+- The primary/non-child context cap is raised from 300k to 350k so auto-compaction triggers at about 301k with the 49,152 `compaction.reserveTokens` default; the developer child 272k ceiling is unchanged.
 
 ## [0.45.0] - 2026-10-14
 

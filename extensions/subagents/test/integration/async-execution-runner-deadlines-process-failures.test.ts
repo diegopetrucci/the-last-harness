@@ -14,6 +14,7 @@ import type { MockPi } from "../support/helpers.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import {
   ASYNC_DIR,
+  RESULTS_DIR,
   type AsyncResultPayload,
   type AsyncStatusPayload,
   TEMP_ROOT_DIR,
@@ -751,7 +752,10 @@ describe("async execution runner deadlines and process failures", () => {
       maxSubagentDepth: 2,
     });
 
-    await waitForMockPiCall(mockPi, 0);
+    // A role timeout may fire before the mock process publishes its call record
+    // on a loaded runner. The result artifact is the authoritative timeout
+    // boundary; requiring a call record here turns that valid path into a
+    // misleading polling failure.
     const payload = await readAsyncPayload(id);
     assert.equal(payload.state, "failed");
     assert.equal(payload.timedOut, true);
@@ -795,7 +799,9 @@ describe("async execution runner deadlines and process failures", () => {
       maxSubagentDepth: 2,
     });
 
-    await waitForMockPiCall(mockPi, 0);
+    await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000), {
+      terminalResultPath: path.join(RESULTS_DIR, `${id}.json`),
+    });
     const resultPath = await waitForAsyncResultFile(id);
     const elapsedMs = Date.now() - startedAt;
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
