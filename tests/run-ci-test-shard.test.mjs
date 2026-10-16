@@ -2,11 +2,23 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildLanes, parseShard, registerTmpdirCleanup } from "../scripts/run-ci-test-shard.mjs";
+import {
+  CI_TIMINGS_DIR_ENV,
+  CI_TIMINGS_EVENT_FILE_ENV,
+  createCiTimingConfig,
+} from "../scripts/ci-timings.mjs";
+import {
+  CI_LANE_LAYOUT_ENV,
+  buildLanes,
+  parseLaneLayout,
+  parseShard,
+  parseShardRunnerOptions,
+  registerTmpdirCleanup,
+} from "../scripts/run-ci-test-shard.mjs";
 import { runLane, runLanes, spawnBuffered } from "../scripts/run-lane.mjs";
 import { isProcessAlive as processIsAlive } from "./process-liveness.mjs";
 
@@ -30,9 +42,20 @@ function tempDir() {
  * session state from the contributor harness.
  */
 function scrubTestEnv(overrides = {}) {
-  const env = { ...process.env, ...overrides };
+  const env = { ...process.env };
   delete env.TICKETS_DIR;
   delete env.NODE_TEST_CONTEXT;
+  delete env.TLH_CI_TIMINGS_DIR;
+  delete env.TLH_CI_TIMINGS_EVENT_FILE;
+  delete env.TLH_CI_TIMINGS_SUITE;
+  delete env.TLH_CI_TIMINGS_SHARD;
+  delete env.TLH_CI_TIMINGS_REPO_ROOT;
+  delete env.TLH_CI_TIMINGS_RUN_ID;
+  delete env[CI_LANE_LAYOUT_ENV];
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
+  }
+  Object.assign(env, overrides);
   for (const key of Object.keys(env)) {
     if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
   }
@@ -66,6 +89,9 @@ function scrubLaneEnv(overrides = {}) {
 }
 
 const cleanLaneEnv = scrubLaneEnv();
+
+// Baseline layout assertions must not inherit an opt-in experimental selector.
+const baselineLaneEnv = Object.freeze({});
 
 function isNumericPid(pid) {
   return Number.isInteger(pid) && pid > 0;
@@ -682,6 +708,41 @@ test("runLane: returns true when all commands succeed", async () => {
   assert.equal(ok, true);
 });
 
+test("runLane: optional timing hooks observe command and lane wall time", async () => {
+  const calls = [];
+  const timing = {
+    startLane(name) {
+      calls.push(["lane-start", name]);
+    },
+    endLane(name, ok) {
+      calls.push(["lane-end", name, ok]);
+    },
+    startCommand(command) {
+      calls.push(["command-start", command.suite]);
+      return command;
+    },
+    endCommand(command, result) {
+      calls.push(["command-end", command.suite, result.ok]);
+    },
+  };
+  const ok = await runLane(
+    {
+      name: "timed",
+      commands: [[process.execPath, "-e", "process.exit(0)"]],
+      timingCommands: [{ suite: "root", eventFile: "/repo/timings/root.events.jsonl" }],
+    },
+    tempDir(),
+    { env: cleanLaneEnv, timing },
+  );
+  assert.equal(ok, true);
+  assert.deepEqual(calls, [
+    ["lane-start", "timed"],
+    ["command-start", "root"],
+    ["command-end", "root", true],
+    ["lane-end", "timed", true],
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // runLanes
 // ---------------------------------------------------------------------------
@@ -971,6 +1032,103 @@ writeFileSync(${JSON.stringify(completedFile)}, String(ok));
     } finally {
       const survivors = await cleanupOwnedPids([helper.pid, readPid(firstPidFile)]);
       assert.deepEqual(survivors, [], "queue fixture processes must not survive cleanup");
+    }
+  },
+);
+
+test(
+  "runLanes: real cancellation invokes the timing collector shutdown hook",
+  { timeout: 20_000 },
+  async () => {
+    const base = tempDir();
+    const timingDir = mkdtempSync(join(resolve(testDir, ".."), ".tmp-ci-timings-cancel-"));
+    _tmpDirs.push(timingDir);
+    const commandReady = join(base, "timing-command.ready");
+    const helperReady = join(base, "timing-helper.ready");
+    const reportPath = join(timingDir, "tlh-ci-timings-real-cancel-1_2.json");
+    const repoRoot = resolve(testDir, "..");
+    const longCommand = [
+      `import { writeFileSync } from "node:fs";`,
+      `writeFileSync(${JSON.stringify(commandReady)}, "ready");`,
+      `setInterval(() => {}, 100000);`,
+    ].join("\n");
+    const helperCode = `
+import { existsSync, writeFileSync } from "node:fs";
+import { createCiTimingCollector, createCiTimingConfig, timingEventFile } from ${JSON.stringify(resolve(repoRoot, "scripts/ci-timings.mjs"))};
+import { runLanes } from ${JSON.stringify(runLanePath)};
+const config = createCiTimingConfig({
+  env: process.env,
+  repoRoot: ${JSON.stringify(repoRoot)},
+  shard: "1/2",
+  runId: "real-cancel",
+  availableParallelism: () => 4,
+});
+if (!config) throw new Error("timing config was unexpectedly disabled");
+const timing = createCiTimingCollector(config);
+const eventFile = timingEventFile(config, { lane: "a", index: 0, suite: "root" });
+const lanesPromise = runLanes(
+  [{
+    name: "a",
+    commands: [[process.execPath, "--input-type=module", "-e", ${JSON.stringify(longCommand)}]],
+    env: process.env,
+    timingCommands: [{ suite: "root", eventFile }],
+  }],
+  { baseHomeDir: ${JSON.stringify(base)}, cwd: ${JSON.stringify(repoRoot)} },
+  { timing },
+);
+while (!existsSync(${JSON.stringify(commandReady)})) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+writeFileSync(${JSON.stringify(helperReady)}, "ready");
+await lanesPromise;
+`;
+    const child = spawn(process.execPath, ["--input-type=module", "-e", helperCode], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: ownedTestEnv(base, { TLH_CI_TIMINGS_DIR: timingDir }),
+    });
+    const closePromise = observeClose(child);
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    try {
+      const deadline = Date.now() + 5000;
+      while (!existsSync(helperReady)) {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          const result = await awaitWithTimeout(
+            closePromise,
+            HELPER_CLOSE_TIMEOUT_MS,
+            "timing cancellation helper close",
+          );
+          throw new Error(
+            `helper exited before cancellation handshake (code=${result.code}, signal=${result.signal}); ` +
+              `stderr=${Buffer.concat(stderr)}`,
+          );
+        }
+        if (Date.now() > deadline)
+          throw new Error("timing cancellation helper readiness timed out");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      assert.equal(child.kill("SIGTERM"), true, "helper should accept SIGTERM");
+      const result = await awaitWithTimeout(
+        closePromise,
+        HELPER_CLOSE_TIMEOUT_MS,
+        "timing cancellation helper close",
+      );
+      const evidence = `code=${result.code}; signal=${result.signal}; stdout=${Buffer.concat(stdout)}; stderr=${Buffer.concat(stderr)}`;
+      assert.equal(result.signal, null, `helper should exit through run-lane; ${evidence}`);
+      assert.equal(result.code, 1, `helper should exit with cancellation failure; ${evidence}`);
+      assert.equal(existsSync(reportPath), true, `timing report should be written; ${evidence}`);
+      const report = JSON.parse(readFileSync(reportPath, "utf8"));
+      assert.equal(report.status, "cancelled");
+      assert.equal(report.cancellationSignal, "SIGTERM");
+      assert.equal(report.lanes[0].status, "cancelled");
+      assert.equal(report.lanes[0].commands[0].status, "cancelled");
+    } finally {
+      const survivors = await cleanupOwnedPids([child.pid]);
+      assert.deepEqual(survivors, [], "timing cancellation processes must not survive cleanup");
     }
   },
 );
@@ -1275,21 +1433,66 @@ test("parseShard: rejects zero shard (0/2)", () => {
   assert.throws(() => parseShard("0/2"), /Shard number must be 1 or 2/);
 });
 
+test("parseLaneLayout: defaults to baseline and accepts experimental", () => {
+  assert.equal(parseLaneLayout(undefined), "baseline");
+  assert.equal(parseLaneLayout("baseline"), "baseline");
+  assert.equal(parseLaneLayout("experimental"), "experimental");
+});
+
+test("parseLaneLayout: rejects malformed values", () => {
+  assert.throws(() => parseLaneLayout("three-lanes"), /TLH_CI_LANE_LAYOUT/);
+  assert.throws(() => parseLaneLayout(""), /TLH_CI_LANE_LAYOUT/);
+});
+
+test("parseShardRunnerOptions: validates layout and concurrency before spawning", () => {
+  assert.deepEqual(
+    parseShardRunnerOptions(["1/2", "--lane-layout", "experimental"], {
+      TLH_TEST_CONCURRENCY: "4",
+    }),
+    { shard: 1, shardStr: "1/2", laneLayout: "experimental" },
+  );
+  assert.throws(
+    () => parseShardRunnerOptions(["1/2"], { [CI_LANE_LAYOUT_ENV]: "invalid" }),
+    /TLH_CI_LANE_LAYOUT/,
+  );
+  assert.throws(
+    () => parseShardRunnerOptions(["1/2"], { TLH_TEST_CONCURRENCY: "0" }),
+    /TLH_TEST_CONCURRENCY/,
+  );
+  assert.throws(
+    () => parseShardRunnerOptions(["1/2", "--unknown"], {}),
+    /Unknown run-ci-test-shard\.mjs option/,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // buildLanes
 // ---------------------------------------------------------------------------
 
 test("buildLanes: projects adaptive local and explicit GitHub concurrency", () => {
-  const [localLaneA] = buildLanes(1, "1/2", {});
+  const [localLaneA] = buildLanes(1, "1/2", baselineLaneEnv, null, "baseline");
   assert.match(localLaneA.commands[0].join(" "), /--test-concurrency=[1-9]\d*/);
 
-  const [githubLaneA] = buildLanes(1, "1/2", { GITHUB_ACTIONS: "true" });
+  const [githubLaneA] = buildLanes(
+    1,
+    "1/2",
+    { ...baselineLaneEnv, GITHUB_ACTIONS: "true" },
+    null,
+    "baseline",
+  );
   assert.doesNotMatch(githubLaneA.commands[0].join(" "), /--test-concurrency=/);
 
-  const [overriddenLaneA] = buildLanes(1, "1/2", {
-    GITHUB_ACTIONS: "true",
-    TLH_TEST_CONCURRENCY: "3",
-  });
+  const [overriddenLaneA] = buildLanes(
+    1,
+    "1/2",
+    {
+      ...baselineLaneEnv,
+      GITHUB_ACTIONS: "true",
+      TLH_TEST_CONCURRENCY: "3",
+    },
+    null,
+    "baseline",
+  );
   assert.match(overriddenLaneA.commands[0].join(" "), /--test-concurrency=3/);
 });
 
@@ -1308,8 +1511,270 @@ test("CI shard runner reports invalid concurrency overrides without a stack", ()
   assert.doesNotMatch(result.stderr, /\bat /u);
 });
 
+test("buildLanes: opt-in timing adds a separate reporter and suite metadata", () => {
+  const repoRoot = resolve(testDir, "..");
+  const root = mkdtempSync(join(repoRoot, ".tmp-ci-timings-runner-"));
+  try {
+    const env = scrubLaneEnv({
+      TLH_CI_TIMINGS_DIR: join(root, "reports"),
+      HOME: join(root, "home"),
+      TMPDIR: join(root, "tmp"),
+    });
+    const config = createCiTimingConfig({
+      env,
+      repoRoot,
+      shard: "1/2",
+      runId: "runner-test",
+      availableParallelism: () => 4,
+    });
+    const [laneA, laneB] = buildLanes(1, "1/2", env, config, "baseline");
+    const rootCommand = laneA.commands[0].join(" ");
+    assert.match(rootCommand, /--test-reporter=dot/);
+    assert.match(rootCommand, /ci-timing-reporter\.mjs/);
+    assert.match(rootCommand, /--test-reporter-destination=stdout/);
+    assert.equal(laneA.env?.[CI_TIMINGS_DIR_ENV], undefined);
+    assert.equal(laneA.env?.[CI_TIMINGS_EVENT_FILE_ENV], undefined);
+    assert.equal(laneA.commandEnvs?.[0]?.[CI_TIMINGS_DIR_ENV], undefined);
+    assert.equal(laneA.commandEnvs?.[0]?.[CI_TIMINGS_EVENT_FILE_ENV], undefined);
+    assert.deepEqual(
+      laneA.timingCommands?.map((entry) => entry?.suite),
+      ["root", "unit", "e2e"],
+    );
+    assert.deepEqual(
+      laneB.timingCommands?.map((entry) => entry?.suite),
+      ["integration"],
+    );
+    assert.match(laneA.commandEnvs?.[1]?.TLH_CI_TIMINGS_EVENT_FILE ?? "", /unit\.events\.jsonl$/);
+    assert.match(
+      laneB.commandEnvs?.[0]?.TLH_CI_TIMINGS_EVENT_FILE ?? "",
+      /integration\.events\.jsonl/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test(
+  "timed root runner does not leak its event destination to a nested runner",
+  { timeout: 120_000 },
+  async () => {
+    const repoRoot = resolve(testDir, "..");
+    const root = mkdtempSync(join(repoRoot, ".tmp-ci-timings-nested-"));
+    const reports = join(root, "reports");
+    const testFile = join(root, "nested-runner.test.mjs");
+    const runnerPath = join(repoRoot, "scripts/run-subagents-tests.mjs");
+    writeFileSync(
+      testFile,
+      [
+        'import test from "node:test";',
+        'import { spawnSync } from "node:child_process";',
+        'test("starts a nested runner without timing output", () => {',
+        `  const result = spawnSync(process.execPath, [${JSON.stringify(runnerPath)}, "e2e"], {`,
+        `    cwd: ${JSON.stringify(repoRoot)},`,
+        "    env: process.env,",
+        '    encoding: "utf8",',
+        "  });",
+        "  if (result.status !== 0) {",
+        "    throw new Error(`nested runner failed: ${result.status}\\n${result.stdout}\\n${result.stderr}`);",
+        "  }",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    try {
+      mkdirSync(join(root, "home"), { recursive: true });
+      mkdirSync(join(root, "tmp"), { recursive: true });
+      const env = scrubLaneEnv({
+        [CI_TIMINGS_DIR_ENV]: reports,
+        HOME: join(root, "home"),
+        TMPDIR: join(root, "tmp"),
+      });
+      const config = createCiTimingConfig({
+        env,
+        repoRoot,
+        shard: "1/2",
+        runId: "nested-runner",
+        availableParallelism: () => 4,
+      });
+      assert.ok(config);
+      const [laneA] = buildLanes(1, "1/2", env, config, "baseline");
+      const rootCommand = [...laneA.commands[0]];
+      rootCommand[rootCommand.length - 1] = testFile;
+      const output = captureStream();
+      const ok = await runLane(
+        {
+          name: laneA.name,
+          commands: [rootCommand],
+          env,
+          commandEnvs: [laneA.commandEnvs?.[0]],
+        },
+        join(root, "lane-home"),
+        { cwd: repoRoot, stdout: output.stream },
+      );
+      assert.equal(ok, true, output.content);
+
+      const eventFile = laneA.timingCommands?.[0]?.eventFile;
+      assert.ok(eventFile);
+      const records = readFileSync(eventFile, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(JSON.parse);
+      assert.equal(
+        records.length,
+        1,
+        `unexpected timing records: ${readFileSync(eventFile, "utf8")}`,
+      );
+      assert.equal(records[0].suite, "root");
+      assert.equal(records[0].file, relative(repoRoot, testFile).replaceAll("\\", "/"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("inherited experimental layout keeps baseline buildLanes assertions isolated", () => {
+  // Run the existing buildLanes assertions in a child so this selector is
+  // inherited through process.env. This test name intentionally stays outside
+  // the child pattern to avoid recursively spawning itself.
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      "--test-reporter=tap",
+      "--test-name-pattern",
+      "^buildLanes:",
+      fileURLToPath(import.meta.url),
+    ],
+    {
+      cwd: resolve(testDir, ".."),
+      env: scrubTestEnv({ [CI_LANE_LAYOUT_ENV]: "experimental" }),
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  const output = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n");
+  assert.equal(
+    result.status,
+    0,
+    `baseline buildLanes assertions failed under inherited experimental layout:\n${output}`,
+  );
+  assert.match(result.stdout ?? "", /# tests [1-9]\d*/u, output);
+});
+
+test("buildLanes: experimental shard 1 uses three isolated lanes", () => {
+  const lanes = buildLanes(1, "1/2", { [CI_LANE_LAYOUT_ENV]: "experimental" });
+  assert.deepEqual(
+    lanes.map((lane) => ({ name: lane.name, commandCount: lane.commands.length })),
+    [
+      { name: "root", commandCount: 1 },
+      { name: "unit", commandCount: 2 },
+      { name: "integration", commandCount: 1 },
+    ],
+  );
+
+  const [rootLane, unitLane, integrationLane] = lanes;
+  assert.match(rootLane.commands[0].join(" "), /--test-shard=1\/2/);
+  assert.match(unitLane.commands[0].join(" "), /run-subagents-tests\.mjs unit/);
+  assert.match(unitLane.commands[0].join(" "), /--test-shard=1\/2/);
+  assert.match(unitLane.commands[1].join(" "), /run-subagents-tests\.mjs e2e/);
+  assert.doesNotMatch(unitLane.commands[1].join(" "), /--test-shard=/);
+  assert.match(integrationLane.commands[0].join(" "), /--test-shard=1\/2/);
+});
+
+test("buildLanes: experimental shard 2 keeps unit and integration assignments", () => {
+  const lanes = buildLanes(2, "2/2", {}, null, "experimental");
+  assert.deepEqual(
+    lanes.map((lane) => ({ name: lane.name, commandCount: lane.commands.length })),
+    [
+      { name: "root", commandCount: 1 },
+      { name: "unit", commandCount: 1 },
+      { name: "integration", commandCount: 1 },
+    ],
+  );
+  assert.doesNotMatch(
+    lanes[1].commands.map((command) => command.join(" ")).join("\n"),
+    /run-subagents-tests\.mjs e2e/,
+  );
+});
+
+test("experimental lanes retain independent HOME directories and sibling failure isolation", async () => {
+  const base = tempDir();
+  const markers = new Map([
+    ["root", join(base, "root-home.txt")],
+    ["unit", join(base, "unit-home.txt")],
+    ["integration", join(base, "integration-home.txt")],
+    ["e2e", join(base, "e2e-ran.txt")],
+  ]);
+  const writeMarker = (marker, exitCode = 0) => [
+    process.execPath,
+    "--input-type=module",
+    "-e",
+    `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, process.env.HOME); process.exit(${exitCode});`,
+  ];
+  const definitions = buildLanes(1, "1/2", {}, null, "experimental");
+  const lanes = definitions.map((lane) => ({
+    ...lane,
+    commands:
+      lane.name === "unit"
+        ? [writeMarker(markers.get("unit"), 1), writeMarker(markers.get("e2e"))]
+        : [writeMarker(markers.get(lane.name))],
+  }));
+
+  const exitCode = await runLanes(lanes, { baseHomeDir: base });
+  assert.equal(exitCode, 1);
+  assert.equal(existsSync(markers.get("root")), true);
+  assert.equal(existsSync(markers.get("unit")), true);
+  assert.equal(existsSync(markers.get("integration")), true);
+  assert.equal(existsSync(markers.get("e2e")), false);
+  const homes = [
+    readFileSync(markers.get("root"), "utf8"),
+    readFileSync(markers.get("unit"), "utf8"),
+    readFileSync(markers.get("integration"), "utf8"),
+  ];
+  assert.equal(new Set(homes).size, 3);
+});
+
+test("buildLanes: experimental timing metadata follows each lane command", () => {
+  const repoRoot = resolve(testDir, "..");
+  const root = mkdtempSync(join(repoRoot, ".tmp-ci-timings-experimental-"));
+  try {
+    const env = scrubLaneEnv({
+      [CI_LANE_LAYOUT_ENV]: "experimental",
+      TLH_CI_TIMINGS_DIR: join(root, "reports"),
+      HOME: join(root, "home"),
+      TMPDIR: join(root, "tmp"),
+    });
+    const config = createCiTimingConfig({
+      env,
+      repoRoot,
+      shard: "1/2",
+      laneLayout: "experimental",
+      runId: "experimental-runner",
+      availableParallelism: () => 4,
+    });
+    const lanes = buildLanes(1, "1/2", env, config, "experimental");
+    assert.deepEqual(
+      lanes.map((lane) => lane.name),
+      ["root", "unit", "integration"],
+    );
+    assert.deepEqual(
+      lanes.map((lane) => lane.timingCommands?.map((entry) => entry?.suite)),
+      [["root"], ["unit", "e2e"], ["integration"]],
+    );
+    for (const lane of lanes) {
+      assert.equal(lane.commandEnvs?.length, lane.commands.length);
+      assert.equal(lane.timingCommands?.length, lane.commands.length);
+      assert.equal(lane.env?.[CI_TIMINGS_DIR_ENV], undefined);
+      assert.equal(lane.env?.[CI_TIMINGS_EVENT_FILE_ENV], undefined);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("buildLanes: shard 1 includes e2e at end of lane A", () => {
-  const [laneA, laneB] = buildLanes(1, "1/2");
+  const [laneA, laneB] = buildLanes(1, "1/2", baselineLaneEnv, null, "baseline");
   assert.equal(laneA.name, "a");
   assert.equal(laneB.name, "b");
 
@@ -1324,14 +1789,14 @@ test("buildLanes: shard 1 includes e2e at end of lane A", () => {
 });
 
 test("buildLanes: shard 2 does not include e2e", () => {
-  const [laneA] = buildLanes(2, "2/2");
+  const [laneA] = buildLanes(2, "2/2", baselineLaneEnv, null, "baseline");
   const laneAJoined = laneA.commands.map((c) => c.join(" ")).join("\n");
   assert.doesNotMatch(laneAJoined, /run-subagents-tests\.mjs e2e/);
 });
 
 test("buildLanes: lane B contains only integration suite", () => {
   for (const shard of [1, 2]) {
-    const [, laneB] = buildLanes(shard, `${shard}/2`);
+    const [, laneB] = buildLanes(shard, `${shard}/2`, baselineLaneEnv, null, "baseline");
     assert.equal(laneB.commands.length, 1);
     const cmd = laneB.commands[0].join(" ");
     assert.match(cmd, /run-subagents-tests\.mjs integration/);
@@ -1341,7 +1806,7 @@ test("buildLanes: lane B contains only integration suite", () => {
 
 test("buildLanes: shard parameter flows to all sharded suites", () => {
   for (const shard of [1, 2]) {
-    const lanes = buildLanes(shard, `${shard}/2`);
+    const lanes = buildLanes(shard, `${shard}/2`, baselineLaneEnv, null, "baseline");
     // Every command that is not e2e must carry the shard option.
     for (const lane of lanes) {
       for (const cmd of lane.commands) {
