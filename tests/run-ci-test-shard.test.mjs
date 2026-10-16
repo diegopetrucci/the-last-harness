@@ -90,6 +90,9 @@ function scrubLaneEnv(overrides = {}) {
 
 const cleanLaneEnv = scrubLaneEnv();
 
+// Baseline layout assertions must not inherit an opt-in experimental selector.
+const baselineLaneEnv = Object.freeze({});
+
 function isNumericPid(pid) {
   return Number.isInteger(pid) && pid > 0;
 }
@@ -1467,16 +1470,29 @@ test("parseShardRunnerOptions: validates layout and concurrency before spawning"
 // ---------------------------------------------------------------------------
 
 test("buildLanes: projects adaptive local and explicit GitHub concurrency", () => {
-  const [localLaneA] = buildLanes(1, "1/2", {});
+  const [localLaneA] = buildLanes(1, "1/2", baselineLaneEnv, null, "baseline");
   assert.match(localLaneA.commands[0].join(" "), /--test-concurrency=[1-9]\d*/);
 
-  const [githubLaneA] = buildLanes(1, "1/2", { GITHUB_ACTIONS: "true" });
+  const [githubLaneA] = buildLanes(
+    1,
+    "1/2",
+    { ...baselineLaneEnv, GITHUB_ACTIONS: "true" },
+    null,
+    "baseline",
+  );
   assert.doesNotMatch(githubLaneA.commands[0].join(" "), /--test-concurrency=/);
 
-  const [overriddenLaneA] = buildLanes(1, "1/2", {
-    GITHUB_ACTIONS: "true",
-    TLH_TEST_CONCURRENCY: "3",
-  });
+  const [overriddenLaneA] = buildLanes(
+    1,
+    "1/2",
+    {
+      ...baselineLaneEnv,
+      GITHUB_ACTIONS: "true",
+      TLH_TEST_CONCURRENCY: "3",
+    },
+    null,
+    "baseline",
+  );
   assert.match(overriddenLaneA.commands[0].join(" "), /--test-concurrency=3/);
 });
 
@@ -1511,7 +1527,7 @@ test("buildLanes: opt-in timing adds a separate reporter and suite metadata", ()
       runId: "runner-test",
       availableParallelism: () => 4,
     });
-    const [laneA, laneB] = buildLanes(1, "1/2", env, config);
+    const [laneA, laneB] = buildLanes(1, "1/2", env, config, "baseline");
     const rootCommand = laneA.commands[0].join(" ");
     assert.match(rootCommand, /--test-reporter=dot/);
     assert.match(rootCommand, /ci-timing-reporter\.mjs/);
@@ -1581,7 +1597,7 @@ test(
         availableParallelism: () => 4,
       });
       assert.ok(config);
-      const [laneA] = buildLanes(1, "1/2", env, config);
+      const [laneA] = buildLanes(1, "1/2", env, config, "baseline");
       const rootCommand = [...laneA.commands[0]];
       rootCommand[rootCommand.length - 1] = testFile;
       const output = captureStream();
@@ -1616,6 +1632,35 @@ test(
     }
   },
 );
+
+test("inherited experimental layout keeps baseline buildLanes assertions isolated", () => {
+  // Run the existing buildLanes assertions in a child so this selector is
+  // inherited through process.env. This test name intentionally stays outside
+  // the child pattern to avoid recursively spawning itself.
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      "--test-reporter=tap",
+      "--test-name-pattern",
+      "^buildLanes:",
+      fileURLToPath(import.meta.url),
+    ],
+    {
+      cwd: resolve(testDir, ".."),
+      env: scrubTestEnv({ [CI_LANE_LAYOUT_ENV]: "experimental" }),
+      encoding: "utf8",
+      timeout: 10_000,
+    },
+  );
+  const output = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join("\n");
+  assert.equal(
+    result.status,
+    0,
+    `baseline buildLanes assertions failed under inherited experimental layout:\n${output}`,
+  );
+  assert.match(result.stdout ?? "", /# tests [1-9]\d*/u, output);
+});
 
 test("buildLanes: experimental shard 1 uses three isolated lanes", () => {
   const lanes = buildLanes(1, "1/2", { [CI_LANE_LAYOUT_ENV]: "experimental" });
@@ -1729,7 +1774,7 @@ test("buildLanes: experimental timing metadata follows each lane command", () =>
 });
 
 test("buildLanes: shard 1 includes e2e at end of lane A", () => {
-  const [laneA, laneB] = buildLanes(1, "1/2");
+  const [laneA, laneB] = buildLanes(1, "1/2", baselineLaneEnv, null, "baseline");
   assert.equal(laneA.name, "a");
   assert.equal(laneB.name, "b");
 
@@ -1744,14 +1789,14 @@ test("buildLanes: shard 1 includes e2e at end of lane A", () => {
 });
 
 test("buildLanes: shard 2 does not include e2e", () => {
-  const [laneA] = buildLanes(2, "2/2");
+  const [laneA] = buildLanes(2, "2/2", baselineLaneEnv, null, "baseline");
   const laneAJoined = laneA.commands.map((c) => c.join(" ")).join("\n");
   assert.doesNotMatch(laneAJoined, /run-subagents-tests\.mjs e2e/);
 });
 
 test("buildLanes: lane B contains only integration suite", () => {
   for (const shard of [1, 2]) {
-    const [, laneB] = buildLanes(shard, `${shard}/2`);
+    const [, laneB] = buildLanes(shard, `${shard}/2`, baselineLaneEnv, null, "baseline");
     assert.equal(laneB.commands.length, 1);
     const cmd = laneB.commands[0].join(" ");
     assert.match(cmd, /run-subagents-tests\.mjs integration/);
@@ -1761,7 +1806,7 @@ test("buildLanes: lane B contains only integration suite", () => {
 
 test("buildLanes: shard parameter flows to all sharded suites", () => {
   for (const shard of [1, 2]) {
-    const lanes = buildLanes(shard, `${shard}/2`);
+    const lanes = buildLanes(shard, `${shard}/2`, baselineLaneEnv, null, "baseline");
     // Every command that is not e2e must carry the shard option.
     for (const lane of lanes) {
       for (const cmd of lane.commands) {
