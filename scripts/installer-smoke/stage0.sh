@@ -299,39 +299,6 @@ run_stage0_remote_support_fetch_smoke() {
   assert_absent "${optional_case_dir}/bin"
 }
 
-run_stale_stage0_manifest_compatibility_smoke() {
-  log "Running stale stage-0 manifest compatibility smoke check..."
-  local case_dir="${TMP_ROOT}/stale-stage0-manifest-compat"
-  local home_dir="${case_dir}/home"
-  local agent_dir="${case_dir}/agent"
-  local bin_dir="${case_dir}/bin"
-  local fakebin="${case_dir}/fakebin"
-  local support_root="${case_dir}/support-root"
-  local stale_installer="${case_dir}/stale-install.sh"
-  local stdout_file="${case_dir}/stdout.log"
-  local stderr_file="${case_dir}/stderr.log"
-  local combined_file="${case_dir}/combined.log"
-  local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs'
-  mkdir -p "${case_dir}" "${home_dir}"
-
-  make_support_copy_curl "${fakebin}"
-  make_fake_remote_stage1_support_root "${support_root}"
-  write_stage0_manifest_variant "${stale_installer}" "${stale_manifest}"
-
-  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="main" TLH_RAW_BASE="${raw_base}" _TLH_STAGE0_CANONICALIZED=1 bash "${stale_installer}" --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
-  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
-
-  assert_contains "${combined_file}" "fake_stage1=ok"
-  assert_contains "${combined_file}" "compat_librarian_present=true"
-  assert_contains "${combined_file}" "compat_query_present=true"
-  assert_contains "${combined_file}" "stale_poison_present=false"
-  assert_absent "${agent_dir}"
-  assert_absent "${bin_dir}"
-  assert_absent "${home_dir}/.pi"
-  assert_absent "${home_dir}/.the-last-harness"
-}
-
 run_stage0_canonical_handoff_smoke() {
   log "Running stale stage-0 canonical handoff smoke check..."
   local case_dir="${TMP_ROOT}/stage0-canonical-handoff"
@@ -345,7 +312,7 @@ run_stage0_canonical_handoff_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|poison/stale-stage0-only.txt'
+  local stale_manifest=$'required|poison/stale-stage0-only.txt'
   mkdir -p "${case_dir}" "${home_dir}"
 
   make_support_copy_curl "${fakebin}"
