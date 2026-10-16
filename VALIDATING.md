@@ -28,6 +28,78 @@ The validation scripts retain Oxlint's built-in default rule selection while `.o
 
 The root test guard, imported subagent runner, and CI shard entrypoint share `TLH_TEST_CONCURRENCY`. When it is unset outside GitHub Actions, they pass Node an adaptive limit of `max(1, floor(availableParallelism / 2))`, which keeps local runs near half of the available CPUs. On GitHub Actions, an unset variable preserves the existing deliberate runner concurrency; a positive-integer override applies in both environments. Invalid values fail fast with a concise error and exit code 2.
 
+## Opt-in CI shard timing reports
+
+The CI shard runner keeps its normal commands, output, scheduling, coverage, and
+failure gates when timing is disabled. Contributor-only timing reports are
+opt-in: set `TLH_CI_TIMINGS_DIR` to an absolute directory owned for the run,
+and keep that directory outside `HOME`, `TMPDIR`, `TMP`, and `TEMP` (the runner
+rejects guarded locations before spawning tests). For example, on a local
+POSIX checkout use a runner-owned path such as:
+
+```sh
+TIMING_DIR="/var/tmp/tlh-ci-timings-$$"
+mkdir -p "$TIMING_DIR"
+TLH_CI_TIMINGS_DIR="$TIMING_DIR" node scripts/run-ci-test-shard.mjs 1/2
+```
+
+The same setting can be used for shard `2/2`; use a distinct directory or
+preserve the generated report names when collecting both shards. Each bounded
+JSON report includes the shard, Node version, platform/architecture, available
+CPU count, effective concurrency, selected lane layout, command and lane
+wall-clock durations, and per-file durations for root, unit, integration, and
+e2e suites. File names are
+repository-relative. `elapsedWallMs` measures process wall time, while
+`cumulativeFileTimeMs` sums Node's per-file durations and can be larger when
+files run concurrently. The effective concurrency is per Node test-runner
+process; baseline lanes A and B and experimental root/unit/integration lanes
+run their own runner processes. Failed or cancelled
+runs retain a status and any complete file observations available before
+termination; they are not successful benchmark samples.
+
+The report directory is deliberately explicit and is not the guarded temporary
+root; raw event files are removed after report creation. To disable collection,
+unset the variable (or do not set it); no report arguments are then added and
+there is no timing-report filesystem activity. Remove old opt-in reports from
+the explicitly chosen directory when they are no longer needed. This helper is
+contributor-only and is excluded from the published package. Timing samples are
+an investigation aid, not a full-shard benchmark loop or a stable p90 claim.
+
+## Manual macOS shard benchmark
+
+`.github/workflows/macos-ci-benchmark.yml` is a manual-only workflow. It uses
+`macos-latest`, Node `22.19.0`, read-only repository access, the normal npm and
+`node_modules` cache conventions, and exactly one shard-runner invocation in
+each of its two matrix jobs (`1/2` and `2/2`). The unchanged two-lane
+`baseline` layout remains the default; `experimental` uses separate `HOME`
+directories for concurrent root, unit/e2e, and integration lanes. The workflow
+accepts a layout and either the existing default concurrency policy or a
+positive-integer `TLH_TEST_CONCURRENCY` override. Invalid values fail before
+any test child is spawned.
+
+Use a controlled same-commit protocol for comparisons:
+
+1. Select one commit and keep the checkout, Node version, runner image, and test
+   inputs fixed for the full comparison. Do not overlap dispatches.
+2. Alternate `baseline`/default and `experimental`/default runs, with at least
+   three successful samples for each layout. Label every sample consistently as
+   warm or cold cache; do not mix cache conditions in one summary.
+3. Only after the layout comparison, repeat at least three successful samples
+   for an explicit positive concurrency value against the matching layout.
+4. Compare the timing report's test execution separately from setup and runner
+   start delays. Do not claim a stable p90 from these tiny sample sets.
+
+Each artifact includes bounded timing reports and metadata identifying the
+commit, layout, requested concurrency, cache result, shard, and completion
+status. Failed, cancelled, unreadable, or otherwise incomplete reports are
+labeled `INCOMPLETE-BENCHMARK.txt`, marked in metadata as ineligible, and must
+never be presented as speedups. Actual hosted execution is deferred until a
+separate publication/dispatch authorization exists and the workflow is
+available on the default branch; local timings are not a substitute. To
+disable or roll back the experiment, stop dispatching it or remove/revert only
+`.github/workflows/macos-ci-benchmark.yml`; `.github/workflows/ci.yml` and its
+required job names remain unchanged.
+
 ## Routine local validation and failure handling
 
 - Run one normal `npm run validate` pass for routine local final validation. It is sequential and fail-fast; do not repeat it or turn CI-shard commands into local stress loops.

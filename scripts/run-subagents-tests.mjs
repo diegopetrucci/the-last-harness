@@ -4,6 +4,11 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  CI_TIMINGS_DIR_ENV,
+  CI_TIMINGS_EVENT_FILE_ENV,
+  ciTimingReporterArgs,
+} from "./ci-timings.mjs";
 import { testConcurrencyArgs } from "./test-concurrency.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -290,12 +295,17 @@ function isSharded(options) {
  * @returns {string[]}
  */
 export function buildTestCommandArgs({ loader, options = [], files, env = process.env }) {
+  const timingArgs = ciTimingReporterArgs({
+    env,
+    reporterPath: pathToFileURL(join(repoRoot, "scripts/ci-timing-reporter.mjs")).href,
+  });
   return [
     "--experimental-strip-types",
     "--import",
     loader,
     "--test",
     "--test-reporter=tap",
+    ...timingArgs,
     ...testConcurrencyArgs({ env }),
     ...options,
     ...files,
@@ -329,6 +339,11 @@ export function buildChildEnv(parentEnv, agentDir) {
   }
 
   const env = { ...parentEnv };
+  // The reporter destination is already encoded in the child command args.
+  // Keeping these paths in test-file environments lets nested runners reuse
+  // and overwrite the current command's event file.
+  delete env[CI_TIMINGS_DIR_ENV];
+  delete env[CI_TIMINGS_EVENT_FILE_ENV];
   for (const key of Object.keys(env)) {
     if (key.startsWith("PI_SUBAGENT_") || key.startsWith("PI_SUBAGENTS_")) delete env[key];
   }
