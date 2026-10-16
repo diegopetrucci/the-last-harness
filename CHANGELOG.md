@@ -22,6 +22,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Fixed a flaky `tlh doctor ignores RTK executables on PATH` test that matched random temp-path suffixes.
 - Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.
 - Removed `docs/subagents-history`; provenance lives in `docs/subagents.md` and git history.
 - Fixed the `module.register()` deprecation warning printed by the subagent test loader.

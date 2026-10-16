@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -531,7 +532,11 @@ exit 97
 
   assert.equal(result.status, 0, output);
   assert.equal(existsSync(rtkMarkerPath), false, "doctor must not execute RTK from PATH");
-  assert.doesNotMatch(output, /rtk/i);
+  // Strip temp paths first: mkdtemp suffixes are random and can contain "rtk".
+  const rootForms = [...new Set([fixture.root, realpathSync(fixture.root)])];
+  let scrubbed = output;
+  for (const form of rootForms) scrubbed = scrubbed.split(form).join("<fixture-root>");
+  assert.doesNotMatch(scrubbed, /\brtk\b/i);
 });
 
 test("tlh doctor fails when pointed at normal Pi config without running protected profile helpers", (t) => {
