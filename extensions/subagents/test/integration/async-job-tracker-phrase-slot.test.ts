@@ -16,7 +16,6 @@ import { describe, it } from "node:test";
 import { createTempDir, removeTempDir } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import {
-  available,
   createEventRecorder,
   createState,
   createUiContext,
@@ -52,107 +51,103 @@ async function waitForStableCount(
   return prev;
 }
 
-describe(
-  "async job tracker phrase-slot rerender",
-  { skip: !available ? "pi packages not available" : undefined },
-  () => {
-    it("triggers exactly one widget rerender when phrase slot changes without status update", async () => {
-      const asyncRoot = createTempDir("pi-async-job-phrase-slot-");
-      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
-      try {
-        const state = createState();
-        const ui = createUiContext();
-        const recorder = createEventRecorder();
+describe("async job tracker phrase-slot rerender", () => {
+  it("triggers exactly one widget rerender when phrase slot changes without status update", async () => {
+    const asyncRoot = createTempDir("pi-async-job-phrase-slot-");
+    let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+    try {
+      const state = createState();
+      const ui = createUiContext();
+      const recorder = createEventRecorder();
 
-        const runId = "run-phrase-slot";
-        const runDir = path.join(asyncRoot, runId);
-        fs.mkdirSync(runDir, { recursive: true });
+      const runId = "run-phrase-slot";
+      const runDir = path.join(asyncRoot, runId);
+      fs.mkdirSync(runDir, { recursive: true });
 
-        // Write a stable status.json so widgetRenderKey does not change after
-        // the first poll (the only change is queued → running on that tick).
-        const startedAt = 0;
-        const lastUpdate = 1_000;
-        fs.writeFileSync(
-          path.join(runDir, "status.json"),
-          JSON.stringify({
-            state: "running",
-            mode: "single",
-            startedAt,
-            lastUpdate,
-            steps: [{ status: "running", agent: "worker", startedAt }],
-          }),
-          "utf-8",
-        );
-
-        // Controllable clock: start just before a slot boundary.
-        let fakeNow = PHRASE_HOLD_MS - 10;
-        const nowFn = () => fakeNow;
-
-        // Very small poll interval so stability is observable quickly.
-        const pollIntervalMs = 5;
-        // Quiescence window: no render for 3 poll intervals before declaring stable.
-        const quiescenceMs = 3 * pollIntervalMs;
-
-        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
-          pollIntervalMs,
-          completionRetentionMs: 10_000,
-          resultsDir: asyncRoot,
-          now: nowFn,
-        });
-
-        // resetJobs renders once (empty widget).
-        // handleStarted renders once (queued job added).
-        // First poll renders once (queued → running status transition).
-        // After that the status is stable and fakeNow stays below the slot
-        // boundary, so no further renders are expected until the boundary is
-        // crossed.  The phrase-slot key is baselined in handleStarted so the
-        // queued → running transition does not cause a spurious extra render.
-        tracker.resetJobs(ui.ctx as never);
-        tracker.handleStarted({
-          id: runId,
-          asyncDir: runDir,
-          agent: "worker",
+      // Write a stable status.json so widgetRenderKey does not change after
+      // the first poll (the only change is queued → running on that tick).
+      const startedAt = 0;
+      const lastUpdate = 1_000;
+      fs.writeFileSync(
+        path.join(runDir, "status.json"),
+        JSON.stringify({
+          state: "running",
           mode: "single",
-        });
+          startedAt,
+          lastUpdate,
+          steps: [{ status: "running", agent: "worker", startedAt }],
+        }),
+        "utf-8",
+      );
 
-        // Wait for at least one render to confirm setup succeeded.
-        await waitForCondition(
-          () => ui.widgets.length >= 1,
-          "initial render",
-          scaleTestTimeout(2_000),
-        );
+      // Controllable clock: start just before a slot boundary.
+      let fakeNow = PHRASE_HOLD_MS - 10;
+      const nowFn = () => fakeNow;
 
-        // Wait for the render count to quiesce before the slot boundary.
-        // This confirms that polls within the same slot produce 0 extra renders.
-        const stableCount = await waitForStableCount(
-          () => ui.widgets.length,
-          quiescenceMs,
-          scaleTestTimeout(3_000),
-        );
+      // Very small poll interval so stability is observable quickly.
+      const pollIntervalMs = 5;
+      // Quiescence window: no render for 3 poll intervals before declaring stable.
+      const quiescenceMs = 3 * pollIntervalMs;
 
-        // Cross the slot boundary.
-        fakeNow = PHRASE_HOLD_MS + 10;
+      tracker = trackerMod.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+        pollIntervalMs,
+        completionRetentionMs: 10_000,
+        resultsDir: asyncRoot,
+        now: nowFn,
+      });
 
-        // Exactly one rerender must fire on the next poll.
-        await waitForCondition(
-          () => ui.widgets.length > stableCount,
-          "rerender on phrase-slot boundary",
-          scaleTestTimeout(2_000),
-        );
-        const countAfterSlot = ui.widgets.length;
-        assert.equal(countAfterSlot, stableCount + 1, "exactly one rerender at slot boundary");
+      // resetJobs renders once (empty widget).
+      // handleStarted renders once (queued job added).
+      // First poll renders once (queued → running status transition).
+      // After that the status is stable and fakeNow stays below the slot
+      // boundary, so no further renders are expected until the boundary is
+      // crossed.  The phrase-slot key is baselined in handleStarted so the
+      // queued → running transition does not cause a spurious extra render.
+      tracker.resetJobs(ui.ctx as never);
+      tracker.handleStarted({
+        id: runId,
+        asyncDir: runDir,
+        agent: "worker",
+        mode: "single",
+      });
 
-        // After the slot change is consumed, no further rerenders should occur.
-        const finalCount = await waitForStableCount(
-          () => ui.widgets.length,
-          quiescenceMs,
-          scaleTestTimeout(2_000),
-        );
-        assert.equal(finalCount, stableCount + 1, "no additional rerenders after slot is consumed");
-      } finally {
-        tracker?.resetJobs();
-        removeTempDir(asyncRoot);
-      }
-    });
-  },
-);
+      // Wait for at least one render to confirm setup succeeded.
+      await waitForCondition(
+        () => ui.widgets.length >= 1,
+        "initial render",
+        scaleTestTimeout(2_000),
+      );
+
+      // Wait for the render count to quiesce before the slot boundary.
+      // This confirms that polls within the same slot produce 0 extra renders.
+      const stableCount = await waitForStableCount(
+        () => ui.widgets.length,
+        quiescenceMs,
+        scaleTestTimeout(3_000),
+      );
+
+      // Cross the slot boundary.
+      fakeNow = PHRASE_HOLD_MS + 10;
+
+      // Exactly one rerender must fire on the next poll.
+      await waitForCondition(
+        () => ui.widgets.length > stableCount,
+        "rerender on phrase-slot boundary",
+        scaleTestTimeout(2_000),
+      );
+      const countAfterSlot = ui.widgets.length;
+      assert.equal(countAfterSlot, stableCount + 1, "exactly one rerender at slot boundary");
+
+      // After the slot change is consumed, no further rerenders should occur.
+      const finalCount = await waitForStableCount(
+        () => ui.widgets.length,
+        quiescenceMs,
+        scaleTestTimeout(2_000),
+      );
+      assert.equal(finalCount, stableCount + 1, "no additional rerenders after slot is consumed");
+    } finally {
+      tracker?.resetJobs();
+      removeTempDir(asyncRoot);
+    }
+  });
+});
