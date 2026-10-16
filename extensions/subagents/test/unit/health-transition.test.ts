@@ -5,12 +5,15 @@ import {
   MAX_HEALTH_ATTEMPT_ID_LENGTH,
   MAX_IDLE_EPISODE_ID_LENGTH,
   normalizeIdleEpisodeId,
-  recoverValidatedActivity,
   resetHealthTransitionState,
   transitionHealth,
   type HealthTransitionState,
 } from "../../src/runs/shared/health-transition.ts";
 import type { DurableAttentionReason } from "../../src/shared/types.ts";
+
+function recoverValidatedActivity(state: HealthTransitionState) {
+  return transitionHealth(state, { type: "validated_activity" });
+}
 
 function enterIdle(state: HealthTransitionState) {
   return transitionHealth(state, { type: "enter_idle" });

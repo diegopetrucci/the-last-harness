@@ -585,9 +585,6 @@ function validateCandidatePath(projectRoot, candidate, fileSystem) {
     }
     return { valid: true, canonicalPath, stat, identity };
 }
-function bytesFromRead(value) {
-    return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf-8");
-}
 function parseUtf8(bytes) {
     try {
         return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -814,10 +811,6 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
     };
     const digest = createHash("sha256").update(exactBytes).digest("hex");
     return { agent, digest, frontmatterFields };
-}
-export function parseProjectAgentDefinition(filePath, content) {
-    const bytes = bytesFromRead(content);
-    return parseProjectAgentDefinitionFromText(filePath, parseUtf8(bytes), bytes);
 }
 function readCandidate(projectRoot, candidate, options) {
     const fileSystem = options.fileSystem;

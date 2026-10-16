@@ -494,7 +494,7 @@ describe("subagent extension child mode", () => {
 			if (!registeredTool) throw new Error("tool not registered");
 			const theme = { fg(_name, text) { return text; }, bold(text) { return text; } };
 			const asyncSingle = registeredTool.renderCall({ agent: "worker", async: true }, theme).text;
-			const asyncParallel = registeredTool.renderCall({ tasks: [{ agent: "worker" }, { agent: "reviewer", count: 2 }], async: true }, theme).text;
+			const asyncParallel = registeredTool.renderCall({ tasks: [{ agent: "worker" }, { agent: "reviewer" }], async: true }, theme).text;
 			if (!asyncSingle.includes("[async]")) throw new Error("expected async single badge, got " + asyncSingle);
 			if (!asyncParallel.includes("[async]") || asyncParallel.includes("parallel")) throw new Error("expected async parallel badge without parallel count, got " + asyncParallel);
 		`;

@@ -524,14 +524,6 @@ function cleanupUnreferencedProjectAgentSnapshot(
   return true;
 }
 
-function cleanupUnreferencedProjectAgentSnapshots(): number {
-  let removed = 0;
-  for (const capability of REGISTERED_CAPABILITIES) {
-    if (cleanupUnreferencedProjectAgentSnapshot(capability)) removed++;
-  }
-  return removed;
-}
-
 function validateRegistrationInput(input: ProjectAgentSnapshotInput): void {
   if (!isRecord(input)) throw new TypeError("Project agent snapshot input must be an object.");
   if (!isNonEmptyString(input.projectRoot)) {
@@ -882,11 +874,6 @@ export function releaseProjectAgentRunReferencesForSession(sessionId: string): n
     .map(([runId]) => runId);
   for (const runId of runIds) releaseProjectAgentRunReference(runId);
   return runIds.length;
-}
-
-/** Explicitly retire unreferenced generations; active/resumable runs are protected. */
-export function cleanupProjectAgentSnapshotRegistry(): number {
-  return cleanupUnreferencedProjectAgentSnapshots();
 }
 
 /** Small diagnostic seam used by focused lifecycle tests. */

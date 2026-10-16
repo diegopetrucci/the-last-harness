@@ -45,13 +45,6 @@ interface InterruptRequest {
   reason?: string;
 }
 
-interface TimeoutRequest {
-  type: "timeout";
-  ts?: number;
-  source?: string;
-  reason?: string;
-}
-
 interface ChildMessageRequestBase {
   id: string;
   ts: number;
@@ -149,21 +142,6 @@ export function requestAsyncInterrupt(
     ...payload,
     ts: payload.ts ?? deps.now?.() ?? Date.now(),
     type: "interrupt",
-  };
-  writeAtomicJson(requestPath, request);
-  return requestPath;
-}
-
-function requestAsyncTimeout(
-  asyncDir: string,
-  payload: Omit<TimeoutRequest, "type"> = {},
-  deps: { now?: () => number } = {},
-): string {
-  const requestPath = timeoutRequestPath(asyncDir);
-  const request: TimeoutRequest = {
-    ...payload,
-    ts: payload.ts ?? deps.now?.() ?? Date.now(),
-    type: "timeout",
   };
   writeAtomicJson(requestPath, request);
   return requestPath;
@@ -556,19 +534,6 @@ export function deliverInterruptRequest(input: {
       throw error;
     }
   }
-}
-
-export function deliverTimeoutRequest(input: {
-  asyncDir: string;
-  pid?: number;
-  kill?: KillFn;
-  signal?: NodeJS.Signals;
-  now?: () => number;
-  source?: string;
-}): void {
-  requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
-    now: input.now,
-  });
 }
 
 /**

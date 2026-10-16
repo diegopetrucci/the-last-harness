@@ -879,10 +879,6 @@ function validateCandidatePath(
   return { valid: true, canonicalPath, stat, identity };
 }
 
-function bytesFromRead(value: string | Buffer): Buffer {
-  return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf-8");
-}
-
 function parseUtf8(bytes: Buffer): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -1177,15 +1173,6 @@ function parseProjectAgentDefinitionFromText(
 
   const digest = createHash("sha256").update(exactBytes).digest("hex");
   return { agent, digest, frontmatterFields };
-}
-
-/** Parse one exact definition byte sequence and derive all field metadata from those bytes. */
-export function parseProjectAgentDefinition(
-  filePath: string,
-  content: string | Buffer,
-): ProjectAgentSnapshotEntry {
-  const bytes = bytesFromRead(content);
-  return parseProjectAgentDefinitionFromText(filePath, parseUtf8(bytes), bytes);
 }
 
 function readCandidate(

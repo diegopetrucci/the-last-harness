@@ -275,25 +275,24 @@ describe("subagent executor dispatch wiring", () => {
     assert.equal(mockPi.callCount(), 0);
   });
 
-  it("expands top-level parallel task counts before launch", async () => {
+  it("rejects retired tasks[].count before launch", async () => {
     const result = await makeExecutor().execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 3 }] },
+      { tasks: [{ agent: "echo", task: "task one", count: 3 }] } as never,
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
     );
 
-    assert.equal(result.isError, undefined);
-    assert.equal(result.details?.mode, "parallel");
-    assert.equal(result.details?.results?.length, 3);
-    assert.equal(mockPi.callCount(), 3);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0]?.text ?? "", /tasks\[0\]\.count is no longer supported/);
+    assert.equal(mockPi.callCount(), 0);
   });
 
-  it("rejects top-level parallel counts that exceed the default limit", async () => {
+  it("rejects top-level parallel tasks that exceed the default limit", async () => {
     const result = await makeExecutor().execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 9 }] },
+      { tasks: Array.from({ length: 9 }, () => ({ agent: "echo", task: "task one" })) },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
@@ -520,7 +519,7 @@ describe("subagent executor dispatch wiring", () => {
   it("uses top-level parallel maxTasks and configured concurrency", async () => {
     const maxTasksResult = await makeExecutor({ parallel: { maxTasks: 9 } }).execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 9 }] },
+      { tasks: Array.from({ length: 9 }, () => ({ agent: "echo", task: "task one" })) },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),
@@ -642,7 +641,10 @@ describe("subagent executor dispatch wiring", () => {
   it("rejects invalid async top-level parallel requests during preflight", async () => {
     const result = await makeExecutor().execute(
       "id",
-      { tasks: [{ agent: "echo", task: "task one", count: 9 }], async: true },
+      {
+        tasks: Array.from({ length: 9 }, () => ({ agent: "echo", task: "task one" })),
+        async: true,
+      },
       new AbortController().signal,
       undefined,
       makeMinimalCtx(tempDir),

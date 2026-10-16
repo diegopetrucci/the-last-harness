@@ -166,32 +166,17 @@ function buildRequestedModeError(params, message) {
         details: { mode: getRequestedModeLabel(params), results: [] },
     };
 }
-function expandTopLevelTaskCounts(tasks) {
-    const expanded = [];
+function rejectRetiredTaskCounts(params) {
+    const tasks = params.tasks;
+    if (!Array.isArray(tasks))
+        return undefined;
     for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
         const task = tasks[taskIndex];
-        const rawCount = task.count;
-        if (rawCount !== undefined &&
-            (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)) {
-            return { error: `tasks[${taskIndex}].count must be an integer >= 1` };
-        }
-        const concreteTask = { ...task };
-        delete concreteTask.count;
-        for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
-            expanded.push({ ...concreteTask });
+        if (task !== null && typeof task === "object" && Object.hasOwn(task, "count")) {
+            return buildRequestedModeError(params, `tasks[${taskIndex}].count is no longer supported. List each parallel task explicitly in tasks[].`);
         }
     }
-    return { tasks: expanded };
-}
-function normalizeRepeatedParallelCounts(params) {
-    if (params.tasks) {
-        const expandedTasks = expandTopLevelTaskCounts(params.tasks);
-        if (expandedTasks.error) {
-            return { error: buildRequestedModeError(params, expandedTasks.error) };
-        }
-        return { params: { ...params, tasks: expandedTasks.tasks } };
-    }
-    return { params };
+    return undefined;
 }
 function runAsyncPath(data, deps) {
     const { params, effectiveCwd, agents, ctx, sessionRoot, sessionFileForTask, artifactConfig, artifactsDir, effectiveAsync, controlConfig, } = data;
@@ -787,11 +772,10 @@ export function createSubagentExecutor(deps) {
                 details: { mode: "single", results: [] },
             };
         }
-        const normalized = normalizeRepeatedParallelCounts(paramsWithResolvedCwd);
-        if (normalized.error)
-            return normalized.error;
-        const normalizedParams = normalized.params;
-        let effectiveParams = normalizedParams;
+        const retiredCountError = rejectRetiredTaskCounts(paramsWithResolvedCwd);
+        if (retiredCountError)
+            return retiredCountError;
+        let effectiveParams = paramsWithResolvedCwd;
         const scope = resolveExecutionAgentScope(effectiveParams.agentScope);
         const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
         const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;

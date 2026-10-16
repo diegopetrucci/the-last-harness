@@ -905,12 +905,6 @@ export function isCanonicalPackagedMinorAgent(agent: unknown): boolean {
   }
 }
 
-/** Map one exact packaged role id to its required uppercase guidance filename. */
-export function projectAgentGuidanceFilename(role: unknown): string | undefined {
-  if (typeof role !== "string" || !Object.hasOwn(ROLE_FILENAMES, role)) return undefined;
-  return ROLE_FILENAMES[role as ProjectAgentGuidanceRole];
-}
-
 /**
  * Build one safe, read-bounded inventory for all packaged roles. Unknown and
  * embedded role names are intentionally absent from this inventory.
@@ -1014,19 +1008,6 @@ export function resolveProjectAgentGuidanceFromInventory(
   return file?.content === undefined
     ? { role, inventory }
     : { role, guidance: file.content, sourcePath: file.path, inventory };
-}
-
-/**
- * Resolve one packaged role and retain the complete inventory for callers that
- * need to report all recognized files and diagnostics once.
- */
-export function resolveProjectAgentGuidance(
-  cwdInput: unknown,
-  agentDirInput: unknown,
-  roleInput: unknown,
-): ProjectAgentGuidanceResult {
-  const inventory = inventoryProjectAgentGuidance(cwdInput, agentDirInput);
-  return resolveProjectAgentGuidanceFromInventory(inventory, roleInput);
 }
 
 function encodeProjectGuidanceSourceLabel(value: string): string {

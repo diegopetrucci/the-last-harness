@@ -314,14 +314,6 @@ function cleanupUnreferencedProjectAgentSnapshot(capability) {
     }
     return true;
 }
-function cleanupUnreferencedProjectAgentSnapshots() {
-    let removed = 0;
-    for (const capability of REGISTERED_CAPABILITIES) {
-        if (cleanupUnreferencedProjectAgentSnapshot(capability))
-            removed++;
-    }
-    return removed;
-}
 function validateRegistrationInput(input) {
     if (!isRecord(input))
         throw new TypeError("Project agent snapshot input must be an object.");
@@ -594,9 +586,6 @@ export function releaseProjectAgentRunReferencesForSession(sessionId) {
     for (const runId of runIds)
         releaseProjectAgentRunReference(runId);
     return runIds.length;
-}
-export function cleanupProjectAgentSnapshotRegistry() {
-    return cleanupUnreferencedProjectAgentSnapshots();
 }
 export function projectAgentSnapshotRegistryStats() {
     let references = 0;
