@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/execution-finalization.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync } from "node:fs";
 import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithFloor, writeMetadata, } from "../../shared/artifacts.js";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";

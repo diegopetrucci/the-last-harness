@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-gnosis.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, } from "node:fs";

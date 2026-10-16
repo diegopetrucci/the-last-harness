@@ -36,7 +36,7 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section. It is the complete record: every merged PR has a terse one-line entry, with contributor-only changes under `### Internal`.
 
 Then draft or edit `release-notes/v$version.md`, the user-facing release body. The TLH architect drafts it from the `CHANGELOG.md` section and the maintainer edits it; follow [`release-notes/README.md`](../release-notes/README.md). Release creation fails if this file is missing or empty.
 

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/constants.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const TLH_NAME = "tlh";
 export const TLH_PACKAGE_NAME = "The Last Harness";
 export const TLH_REPO = "diegopetrucci/the-last-harness";

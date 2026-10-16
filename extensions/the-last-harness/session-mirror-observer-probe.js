@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror-observer-probe.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { performance } from "node:perf_hooks";
 import { createSessionMirrorObserverRuntime } from "./session-mirror/observer.js";
 import { createSessionMirrorObserverSocketSink } from "./session-mirror/local-bridge-sink.js";

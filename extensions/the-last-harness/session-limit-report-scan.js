@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-limit-report-scan.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

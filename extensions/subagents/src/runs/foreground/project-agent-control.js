@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/project-agent-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { discoverAgentsWithProjectSnapshot, } from "../../agents/agents.js";
 import { PROJECT_AGENT_DIRECTORY, PROJECT_AGENT_PACKAGE, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/health-transition.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const ACTIVITY_MONITOR_INTERVAL_MS = 1_000;
 export const ACTIVITY_MONITOR_GAP_THRESHOLD_MS = ACTIVITY_MONITOR_INTERVAL_MS * 2;
 export function getActivityMonitorGap(previousMonitorTickAt, now) {

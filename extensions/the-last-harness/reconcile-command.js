@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/reconcile-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath } from "./common.js";
 import { computeModelEffortDrift, readReconcileState, updateReconcileAcknowledgedSnapshot, } from "./model-effort-reconcile.js";
 import { clearPrimaryAgentModelOverrideByName, } from "./primary-agent-runtime.js";

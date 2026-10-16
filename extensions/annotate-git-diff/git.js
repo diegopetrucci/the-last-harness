@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/git.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { lstatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";

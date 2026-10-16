@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/package-version.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

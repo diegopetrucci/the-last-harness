@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-limit-report-aggregator.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { basename, relative } from "node:path";
 import { addUsage, createUsageTotals, normalizeUsage } from "./tokens-analyzer.js";
 export function aggregateSessionUsage(window, sessionsRoot, parsedFiles, scanCaveats = []) {

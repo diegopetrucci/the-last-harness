@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename } from "node:path";
 import { getAgentDir, parseArgs, } from "@earendil-works/pi-coding-agent";

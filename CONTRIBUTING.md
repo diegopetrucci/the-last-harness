@@ -52,7 +52,7 @@ Docs-only changes may use narrower validation, but inspect the rendered/content 
 
 ## Packaged vs contributor-only files
 
-The `files` allowlist in `package.json` defines what ships in the published npm package. `tools/` is excluded by omission because it is contributor-only tooling that never ships. The negated `docs/*` entries (for example `!docs/subagents-history`, `!docs/brand`, `!docs/local-development.md`) keep contributor-only documentation out of the tarball while still publishing the core end-user docs.
+The `files` allowlist in `package.json` defines what ships in the published npm package. `tools/` is excluded by omission because it is contributor-only tooling that never ships. The negated `docs/*` entries (for example `!docs/brand`, `!docs/local-development.md`) keep contributor-only documentation out of the tarball while still publishing the core end-user docs.
 
 ## Repo-only eval workflows
 
@@ -82,7 +82,8 @@ Guardrails to remember:
 - Shell should be Bash with `set -euo pipefail` and careful quoting.
 - Node scripts are ESM and should use `node:` imports.
 - Keep installer output clear and actionable.
-- Update `README.md`, docs, or `CHANGELOG.md` when a user-visible behavior change warrants it.
+- Update `README.md` or docs when a user-visible behavior change warrants it.
+- Every PR adds a terse one-line `CHANGELOG.md` entry under `## Unreleased` with a PR link; contributor-only changes (CI, tests, docs tooling, agent instructions) go under `### Internal`.
 - Avoid broad refactors or unrelated cleanup in focused changes.
 
 ### Retiring installer migrations
@@ -100,7 +101,7 @@ Before requesting review, check that:
 
 - the change preserves the isolation and installer safety invariants above;
 - relevant tests or smoke checks pass;
-- docs and changelog updates are included when needed;
+- docs are updated when needed and `CHANGELOG.md` has an entry for the PR (`### Internal` for contributor-only changes);
 - the diff contains no secrets, local paths, or unintended generated files.
 
 Every PR description should end with an `Install this branch` command using the branch name in both the raw URL and `--ref` value:

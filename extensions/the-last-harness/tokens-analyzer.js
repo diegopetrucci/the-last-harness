@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tokens-analyzer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
 import { getMcpToolKind } from "./mcp-tools.js";
 const NOISE_FLOOR_TOKENS = 1024;

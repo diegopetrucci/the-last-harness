@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/ticket-workflow-ui-facade.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createTlhTicketWorkflowUiRuntime, } from "./ticket-workflow-ui.js";
 import { activateTlhTicketSessionScope } from "./tickets.js";
 export function registerTlhTicketWorkflowUi(pi, options = {}) {

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer-subscription-usage.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatCompactTokenCount } from "./common.js";
 const TLH_SUBSCRIPTION_USAGE_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const MINUTE_MS = 60 * 1000;

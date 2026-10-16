@@ -68,7 +68,6 @@
     "README.md",
     "CHANGELOG.md",
     "docs",
-    "!docs/subagents-history",
     "!docs/brand",
     "!docs/local-development.md",
     "!docs/installer-performance.md",

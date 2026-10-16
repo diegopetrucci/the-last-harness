@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/agents.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

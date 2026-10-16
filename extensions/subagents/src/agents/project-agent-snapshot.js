@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/project-agent-snapshot.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 export const PROJECT_AGENT_TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 export class ProjectAgentSnapshotCapabilityError extends Error {

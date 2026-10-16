@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/subscription-usage.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";

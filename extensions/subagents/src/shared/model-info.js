@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/model-info.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const MODEL_CONTEXT_WINDOW_POLICY_KEY = Symbol.for("the-last-harness.model-context-window-policy");
 const MODEL_CONTEXT_WINDOW_POLICY_STATE_KEY = Symbol.for("the-last-harness.model-context-window-policy-state");
 function positiveFiniteNumber(value) {

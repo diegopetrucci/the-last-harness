@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-wrapper.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";

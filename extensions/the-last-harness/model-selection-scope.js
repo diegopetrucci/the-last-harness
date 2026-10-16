@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-selection-scope.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";

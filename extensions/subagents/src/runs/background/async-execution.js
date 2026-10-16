@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-execution.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/async-status.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";

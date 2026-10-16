@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-version.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * tlh-version — read-only version/provenance reporter.
  *

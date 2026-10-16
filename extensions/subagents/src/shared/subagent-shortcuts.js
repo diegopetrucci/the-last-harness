@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/subagent-shortcuts.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Key } from "@earendil-works/pi-tui";
 export const SUBAGENT_LIVE_DETAIL_SHORTCUT = Key.ctrlShift("d");
 export const SUBAGENT_PAUSE_ALL_SHORTCUT = Key.ctrlShift("u");

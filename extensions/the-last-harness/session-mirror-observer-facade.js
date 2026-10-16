@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror-observer-facade.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { lstatSync, realpathSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { dirname, join } from "node:path";

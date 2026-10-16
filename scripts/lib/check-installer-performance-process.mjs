@@ -1,3 +1,4 @@
+// Generated from scripts/lib/check-installer-performance-process.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn, spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import process from "node:process";

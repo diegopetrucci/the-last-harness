@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";

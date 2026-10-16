@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/prompt.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 function formatScopeLabel(comment) {
     switch (comment.scope) {
         case "branch":

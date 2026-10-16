@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-sessions.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * tlh-sessions — read-only session analysis CLI.
  *

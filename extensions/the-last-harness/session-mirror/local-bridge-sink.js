@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/local-bridge-sink.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createConnection } from "node:net";
 import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";

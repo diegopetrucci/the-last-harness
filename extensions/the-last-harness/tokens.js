@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tokens.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

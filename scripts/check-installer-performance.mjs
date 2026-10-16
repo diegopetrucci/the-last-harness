@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/check-installer-performance.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";

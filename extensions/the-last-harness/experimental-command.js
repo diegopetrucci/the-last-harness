@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/experimental-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { availableExperimentalFeatureList, EXPERIMENTAL_COMMAND_HELP, getExperimentalFeature, getTlhExperimentalConfig, hasRegisteredExperimentalFeatures, isTlhExperimentalFeatureEnabled, noExperimentalFeaturesMessage, normalizeEnabledFeatures, parseExperimentalSlashAction, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, TLH_EXPERIMENTAL_FEATURES, unknownExperimentalFeatureMessage, } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";

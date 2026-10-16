@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-update.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";

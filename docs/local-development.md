@@ -63,7 +63,7 @@ Use `npm run typecheck` for the main repository TypeScript check, `npm run typec
 
 ## Develop the first-party subagent runtime
 
-`extensions/subagents/src/**/*.ts` is authoritative runtime source; same-layout `.js` files are generated. The runtime entrypoint is `extensions/subagents/src/extension/index.js`, declared directly in the root package's `pi.extensions`. It is not a standalone package dependency and must not be released, published, pinned, or upstream-synced separately from TLH. Historical standalone metadata under `docs/subagents-history/source/` is evidence, not contributor instruction; never launch a task with `cwd` beneath that archive because its preserved `AGENTS.md`/`CLAUDE.md` names can be loaded as project context.
+`extensions/subagents/src/**/*.ts` is authoritative runtime source; same-layout `.js` files are generated. The runtime entrypoint is `extensions/subagents/src/extension/index.js`, declared directly in the root package's `pi.extensions`. It is not a standalone package dependency and must not be released, published, pinned, or upstream-synced separately from TLH.
 
 Use the narrow imported suites while iterating, then the full repository validation before handoff:
 
@@ -77,14 +77,6 @@ npm run validate
 ```
 
 If TypeScript changes intentionally affect generated runtime output, run `npm run build`, inspect both the source and generated diff, and rerun `npm run check:runtime`. Do not hand-edit the JavaScript mirror. The tests under `extensions/subagents/test/` are contributor-only and excluded from the published package; the runtime and Nico Bailon's notice at `extensions/subagents/LICENSE` are shipped.
-
-To verify import provenance against a checkout containing the source commit:
-
-```sh
-node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-subagents-checkout
-```
-
-That verifier compares source Git objects with the immutable import checkpoint and current historical archive. It is separate from routine `npm run validate` because the external history checkout is not a repository dependency. See [subagents-history/HISTORY.md](subagents-history/HISTORY.md) for the repository URL, exact commits/tree, checksum command, and history-inspection commands.
 
 ## Test the extension directly
 

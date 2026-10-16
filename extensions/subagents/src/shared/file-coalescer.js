@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/file-coalescer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const defaultTimerApi = {
     setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
     clearTimeout: (handle) => clearTimeout(handle),

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/identity.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/;
 function normalizePackageName(value) {
     const trimmed = value?.trim();

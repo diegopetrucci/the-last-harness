@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/acceptance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
