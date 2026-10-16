@@ -20,8 +20,7 @@ function isSafeNestedId(value: unknown): value is string {
  * Validate an id before using it to resolve a retained async artifact.
  *
  * The nested orchestration protocol is retired, but ordinary run lookup still
- * accepts an id supplied by the user. Keep this boundary helper until the
- * legacy janitor no longer needs the nested artifact layout.
+ * accepts an id supplied by the user.
  */
 export function assertSafeNestedId(label: string, value: string): void {
   if (!isSafeNestedId(value)) throw new Error(`${label} must be a non-empty safe id token.`);

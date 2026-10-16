@@ -15,11 +15,6 @@ interface NativeHostInfo {
 interface GlimpseProtocolMessage {
   type?: string;
   data?: unknown;
-  screen?: unknown;
-  screens?: unknown;
-  appearance?: unknown;
-  cursor?: unknown;
-  cursorTip?: unknown;
 }
 
 export interface QuietGlimpseWindow {
