@@ -28,6 +28,78 @@ The validation scripts retain Oxlint's built-in default rule selection while `.o
 
 The root test guard, imported subagent runner, and CI shard entrypoint share `TLH_TEST_CONCURRENCY`. When it is unset outside GitHub Actions, they pass Node an adaptive limit of `max(1, floor(availableParallelism / 2))`, which keeps local runs near half of the available CPUs. On GitHub Actions, an unset variable preserves the existing deliberate runner concurrency; a positive-integer override applies in both environments. Invalid values fail fast with a concise error and exit code 2.
 
+## Opt-in CI shard timing reports
+
+The CI shard runner keeps its normal commands, output, scheduling, coverage, and
+failure gates when timing is disabled. Contributor-only timing reports are
+opt-in: set `TLH_CI_TIMINGS_DIR` to an absolute directory owned for the run,
+and keep that directory outside `HOME`, `TMPDIR`, `TMP`, and `TEMP` (the runner
+rejects guarded locations before spawning tests). For example, on a local
+POSIX checkout use a runner-owned path such as:
+
+```sh
+TIMING_DIR="/var/tmp/tlh-ci-timings-$$"
+mkdir -p "$TIMING_DIR"
+TLH_CI_TIMINGS_DIR="$TIMING_DIR" node scripts/run-ci-test-shard.mjs 1/2
+```
+
+The same setting can be used for shard `2/2`; use a distinct directory or
+preserve the generated report names when collecting both shards. Each bounded
+JSON report includes the shard, Node version, platform/architecture, available
+CPU count, effective concurrency, selected lane layout, command and lane
+wall-clock durations, and per-file durations for root, unit, integration, and
+e2e suites. File names are
+repository-relative. `elapsedWallMs` measures process wall time, while
+`cumulativeFileTimeMs` sums Node's per-file durations and can be larger when
+files run concurrently. The effective concurrency is per Node test-runner
+process; baseline lanes A and B and experimental root/unit/integration lanes
+run their own runner processes. Failed or cancelled
+runs retain a status and any complete file observations available before
+termination; they are not successful benchmark samples.
+
+The report directory is deliberately explicit and is not the guarded temporary
+root; raw event files are removed after report creation. To disable collection,
+unset the variable (or do not set it); no report arguments are then added and
+there is no timing-report filesystem activity. Remove old opt-in reports from
+the explicitly chosen directory when they are no longer needed. This helper is
+contributor-only and is excluded from the published package. Timing samples are
+an investigation aid, not a full-shard benchmark loop or a stable p90 claim.
+
+## Manual macOS shard benchmark
+
+`.github/workflows/macos-ci-benchmark.yml` is a manual-only workflow. It uses
+`macos-latest`, Node `22.19.0`, read-only repository access, the normal npm and
+`node_modules` cache conventions, and exactly one shard-runner invocation in
+each of its two matrix jobs (`1/2` and `2/2`). The unchanged two-lane
+`baseline` layout remains the default; `experimental` uses separate `HOME`
+directories for concurrent root, unit/e2e, and integration lanes. The workflow
+accepts a layout and either the existing default concurrency policy or a
+positive-integer `TLH_TEST_CONCURRENCY` override. Invalid values fail before
+any test child is spawned.
+
+Use a controlled same-commit protocol for comparisons:
+
+1. Select one commit and keep the checkout, Node version, runner image, and test
+   inputs fixed for the full comparison. Do not overlap dispatches.
+2. Alternate `baseline`/default and `experimental`/default runs, with at least
+   three successful samples for each layout. Label every sample consistently as
+   warm or cold cache; do not mix cache conditions in one summary.
+3. Only after the layout comparison, repeat at least three successful samples
+   for an explicit positive concurrency value against the matching layout.
+4. Compare the timing report's test execution separately from setup and runner
+   start delays. Do not claim a stable p90 from these tiny sample sets.
+
+Each artifact includes bounded timing reports and metadata identifying the
+commit, layout, requested concurrency, cache result, shard, and completion
+status. Failed, cancelled, unreadable, or otherwise incomplete reports are
+labeled `INCOMPLETE-BENCHMARK.txt`, marked in metadata as ineligible, and must
+never be presented as speedups. Actual hosted execution is deferred until a
+separate publication/dispatch authorization exists and the workflow is
+available on the default branch; local timings are not a substitute. To
+disable or roll back the experiment, stop dispatching it or remove/revert only
+`.github/workflows/macos-ci-benchmark.yml`; `.github/workflows/ci.yml` and its
+required job names remain unchanged.
+
 ## Routine local validation and failure handling
 
 - Run one normal `npm run validate` pass for routine local final validation. It is sequential and fail-fast; do not repeat it or turn CI-shard commands into local stress loops.
@@ -151,7 +223,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. Measured runs within each invocation share one stable temporary profile path, with run 1 as the cold sample and later runs as warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.2.0 release-candidate checks; the Pi 1.1.0 and 1.2.0 comparison status and additional release checks are recorded below. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.3.0 release-candidate checks; the historical Pi 1.1.0 and 1.2.0 comparison status plus the current Pi 1.3.0 checks are recorded below. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`. `.github/workflows/startup-performance.yml` runs on every pull request and on `main` as an informational check with `--budget-ms 2500`. That budget is slack above this release objective. The local checker default remains `1000ms`.
 
@@ -159,7 +231,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following carried-forward checks are required Pi 1.2.0 release-preparation work (first listed for Pi 1.1.0; v0.44.0 and v0.45.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following carried-forward checks are required Pi 1.3.0 release-preparation work (first listed for Pi 1.1.0; v0.44.0 and v0.45.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -170,29 +242,40 @@ The following carried-forward checks are required Pi 1.2.0 release-preparation w
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `1.2.0`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises Pi `1.3.0`, verify update convergence from that published ref.
 
-### Pi 1.2.0 comparison status (reviewed 2026-10-13)
+### Pi 1.3.0 comparison status (reviewed 2026-10-15)
 
-The dated 1.1.0→1.2.0 tarball comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-120-review-evidence). This is not live release validation: no provider, credential, or installed-profile checks were run. Record these Pi 1.2.0 checks against the packaged release candidate, in addition to the carried-forward list above and the Pi 1.1.0 checks below:
+The dated 1.2.0→1.3.0 package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#pi-130-review-evidence). The original source/package inspection was not live release validation: it ran no provider, credential, installed-profile, or release-tier checks. Separately, a clean isolated unpacked-package installation on 2026-10-15 verified Pi 1.3.0 from both the private runtime and generated wrapper, verified the runtime and wrapper ownership markers and that the runtime lock matched the shipped lock, and observed the runtime top level `.tlh-runtime-owned`, `bin`, `lib`, and `node-compile-cache`; isolated doctor reported 7 OK / 3 WARN / 0 FAIL, with one unresolved packaged-settings append and expected missing EXA/gh auth prerequisites. No paid-provider, normal home-profile, or publication checks were run. The permanent deterministic/isolated regression suites — [resume](tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) and [model resolution](tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs) — pass with Pi 1.3.0 without live providers. The provider-backed and packaged release-candidate checks below remain pending:
+
+- **Kimi Code transport and custom base URL:** with an authorized Kimi Code setup, verify Chat Completions behavior, tool additions during a session, prompt-cache retention, and that every custom `models.json` base URL includes `/v1`.
+- **OpenAI GPT-6 cache retention:** with an OpenAI API-key model, verify a mid-session thinking-level change preserves the prompt cache. This check does not cover the OpenAI Codex subscription provider, where that cache benefit does not apply.
+- **Provider/model ambiguity (deterministic isolated):** the [model-resolution regression](tests/the-last-harness-pi-1-3-model-resolution-regressions.test.mjs) passes credential-preferred, no-credential ambiguity, provider-qualified, and TLH child override → `buildPiArgs` → `parseArgs` → real `resolveCliModel` checks. Provider-backed release validation remains pending.
+- **Resumed active tools (deterministic isolated):** the [resume regression](tests/the-last-harness-pi-1-3-resume-regressions.test.mjs) passes primary allowlist precedence at policy application and before provider execution, explicit child `--tools` precedence over transcript state, and omitted-child transcript restoration. It accepts upstream's transient late-tool activation after registration as non-security-boundary behavior while retaining late-tool registration, inactive control behavior, provider exclusion, rejected attempted execution with zero executor count, and allowed-read assertions. Provider-backed release validation remains pending.
+- **Clean model switching:** verify thinking from the previous model is not presented to the next model as plain text.
+- **TLH policy boundaries:** with the default cap enabled, `gpt-6.1-sol` has a native 500k window (272k → 500k), the non-child primary effective window is 300k (272k → 300k), non-developer children use native 500k, and canonical developer children use `min(native, 272k)`; `tlh.contextCap.disabled=true` follows native windows. Verify model defaults, MCP exclusion/adapter policy, OSC root ownership, and user settings remain unchanged.
+
+### Historical Pi 1.2.0 comparison status (reviewed 2026-10-13)
+
+The dated 1.1.0→1.2.0 tarball comparison is historical evidence recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#historical-pi-120-review-evidence). It was not live release validation: no provider, credential, or installed-profile checks were run. The checks identified at that time remain pending and are carried forward by the current Pi 1.3.0 release-preparation checklist above:
 
 - **Claude Pro/Max OAuth gate:** with a live Claude Pro/Max OAuth login (pi-ai's `anthropic-messages.js` now rebuilds and retries the request once on strict-tool limit errors), verify a normal turn, tool use, a mid-conversation tool change via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default.
 - **Extension-triggered turns:** verify an MCP adapter auth/UI turn started via `pi.sendMessage(..., { triggerTurn: true })` keeps the TLH system prompt, and that busy-session `sendUserMessage`/`sendMessage` callers (subagent follow-up/steer nudges, annotate, session-mirror reply) behave while a run is starting.
 - **Startup validation:** verify TLH starts cleanly with the packaged theme and keybindings on a fresh isolated profile.
 - **Runtime layout:** verify a real prefix install no longer materializes `chord`, with the runtime prefix top level still `bin` and `lib`.
 
-### Pi 1.1.0 comparison status (reviewed 2026-10-08)
+### Historical Pi 1.1.0 comparison status (reviewed 2026-10-08)
 
 The dated 1.0.4→1.1.0 source-map/package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md). This is not live release validation: the repository pin advanced to 1.1.0 after that review, the installed modules were 1.0.3 during the review, and no provider, credential, or installed-profile checks were run. The native OSC overlap blocker is resolved on inherited base `a72786a5`: the wrapper defaults `PI_PROGRAM_STATUS=0`, leaving TLH's effective-activity writer as the default root owner. `PI_PROGRAM_STATUS=1` remains an explicit user override and is not the default compatibility path.
 
-Record these Pi 1.1.0 checks (still pending; carried forward under Pi 1.2.0) against the packaged release candidate:
+The following Pi 1.1.0 checks remain historical pending items carried forward under the current Pi 1.3.0 release-preparation checklist:
 
 - **OSC 7501 ownership:** verify Pi's native writer stays suppressed by the wrapper, TLH reports primary-or-active-child effective activity, and dialog/login blocked states, completion, session switching, and shutdown do not produce duplicate root records. Treat an explicit `PI_PROGRAM_STATUS=1` override as an opt-in caveat.
 - **Child policy and rendering:** verify plain and `+name`/`-name` tool policies, generic-MCP retention, `MCP_DIRECT_TOOLS=__none__`, recorded tool duration, `outputPad`, and `agent_settled.aborted` behavior across an interrupted/reloaded child session.
 - **Model/provider accounting:** with an authorized real provider, verify model/effort/auth behavior, retry handling, context-limit/token reporting, long-prompt cost tiers, and classifier/model availability. No paid-provider run belongs in this implementation ticket.
 - **MCP and published release:** verify adapter connectivity/cancellation, native-MCP exclusion behavior, package/bundle layout, and update convergence from the published Pi 1.2.0 ref.
 
-The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05; these are historical results, not Pi 1.1.0 or 1.2.0 validation. v0.44.0 shipped on 2026-10-12, and v0.45.0 shipped on 2026-10-14, without running the carried-forward Pi 1.1.0/1.2.0 release-tier checklist, by maintainer decision; the checklist remains pending, is carried forward under Pi 1.2.0, and should run against the next release candidate. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` record.
+The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05; these are historical results, not Pi 1.1.0 or 1.2.0 validation. v0.44.0 shipped on 2026-10-12, and v0.45.0 shipped on 2026-10-14, without running the carried-forward Pi 1.1.0/1.2.0 release-tier checklist, by maintainer decision; the checklist remains pending, is carried forward under Pi 1.3.0, and should run against the next release candidate. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` record.
 
 ## Final validation guidance
 

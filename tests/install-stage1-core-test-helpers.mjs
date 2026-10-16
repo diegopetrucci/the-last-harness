@@ -21,7 +21,7 @@ import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const repoNodeModulesBin = join(repoRoot, "node_modules", ".bin");
 export const TLH_NON_PINNED_PI_VERSION = "0.80.1";
-export const TLH_PINNED_PI_VERSION = "1.2.0";
+export const TLH_PINNED_PI_VERSION = "1.3.0";
 
 // ---------------------------------------------------------------------------
 // Utility helpers
