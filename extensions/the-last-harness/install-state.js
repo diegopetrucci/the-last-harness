@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/install-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { TLH_REPO } from "./constants.js";
 import { readTlhInstallState } from "./profile-state.js";
 const STABLE_TRACK = "latest-release";

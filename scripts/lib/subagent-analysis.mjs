@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * Read-only subagent session analysis.
  *

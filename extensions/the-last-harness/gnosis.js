@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/gnosis.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFileSync } from "node:child_process";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";

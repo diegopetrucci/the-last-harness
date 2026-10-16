@@ -1,3 +1,4 @@
+// Generated from scripts/lib/mcp-adapter-cutover.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";

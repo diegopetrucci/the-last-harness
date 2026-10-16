@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-visibility.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { InteractiveMode, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { isRecord, readText, uniqueSorted } from "./common.js";
 import { safeTlhProfileFilePath } from "./profile-state.js";

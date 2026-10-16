@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-git.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";

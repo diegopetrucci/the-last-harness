@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/terminal-persistence.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/schemas.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Type } from "typebox";
 function keepTopLevelParameterDescriptions(schema) {
     return pruneNestedDescriptions(schema, []);

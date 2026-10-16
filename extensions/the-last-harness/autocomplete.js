@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/autocomplete.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { AUTOCOMPLETE_SOURCE_TAG_PATTERN } from "./constants.js";
 const HIDDEN_SLASH_COMMANDS = new Set([
     "changelog",

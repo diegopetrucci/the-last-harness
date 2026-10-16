@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/shell-parser.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["-C", "-P", "-a", "-u"]);
 const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
 const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);

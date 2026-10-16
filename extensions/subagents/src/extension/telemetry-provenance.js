@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/telemetry-provenance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import { getTlhVersion } from "../../../the-last-harness/package-version.js";
 import { readTlhInstallState } from "../../../the-last-harness/profile-state.js";

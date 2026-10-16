@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-settings.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";

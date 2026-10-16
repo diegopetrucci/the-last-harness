@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/tool-description.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the TLH minimal contract. Use exactly one mode per call.
 
 EXECUTION

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/header.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { TLH_NAME } from "./constants.js";
 function formatLaunchContextPercent(tokens, contextWindow) {

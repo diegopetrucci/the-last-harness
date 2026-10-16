@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-runtime.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * tlh-install-runtime — staged npm-ci runtime provisioning for the TLH private Pi runtime.
  *

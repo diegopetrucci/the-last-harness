@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/annotate-last-message/theme.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const FALLBACK = {
     "--mdHeading": "#f4c95d",
     "--mdLink": "#7dd3fc",

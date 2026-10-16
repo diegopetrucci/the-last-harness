@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/usage-limits-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getCachedTlhUsageWeeklyVisibility, getPersistedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, setCachedTlhUsageWeeklyVisibility, USAGE_COMMAND_HELP, } from "./usage-limits.js";

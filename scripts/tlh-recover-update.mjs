@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-recover-update.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, } from "node:fs";
 import { homedir, tmpdir } from "node:os";

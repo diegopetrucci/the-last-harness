@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-install.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, } from "node:fs";

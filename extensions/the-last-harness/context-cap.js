@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/context-cap.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isPlainObject } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";

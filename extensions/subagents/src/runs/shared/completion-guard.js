@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/completion-guard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isMutatingBashCommand } from "./long-running-guard.js";
 import { expectsImplementationMutation as sharedExpectsImplementationMutation } from "./task-intent.js";
 const VALIDATION_ONLY_TASK_PATTERNS = [

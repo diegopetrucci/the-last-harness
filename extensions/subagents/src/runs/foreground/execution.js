@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/execution.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/mcp-adapter-migration.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { accessSync, chmodSync, closeSync, constants, fsyncSync, fstatSync, lstatSync, linkSync, mkdtempSync, openSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeSync, } from "node:fs";
 import { homedir } from "node:os";
 import process from "node:process";

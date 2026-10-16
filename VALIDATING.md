@@ -24,6 +24,23 @@ Local gitleaks scans consume `.gitleaks.toml` as the allowlist for reviewed synt
 
 The validation scripts retain Oxlint's built-in default rule selection while `.oxlintrc.json` registers the vendored anti-slop plugin for deliberate per-rule adoption. The global `max-lines` rule is enabled at error severity with a 2,000 physical-line ceiling (including blank lines and comments) for every file under `scripts/`, `tests/`, and `extensions/`, and for `protocol/` except `protocol/session-mirror/v1/conformance.ts`, which turns `max-lines` off and keeps the other rules. Source, test, and generated mirror files share this limit without further exemptions. The current rollout enables `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` at error severity; the other 6 anti-slop rule entries remain visibly commented out. `npm run lint` runs `oxlint --deny-warnings scripts tests extensions protocol`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check` (Oxfmt check mode over `scripts/`, `tests/`, `extensions/`, and `protocol/`). The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
+## Fast checks for agents
+
+`npm run validate` typically takes about 2-4 minutes locally (observed median ~2 min, p90 ~3.5 min, max ~7 min), so set tool timeouts to at least 600 seconds.
+
+Single root test file (diagnostic only; it bypasses the `TMPDIR` leak guard that `npm test` uses, so it is not validation):
+
+```sh
+node --test tests/<name>.test.mjs
+```
+
+Single subagents test file from the repo root, optionally narrowed by test name (also diagnostic only):
+
+```sh
+node --experimental-strip-types --import ./extensions/subagents/test/support/register-loader.mjs --test extensions/subagents/test/unit/<name>.test.ts
+node --experimental-strip-types --import ./extensions/subagents/test/support/register-loader.mjs --test --test-name-pattern='<pattern>' extensions/subagents/test/unit/<name>.test.ts
+```
+
 ## Test-runner concurrency policy
 
 The root test guard, imported subagent runner, and CI shard entrypoint share `TLH_TEST_CONCURRENCY`. When it is unset outside GitHub Actions, they pass Node an adaptive limit of `max(1, floor(availableParallelism / 2))`, which keeps local runs near half of the available CPUs. On GitHub Actions, an unset variable preserves the existing deliberate runner concurrency; a positive-integer override applies in both environments. Invalid values fail fast with a concise error and exit code 2.
@@ -161,15 +178,7 @@ For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run t
 
 The subagent runtime is part of the root TLH package, not a separately pinned default extension. `npm run check:package-contents` verifies that the declared first-party runtime entrypoint and `extensions/subagents/LICENSE` are present in `npm pack --dry-run`, while contributor-only imported tests remain excluded.
 
-The source-history comparison is intentionally a separate, checkout-dependent verification:
-
-```sh
-node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-subagents-checkout
-```
-
-It verifies the exact source repository commit/tree, include/exclude partition, source and imported blob identities, current historical archive bytes/modes, full-tree tar checksum, ledger counts, import ancestry, and absence of grafted source ancestry. It is not part of `npm run validate` because routine clones do not carry the external repository's Git objects. See [docs/subagents-history/HISTORY.md](docs/subagents-history/HISTORY.md) for the pinned values and independent history-inspection commands.
-
-No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation. Those workflows survive only as historical evidence under `docs/subagents-history/source/`; never use that archive as a task `cwd`.
+No standalone subagent publish, release, pin-bump, or upstream-sync check is current TLH validation.
 
 ## Useful targeted checks
 
@@ -223,7 +232,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. Measured runs within each invocation share one stable temporary profile path, with run 1 as the cold sample and later runs as warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.3.0 release-candidate checks; the historical Pi 1.1.0 and 1.2.0 comparison status plus the current Pi 1.3.0 checks are recorded below. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.3.0 release-candidate checks; the current Pi 1.3.0 checks are recorded below, and the historical Pi 1.1.0 and 1.2.0 comparison status lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md). [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`. `.github/workflows/startup-performance.yml` runs on every pull request and on `main` as an informational check with `--budget-ms 2500`. That budget is slack above this release objective. The local checker default remains `1000ms`.
 
@@ -255,27 +264,7 @@ The dated 1.2.0→1.3.0 package comparison is complete and recorded in [the upst
 - **Clean model switching:** verify thinking from the previous model is not presented to the next model as plain text.
 - **TLH policy boundaries:** with the default cap enabled, `gpt-6.1-sol` has a native 500k window (272k → 500k), the non-child primary effective window is 300k (272k → 300k), non-developer children use native 500k, and canonical developer children use `min(native, 272k)`; `tlh.contextCap.disabled=true` follows native windows. Verify model defaults, MCP exclusion/adapter policy, OSC root ownership, and user settings remain unchanged.
 
-### Historical Pi 1.2.0 comparison status (reviewed 2026-10-13)
-
-The dated 1.1.0→1.2.0 tarball comparison is historical evidence recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md#historical-pi-120-review-evidence). It was not live release validation: no provider, credential, or installed-profile checks were run. The checks identified at that time remain pending and are carried forward by the current Pi 1.3.0 release-preparation checklist above:
-
-- **Claude Pro/Max OAuth gate:** with a live Claude Pro/Max OAuth login (pi-ai's `anthropic-messages.js` now rebuilds and retries the request once on strict-tool limit errors), verify a normal turn, tool use, a mid-conversation tool change via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default.
-- **Extension-triggered turns:** verify an MCP adapter auth/UI turn started via `pi.sendMessage(..., { triggerTurn: true })` keeps the TLH system prompt, and that busy-session `sendUserMessage`/`sendMessage` callers (subagent follow-up/steer nudges, annotate, session-mirror reply) behave while a run is starting.
-- **Startup validation:** verify TLH starts cleanly with the packaged theme and keybindings on a fresh isolated profile.
-- **Runtime layout:** verify a real prefix install no longer materializes `chord`, with the runtime prefix top level still `bin` and `lib`.
-
-### Historical Pi 1.1.0 comparison status (reviewed 2026-10-08)
-
-The dated 1.0.4→1.1.0 source-map/package comparison is complete and recorded in [the upstream-sync inventory](docs/upstream-sync-inventory.md). This is not live release validation: the repository pin advanced to 1.1.0 after that review, the installed modules were 1.0.3 during the review, and no provider, credential, or installed-profile checks were run. The native OSC overlap blocker is resolved on inherited base `a72786a5`: the wrapper defaults `PI_PROGRAM_STATUS=0`, leaving TLH's effective-activity writer as the default root owner. `PI_PROGRAM_STATUS=1` remains an explicit user override and is not the default compatibility path.
-
-The following Pi 1.1.0 checks remain historical pending items carried forward under the current Pi 1.3.0 release-preparation checklist:
-
-- **OSC 7501 ownership:** verify Pi's native writer stays suppressed by the wrapper, TLH reports primary-or-active-child effective activity, and dialog/login blocked states, completion, session switching, and shutdown do not produce duplicate root records. Treat an explicit `PI_PROGRAM_STATUS=1` override as an opt-in caveat.
-- **Child policy and rendering:** verify plain and `+name`/`-name` tool policies, generic-MCP retention, `MCP_DIRECT_TOOLS=__none__`, recorded tool duration, `outputPad`, and `agent_settled.aborted` behavior across an interrupted/reloaded child session.
-- **Model/provider accounting:** with an authorized real provider, verify model/effort/auth behavior, retry handling, context-limit/token reporting, long-prompt cost tiers, and classifier/model availability. No paid-provider run belongs in this implementation ticket.
-- **MCP and published release:** verify adapter connectivity/cancellation, native-MCP exclusion behavior, package/bundle layout, and update convergence from the published Pi 1.2.0 ref.
-
-The live-provider checks for Pi 0.87.1 passed on the packaged `v0.43.0` candidate on 2026-09-25 (`tlhf-u2gu`) and are recorded in the release validation notes/current release tracking. Live Claude Pro/Max OAuth checks on Pi 1.0.3 (mid-conversation tool changes via a primary-agent switch and a supervisor contact, and `/effort` → Ctrl+S saving a default) passed on 2026-10-05; these are historical results, not Pi 1.1.0 or 1.2.0 validation. v0.44.0 shipped on 2026-10-12, and v0.45.0 shipped on 2026-10-14, without running the carried-forward Pi 1.1.0/1.2.0 release-tier checklist, by maintainer decision; the checklist remains pending, is carried forward under Pi 1.3.0, and should run against the next release candidate. [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` record.
+Historical Pi 1.2.0 and 1.1.0 comparison status notes are in [docs/pin-bump-verification.md](docs/pin-bump-verification.md#historical-pi-120-comparison-status-reviewed-2026-10-13).
 
 ## Final validation guidance
 

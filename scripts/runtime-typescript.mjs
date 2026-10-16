@@ -193,6 +193,17 @@ function relativeRepoPath(path, repoRoot) {
   return normalizeRepoRelativePath(relative(repoRoot, path));
 }
 
+function readGeneratedRuntimeOutput(config, sourcePath, generatedOutputPath) {
+  const header = `// Generated from ${relativeRepoPath(sourcePath, config.repoRoot)} by scripts/runtime-typescript.mjs; edit the source, not this file.\n`;
+  const content = readFileSync(generatedOutputPath, "utf8");
+  if (content.startsWith("#!")) {
+    const newlineIndex = content.indexOf("\n");
+    if (newlineIndex === -1) return `${content}\n${header}`;
+    return `${content.slice(0, newlineIndex + 1)}${header}${content.slice(newlineIndex + 1)}`;
+  }
+  return `${header}${content}`;
+}
+
 function spawnTsc(config, target, args, stdio = "inherit") {
   const tscEntrypoint = require.resolve("typescript/bin/tsc");
   const result = spawnSync(
@@ -337,7 +348,10 @@ function buildRuntimeOutputs(config, target, sources) {
         continue;
       }
       mkdirSync(dirname(outputPath), { recursive: true });
-      writeFileSync(outputPath, readFileSync(generatedOutputPath, "utf8"));
+      writeFileSync(
+        outputPath,
+        readGeneratedRuntimeOutput(config, sourcePath, generatedOutputPath),
+      );
     }
 
     if (missingGeneratedOutputs.length > 0) {
@@ -386,7 +400,10 @@ function checkFreshRuntimeOutputs(config, target, sources) {
         missingOutputs.push(relativeOutputPath);
         continue;
       }
-      if (readFileSync(outputPath, "utf8") !== readFileSync(generatedOutputPath, "utf8")) {
+      if (
+        readFileSync(outputPath, "utf8") !==
+        readGeneratedRuntimeOutput(config, sourcePath, generatedOutputPath)
+      ) {
         staleOutputs.push(relativeOutputPath);
       }
     }

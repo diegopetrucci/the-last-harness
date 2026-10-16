@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/session-identity.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function resolveCurrentSessionId(sessionManager) {
     const sessionId = sessionManager.getSessionFile() ?? sessionManager.getSessionId();
     if (!sessionId)

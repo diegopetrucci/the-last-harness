@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/legacy-theme-notice.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readTlhStartupState, tlhStartupStatePath, updateTlhStartupState, } from "./profile-state.js";
 export const LEGACY_THEME_NAME = "the-last-harness";
 export const LEGACY_THEME_NOTICE = "TLH can now follow your terminal's theme colors. To switch: /settings → Theme → system.";

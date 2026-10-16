@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/merge-settings.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";

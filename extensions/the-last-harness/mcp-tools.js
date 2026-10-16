@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/mcp-tools.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function hasPersistedDirectMcpResultDetails(toolName, details) {
     if (!details || typeof details !== "object") {
         return false;

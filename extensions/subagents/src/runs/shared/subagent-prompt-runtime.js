@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.js";

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-profile-cleanup.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { copyFileSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, LEGACY_INFERRED_RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, packageIdentity, } from "./default-extensions.mjs";

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/annotate-last-message.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { openQuietGlimpse } from "../shared/quiet-glimpse.js";
 import { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback, } from "./annotate-last-message/prompt.js";
 import { findLastAssistantMessage } from "./annotate-last-message/session.js";

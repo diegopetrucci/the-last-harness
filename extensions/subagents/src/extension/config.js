@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/config.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "../shared/utils.js";

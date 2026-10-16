@@ -20,6 +20,15 @@ All notable changes to The Last Harness will be documented in this file.
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
 - The primary/non-child context cap is raised from 300k to 350k so auto-compaction triggers at about 301k with the 49,152 `compaction.reserveTokens` default; the developer child 272k ceiling is unchanged.
 
+### Internal
+
+- Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.
+- Removed `docs/subagents-history`; provenance lives in `docs/subagents.md` and git history.
+- Fixed the `module.register()` deprecation warning printed by the subagent test loader.
+- Added a fast-checks section to `VALIDATING.md`.
+- Added a nested `extensions/subagents/AGENTS.md` with subagent-specific contributor guidance.
+- Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
+
 ## [0.45.0] - 2026-10-14
 
 ### Fixed

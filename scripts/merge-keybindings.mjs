@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/merge-keybindings.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

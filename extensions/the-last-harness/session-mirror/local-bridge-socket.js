@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/local-bridge-socket.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const FAILURE_EVENTS = ["error", "end", "close"];
 export function bestEffort(action) {
     try {

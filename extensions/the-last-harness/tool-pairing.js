@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tool-pairing.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function computeMedian(values) {
     if (values.length === 0)
         return null;

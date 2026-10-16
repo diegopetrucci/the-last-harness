@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/foreground-pause-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { ASYNC_DIR, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-limit-report.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { formatHomePath } from "./common.js";

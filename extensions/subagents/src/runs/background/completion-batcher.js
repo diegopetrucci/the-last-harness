@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/completion-batcher.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const DEFAULT_COMPLETION_BATCH_CONFIG = {
     enabled: true,
     debounceMs: 150,

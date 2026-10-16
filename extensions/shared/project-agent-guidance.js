@@ -1,3 +1,4 @@
+// Generated from extensions/shared/project-agent-guidance.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { findValidatedGitWorktree, } from "./project-agent-worktree.js";

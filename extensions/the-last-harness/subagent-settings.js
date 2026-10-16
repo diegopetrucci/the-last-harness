@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/subagent-settings.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
