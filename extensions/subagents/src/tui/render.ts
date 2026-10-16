@@ -3,4 +3,9 @@
  */
 
 export { clearLegacyResultAnimationTimer, renderSubagentResult } from "./render-result.ts";
-export { buildWidgetLines, renderWidget, widgetRenderKey } from "./render-widget.ts";
+export {
+  buildWidgetLines,
+  renderWidget,
+  widgetPhraseSlotKey,
+  widgetRenderKey,
+} from "./render-widget.ts";

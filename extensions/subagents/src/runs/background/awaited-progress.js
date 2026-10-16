@@ -51,7 +51,7 @@ function plannedStepsForPlan(plan) {
     return plan.kind === "single" ? [plan.task] : plan.tasks;
 }
 function buildProgressItem(input) {
-    const { index, agent, task, stepStatus, step, recentOutput, durationMs, skills } = input;
+    const { index, agent, task, stepStatus, step, recentOutput, durationMs, startedAt, skills } = input;
     const progress = {
         index,
         agent,
@@ -70,6 +70,7 @@ function buildProgressItem(input) {
         turnCount: step?.turnCount,
         tokens: progressTokensForStep(step),
         durationMs,
+        startedAt,
         error: step?.error,
     };
     if (skills)
@@ -162,6 +163,7 @@ function buildAwaitedProgressStep(status, index, planned, persisted, now) {
     const finalOutput = recentOutput.join("\n") || persisted?.error || "";
     const durationMs = persisted?.durationMs ??
         (persisted?.startedAt !== undefined ? Math.max(0, now() - persisted.startedAt) : 0);
+    const startedAt = persisted?.startedAt ?? status.startedAt;
     const progress = buildProgressItem({
         index,
         agent,
@@ -170,6 +172,7 @@ function buildAwaitedProgressStep(status, index, planned, persisted, now) {
         step: persisted,
         recentOutput,
         durationMs,
+        startedAt,
         skills,
     });
     const result = buildProgressResult({

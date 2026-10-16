@@ -76,7 +76,7 @@ function restoreEnv(previousEnv) {
   }
 }
 
-test("Jiti command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
+test("Jiti command facades resolve tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-lazy-commands-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
@@ -103,13 +103,10 @@ test("Jiti command facades resolve review, tokens, annotate-last-message, and tl
     const pi = createPiHarness();
     theLastHarness(pi);
 
-    const reviewCommand = pi.commands.get("review");
+    assert.equal(pi.commands.has("review"), false);
     const tokensCommand = pi.commands.get("tokens");
     const annotateCommand = pi.commands.get("annotate-last-message");
     const changelogCommand = pi.commands.get("tlh-changelog");
-    assert.equal(typeof reviewCommand?.handler, "function");
-    assert.equal(reviewCommand?.description, "Review code changes via an interactive mode picker");
-    assert.equal(reviewCommand?.getArgumentCompletions?.("anything"), null);
     assert.equal(typeof tokensCommand?.handler, "function");
     assert.equal(tokensCommand?.description, "Generate and open a local TLH token-spend report");
     assert.equal(typeof annotateCommand?.handler, "function");
@@ -120,16 +117,6 @@ test("Jiti command facades resolve review, tokens, annotate-last-message, and tl
     assert.equal(typeof changelogCommand?.handler, "function");
 
     const shutdownHandlerCount = pi.handlers.get("session_shutdown")?.length ?? 0;
-
-    const reviewRun = createCommandContext({ cwd });
-    await reviewCommand.handler("pr 123", reviewRun.ctx);
-    assert.deepEqual(reviewRun.notifications, [
-      {
-        message:
-          "/review is picker-only. Run /review with no arguments, then choose a mode in the picker. Typed shortcuts like `/review pr 123` and `--extra` are no longer supported.",
-        type: "error",
-      },
-    ]);
 
     const tokensRun = createCommandContext({ cwd });
     await tokensCommand.handler("unexpected", tokensRun.ctx);

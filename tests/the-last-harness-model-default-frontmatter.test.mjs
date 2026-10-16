@@ -242,6 +242,41 @@ test("production bundled agents declare well-formed xAI defaults", () => {
   }
 });
 
+test("production bundled agents use the approved OpenAI Codex defaults", () => {
+  const expectedDefaults = new Map([
+    ["architect", { model: "gpt-5.6-sol", effort: "medium" }],
+    ["rush", { model: "gpt-5.6-sol", effort: "low" }],
+    ["product", { model: "gpt-5.6-sol", effort: "medium" }],
+    ["bug-hunter", { model: "gpt-5.6-sol", effort: "medium" }],
+    ["code-reviewer", { model: "gpt-5.6-sol", effort: "medium" }],
+    ["contrarian", { model: "gpt-6-astra", effort: "medium" }],
+    ["developer", { model: "gpt-5.6-luna", effort: "max" }],
+    ["diff-summarizer", { model: "gpt-5.6-luna", effort: "medium" }],
+    ["librarian", { model: "gpt-5.6-luna", effort: "medium" }],
+    ["oracle", { model: "gpt-6-astra", effort: "medium" }],
+    ["repo-scout", { model: "gpt-5.6-luna", effort: "medium" }],
+    ["test-runner", { model: "gpt-5.6-luna", effort: "low" }],
+    ["web-scout", { model: "gpt-5.6-luna", effort: "medium" }],
+  ]);
+  const agents = [...loadPrimaryAgents().values(), ...loadSubagentMetadata()];
+
+  assert.equal(agents.length, expectedDefaults.size, "all packaged agents need an OpenAI default");
+  for (const [name, expected] of expectedDefaults) {
+    const agent = agents.find((candidate) => candidate.name === name);
+    assert.ok(agent, `production loader must return ${name}`);
+    const entries = loadedModelEntries(agent).filter(
+      ({ model }) => model.provider === "openai-codex",
+    );
+    assert.equal(entries.length, 1, `${name} must declare exactly one OpenAI Codex default`);
+    const [{ model, entry }] = entries;
+    assert.deepEqual(
+      { model: model.id, effort: entry.effort },
+      expected,
+      `${name} OpenAI Codex default`,
+    );
+  }
+});
+
 test("loaded primaries preserve preferred selection relationships", () => {
   const primaryAgents = [...loadPrimaryAgents().values()];
   assert.ok(primaryAgents.length > 0, "production loader must return primary agents");

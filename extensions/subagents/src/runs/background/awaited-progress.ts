@@ -99,9 +99,11 @@ function buildProgressItem(input: {
   step: AsyncStatusStep | undefined;
   recentOutput: string[];
   durationMs: number;
+  startedAt: number;
   skills: string[] | undefined;
 }): AgentProgress {
-  const { index, agent, task, stepStatus, step, recentOutput, durationMs, skills } = input;
+  const { index, agent, task, stepStatus, step, recentOutput, durationMs, startedAt, skills } =
+    input;
   const progress: AgentProgress = {
     index,
     agent,
@@ -121,6 +123,7 @@ function buildProgressItem(input: {
     turnCount: step?.turnCount,
     tokens: progressTokensForStep(step),
     durationMs,
+    startedAt,
     error: step?.error,
   };
   if (skills) progress.skills = [...skills];
@@ -238,6 +241,10 @@ function buildAwaitedProgressStep(
   const durationMs =
     persisted?.durationMs ??
     (persisted?.startedAt !== undefined ? Math.max(0, now() - persisted.startedAt) : 0);
+  // Stable execution start for live-clock phrase selection: prefer the step's
+  // own startedAt so multi-step runs have independent clocks; fall back to the
+  // run-level startedAt so idle gaps don't stall phrase rotation.
+  const startedAt = persisted?.startedAt ?? status.startedAt;
   const progress = buildProgressItem({
     index,
     agent,
@@ -246,6 +253,7 @@ function buildAwaitedProgressStep(
     step: persisted,
     recentOutput,
     durationMs,
+    startedAt,
     skills,
   });
   const result = buildProgressResult({

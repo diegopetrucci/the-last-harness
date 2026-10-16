@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webDir = join(__dirname, "web");
@@ -46,6 +46,8 @@ function resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath) {
             if (entry.isDirectory()) {
                 if (entry.name === "assets")
                     continue;
+                if (entryPath === join(monacoBasePath, "nls", "lang"))
+                    continue;
                 visit(entryPath);
                 continue;
             }
@@ -71,6 +73,7 @@ function resolveReviewUiAssets() {
             : "";
         const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
         const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath);
+        const monacoBaseUrl = pathToFileURL(dirname(monacoBasePath) + "/").href;
         return {
             tailwindBrowserJs,
             monacoLoaderJs,
@@ -78,6 +81,7 @@ function resolveReviewUiAssets() {
             monacoEditorCss,
             monacoWorkerJs,
             monacoBasicLanguagesJs: monacoRuntimeJs,
+            monacoBaseUrl,
             bootstrapError: null,
         };
     }
@@ -90,6 +94,7 @@ function resolveReviewUiAssets() {
             monacoEditorCss: "",
             monacoWorkerJs: "",
             monacoBasicLanguagesJs: "",
+            monacoBaseUrl: "",
             bootstrapError: `Unable to load packaged review UI assets: ${message}`,
         };
     }
@@ -112,7 +117,10 @@ export function buildReviewHtml(data) {
     html = safeReplace(html, "__INLINE_MONACO_LOADER_JS__", escapeInlineScriptSource(assets.monacoLoaderJs));
     html = safeReplace(html, "__INLINE_MONACO_EDITOR_CSS__", escapeInlineStyleSource(assets.monacoEditorCss));
     html = safeReplace(html, "__INLINE_MONACO_WORKER_SOURCE_JSON__", escapeForInlineScript(JSON.stringify(assets.monacoWorkerJs)));
-    html = safeReplace(html, "__INLINE_MONACO_ENTRY_JS__", escapeInlineScriptSource(assets.monacoEntryJs));
+    const monacoBaseUrlConfig = assets.monacoBaseUrl
+        ? `require.config({baseUrl:${escapeForInlineScript(JSON.stringify(assets.monacoBaseUrl))}});\n`
+        : "";
+    html = safeReplace(html, "__INLINE_MONACO_ENTRY_JS__", monacoBaseUrlConfig + escapeInlineScriptSource(assets.monacoEntryJs));
     html = safeReplace(html, "__INLINE_MONACO_BASIC_LANGUAGES_JS__", escapeInlineScriptSource(assets.monacoBasicLanguagesJs));
     html = safeReplace(html, "__INLINE_REVIEW_STATE_JS__", reviewStateJs);
     html = safeReplace(html, "__INLINE_REVIEW_NAVIGATION_JS__", reviewNavigationJs);

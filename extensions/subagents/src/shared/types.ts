@@ -411,6 +411,8 @@ export interface AgentProgress {
   turnCount?: number;
   tokens: number;
   durationMs: number;
+  /** Wall-clock ms when this execution started; used for live-clock phrase selection. */
+  startedAt?: number;
   error?: string;
   failedTool?: string;
 }
@@ -1060,6 +1062,21 @@ export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 /** Internal lifecycle event emitted when an awaited run owner settles. */
 export const SUBAGENT_ASYNC_OWNER_COMPLETE_EVENT = "subagent:async-owner-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+// Keep this literal local to the subagents shared types module so detached
+// runtime imports never cross out of the generated subagents source root.
+export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
+
+export type SubagentAsyncRestoredJob = {
+  runId: string;
+  asyncDir: string;
+  sessionId: string;
+  pid?: number;
+};
+
+export type SubagentAsyncRestoredEvent = {
+  sessionId: string;
+  jobs: readonly SubagentAsyncRestoredJob[];
+};
 
 interface TopLevelParallelConfig {
   maxTasks?: number;

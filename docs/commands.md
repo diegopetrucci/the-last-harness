@@ -51,7 +51,6 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/effort` | TLH behavioral alias for Pi's native thinking-level picker |
 | `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews` and `ci-failure-investigation` are currently registered) |
 | `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
-| `/review` | Open an interactive code-review mode picker (available with the architect or disabled primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/reconcile` | Review and resolve model/effort override drift from TLH packaged defaults |
 | `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
@@ -80,8 +79,6 @@ Typed `/thinking <level>` and `/effort <level>` values, plus native thinking cyc
 Use `/switch-primary-agent disabled` to disable the primary persona for the current session; use `/switch-primary-agent default disabled` to make it the persistent default. `Shift+Tab` also cycles into disabled mode.
 
 Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
-
-`/review` is available while architect or disabled is active (and requires the interactive TUI); rush, product, and bug-hunter remain blocked. It gathers the selected review target, sends a `[/review]` handoff, and the active primary delegates it to `code-reviewer` in a fresh isolated context, digests findings, and keeps the request review-only. Disabled mode does not regain architect planning, approval, ticket, or implementation orchestration.
 
 ### `/experimental`
 

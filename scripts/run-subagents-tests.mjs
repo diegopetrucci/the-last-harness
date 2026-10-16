@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { testConcurrencyArgs } from "./test-concurrency.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const repoRoot = resolve(dirname(scriptPath), "..");
@@ -14,8 +15,9 @@ export const suiteConfigs = {
     // Stage 1 (origin/main 0c8f4faa) measured pass count: 1159/1159.
     // Stage 2 (origin/main 5bafc8d4) measured pass count: 1189/1189.
     // Stage 2 fix (persistContinuationTelemetry regression test): 1197/1197.
+    // Stage 3 review fix (awaited-progress startedAt projection): 1233/1233.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 1197,
+    minimumTests: 1233,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
@@ -100,6 +102,30 @@ function isSharded(options) {
   return options.some((option) => option === "--test-shard" || option.startsWith("--test-shard="));
 }
 
+/**
+ * Build the Node test-runner command arguments for an imported subagent suite.
+ *
+ * @param {{
+ *   loader: string;
+ *   options?: string[];
+ *   files: string[];
+ *   env?: Record<string, string | undefined>;
+ * }} input
+ * @returns {string[]}
+ */
+export function buildTestCommandArgs({ loader, options = [], files, env = process.env }) {
+  return [
+    "--experimental-strip-types",
+    "--import",
+    loader,
+    "--test",
+    "--test-reporter=tap",
+    ...testConcurrencyArgs({ env }),
+    ...options,
+    ...files,
+  ];
+}
+
 function relayFailureOutput(result) {
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -153,23 +179,20 @@ export function runSuite(suite, options = []) {
     return 2;
   }
 
+  const loader = pathToFileURL(
+    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
+  ).href;
+  let args;
+  try {
+    args = buildTestCommandArgs({ loader, options, files, env: process.env });
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
   const root = mkdtempSync(join(tmpdir(), "tlh-subagents-tests-"));
   const agentDir = join(root, "agent");
   mkdirSync(agentDir, { recursive: true });
   const env = buildChildEnv(process.env, agentDir);
-
-  const loader = pathToFileURL(
-    join(repoRoot, "extensions/subagents/test/support/register-loader.mjs"),
-  ).href;
-  const args = [
-    "--experimental-strip-types",
-    "--import",
-    loader,
-    "--test",
-    "--test-reporter=tap",
-    ...options,
-    ...files,
-  ];
   let result;
   try {
     result = spawnSync(process.execPath, args, {

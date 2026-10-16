@@ -102,6 +102,7 @@ export interface AsyncRunSummary {
   asyncDir: string;
   awaited?: boolean;
   sessionId?: string;
+  pid?: number;
   state: AsyncStatus["state"];
   lifecycle?: AsyncStatus["lifecycle"];
   error?: string;
@@ -327,6 +328,7 @@ function statusToSummary(
     asyncDir,
     ...(status.awaited ? { awaited: true } : {}),
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
+    ...(typeof status.pid === "number" ? { pid: status.pid } : {}),
     state: status.state,
     ...(status.lifecycle ? { lifecycle: status.lifecycle } : {}),
     ...(status.error ? { error: status.error } : {}),

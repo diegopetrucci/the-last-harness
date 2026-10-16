@@ -992,9 +992,10 @@ describe("subagent async widget rendering", () => {
       ]);
 
       const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
+      // Elapsed 7 000 ms → time-based slot 0; same lookup as turnCount-fallback 0.
       assert.match(
         text,
-        new RegExp(`thinker · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`),
+        new RegExp(`thinker · ${escapeRegExp(whimsicalThinkingPhrase(0))} · active now`),
       );
       assert.doesNotMatch(text, /5 turns|18 tool uses|44k token|7\.0s/);
       assert.match(text, /\+2 more/);

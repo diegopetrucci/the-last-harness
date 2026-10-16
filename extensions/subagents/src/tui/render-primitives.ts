@@ -229,8 +229,13 @@ export function isHealthActivityState(activityState: ActivityState | undefined):
 export function compactThinkingPhrase(
   activityState: ActivityState | undefined,
   turnCount?: number,
+  snapshotNow?: number,
+  startedAt?: number,
+  elapsedMs?: number,
 ): string | undefined {
-  return isHealthActivityState(activityState) ? undefined : whimsicalThinkingPhrase(turnCount);
+  return isHealthActivityState(activityState)
+    ? undefined
+    : whimsicalThinkingPhrase(turnCount, snapshotNow, startedAt, elapsedMs);
 }
 
 export function themeBold(theme: Theme, text: string): string {

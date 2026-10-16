@@ -5,10 +5,11 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { captureConsole, readPiLog } from "./install-stage1-test-helpers.mjs";
@@ -478,3 +479,51 @@ test("stage-1 dry-run prints the staged npm command without creating roots", (t)
   assert.equal(existsSync(join(agentDir, "npm")), false);
   assert.equal(existsSync(join(agentDir, "npm-called.log")), false);
 });
+
+test(
+  "stage-1 npm --prefix is the canonical realpath when agentDir has a symlinked ancestor",
+  { skip: process.platform === "win32" },
+  (t) => {
+    const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+    // symlinkedAgentAncestor places agentDir under <root>/link/agent where link
+    // is a symlink, giving a deterministic symlinked ancestor on both macOS and Linux.
+    const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+      defaultExtensions: defaults,
+      settings: { packages: defaults.map((d) => d.source) },
+      symlinkedAgentAncestor: true,
+      fakeNpmBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+    });
+
+    preInstallNpmDefaultExtensions(config);
+
+    const npmLog = readFileSync(join(agentDir, "npm.log"), "utf8").trim();
+    const prefixMatch = npmLog.match(/--prefix (\S+)/);
+    assert.ok(prefixMatch, "npm.log should contain --prefix arg");
+    const recordedPrefix = prefixMatch[1];
+
+    // The prefix must be a staging directory, not the final npm root
+    assert.ok(
+      recordedPrefix.includes(".tlh-npm-defaults-"),
+      "npm --prefix should be the staging dir",
+    );
+    // The stage was promoted; compare the recorded prefix against the canonical
+    // form (realpathSync(agentDir) + stage basename). The recorded prefix must
+    // not start with the symlinked ancestor path (<root>/link).
+    const stageBasename = recordedPrefix.split("/").at(-1);
+    const canonicalAgentDir = realpathSync(agentDir);
+    assert.equal(
+      recordedPrefix,
+      join(canonicalAgentDir, stageBasename),
+      "npm --prefix should be the canonical realpath of the stage dir (no symlinked ancestor)",
+    );
+    assert.ok(
+      !recordedPrefix.startsWith(dirname(agentDir) + "/"),
+      "npm --prefix should not start with the symlinked ancestor path",
+    );
+    // The stage must have been promoted to <agentDir>/npm
+    assert.ok(
+      existsSync(join(agentDir, "npm", "package.json")),
+      "stage should be promoted to <agentDir>/npm",
+    );
+  },
+);

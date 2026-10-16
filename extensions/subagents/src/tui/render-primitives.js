@@ -149,8 +149,10 @@ export function buildLiveStatusLine(progress, snapshotNow) {
 export function isHealthActivityState(activityState) {
     return activityState === "needs_attention";
 }
-export function compactThinkingPhrase(activityState, turnCount) {
-    return isHealthActivityState(activityState) ? undefined : whimsicalThinkingPhrase(turnCount);
+export function compactThinkingPhrase(activityState, turnCount, snapshotNow, startedAt, elapsedMs) {
+    return isHealthActivityState(activityState)
+        ? undefined
+        : whimsicalThinkingPhrase(turnCount, snapshotNow, startedAt, elapsedMs);
 }
 export function themeBold(theme, text) {
     return theme.bold?.(text) ?? text;

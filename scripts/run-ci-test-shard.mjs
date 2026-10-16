@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testConcurrencyArgs } from "./test-concurrency.mjs";
 import { runLanes } from "./run-lane.mjs";
 import { findLeaks } from "./run-test-tmpdir-guard.mjs";
 
@@ -73,15 +74,24 @@ export function parseShard(shardArg) {
  *
  * @param {number} shard
  * @param {string} shardStr
+ * @param {Record<string, string | undefined>} [env]
  * @returns {import("./run-lane.mjs").Lane[]}
  */
-export function buildLanes(shard, shardStr) {
+export function buildLanes(shard, shardStr, env = process.env) {
   const subagentsScript = join(repoRoot, "scripts", "run-subagents-tests.mjs");
   const shardOption = `--test-shard=${shardStr}`;
+  const concurrencyArgs = testConcurrencyArgs({ env });
 
   /** @type {string[][]} */
   const laneACommands = [
-    [process.execPath, "--test", "--test-reporter=dot", shardOption, "tests/**/*.test.mjs"],
+    [
+      process.execPath,
+      "--test",
+      "--test-reporter=dot",
+      ...concurrencyArgs,
+      shardOption,
+      "tests/**/*.test.mjs",
+    ],
     [process.execPath, subagentsScript, "unit", shardOption],
   ];
   if (shard === 1) {
@@ -117,6 +127,14 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const { shard, shardStr } = parsed;
+  let laneDefinitions;
+  try {
+    laneDefinitions = buildLanes(shard, shardStr);
+  } catch (error) {
+    process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+
   const baseHomeDir = process.env.HOME ?? join(repoRoot, ".tmp-ci-home");
 
   // Isolate each lane's temp output under a fresh per-run root so temp-dir
@@ -124,7 +142,7 @@ export async function main(argv = process.argv.slice(2)) {
   const tmpdirRoot = mkdtempSync(join(tmpdir(), "tlh-ci-shard-run-"));
   const cleanupTmpdir = registerTmpdirCleanup(tmpdirRoot);
   const tmpdirEnv = { TMPDIR: tmpdirRoot, TMP: tmpdirRoot, TEMP: tmpdirRoot };
-  const lanes = buildLanes(shard, shardStr).map((lane) => ({
+  const lanes = laneDefinitions.map((lane) => ({
     ...lane,
     env: { ...lane.env, ...tmpdirEnv },
   }));

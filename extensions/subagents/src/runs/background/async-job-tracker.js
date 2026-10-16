@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { renderWidget, widgetRenderKey } from "../../tui/render.js";
+import { renderWidget, widgetPhraseSlotKey, widgetRenderKey } from "../../tui/render.js";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
-import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
+import { normalizeSubagentRunMode, POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_ASYNC_RESTORED_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../shared/nested-events.js";
@@ -125,6 +125,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const timer = setTimeout(() => {
             state.cleanupTimers.delete(asyncId);
             state.asyncJobs.delete(asyncId);
+            lastPhraseSlotKeys.delete(asyncId);
             if (state.lastUiContext) {
                 rerenderWidget(state.lastUiContext);
             }
@@ -261,6 +262,19 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             fs.closeSync(fd);
         }
     };
+    const lastPhraseSlotKeys = new Map();
+    const nowMs = () => options.now?.() ?? Date.now();
+    const updatePhraseSlot = (asyncId, job, now) => {
+        const before = lastPhraseSlotKeys.get(asyncId);
+        const after = widgetPhraseSlotKey(job, now);
+        lastPhraseSlotKeys.set(asyncId, after);
+        return before !== after;
+    };
+    const renderOrPhraseChanged = (renderKeyBefore, asyncId, job, now) => {
+        const renderChanged = widgetRenderKey(job) !== renderKeyBefore;
+        const phraseChanged = updatePhraseSlot(asyncId, job, now);
+        return renderChanged || phraseChanged;
+    };
     const ensurePoller = () => {
         if (state.poller)
             return;
@@ -275,6 +289,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 return;
             }
             let widgetChanged = false;
+            const phraseSlotNow = nowMs();
             for (const job of state.asyncJobs.values()) {
                 const widgetStateBefore = widgetRenderKey(job);
                 let nestedRefreshFailed = false;
@@ -367,7 +382,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
                             scheduleCleanup(job.asyncId);
                         }
-                        if (widgetRenderKey(job) !== widgetStateBefore)
+                        if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
                             widgetChanged = true;
                         continue;
                     }
@@ -397,7 +412,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         scheduleCleanup(job.asyncId);
                     }
                 }
-                if (widgetRenderKey(job) !== widgetStateBefore)
+                if (renderOrPhraseChanged(widgetStateBefore, job.asyncId, job, phraseSlotNow))
                     widgetChanged = true;
             }
             if (widgetChanged && state.lastUiContext?.hasUI)
@@ -415,7 +430,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const now = Date.now();
         const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
         const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
-        state.asyncJobs.set(info.id, {
+        const newJob = {
             asyncId: info.id,
             asyncDir,
             ...(isAwaitedRun(info.id) ? { awaited: true } : {}),
@@ -433,7 +448,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             deadlineAt: info.deadlineAt,
             controlEventCursor: 0,
             projectAgents: info.projectAgents,
-        });
+        };
+        state.asyncJobs.set(info.id, newJob);
+        lastPhraseSlotKeys.set(info.id, widgetPhraseSlotKey(newJob, nowMs()));
         ensurePoller();
         if (state.lastUiContext) {
             rerenderWidget(state.lastUiContext);
@@ -488,24 +505,54 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         state.cleanupTimers.clear();
         state.asyncJobs.clear();
+        lastPhraseSlotKeys.clear();
         state.resultFileCoalescer.clear();
         if (ctx?.hasUI) {
             state.lastUiContext = ctx;
             rerenderWidget(ctx, []);
         }
     };
+    const emitRestoredSnapshot = (sessionId, runs) => {
+        const snapshotSessionId = sessionId ?? "";
+        const jobs = sessionId === null
+            ? []
+            : runs.map((run) => {
+                const pid = typeof run.pid === "number" && Number.isInteger(run.pid) && run.pid > 0
+                    ? run.pid
+                    : undefined;
+                return {
+                    runId: run.id,
+                    asyncDir: run.asyncDir,
+                    sessionId: snapshotSessionId,
+                    ...(pid !== undefined ? { pid } : {}),
+                };
+            });
+        const payload = {
+            sessionId: snapshotSessionId,
+            jobs,
+        };
+        try {
+            pi.events.emit(SUBAGENT_ASYNC_RESTORED_EVENT, payload);
+        }
+        catch (error) {
+            console.error("Failed to publish the async restore snapshot:", error);
+        }
+    };
     const restoreActiveJobs = (ctx) => {
         if (ctx?.hasUI)
             state.lastUiContext = ctx;
-        if (!state.currentSessionId)
-            return;
+        const sessionId = state.currentSessionId;
         restoreControlEventProbeFailures.clear();
+        if (!sessionId) {
+            emitRestoredSnapshot(null, []);
+            return;
+        }
         let runs;
         let issues;
         try {
             ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
                 states: ["queued", "running"],
-                sessionId: state.currentSessionId,
+                sessionId,
                 resultsDir,
                 kill: options.kill,
                 now: options.now,
@@ -514,22 +561,30 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         catch (error) {
             console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
+            emitRestoredSnapshot(sessionId, []);
             return;
         }
-        const warnings = [formatRestoredActiveJobsCount(runs.length)];
-        if (issues.length > 0) {
-            warnings.push("left unreadable statuses in place");
-            warnRestoreIssues(`Async restore skipped unreadable startup statuses: ${warnings.join("; ")}.`);
+        try {
+            const warnings = [formatRestoredActiveJobsCount(runs.length)];
+            if (issues.length > 0) {
+                warnings.push("left unreadable statuses in place");
+                warnRestoreIssues(`Async restore skipped unreadable startup statuses: ${warnings.join("; ")}.`);
+            }
+            for (const run of runs) {
+                state.asyncJobs.set(run.id, summaryToJob(run));
+            }
+            if (restoreControlEventProbeFailures.size > 0 &&
+                !restoreWarningDedupe.has("control-event-probe-failure")) {
+                restoreWarningDedupe.add("control-event-probe-failure");
+                const count = restoreControlEventProbeFailures.size;
+                warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);
+            }
         }
-        for (const run of runs) {
-            state.asyncJobs.set(run.id, summaryToJob(run));
+        catch (error) {
+            emitRestoredSnapshot(sessionId, []);
+            throw error;
         }
-        if (restoreControlEventProbeFailures.size > 0 &&
-            !restoreWarningDedupe.has("control-event-probe-failure")) {
-            restoreWarningDedupe.add("control-event-probe-failure");
-            const count = restoreControlEventProbeFailures.size;
-            warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);
-        }
+        emitRestoredSnapshot(sessionId, runs);
         if (runs.length === 0)
             return;
         ensurePoller();

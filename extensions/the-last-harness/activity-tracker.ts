@@ -3,12 +3,19 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveTempRootDir } from "../shared/subagent-temp-root.js";
 import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
+import {
+  isBundledSubagentRestoreProviderActive,
+  resetBundledSubagentRestoreProvider,
+  SUBAGENT_ASYNC_RESTORED_EVENT,
+  type SubagentAsyncRestoredEvent,
+} from "../shared/subagent-restore-contract.js";
 // Re-export so existing importers of activity-tracker.ts continue to work.
 export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
+const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 const RETRY_GRACE_REASON = "primary:retry-grace";
 const DEFAULT_RETRY_GRACE_MS = 1500;
 const COMPLETED_ASYNC_TOMBSTONE_MS = 60_000;
@@ -43,6 +50,7 @@ export type TlhEffectiveActivityTracker = {
   getSnapshot(): TlhEffectiveActivitySnapshot;
   isInProgress(): boolean;
   subscribe(listener: TlhEffectiveActivityListener): () => void;
+  beginSession(ctx: Pick<ExtensionContext, "cwd" | "sessionManager">): void;
   rehydrateFromArtifacts(ctx: Pick<ExtensionContext, "cwd" | "sessionManager">): void;
   dispose(): void;
   handleBeforeAgentStart(): void;
@@ -56,6 +64,7 @@ export type TlhEffectiveActivityTracker = {
   handleSessionCompactFailed(event?: { reason?: string; willRetry?: boolean }): void;
   handleUIPromptStart(event?: { reason?: string; kind?: string; title?: string }): void;
   handleUIPromptEnd(event?: { reason?: string; kind?: string; title?: string }): void;
+  handleAsyncRestored(data: unknown): void;
   handleAsyncStarted(data: unknown): void;
   handleAsyncComplete(data: unknown): void;
   handleAsyncControl(data: unknown): void;
@@ -109,16 +118,12 @@ type AsyncJobRecord = {
   asyncDir?: string;
   /** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
   pid?: number;
-  source: "started" | "control" | "rehydrated";
+  sessionId?: string;
+  source: "started" | "control" | "rehydrated" | "restored";
 };
 
 function resolveDefaultAsyncDir(): string {
   return path.join(resolveTempRootDir(), "async-subagent-runs");
-}
-
-function normalizeComparablePath(target: string): string {
-  const resolved = path.resolve(target);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,25 +179,26 @@ function looksLikeRetryableAgentEnd(messages: readonly unknown[] | undefined): b
   return false;
 }
 
-function readRunningAsyncJob(
+function readRestorableAsyncJob(
   asyncDir: string,
-): { runId: string; sessionId?: string; cwd?: string } | undefined {
+): { runId: string; sessionId: string; pid?: number } | undefined {
   const statusPath = path.join(asyncDir, "status.json");
   const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as unknown;
   if (
     !isRecord(raw) ||
-    raw.state !== "running" ||
+    (raw.state !== "running" && raw.state !== "queued") ||
     typeof raw.runId !== "string" ||
-    raw.runId.length === 0
+    raw.runId.length === 0 ||
+    typeof raw.sessionId !== "string" ||
+    raw.sessionId.length === 0
   ) {
     return undefined;
   }
+  const pid = toValidPid(raw.pid);
   return {
     runId: raw.runId,
-    ...(typeof raw.sessionId === "string" && raw.sessionId.length > 0
-      ? { sessionId: raw.sessionId }
-      : {}),
-    ...(typeof raw.cwd === "string" && raw.cwd.length > 0 ? { cwd: raw.cwd } : {}),
+    sessionId: raw.sessionId,
+    ...(pid !== undefined ? { pid } : {}),
   };
 }
 
@@ -214,6 +220,7 @@ export function createTlhEffectiveActivityTracker(
   const retryGraceTimers = new Map<string, TimeoutHandle>();
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
+  let activeSessionId: string | undefined;
   /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
   let uiPromptDepth = 0;
   let lastSnapshotKey = "0::0::::";
@@ -326,10 +333,12 @@ export function createTlhEffectiveActivityTracker(
         : undefined;
     const asyncDir = incomingAsyncDir ?? existingAsyncDir;
     const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
+    const sessionId = incoming.sessionId ?? existing?.sessionId;
     return {
       source: incoming.source,
       ...(asyncDir ? { asyncDir } : {}),
       ...(pid !== undefined ? { pid } : {}),
+      ...(sessionId ? { sessionId } : {}),
     };
   };
 
@@ -341,6 +350,44 @@ export function createTlhEffectiveActivityTracker(
     }
     activeAsyncJobs.set(runId, mergeAsyncJobRecord(activeAsyncJobs.get(runId), record));
     // Start the periodic liveness drain if it isn't already running.
+    scheduleLivenessCheck();
+  };
+
+  const isRestoredSource = (source: AsyncJobRecord["source"]): boolean =>
+    source === "rehydrated" || source === "restored";
+
+  const replaceRestoredAsyncJobs = (
+    jobs: readonly {
+      runId: string;
+      asyncDir: string;
+      sessionId?: string;
+      pid?: number;
+      source: "rehydrated" | "restored";
+    }[],
+  ): void => {
+    cleanupCompletedAsyncJobTombstones();
+    for (const [runId, record] of activeAsyncJobs) {
+      if (isRestoredSource(record.source)) activeAsyncJobs.delete(runId);
+    }
+    if (activeAsyncJobs.size === 0) stopLivenessTimer();
+
+    for (const job of jobs) {
+      if (!job.runId || !job.asyncDir) continue;
+      // A live event wins over a restore snapshot with the same id. This keeps
+      // replacement from erasing work observed after the session began.
+      const existing = activeAsyncJobs.get(job.runId);
+      if (existing && !isRestoredSource(existing.source)) continue;
+      // A completion event wins over a late restore snapshot. Keep the tombstone
+      // so the snapshot cannot revive a job that already finished.
+      if (recentlyCompletedAsyncJobs.has(job.runId)) continue;
+      const pid = toValidPid(job.pid);
+      activeAsyncJobs.set(job.runId, {
+        source: job.source,
+        asyncDir: job.asyncDir,
+        ...(job.sessionId ? { sessionId: job.sessionId } : {}),
+        ...(pid !== undefined ? { pid } : {}),
+      });
+    }
     scheduleLivenessCheck();
   };
 
@@ -402,6 +449,11 @@ export function createTlhEffectiveActivityTracker(
         continue;
       }
       if (state === "queued") {
+        // Subagents treats a restored queued run as authoritative for its own
+        // poller, but TLH is only a best-effort activity projection. Apply the
+        // same finite startedAt bound to restored snapshots so an orphaned
+        // queue cannot suppress idle forever; this intentional limit may stop
+        // showing activity before subagents advances a long-lived queue.
         // Queued: no pid yet. Grant a short grace period bounded by startedAt
         // so the check stays stateless. This does not penalise long-running
         // work — healthy long runs are in state "running" with a live pid.
@@ -455,9 +507,16 @@ export function createTlhEffectiveActivityTracker(
   };
 
   const currentSessionId = (
-    sessionManager: { getSessionId?: (() => string | undefined) | undefined } | undefined,
+    sessionManager:
+      | {
+          getSessionFile?: (() => string | null | undefined) | undefined;
+          getSessionId?: (() => string | null | undefined) | undefined;
+        }
+      | undefined,
   ): string | undefined => {
-    const sessionId = sessionManager?.getSessionId?.();
+    // Keep the consumer's identity order aligned with subagents' restore
+    // producer: persisted session-file paths are authoritative over UUIDs.
+    const sessionId = sessionManager?.getSessionFile?.() ?? sessionManager?.getSessionId?.();
     return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
   };
 
@@ -508,8 +567,19 @@ export function createTlhEffectiveActivityTracker(
         listeners.delete(listener);
       };
     },
+    beginSession(ctx) {
+      activeSessionId = currentSessionId(ctx.sessionManager);
+    },
     rehydrateFromArtifacts(ctx) {
       if (disposed) return;
+      activeSessionId = currentSessionId(ctx.sessionManager);
+      const restoredJobs: Array<{
+        runId: string;
+        asyncDir: string;
+        sessionId: string;
+        pid?: number;
+        source: "rehydrated";
+      }> = [];
       const entries = (() => {
         try {
           return fs.readdirSync(asyncDir, { withFileTypes: true });
@@ -522,23 +592,29 @@ export function createTlhEffectiveActivityTracker(
           return undefined;
         }
       })();
-      if (!entries) return;
 
-      const normalizedCwd = normalizeComparablePath(ctx.cwd);
-      const sessionId = currentSessionId(ctx.sessionManager);
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const candidateAsyncDir = path.join(asyncDir, entry.name);
-        try {
-          const status = readRunningAsyncJob(candidateAsyncDir);
-          if (!status) continue;
-          if (sessionId && status.sessionId && sessionId !== status.sessionId) continue;
-          if (status.cwd && normalizeComparablePath(status.cwd) !== normalizedCwd) continue;
-          setAsyncJobActive(status.runId, { asyncDir: candidateAsyncDir, source: "rehydrated" });
-        } catch {
-          // Fail closed on malformed or partially-written async artifacts.
+      if (entries && activeSessionId) {
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const candidateAsyncDir = path.join(asyncDir, entry.name);
+          try {
+            const status = readRestorableAsyncJob(candidateAsyncDir);
+            if (!status || status.sessionId !== activeSessionId) continue;
+            restoredJobs.push({
+              runId: status.runId,
+              asyncDir: candidateAsyncDir,
+              sessionId: status.sessionId,
+              ...(status.pid !== undefined ? { pid: status.pid } : {}),
+              source: "rehydrated",
+            });
+          } catch {
+            // Fail closed on malformed or partially-written async artifacts.
+          }
         }
       }
+      // Fallback scans are also replacement snapshots, but live started/control
+      // records remain untouched by replaceRestoredAsyncJobs.
+      replaceRestoredAsyncJobs(restoredJobs);
       notifyIfChanged();
     },
     dispose() {
@@ -548,6 +624,7 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons.clear();
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
+      activeSessionId = undefined;
       uiPromptDepth = 0;
       notifyIfChanged();
       listeners.clear();
@@ -614,6 +691,35 @@ export function createTlhEffectiveActivityTracker(
       uiPromptDepth -= 1;
       notifyIfChanged();
     },
+    handleAsyncRestored(data) {
+      if (disposed || !activeSessionId || !isRecord(data)) return;
+      const snapshot = data as Partial<SubagentAsyncRestoredEvent>;
+      if (snapshot.sessionId !== activeSessionId || !Array.isArray(snapshot.jobs)) return;
+      const restoredJobs: Array<{
+        runId: string;
+        asyncDir: string;
+        sessionId: string;
+        pid?: number;
+        source: "restored";
+      }> = [];
+      for (const candidate of snapshot.jobs) {
+        if (!isRecord(candidate)) continue;
+        const runId = readNonEmptyStringField(candidate, "runId");
+        const asyncDir = readNonEmptyStringField(candidate, "asyncDir");
+        const sessionId = readNonEmptyStringField(candidate, "sessionId");
+        if (!runId || !asyncDir || sessionId !== activeSessionId) continue;
+        const pid = toValidPid(candidate.pid);
+        restoredJobs.push({
+          runId,
+          asyncDir,
+          sessionId,
+          ...(pid !== undefined ? { pid } : {}),
+          source: "restored",
+        });
+      }
+      replaceRestoredAsyncJobs(restoredJobs);
+      notifyIfChanged();
+    },
     handleAsyncStarted(data) {
       if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
         return;
@@ -623,6 +729,8 @@ export function createTlhEffectiveActivityTracker(
       const record: AsyncJobRecord = { source: "started" };
       const asyncDir = readNonEmptyStringField(data, "asyncDir");
       if (asyncDir) record.asyncDir = asyncDir;
+      const sessionId = readNonEmptyStringField(data, "sessionId");
+      if (sessionId) record.sessionId = sessionId;
       const pid = toValidPid(data.pid);
       if (pid !== undefined) record.pid = pid;
       setAsyncJobActive(data.id, record);
@@ -657,6 +765,10 @@ export function createTlhEffectiveActivityTracker(
         readNonEmptyStringField(data, "asyncDir") ??
         readNonEmptyStringField(data.event, "asyncDir");
       if (asyncDir) record.asyncDir = asyncDir;
+      const sessionId =
+        readNonEmptyStringField(data, "sessionId") ??
+        readNonEmptyStringField(data.event, "sessionId");
+      if (sessionId) record.sessionId = sessionId;
       setAsyncJobActive(data.event.runId, record);
       notifyIfChanged();
     },
@@ -667,13 +779,17 @@ export function registerTlhEffectiveActivityTracker(
   pi: Pick<ExtensionAPI, "on"> & {
     events?: Pick<ExtensionAPI["events"], "on" | "emit"> | undefined;
   },
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): TlhEffectiveActivityTracker {
+  resetBundledSubagentRestoreProvider();
   const tracker = createTlhEffectiveActivityTracker();
+  const env = options.env ?? process.env;
   const unsubscribes = pi.events
     ? [
         pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) => tracker.handleAsyncStarted(data)),
         pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => tracker.handleAsyncComplete(data)),
         pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
+        pi.events.on(SUBAGENT_ASYNC_RESTORED_EVENT, (data) => tracker.handleAsyncRestored(data)),
       ]
     : [];
 
@@ -694,6 +810,13 @@ export function registerTlhEffectiveActivityTracker(
   }
 
   pi.on("session_start", (_event, ctx) => {
+    tracker.beginSession(ctx);
+    if (env[SUBAGENT_CHILD_ENV] === "1") return;
+    // The bundled producer announces synchronously during registration, before
+    // session_start. If it is absent/filtered/external, retain the legacy scan.
+    // Reporters read this earlier handler's snapshot, so the producer event can
+    // leave one handler-turn idle window before the restored jobs arrive.
+    if (pi.events && isBundledSubagentRestoreProviderActive()) return;
     tracker.rehydrateFromArtifacts(ctx);
   });
   pi.on("before_agent_start", () => {

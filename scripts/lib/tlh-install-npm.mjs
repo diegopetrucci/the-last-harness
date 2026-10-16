@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { disabledDefaultExtensionIds, packageIdentity, packageSourceOf, readDefaultExtensions, } from "./default-extensions.mjs";
@@ -276,12 +276,18 @@ export function preInstallNpmDefaultExtensions(config, io) {
         stagePath = mkdtempSync(join(stageParent, NPM_PREINSTALL_STAGE_PREFIX));
         assertProfilePathWithinAgent(config, stagePath, "npm staging root");
         prepareNpmStage(config, stagePath, io);
+        // Canonicalize the stage path before passing it as --prefix. With a lexical
+        // prefix under a symlinked ancestor, npm records package-lock keys relative
+        // to the lexical path (e.g. '../../agent/.tlh-npm-defaults-X/node_modules/...').
+        // After the stage is renamed to <agentDir>/npm those keys are stale, so later
+        // npm operations cannot use the lock and re-resolve caret ranges past pinned versions.
+        const canonicalStagePath = realpathSync(stagePath);
         const commandArgs = [
             ...npmCommand,
             "install",
             ...npmSpecs,
             "--prefix",
-            stagePath,
+            canonicalStagePath,
             "--legacy-peer-deps",
         ];
         io.runCommand(commandArgs);

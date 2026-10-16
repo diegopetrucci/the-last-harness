@@ -161,11 +161,44 @@ test("annotate-git-diff review HTML inlines Monaco assets without file:// URLs i
     repositoryHasHead: false,
   });
 
+  // The only permitted file:// URL pointing into node_modules is the intentional
+  // require.config baseUrl for the packaged Monaco min/ directory. AMD uses it so
+  // that require.toUrl() returns absolute URLs; all other node_modules file URLs
+  // remain prohibited.
+  const nodeModulesFileUrls = [
+    ...html.matchAll(/file:\/\/\/[a-zA-Z][^\s'"<>${}]*node_modules[^\s'"<>${}]*/g),
+  ].map((match) => match[0]);
+  const unexpectedFileUrls = nodeModulesFileUrls.filter(
+    (url) => !url.endsWith("/monaco-editor/min/"),
+  );
+  assert.equal(
+    unexpectedFileUrls.length,
+    0,
+    `only the require.config baseUrl may contain file:// URLs into node_modules; unexpected: ${unexpectedFileUrls.join(", ")}`,
+  );
+  assert.ok(
+    nodeModulesFileUrls.some((url) => url.endsWith("/monaco-editor/min/")),
+    "require.config baseUrl pointing to Monaco min/ must appear in built HTML",
+  );
+
+  // require.config({baseUrl}) must appear before the Monaco entry module so that
+  // AMD's toUrl() is configured before any module factory runs.
+  const requireConfigIdx = html.indexOf("require.config({baseUrl:");
+  const vsIndexDefineIdx = html.indexOf('define("vs/index"');
+  assert.ok(requireConfigIdx >= 0, "require.config({baseUrl}) must appear in built HTML");
+  assert.ok(
+    requireConfigIdx < vsIndexDefineIdx,
+    'require.config({baseUrl}) must precede define("vs/index")',
+  );
+
+  // Locale packs assign global NLS state when evaluated. They must stay external
+  // rather than letting the last alphabetically inlined locale win.
   assert.doesNotMatch(
     html,
-    /file:\/\/[^\s'"]*node_modules/,
-    "built HTML must not contain file:// URLs into node_modules",
+    /globalThis\._VSCODE_NLS_(?:MESSAGES\s*=\s*\[|LANGUAGE\s*=\s*["'])/,
+    "Monaco nls/lang locale assignments must not be inlined",
   );
+
   assert.match(html, /define\("vs\/index"/);
   assert.doesNotMatch(html, /define\("vs\/editor\/editor\.main"/);
   assert.doesNotMatch(html, /document\.createElement\("link"\)/);
@@ -224,7 +257,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const embeddedProjectAgentMarker = /embedded\.xyz/;
   const projectAgentPathMarker = /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
-  const reviewHandoffHeader = /## \/review handoff/;
+  const finalReviewWorkflow = /## Final review[\s\S]*code-reviewer/;
 
   const architectPrompt = buildTlhSystemPrompt(architect, subagents, true);
   assert.match(architectPrompt, sectionHeader);
@@ -232,13 +265,13 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(architectPrompt, embeddedProjectAgentMarker);
   assert.match(architectPrompt, projectAgentPathMarker);
   assert.match(architectPrompt, USER_SCOPE_MARKER);
+  assert.match(architectPrompt, finalReviewWorkflow);
 
   for (const primary of [rush, product, bugHunter]) {
     const label = primary?.name ?? "unknown";
     const prompt = buildTlhSystemPrompt(primary, subagents, true);
     assert.match(prompt, sectionHeader, `${label}: section header present`);
     assert.doesNotMatch(prompt, embeddedTargetMarker, `${label}: no embedded guidance`);
-    assert.doesNotMatch(prompt, reviewHandoffHeader, `${label}: no review handoff`);
   }
 
   const disabledPrompt = buildTlhSystemPrompt(undefined, subagents, false);
@@ -247,6 +280,5 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.doesNotMatch(disabledPrompt, embeddedProjectAgentMarker);
   assert.match(disabledPrompt, projectAgentPathMarker);
   assert.match(disabledPrompt, USER_SCOPE_MARKER);
-  assert.match(disabledPrompt, /## \/review handoff[\s\S]*code-reviewer/);
   assert.doesNotMatch(disabledPrompt, /You are the TLH architect/);
 });
