@@ -24,6 +24,12 @@ function scrubRunnerEnv() {
   delete env.TICKETS_DIR;
   delete env.NODE_OPTIONS;
   delete env.NODE_TEST_CONTEXT;
+  delete env.TLH_CI_TIMINGS_DIR;
+  delete env.TLH_CI_TIMINGS_EVENT_FILE;
+  delete env.TLH_CI_TIMINGS_SUITE;
+  delete env.TLH_CI_TIMINGS_SHARD;
+  delete env.TLH_CI_TIMINGS_REPO_ROOT;
+  delete env.TLH_CI_TIMINGS_RUN_ID;
   for (const key of Object.keys(env)) {
     if (key.startsWith("PI_SUBAGENT")) delete env[key];
   }
@@ -45,6 +51,50 @@ test("subagents runner projects the shared concurrency policy into Node args", (
     env: { GITHUB_ACTIONS: "true" },
   });
   assert.ok(!githubArgs.some((arg) => arg.startsWith("--test-concurrency=")));
+
+  const timingArgs = buildTestCommandArgs({
+    loader: "file:///tmp/register-loader.mjs",
+    files: ["suite.test.ts"],
+    env: {
+      TLH_CI_TIMINGS_DIR: "/workspace/timings",
+      TLH_CI_TIMINGS_EVENT_FILE: "/workspace/timings/unit.events.jsonl",
+    },
+  });
+  assert.ok(
+    timingArgs.includes(
+      `--test-reporter=${new URL("../scripts/ci-timing-reporter.mjs", import.meta.url).href}`,
+    ),
+  );
+  assert.ok(timingArgs.includes("--test-reporter-destination=stdout"));
+  assert.ok(
+    timingArgs.includes("--test-reporter-destination=/workspace/timings/unit.events.jsonl"),
+  );
+
+  const childEnv = buildChildEnv(
+    {
+      TLH_CI_TIMINGS_DIR: "/workspace/timings",
+      TLH_CI_TIMINGS_EVENT_FILE: "/workspace/timings/unit.events.jsonl",
+      TLH_CI_TIMINGS_SUITE: "unit",
+      TLH_CI_TIMINGS_REPO_ROOT: "/workspace/repo",
+    },
+    "/tmp/agent-dir",
+  );
+  assert.equal(childEnv.TLH_CI_TIMINGS_DIR, undefined);
+  assert.equal(childEnv.TLH_CI_TIMINGS_EVENT_FILE, undefined);
+  assert.equal(childEnv.TLH_CI_TIMINGS_SUITE, "unit");
+  assert.equal(childEnv.TLH_CI_TIMINGS_REPO_ROOT, "/workspace/repo");
+});
+
+test("subagents runner rejects incomplete timing configuration without a stack", () => {
+  const result = spawnSync(process.execPath, [runnerPath, "e2e"], {
+    cwd: repoRoot,
+    env: { ...scrubRunnerEnv(), TLH_CI_TIMINGS_DIR: "/tmp/timings" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /must be set together/);
+  assert.doesNotMatch(result.stderr, /\bat /u);
 });
 
 test("subagents runner reports invalid concurrency overrides without a stack", () => {
