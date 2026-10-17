@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import {
   chmodSync,
-  existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -168,9 +169,21 @@ function assertNotNormalPiPath(path: string, label: string): void {
   );
 }
 
-function wrapperIsManaged(path: string, marker = DEFAULT_MARKER): boolean {
-  if (!existsSync(path)) return false;
+/** True when anything exists at path, including dangling symlinks (lstat, never follows). */
+function entryExists(path: string): boolean {
   try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Follows symlinks: a live link to a managed wrapper is managed; dangling/non-file entries are not. */
+function wrapperIsManaged(path: string, marker = DEFAULT_MARKER): boolean {
+  try {
+    // Never open FIFOs/devices (or symlinks to them): reading could block forever.
+    if (!statSync(path).isFile()) return false;
     const line = readFileSync(path, "utf8").split(/\r?\n/)[2] || "";
     return line === `# ${marker}`;
   } catch {
@@ -558,12 +571,12 @@ function renderWrapper(args: WrapperRenderArgs): string {
 }
 
 function dryRun(args: ValidatedCliArgs, path: string): void {
-  if (existsSync(path) && !wrapperIsManaged(path) && !args.force) {
+  if (entryExists(path) && !wrapperIsManaged(path) && !args.force) {
     warn(`would not overwrite unmanaged existing wrapper: ${path}`);
     return;
   }
   printCommand(["mkdir", "-p", args.binDir]);
-  if (existsSync(path)) {
+  if (entryExists(path)) {
     log(args, `Would overwrite wrapper: ${path}`);
   } else {
     log(args, `Would create wrapper: ${path}`);
@@ -571,7 +584,7 @@ function dryRun(args: ValidatedCliArgs, path: string): void {
 }
 
 function writeWrapper(args: ValidatedCliArgs, path: string): void {
-  if (existsSync(path) && !wrapperIsManaged(path) && !args.force) {
+  if (entryExists(path) && !wrapperIsManaged(path) && !args.force) {
     throw new Error(
       `${path} already exists and is not managed by this installer; use --force or --bin-dir`,
     );
@@ -580,7 +593,10 @@ function writeWrapper(args: ValidatedCliArgs, path: string): void {
   mkdirSync(args.binDir, { recursive: true });
   const tmpPath = `${path}.tmp.${process.pid}`;
   try {
-    writeFileSync(tmpPath, renderWrapper(args), "utf8");
+    // Drop any pre-existing entry at the temp path (a symlink is removed, not followed),
+    // then create exclusively so a racing symlink can never redirect the write.
+    rmSync(tmpPath, { force: true });
+    writeFileSync(tmpPath, renderWrapper(args), { encoding: "utf8", flag: "wx", mode: 0o755 });
     chmodSync(tmpPath, 0o755);
     renameSync(tmpPath, path);
   } catch (error) {
@@ -633,4 +649,4 @@ if (isMainModule()) {
   }
 }
 
-export { DEFAULT_MARKER, parseArgs, renderWrapper, usage, validateArgs, wrapperPath };
+export { DEFAULT_MARKER, parseArgs, renderWrapper, usage, validateArgs, wrapperPath, writeWrapper };

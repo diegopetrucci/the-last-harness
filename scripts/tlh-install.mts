@@ -3,12 +3,14 @@ import { randomUUID } from "node:crypto";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -1763,8 +1765,8 @@ function configureTickets(config: InstallConfig): void {
 }
 
 function wrapperIsManaged(config: InstallConfig): boolean {
-  if (!existsSync(config.wrapperPath)) return false;
   try {
+    if (!statSync(config.wrapperPath).isFile()) return false;
     const line = readFileSync(config.wrapperPath, "utf8").split(/\r?\n/)[2] || "";
     return line === "# Managed by The Last Harness installer";
   } catch {
@@ -1772,13 +1774,23 @@ function wrapperIsManaged(config: InstallConfig): boolean {
   }
 }
 
+/** lstat-based: true for any entry at the path, including dangling symlinks. */
+function wrapperEntryExists(config: InstallConfig): boolean {
+  try {
+    lstatSync(config.wrapperPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function writeWrapperDryRunWithoutHelper(config: InstallConfig): void {
-  if (existsSync(config.wrapperPath) && !wrapperIsManaged(config) && !config.force) {
+  if (wrapperEntryExists(config) && !wrapperIsManaged(config) && !config.force) {
     warn(`would not overwrite unmanaged existing wrapper: ${config.wrapperPath}`);
     return;
   }
   printCommand(["mkdir", "-p", config.binDir]);
-  if (existsSync(config.wrapperPath)) log(config, `Would overwrite wrapper: ${config.wrapperPath}`);
+  if (wrapperEntryExists(config)) log(config, `Would overwrite wrapper: ${config.wrapperPath}`);
   else log(config, `Would create wrapper: ${config.wrapperPath}`);
 }
 
