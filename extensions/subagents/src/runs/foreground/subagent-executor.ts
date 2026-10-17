@@ -78,7 +78,7 @@ export {
 };
 import { pausedForegroundStatusPath } from "./foreground-pause-state.ts";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
-import type { ModelScopeConfig } from "../shared/model-scope.ts";
+import type { ModelScopeConfig, ModelSource } from "../shared/model-scope.ts";
 import {
   executeAsyncParallel,
   executeAsyncSingle,
@@ -204,8 +204,9 @@ export interface ExecutorDeps {
   getProjectAgentAccess?: (request: ProjectAgentAccessRequest) => ProjectAgentAccess | undefined;
   /** Provenance captured once by the parent extension load boundary. */
   telemetryProvenance?: import("../../shared/telemetry.ts").SubagentTelemetryProvenance;
-  /** Narrow functional seam for exercising continuation authorization without spawning a child. */
+  /** Narrow functional seams for exercising async dispatch without spawning a child. */
   executeAsyncSingle?: typeof executeAsyncSingle;
+  executeAsyncParallel?: typeof executeAsyncParallel;
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -247,6 +248,11 @@ function hasExplicitProjectModel(target: unknown): boolean {
   if (typeof model !== "string") return false;
   const normalized = model.trim();
   return normalized.length > 0 && normalized !== "inherit";
+}
+
+function modelSourceForTaskOverride(model: string | undefined): ModelSource {
+  const trimmed = model?.trim();
+  return trimmed && trimmed !== "inherit" ? "explicit" : "inherited";
 }
 
 function applyProjectAgentOpenRouterModel(
@@ -488,60 +494,63 @@ function runAsyncPath(
   const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
   const currentProvider = ctx.model?.provider;
   let projectRunRetained = false;
-  if (data.projectAgentCaptures?.length) {
-    try {
-      retainProjectAgentRunReference(data.projectAgentCapability!, id, data.projectAgentCaptures);
-      projectRunRetained = true;
-    } catch (error) {
-      return toExecutionErrorResult(
-        params,
-        new Error(
-          `TLH project-agent run retention failed: ${error instanceof Error ? error.message : String(error)}`,
+  let projectRunHandedOff = false;
+  try {
+    if (data.projectAgentCaptures?.length) {
+      try {
+        retainProjectAgentRunReference(data.projectAgentCapability!, id, data.projectAgentCaptures);
+        projectRunRetained = true;
+      } catch (error) {
+        return toExecutionErrorResult(
+          params,
+          new Error(
+            `TLH project-agent run retention failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+    }
+
+    const handoffAsyncProjectRun = <T extends SubagentToolResult<Details>>(result: T): T => {
+      const resumable = result.details?.results.some((child) => child.pause || child.interrupted);
+      if (projectRunRetained && (!result.isError || resumable)) projectRunHandedOff = true;
+      return result;
+    };
+
+    if (hasTasks && params.tasks) {
+      const agentConfigs = params.tasks.map((task) =>
+        agents.find((agent) => agent.name === task.agent),
+      );
+      const modelSources = params.tasks.map((task) => modelSourceForTaskOverride(task.model));
+      const modelOverrides = params.tasks.map((task, index) =>
+        resolveSubagentModelOverride(
+          task.model ?? agentConfigs[index]?.model,
+          ctx.model,
+          availableModels,
+          currentProvider,
+          { scope: data.modelScope, source: modelSources[index] },
         ),
       );
-    }
-  }
-  const releaseAsyncProjectRunOnError = <T extends SubagentToolResult<Details>>(result: T): T => {
-    if (projectRunRetained && result.isError) {
-      releaseProjectAgentRunReference(id);
-      projectRunRetained = false;
-    }
-    return result;
-  };
-
-  if (hasTasks && params.tasks) {
-    const agentConfigs = params.tasks.map((task) =>
-      agents.find((agent) => agent.name === task.agent),
-    );
-    const modelOverrides = params.tasks.map((task, index) =>
-      resolveSubagentModelOverride(
-        task.model ?? agentConfigs[index]?.model,
-        ctx.model,
-        availableModels,
-        currentProvider,
-        { scope: data.modelScope, source: task.model ? "explicit" : "inherited" },
-      ),
-    );
-    const parallelTasks = params.tasks.map((task, index) => ({
-      agent: task.agent,
-      task: task.task,
-      cwd: task.cwd,
-      ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
-      ...(providerFallbackModelsForTarget(task)
-        ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
-        : {}),
-      ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
-      ...(task.output === true
-        ? agentConfigs[index]?.output
-          ? { output: agentConfigs[index]!.output }
-          : {}
-        : task.output !== undefined
-          ? { output: task.output }
+      const parallelTasks = params.tasks.map((task, index) => ({
+        agent: task.agent,
+        task: task.task,
+        cwd: task.cwd,
+        ...(modelOverrides[index]
+          ? { model: modelOverrides[index], modelSource: modelSources[index] }
           : {}),
-      ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-    }));
-    return releaseAsyncProjectRunOnError(
-      executeAsyncParallel(id, {
+        ...(providerFallbackModelsForTarget(task)
+          ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
+          : {}),
+        ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
+        ...(task.output === true
+          ? agentConfigs[index]?.output
+            ? { output: agentConfigs[index]!.output }
+            : {}
+          : task.output !== undefined
+            ? { output: task.output }
+            : {}),
+        ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+      }));
+      const result = (deps.executeAsyncParallel ?? executeAsyncParallel)(id, {
         tasks: parallelTasks,
         concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
         agents,
@@ -560,39 +569,38 @@ function runAsyncPath(
         telemetryProvenance: data.telemetryProvenance,
         telemetryLineage: data.telemetryLineage,
         projectAgentCaptures: data.projectAgentCaptures,
-      }),
-    );
-  }
-
-  if (hasSingle) {
-    const a = agents.find((x) => x.name === params.agent);
-    if (!a) {
-      return {
-        content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-        isError: true,
-        details: { mode: "single" as const, results: [] },
-      };
+      });
+      return handoffAsyncProjectRun(result);
     }
-    const rawOutput = params.output !== undefined ? params.output : a.output;
-    const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
-    const effectiveOutputMode = params.outputMode ?? "inline";
-    const skills = a.skills;
-    const maxSubagentDepth = resolveChildMaxSubagentDepth(
-      currentMaxSubagentDepth,
-      a.maxSubagentDepth,
-    );
-    const modelOverride = resolveSubagentModelOverride(
-      (params.model as string | undefined) ?? a.model,
-      ctx.model,
-      availableModels,
-      currentProvider,
-      {
-        scope: data.modelScope,
-        source: (params.model as string | undefined) ? "explicit" : "inherited",
-      },
-    );
-    return releaseAsyncProjectRunOnError(
-      (deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
+
+    if (hasSingle) {
+      const a = agents.find((x) => x.name === params.agent);
+      if (!a) {
+        return {
+          content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+          isError: true,
+          details: { mode: "single" as const, results: [] },
+        };
+      }
+      const rawOutput = params.output !== undefined ? params.output : a.output;
+      const effectiveOutput = normalizeSingleOutputOverride(rawOutput, a.output);
+      const effectiveOutputMode = params.outputMode ?? "inline";
+      const skills = a.skills;
+      const maxSubagentDepth = resolveChildMaxSubagentDepth(
+        currentMaxSubagentDepth,
+        a.maxSubagentDepth,
+      );
+      const modelOverride = resolveSubagentModelOverride(
+        (params.model as string | undefined) ?? a.model,
+        ctx.model,
+        availableModels,
+        currentProvider,
+        {
+          scope: data.modelScope,
+          source: (params.model as string | undefined) ? "explicit" : "inherited",
+        },
+      );
+      const result = (deps.executeAsyncSingle ?? executeAsyncSingle)(id, {
         agent: params.agent!,
         task: params.task ?? "",
         agentConfig: a,
@@ -618,15 +626,16 @@ function runAsyncPath(
         projectAgent: data.projectAgentCaptures?.find(
           (capture) => capture.provenance.agent === params.agent,
         ),
-      }),
-    );
-  }
+      });
+      return handoffAsyncProjectRun(result);
+    }
 
-  if (projectRunRetained) {
-    releaseProjectAgentRunReference(id);
-    projectRunRetained = false;
+    return null;
+  } finally {
+    if (projectRunRetained && !projectRunHandedOff) {
+      releaseProjectAgentRunReference(id);
+    }
   }
-  return null;
 }
 
 function inferExecutionMode(params: SubagentParamsLike): SubagentRunMode {

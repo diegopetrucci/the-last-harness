@@ -12,7 +12,13 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, type AgentProgress, type SingleResult } from "../../src/shared/types.ts";
+import {
+  ASYNC_DIR,
+  RESULTS_DIR,
+  type AgentProgress,
+  type SingleResult,
+} from "../../src/shared/types.ts";
+import type { ModelScopeConfig } from "../../src/runs/shared/model-scope.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createEventBus,
@@ -139,6 +145,7 @@ describe(
       agents = [makeAgent("echo")],
       config: Record<string, unknown> = {},
       runSyncOverride?: (...args: any[]) => Promise<SingleResult>,
+      modelScope?: ModelScopeConfig,
     ) {
       return createSubagentExecutor({
         pi: { events: createEventBus(), getSessionName: () => undefined },
@@ -153,7 +160,7 @@ describe(
         tempArtifactsDir: tempDir,
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents }),
+        discoverAgents: () => ({ agents, modelScope }),
         runSync: runSyncOverride,
       });
     }
@@ -591,6 +598,103 @@ describe(
           .map((args) => readRequiredOptionValue(args, "--model"))
           .sort();
         assert.deepEqual(recordedModels, ["deepseek/deepseek-v4-flash", "openai/gpt-5-mini"]);
+      },
+    );
+
+    it(
+      "async parallel preserves inherited model scope provenance and thinking suffixes",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const modelScope: ModelScopeConfig = { enforce: true, allow: ["anthropic/*"] };
+        const agents = [
+          makeAgent("agent-default", { model: "openai/gpt-5" }),
+          makeAgent("parent-inherited"),
+          makeAgent("explicit-in-scope"),
+          makeAgent("thinking-suffix"),
+        ];
+        for (const output of ["agent default", "parent inherited", "explicit", "thinking"]) {
+          mockPi.onCall({ output });
+        }
+        const executor = makeExecutor(agents, {}, undefined, modelScope);
+
+        const result = await executor.execute(
+          "async-parallel-model-scope",
+          {
+            async: true,
+            tasks: [
+              { agent: "agent-default", task: "Inherited agent default" },
+              { agent: "parent-inherited", task: "Inherited parent model" },
+              {
+                agent: "explicit-in-scope",
+                task: "Explicit allowed model",
+                model: "anthropic/claude-sonnet-4",
+              },
+              {
+                agent: "thinking-suffix",
+                task: "Preserve thinking suffix",
+                model: "anthropic/claude-sonnet-4:high",
+              },
+            ],
+          },
+          new AbortController().signal,
+          undefined,
+          {
+            ...makeMinimalCtx(tempDir),
+            model: { provider: "deepseek", id: "deepseek-v4" },
+          },
+        );
+
+        assert.equal(result.isError, undefined);
+        const asyncId = result.details?.asyncId;
+        assert.ok(asyncId, "expected async run id");
+        await waitForTestCondition(
+          () => fs.existsSync(path.join(RESULTS_DIR, `${asyncId}.json`)),
+          "async parallel model-scope result",
+          scaleTestTimeout(10_000),
+        );
+        await waitForTestCondition(
+          () => mockPi.callCount() === 4,
+          "all async parallel model-scope children",
+          scaleTestTimeout(10_000),
+        );
+        const recordedModels = readAllCallArgs()
+          .map((args) => readRequiredOptionValue(args, "--model"))
+          .sort();
+        assert.deepEqual(recordedModels, [
+          "anthropic/claude-sonnet-4",
+          "anthropic/claude-sonnet-4:high",
+          "deepseek/deepseek-v4",
+          "openai/gpt-5",
+        ]);
+      },
+    );
+
+    it(
+      "async parallel still rejects explicit out-of-scope model overrides",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const executor = makeExecutor([makeAgent("explicit")], {}, undefined, {
+          enforce: true,
+          allow: ["anthropic/*"],
+        });
+        const result = await executor.execute(
+          "async-parallel-explicit-model-scope",
+          {
+            async: true,
+            tasks: [{ agent: "explicit", task: "Reject this", model: "openai/gpt-5" }],
+          },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true);
+        assert.match(result.content[0]?.text ?? "", /outside the configured subagent model scope/);
+        assert.equal(mockPi.callCount(), 0);
       },
     );
 

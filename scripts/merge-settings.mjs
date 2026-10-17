@@ -293,6 +293,22 @@ function isConfirmedLocalTlhPackage(source, profileDir, homeDir) {
     const packageDir = packageSourceInstallDir(trimmedSource, { agentDir: profileDir, homeDir });
     return Boolean(packageDir) && isTlhPackageManifest(join(packageDir, "package.json"));
 }
+function existingTlhPackageSource(settings, profileDir, homeDir) {
+    if (!isPlainObject(settings) || !Array.isArray(settings.packages))
+        return undefined;
+    let canonicalSource;
+    for (const entry of settings.packages) {
+        const source = packageSourceOf(entry);
+        if (!source)
+            continue;
+        if (isConfirmedLocalTlhPackage(source, profileDir, homeDir))
+            return source;
+        if (canonicalSource === undefined && packageIdentity(entry) === HARNESS_PACKAGE_IDENTITY) {
+            canonicalSource = source;
+        }
+    }
+    return canonicalSource;
+}
 function applyCanonicalHarnessCleanup(settings, ensuredSource, profileDir, homeDir, changes) {
     if (packageIdentity(ensuredSource) !== HARNESS_PACKAGE_IDENTITY)
         return;
@@ -869,20 +885,26 @@ function main() {
     const heldMcpState = mcpCutover.freeze && mcporterEntry
         ? { packageEntries: cloneMcpAdapterEntries(existing, mcporterEntry) }
         : undefined;
-    const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
-    const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, {
+    const profileDir = dirname(settingsPath);
+    const homeDir = process.env.HOME || homedir();
+    const explicitPackageSource = args.packageSource?.trim() || undefined;
+    const packageSource = explicitPackageSource || existingTlhPackageSource(existing, profileDir, homeDir);
+    const ensuredHarnessSource = packageSource || DEFAULT_PACKAGE_SOURCE;
+    const defaults = prepareDefaults(rawDefaults, packageSource, defaultExtensions, disabledIds, existing, {
         force: args.force,
         mcpCutover,
     });
     const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
     applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
-    // An omitted source uses the default for ordinary merge behavior, but does
-    // not authorize destructive local-registration cleanup (for example, doctor).
-    if (args.packageSource?.trim() &&
-        packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY) {
-        applyCanonicalHarnessCleanup(next, ensuredHarnessSource, dirname(settingsPath), process.env.HOME || homedir(), changes);
+    // Omitted sources are inferred from the existing TLH registration above, but
+    // only an explicit override authorizes switching between canonical and local
+    // registrations in either direction.
+    if (explicitPackageSource) {
+        if (packageIdentity(ensuredHarnessSource) === HARNESS_PACKAGE_IDENTITY) {
+            applyCanonicalHarnessCleanup(next, ensuredHarnessSource, profileDir, homeDir, changes);
+        }
+        applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
     }
-    applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
     const managedDefaultExtensionProvenance = readDefaultExtensionProvenance(next).managedPackageIdentities;
     const sourceUpdatedIdentities = applyDefaultExtensionSourceUpdates(next, defaultExtensions, disabledIds, changes, {
         force: args.force,

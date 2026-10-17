@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isExtensionToolPath } from "./identity.ts";
 import type { AgentConfig } from "./agents.ts";
 
 /** Project run references outlive the UI cleanup window for terminal resume. */
@@ -184,6 +185,13 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function hasExtensionToolPath(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.some((tool) => typeof tool === "string" && isExtensionToolPath(tool.trim()))
+  );
+}
+
 function invalidCapability(): ProjectAgentSnapshotCapabilityError {
   return new ProjectAgentSnapshotCapabilityError();
 }
@@ -291,6 +299,7 @@ function validCapturedAgentConfig(value: unknown): value is AgentConfig {
     )
   )
     return false;
+  if (hasExtensionToolPath(value.tools)) return false;
   if (value.model !== undefined && typeof value.model !== "string") return false;
   if (
     value.thinking !== undefined &&
@@ -578,6 +587,9 @@ function validateRegistrationInput(input: ProjectAgentSnapshotInput): void {
     }
     if (entry.agent.source !== "project") {
       throw new TypeError("Project agent snapshot agents must preserve source 'project'.");
+    }
+    if (hasExtensionToolPath(entry.agent.tools)) {
+      throw new TypeError("Project agent snapshot tools must not contain extension paths.");
     }
     if (entry.agent.disabled !== undefined) {
       throw new TypeError("Project agent snapshot agents must not carry a disabled field.");

@@ -292,25 +292,9 @@ function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     return true;
 }
 export function deliverInterruptRequest(input) {
-    const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
+    requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
         now: input.now,
     });
-    if (typeof input.pid === "number" && input.pid > 0) {
-        try {
-            (input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);
-        }
-        catch (error) {
-            if (error?.code === "ENOSYS") {
-                return;
-            }
-            try {
-                fs.rmSync(requestPath, { force: true });
-            }
-            catch {
-            }
-            throw error;
-        }
-    }
 }
 export function watchAsyncControlInbox(asyncDir, opts) {
     const fsImpl = opts.fs ?? fs;

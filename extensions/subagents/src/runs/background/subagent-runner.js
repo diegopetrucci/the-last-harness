@@ -1262,6 +1262,7 @@ async function runSubagentWithInput(config, plan) {
             normalizeFailedSupervisorPauseResults(results, statusPayload.steps, statusOwner.supervisorPauseRequest.requesterIndex, agentName);
         }
     }
+    const pausedOwnershipConfirmedStopped = statusOwner.interrupted && statusOwner.ownedPauseProcessesConfirmedStopped();
     persistRunnerTerminalRun({
         config,
         plan,
@@ -1285,6 +1286,7 @@ async function runSubagentWithInput(config, plan) {
         totalTasks,
         pausedAwaitingSupervisor,
         safePausedResultAfterReap,
+        pausedOwnershipConfirmedStopped,
         skipFinalStatusWrite,
         pausedOutputForIndex,
         appendEvent,

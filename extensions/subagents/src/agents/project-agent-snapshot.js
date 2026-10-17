@@ -1,5 +1,6 @@
 // Generated from extensions/subagents/src/agents/project-agent-snapshot.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
+import { isExtensionToolPath } from "./identity.js";
 export const PROJECT_AGENT_TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 export class ProjectAgentSnapshotCapabilityError extends Error {
     code = "INVALID_PROJECT_AGENT_SNAPSHOT_CAPABILITY";
@@ -38,6 +39,10 @@ function isRecord(value) {
 }
 function isNonEmptyString(value) {
     return typeof value === "string" && value.trim().length > 0;
+}
+function hasExtensionToolPath(value) {
+    return (Array.isArray(value) &&
+        value.some((tool) => typeof tool === "string" && isExtensionToolPath(tool.trim())));
 }
 function invalidCapability() {
     return new ProjectAgentSnapshotCapabilityError();
@@ -133,6 +138,8 @@ function validCapturedAgentConfig(value) {
         value.defaultReads,
     ];
     if (stringArrays.some((items) => items !== undefined && (!Array.isArray(items) || !items.every(isNonEmptyString))))
+        return false;
+    if (hasExtensionToolPath(value.tools))
         return false;
     if (value.model !== undefined && typeof value.model !== "string")
         return false;
@@ -364,6 +371,9 @@ function validateRegistrationInput(input) {
         }
         if (entry.agent.source !== "project") {
             throw new TypeError("Project agent snapshot agents must preserve source 'project'.");
+        }
+        if (hasExtensionToolPath(entry.agent.tools)) {
+            throw new TypeError("Project agent snapshot tools must not contain extension paths.");
         }
         if (entry.agent.disabled !== undefined) {
             throw new TypeError("Project agent snapshot agents must not carry a disabled field.");

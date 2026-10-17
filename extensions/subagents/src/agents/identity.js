@@ -26,6 +26,9 @@ export function buildRuntimeName(localName, packageName) {
     const trimmedPackage = packageName?.trim();
     return trimmedPackage ? `${trimmedPackage}.${localName}` : localName;
 }
+export function isExtensionToolPath(tool) {
+    return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
 export function frontmatterNameForConfig(config) {
     if (config.localName)
         return config.localName;

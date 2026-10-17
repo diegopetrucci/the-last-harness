@@ -297,7 +297,8 @@ function readSettingsFileStrict(filePath: string): Record<string, unknown> {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    const normalizedRaw = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    parsed = JSON.parse(normalizedRaw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse settings file '${filePath}': ${message}`, { cause: error });

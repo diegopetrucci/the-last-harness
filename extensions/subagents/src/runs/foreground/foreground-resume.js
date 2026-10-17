@@ -13,7 +13,7 @@ import { canonicalSubagentModelIdentity, modelReferenceFromIdentity, } from "../
 import { executeAsyncSingle, formatAsyncStartedMessage } from "../background/async-execution.js";
 import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../background/async-resume.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
-import { lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { checkPidLiveness, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, requestAsyncResume, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
@@ -176,7 +176,7 @@ function persistContinuationTelemetry(target, continuationRunId) {
     catch {
     }
 }
-function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow) {
+function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiveContextWindow, options = {}) {
     if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir)
         return undefined;
     const asyncDir = target.asyncDir;
@@ -213,12 +213,21 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiv
                 throw new Error(`Paused run '${target.runId}' child ${target.index} is not paused and cannot be resumed.`);
             return undefined;
         }
+        const persistedOwnerPids = [current.pid, current.pause?.ownerPid].filter((pid, index, pids) => typeof pid === "number" && pid > 0 && pids.indexOf(pid) === index);
+        for (const persistedOwnerPid of persistedOwnerPids) {
+            const liveness = checkPidLiveness(persistedOwnerPid, options.kill);
+            if (liveness !== "dead")
+                return {
+                    blockedMessage: `Paused run '${target.runId}' is still stopping; persisted owner pid ${persistedOwnerPid} is ${liveness}. Retry resume after cleanup completes.`,
+                };
+        }
         if (isClaimedPausedLifecycle(current, target.index))
             throw new Error(`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`);
         const claimToken = `claim-${target.runId}-${target.index}-${Date.now()}`;
         const claimedAt = Date.now();
         const nextStatus = {
             ...current,
+            pid: undefined,
             lastUpdate: claimedAt,
             pause: current.pause ? { ...current.pause, ownerPid: undefined } : current.pause,
             lifecycle: {
@@ -801,7 +810,7 @@ async function prepareResume(input) {
     const continuationRunId = randomUUID().slice(0, 8);
     let claimedPause;
     try {
-        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, contextPolicy.modelContextWindow);
+        const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, contextPolicy.modelContextWindow, { kill: input.deps.kill });
         if (claimDecision && "blockedMessage" in claimDecision)
             return managementError(claimDecision.blockedMessage);
         claimedPause = claimDecision;
