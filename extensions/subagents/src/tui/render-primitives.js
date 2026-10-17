@@ -174,7 +174,7 @@ export function modelThinkingBadge(theme, model, thinking) {
     const label = safeTerminalText(formatModelThinking(model ? safeTerminalText(model) : model, thinking));
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
-export function childLocationText(loc) {
+function childLocationText(loc) {
     if (!loc)
         return undefined;
     const safeLocationPart = (value) => safeTerminalText(value.replace(/[\r\n]/g, (c) => (c === "\r" ? "\\r" : "\\n")));

@@ -12,7 +12,6 @@ import {
   createCiTimingCollector,
   createCiTimingConfig,
   ciTimingReporterArgs,
-  isRepositoryRelativeTimingFile,
   resolveCiTimingDirectory,
   timingEnvironmentForCommand,
   timingEventFile,
@@ -394,7 +393,6 @@ test("timing reporter emits per-file records while TAP remains on stdout", () =>
     assert.equal(event.length, 1);
     assert.equal(event[0].suite, "root");
     assert.equal(event[0].file, relative(repoRoot, testFile).replaceAll("\\", "/"));
-    assert.equal(isRepositoryRelativeTimingFile(event[0].file), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

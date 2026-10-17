@@ -902,7 +902,7 @@ export function formatUnavailableStoredModelWarning(
   return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
 
-export function formatUnavailableProjectModelWarning(
+function formatUnavailableProjectModelWarning(
   agentName: string | undefined,
   model: string,
 ): string {
