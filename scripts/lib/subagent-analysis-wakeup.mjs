@@ -806,8 +806,10 @@ export function analyzeWakeupsForScan(scanResult, context) {
         .filter((pair) => pair.toolName === "subagent")
         .map((pair) => pair.toolCallId));
     for (let entryIndex = 0; entryIndex < scanResult.entries.length; entryIndex++) {
+        context.setCurrentEntryIndex(entryIndex);
         processWakeupEntry(context, state, scanResult, entryIndex, pairedSubagentCallIds);
     }
+    context.setCurrentEntryIndex(undefined);
     if (state.activeWake) {
         finishWakeup(context, state.activeWake, "missing-assistant-turn");
         state.activeWake = undefined;
