@@ -1,6 +1,6 @@
 # Local development
 
-Run these commands from the repository root with Node.js >=22.19.0. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
+Run these commands from the repository root with the Node.js version required by `engines.node` in `package.json`. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
 
 The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-type` is recorded in [Unsafe dictionary investigation (2026-08-18)](no-unsafe-dictionary-investigation-2026-08-18.md). It is evidence for a future decision only; do not enable the rule or apply cosmetic remediations from that note without a separately approved implementation slice.
 
@@ -23,9 +23,9 @@ Do not export or copy raw event data into issues, commits, tests, logs, or other
 
 ## Direct dependency pin decisions
 
-Direct dependency, devDependency, and peerDependency specs remain exact. The current Pi pin is `1.3.0`; the existing exact pins for Oxlint `1.82.0`, `@oxlint/plugins` `1.82.0`, Oxfmt `0.67.0`, and `@types/node` `26.5.0` remain unchanged. The other existing exact pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) also remain unchanged. Pi `1.3.0` retains the runtime dependency layout introduced in 0.85.1, including the ordinary `pi-ai`, `pi-tui`, and `pi-agent-core` dependencies, and keeps the internal Pi siblings at exact release pins. The `@earendil-works/chord` dependency removed in 1.2.0 remains absent; `pi-client`, `pi-protocol`, and `pi-server` remain absent from the installed dependency tree, while `pi-telemetry` appears transitively.
+Direct dependency and devDependency specs remain exact pins; the `typebox` peerDependency `'*'` is the only exception (see below). The managed Pi pin lives in `install.sh`, `scripts/tlh-install.mts`, `extensions/the-last-harness/model-selection-scope.ts`, `package.json`, and `config/pi-runtime/package.json`; the other exact pins are in `package.json` too, and `config/pi-runtime/package.json` keeps the internal Pi siblings at exact release pins. The pinned Pi runtime's dependency layout (including the ordinary `pi-ai`, `pi-tui`, and `pi-agent-core` dependencies) and the removed or absent Pi packages are whatever that file and its lockfile say.
 
-TLH's `typebox` pin is a `devDependency` at the exact version `1.3.27` (matching Pi `1.3.0`'s pinned transitive `typebox` version) plus a `peerDependency` of `'*'`. Pi provides `typebox` to extensions at runtime and warns when packages bundle a host-provided dependency, so TLH declares it as a peer rather than a direct runtime dependency. The separate TypeScript compatibility hold remains at `6.0.3` because `scripts/runtime-typescript.mjs` resolves `typescript/bin/tsc`, which TypeScript `7.0.2` no longer exports, and `scripts/check-lazy-import-boundaries.mjs` imports the TypeScript compiler API and calls `ts.createSourceFile`, while TypeScript `7.0.2`'s root export does not provide that compiler API.
+TLH's `typebox` pin is a `devDependency` at an exact version (matching the pinned Pi's transitive `typebox` version) plus a deliberately unpinned `peerDependency` of `'*'`. Pi provides `typebox` to extensions at runtime and warns when packages bundle a host-provided dependency, so TLH declares it as a peer rather than a direct runtime dependency. The separate TypeScript compatibility hold remains at the `package.json` pin because `scripts/runtime-typescript.mjs` resolves `typescript/bin/tsc`, which TypeScript 7 no longer exports, and `scripts/check-lazy-import-boundaries.mjs` imports the TypeScript compiler API and calls `ts.createSourceFile`, while TypeScript 7's root export does not provide that compiler API.
 
 ## Package compatibility boundary
 
@@ -35,18 +35,10 @@ Files may be shipped so runtime discovery or installer workflows can find them; 
 
 ## Run validation
 
-Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, Oxlint linting, Oxfmt formatting checks, ShellCheck linting, settings merge dry-run, and package dry-run:
+Run the aggregate validation script. What it covers, the Oxlint configuration, the test reporters, and the full-validation rules are in [VALIDATING.md](../VALIDATING.md#standard-full-validation):
 
 ```sh
 npm run validate
-```
-
-Oxlint retains its built-in default rule selection and registers the vendored anti-slop plugin through `.oxlintrc.json`. The global `max-lines` rule is enabled at error severity with a 2,000 physical-line ceiling (including blank lines and comments) for every file under `scripts/`, `tests/`, and `extensions/`; source, test, and generated mirror files share this limit without exemptions. Anti-slop adoption is deliberately per-rule: `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity, while the other 6 rule entries remain visibly commented out. Oxlint still runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
-
-When you need the full Node test reporter for diagnostics, rerun:
-
-```sh
-npm run test:verbose
 ```
 
 If you are iterating on runtime TypeScript sources under `scripts/` or `extensions/`, you can run the focused commands directly:
@@ -173,24 +165,6 @@ TLH_PACKAGE_SOURCE="file:$PWD" bash install.sh \
 
 **File-source keybinding caveat (`/effort` picker, Ctrl+S):** under the `file:<checkout>` layout only, the `/effort` picker renders an empty key where `Ctrl+S` should appear, and pressing Ctrl+S does nothing—the picker stays open and no default is saved. Enter and Escape/Ctrl+C still work. This is not a TLH bug. Cause: the pinned Pi runtime renders selector hints from the global pi-tui keybindings registry via `keyDisplayText`/`getKeybindings`, and when TLH is installed from a checkout the checkout's own `node_modules/@earendil-works/pi-coding-agent` supplies a second `pi-coding-agent` (and nested `pi-tui`) module instance whose global keybindings registry is never initialised by the interactive app, so `app.*` binding ids resolve to no keys while `tui.*` ids still resolve from built-in defaults. The unpacked-package layout contains no `node_modules`, so a packaged install has a single module instance and behaves correctly. To verify Ctrl+S persistence, use the unpacked-package layout (npm pack, unpack, then `TLH_PACKAGE_SOURCE=file:<unpacked-package>`).
 
-You can also test any pushed TLH branch through GitHub. Fetch that branch's installer and pass the same branch name as `--ref`:
+You can also test a pushed TLH branch through GitHub. The `Install this branch` command is in [CONTRIBUTING.md](../CONTRIBUTING.md#pull-requests-and-ci); for temporary testing without touching your real `tlh` profile or wrapper, add `--agent-dir "$tmp/agent" --bin-dir "$tmp/bin"` to it (with `tmp="$(mktemp -d)"`) and run `"$tmp/bin/tlh"`.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/my-feature-branch/install.sh |
-  bash -s -- --ref my-feature-branch --track ref
-```
-
-For temporary branch testing without touching your real `tlh` profile or wrapper:
-
-```sh
-tmp="$(mktemp -d)"
-curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/my-feature-branch/install.sh |
-  bash -s -- \
-    --ref my-feature-branch \
-    --track ref \
-    --agent-dir "$tmp/agent" \
-    --bin-dir "$tmp/bin"
-"$tmp/bin/tlh"
-```
-
-Replace `my-feature-branch` in both places with the pushed TLH branch you want to test. This is a TLH installer test, not a standalone subagent release flow.
+This is a TLH installer test, not a standalone subagent release flow.

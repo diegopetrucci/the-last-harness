@@ -10,9 +10,7 @@ Scope: `extensions/subagents/`, the first-party subagent runtime. Repository-wid
 ## Tests
 
 - `test/unit/`, `test/integration/`, `test/e2e/`: suites by scope; `test/support/`: shared helpers and the loader (`register-loader.mjs`).
-- From the repo root: `npm run test:subagents:unit`, `npm run test:subagents:integration`, `npm run test:subagents:e2e` (or `npm run test:subagents` for all three).
-- For a single test file, use the command in the "Fast checks for agents" section of [VALIDATING.md](../../VALIDATING.md#fast-checks-for-agents).
-- `npm run typecheck:subagents-test` type-checks the tests.
+- Suite commands, single-file runs, and focused diagnostics are in [VALIDATING.md](../../VALIDATING.md#test-suites-and-output-modes) and its "Fast checks for agents" section.
 - `test/` is excluded from the npm package via this directory's `.npmignore`; keep it that way.
 
 ## Packaging and licensing
