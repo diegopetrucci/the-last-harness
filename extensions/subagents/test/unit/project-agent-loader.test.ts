@@ -16,7 +16,6 @@ import {
   MAX_PROJECT_AGENT_FILE_BYTES,
   MAX_PROJECT_AGENT_FILES,
   MAX_PROJECT_AGENT_TOTAL_BYTES,
-  parseProjectAgentDefinition,
   resolveCanonicalGitWorktreeRoot,
   resolveProjectAgentTrust,
   scanProjectAgentDefinitions,
@@ -35,6 +34,18 @@ function tempProject(options: { git?: boolean } = {}): string {
 
 function customDirectory(projectRoot: string): string {
   return path.join(projectRoot, ".tlh", "agents", "custom");
+}
+
+/** Parse one definition through the live scanner, isolated in its own project. */
+function parseProjectAgentDefinition(filePath: string, bytes: Buffer) {
+  const project = tempProject();
+  const copyPath = path.join(customDirectory(project), path.basename(filePath));
+  fs.mkdirSync(path.dirname(copyPath), { recursive: true });
+  fs.writeFileSync(copyPath, bytes);
+  const scan = scanProjectAgentDefinitions(project);
+  const entry = scan.entries[0];
+  if (!entry) throw new Error(scan.diagnostics.join("\n") || "no entry parsed");
+  return entry;
 }
 
 function writeDefinition(
@@ -187,7 +198,7 @@ describe("trusted project-agent loader", () => {
     assert.equal(entry.digest, createHash("sha256").update(bytes).digest("hex"));
     assert.throws(
       () => parseProjectAgentDefinition(filePath.replace("REVIEWER.md", "reviewer.md"), bytes),
-      /uppercase ASCII/,
+      /invalid project-agent basename/,
     );
   });
 

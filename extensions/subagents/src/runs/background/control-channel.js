@@ -47,16 +47,6 @@ export function requestAsyncInterrupt(asyncDir, payload = {}, deps = {}) {
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
-function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
-    const requestPath = timeoutRequestPath(asyncDir);
-    const request = {
-        ...payload,
-        ts: payload.ts ?? deps.now?.() ?? Date.now(),
-        type: "timeout",
-    };
-    writeAtomicJson(requestPath, request);
-    return requestPath;
-}
 function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
     const message = payload.message.trim();
     if (!message)
@@ -321,11 +311,6 @@ export function deliverInterruptRequest(input) {
             throw error;
         }
     }
-}
-export function deliverTimeoutRequest(input) {
-    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
-        now: input.now,
-    });
 }
 export function watchAsyncControlInbox(asyncDir, opts) {
     const fsImpl = opts.fs ?? fs;

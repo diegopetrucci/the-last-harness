@@ -53,12 +53,6 @@ const TaskItem = Type.Object(
         description: "Task working directory; relative paths resolve against the run cwd.",
       }),
     ),
-    count: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        description: "Repeat this parallel task N times with the same settings.",
-      }),
-    ),
     output: Type.Optional(OutputOverride),
     outputMode: Type.Optional(OutputModeOverride),
     model: Type.Optional(Type.String({ description: "Override model for this task" })),
@@ -76,8 +70,7 @@ const SubagentParamsSchema = Type.Object(
     ),
     tasks: Type.Optional(
       Type.Array(TaskItem, {
-        description:
-          "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
+        description: "PARALLEL mode: [{agent, task, cwd?, output?, outputMode?, model?}, ...]",
       }),
     ),
     async: Type.Optional(

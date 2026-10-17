@@ -41,10 +41,6 @@ const TaskItem = Type.Object({
     cwd: Type.Optional(Type.String({
         description: "Task working directory; relative paths resolve against the run cwd.",
     })),
-    count: Type.Optional(Type.Integer({
-        minimum: 1,
-        description: "Repeat this parallel task N times with the same settings.",
-    })),
     output: Type.Optional(OutputOverride),
     outputMode: Type.Optional(OutputModeOverride),
     model: Type.Optional(Type.String({ description: "Override model for this task" })),
@@ -53,7 +49,7 @@ const SubagentParamsSchema = Type.Object({
     agent: Type.Optional(Type.String({ description: "Agent name for SINGLE mode or action='get'." })),
     task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
     tasks: Type.Optional(Type.Array(TaskItem, {
-        description: "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
+        description: "PARALLEL mode: [{agent, task, cwd?, output?, outputMode?, model?}, ...]",
     })),
     async: Type.Optional(Type.Boolean({
         description: "Launch detached background work (default: false, or per config)",

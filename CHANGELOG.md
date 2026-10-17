@@ -19,6 +19,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH now ships `compaction.reserveTokens: 49152` as a packaged default (inserted only when absent, recorded with a `tlh.compactionReserveTokensManaged` marker) to mitigate compaction summaries hitting the token cap on reasoning models. Auto-compaction triggers about 32,768 tokens earlier; see [`docs/install.md`](docs/install.md#compaction-reserve-default). [#785](https://github.com/diegopetrucci/the-last-harness/issues/785)
 - The architect no longer creates a branch before launching a worker when working in a fresh worktree, including one on `main`/`master`.
 - The primary/non-child context cap is raised from 300k to 350k so auto-compaction triggers at about 301k with the 49,152 `compaction.reserveTokens` default; the developer child 272k ceiling is unchanged.
+- Removed the unused `tasks[].count` parameter from the subagent tool; passing it is now rejected with an error. List each parallel task explicitly.
 
 ### Internal
 
@@ -29,6 +30,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Added a fast-checks section to `VALIDATING.md`.
 - Added a nested `extensions/subagents/AGENTS.md` with subagent-specific contributor guidance.
 - Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
+- Removed production exports that only tests used (project-guidance/agent-definition/health/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 
 ## [0.45.0] - 2026-10-14
 

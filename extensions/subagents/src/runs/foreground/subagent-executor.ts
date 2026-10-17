@@ -116,7 +116,6 @@ interface TaskParam {
   agent: string;
   task: string;
   cwd?: string;
-  count?: number;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
   model?: string;
@@ -418,38 +417,21 @@ function buildRequestedModeError(
   };
 }
 
-function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; error?: string } {
-  const expanded: TaskParam[] = [];
+function rejectRetiredTaskCounts(
+  params: SubagentParamsLike,
+): SubagentToolResult<Details> | undefined {
+  const tasks: unknown = params.tasks;
+  if (!Array.isArray(tasks)) return undefined;
   for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
-    const task = tasks[taskIndex]!;
-    const rawCount = (task as TaskParam & { count?: unknown }).count;
-    if (
-      rawCount !== undefined &&
-      (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)
-    ) {
-      return { error: `tasks[${taskIndex}].count must be an integer >= 1` };
-    }
-    const concreteTask = { ...task };
-    delete concreteTask.count;
-    for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
-      expanded.push({ ...concreteTask });
+    const task: unknown = tasks[taskIndex];
+    if (task !== null && typeof task === "object" && Object.hasOwn(task, "count")) {
+      return buildRequestedModeError(
+        params,
+        `tasks[${taskIndex}].count is no longer supported. List each parallel task explicitly in tasks[].`,
+      );
     }
   }
-  return { tasks: expanded };
-}
-
-function normalizeRepeatedParallelCounts(params: SubagentParamsLike): {
-  params?: SubagentParamsLike;
-  error?: SubagentToolResult<Details>;
-} {
-  if (params.tasks) {
-    const expandedTasks = expandTopLevelTaskCounts(params.tasks);
-    if (expandedTasks.error) {
-      return { error: buildRequestedModeError(params, expandedTasks.error) };
-    }
-    return { params: { ...params, tasks: expandedTasks.tasks } };
-  }
-  return { params };
+  return undefined;
 }
 
 function runAsyncPath(
@@ -1178,11 +1160,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       };
     }
 
-    const normalized = normalizeRepeatedParallelCounts(paramsWithResolvedCwd);
-    if (normalized.error) return normalized.error;
-    const normalizedParams = normalized.params!;
+    const retiredCountError = rejectRetiredTaskCounts(paramsWithResolvedCwd);
+    if (retiredCountError) return retiredCountError;
 
-    let effectiveParams = normalizedParams;
+    let effectiveParams = paramsWithResolvedCwd;
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
     const requestedExecutionCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;

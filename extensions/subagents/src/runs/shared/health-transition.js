@@ -154,9 +154,6 @@ export function transitionHealth(current, action) {
         idleAttentionEligible,
     };
 }
-export function recoverValidatedActivity(state) {
-    return transitionHealth(state, { type: "validated_activity" });
-}
 export function resetHealthTransitionState(state, attemptId) {
     return transitionHealth(state, { type: "attempt_reset", attemptId });
 }

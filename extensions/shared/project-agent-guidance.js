@@ -673,11 +673,6 @@ export function isCanonicalPackagedMinorAgent(agent) {
         return false;
     }
 }
-export function projectAgentGuidanceFilename(role) {
-    if (typeof role !== "string" || !Object.hasOwn(ROLE_FILENAMES, role))
-        return undefined;
-    return ROLE_FILENAMES[role];
-}
 export function inventoryProjectAgentGuidance(cwdInput, agentDirInput) {
     const diagnostics = [];
     const cwd = resolveInputPath(cwdInput, "cwd", diagnostics);
@@ -752,10 +747,6 @@ export function resolveProjectAgentGuidanceFromInventory(inventory, roleInput) {
     return file?.content === undefined
         ? { role, inventory }
         : { role, guidance: file.content, sourcePath: file.path, inventory };
-}
-export function resolveProjectAgentGuidance(cwdInput, agentDirInput, roleInput) {
-    const inventory = inventoryProjectAgentGuidance(cwdInput, agentDirInput);
-    return resolveProjectAgentGuidanceFromInventory(inventory, roleInput);
 }
 function encodeProjectGuidanceSourceLabel(value) {
     return Array.from(value, (character) => {

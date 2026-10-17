@@ -25,7 +25,6 @@ import {
   releaseProjectAgentRunReference,
   retainProjectAgentSnapshotReference,
   releaseProjectAgentSnapshotReference,
-  cleanupProjectAgentSnapshotRegistry,
   projectAgentSnapshotRegistryStats,
   type ProjectAgentSnapshotInput,
 } from "../../src/agents/project-agent-snapshot.ts";
@@ -203,7 +202,6 @@ describe("project agent snapshot provider", () => {
     );
     const capture = createProjectAgentRunCapture(manifest, agent);
     retainProjectAgentRunReference(capability, "retained-run-id", [capture]);
-    assert.equal(cleanupProjectAgentSnapshotRegistry(), 0);
     assert.throws(
       () => revokeProjectAgentSnapshot(capability),
       ProjectAgentSnapshotCapabilityError,
@@ -220,7 +218,6 @@ describe("project agent snapshot provider", () => {
     });
     assert.equal(releaseProjectAgentRunReference("retained-run-id"), true);
     assert.deepEqual(lookupProjectAgentRunReference("retained-run-id"), { status: "missing" });
-    cleanupProjectAgentSnapshotRegistry();
     assert.throws(
       () => resolveProjectAgentSnapshot(capability, getProjectAgentSnapshotProvenance(capability)),
       ProjectAgentSnapshotCapabilityError,
@@ -293,7 +290,6 @@ describe("project agent snapshot provider", () => {
     });
     releaseProjectAgentRunReference("ambiguous-retained-a");
     releaseProjectAgentRunReference("ambiguous-retained-b");
-    cleanupProjectAgentSnapshotRegistry();
   });
 
   it("retains older generations until each capability is explicitly revoked", () => {
