@@ -11,6 +11,17 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - `check-package-versions` now fails when the Pi version recorded in `config/pi-runtime/package-lock.json` (the `node_modules/@earendil-works/pi-coding-agent` entry or the root dependency) drifts from the managed Pi pin. [#760](https://github.com/diegopetrucci/the-last-harness/issues/760)
+- The `tlh` wrapper now refuses dangling symlinks and non-file entries without `--force` and writes its temporary file exclusively.
+- `tlh update` keeps user-set filters on the TLH package entry.
+- `tlh defaults enable mcporter` no longer drops native MCP while the adapter stays filter-disabled.
+- The MCP adapter startup check now detects a stale cached adapter for `tlh-vX` git tag selections.
+- The footer cost and session-limit report now include `cache_warm`, tool-result, and compaction/`branch_summary` spend, matching upstream Pi.
+- `/tokens` counts each subagent once and includes compaction/`branch_summary` spend.
+- Header lines no longer exceed the terminal width.
+- `annotate-git-diff` now handles non-ASCII, space, and tab filenames and file-type changes.
+- Subagent abort now escalates to `SIGKILL` when the child ignores `SIGTERM`, the result watcher rescans after a restart, and resume releases its reservation when project-agent retention fails.
+- The stale-run reconciler now recovers stopped runs under the lifecycle lock.
+- Subagent session analysis now merges telemetry in transcript order.
 
 ### Changed
 
@@ -31,6 +42,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Added a nested `extensions/subagents/AGENTS.md` with subagent-specific contributor guidance.
 - Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
 - Removed production exports that only tests used (project-guidance/agent-definition/health/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
+- `check-package-versions` now fails on `package.json`-vs-lockfile pin drift, and CI `node_modules` cache keys include `package.json`.
 
 ## [0.45.0] - 2026-10-14
 
