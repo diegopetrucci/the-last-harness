@@ -246,6 +246,9 @@ describe("trusted project-agent loader", () => {
         { tools: "mcp:unsafe-project-tool" },
         /tools must declare at least one usable tool/,
       ],
+      ["EXTENSION-TOOL-TS.md", { tools: "payload.ts" }, /extension path and is prohibited/],
+      ["EXTENSION-TOOL-JS.md", { tools: "payload.js" }, /extension path and is prohibited/],
+      ["EXTENSION-TOOL-SLASH.md", { tools: "read,./payload" }, /extension path and is prohibited/],
       ["INVALID-TOOL.md", { tools: "read,grep[]" }, /valid runtime tool name/],
       ["INVALID-TOOL-PREFIX.md", { tools: "-read" }, /valid runtime tool name/],
       [
@@ -314,6 +317,24 @@ describe("trusted project-agent loader", () => {
         expected,
       );
     }
+  });
+
+  it("tombstones extension-path aliases while retaining named tools", () => {
+    const project = tempProject();
+    writeDefinition(project, "ALIAS-TS.md", { tools: "payload.ts" });
+    writeDefinition(project, "ALIAS-JS.md", { tools: "payload.js" });
+    writeDefinition(project, "NAMED.md", { tools: "read,bash" });
+
+    const result = scanProjectAgentDefinitions(project);
+
+    assert.equal(result.status, "stable");
+    assert.deepEqual(
+      result.entries.map((entry) => entry.agent.name),
+      ["embedded.named"],
+    );
+    assert.deepEqual(result.entries[0]?.agent.tools, ["read", "bash"]);
+    assert.deepEqual(result.tombstones, ["embedded.alias-js", "embedded.alias-ts"]);
+    assert.match(result.diagnostics.join("\n"), /extension path and is prohibited/);
   });
 
   it("loads only direct uppercase custom files at the Git root", async () => {

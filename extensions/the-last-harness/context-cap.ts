@@ -939,7 +939,7 @@ function toggleContextCapSetting(cwd: string): ContextCapToggleResult {
     cwd,
     "Refusing to write context-cap settings outside the isolated TLH profile.",
     (current) => {
-      const settings = current ? (JSON.parse(current) as unknown) : {};
+      const settings = current ? (JSON.parse(current.replace(/^\uFEFF/, "")) as unknown) : {};
       assertContextCapSettings(settings);
       const currentlyDisabled = settings.tlh?.contextCap?.disabled === true;
       const nowDisabled = !currentlyDisabled;

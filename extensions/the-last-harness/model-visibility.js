@@ -78,7 +78,7 @@ function readTlhSettings() {
         return settingsPath ? {} : undefined;
     }
     try {
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
         return isRecord(parsed) ? parsed : {};
     }
     catch {

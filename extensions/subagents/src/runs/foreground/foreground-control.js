@@ -176,8 +176,6 @@ function requestAsyncInterruptForTarget(state, target, kill) {
     try {
         deliverInterruptRequest({
             asyncDir: target.asyncDir,
-            pid: status.pid,
-            kill,
             source: "interrupt-action",
         });
         const tracked = state.asyncJobs.get(target.asyncId);

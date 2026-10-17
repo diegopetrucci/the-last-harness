@@ -10,8 +10,19 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Uninstall now accepts installer-compatible symlinked HOME/ancestor aliases while retaining canonical path and profile safety guards.
+- Normal Pi path guards now recognize existing case aliases on case-insensitive filesystems without folding distinct case-sensitive paths.
+- Uninstall preserves an unmarked agent dir after a late install failure while still cleaning independently owned runtime and managed-wrapper artifacts, with an actionable warning and nonzero status.
+- First-time private runtime provisioning now checkpoints affirmative ownership before staged swaps, so failed or interrupted retries remain safe without adopting unmarked prefixes.
+- TLH settings readers and writers now accept a leading UTF-8 BOM while preserving malformed-file guards and unrelated settings.
+- Session-mirror reply receipts now distinguish pre-injection expiry from post-injection unconfirmed outcomes and accept persisted completion within confirmation bounds.
+- Non-UI session-mirror replies now retain only a revocable active-session idle capability, so context garbage collection preserves valid idle checks.
+- Session-mirror reply busy and compaction latches now clear only after idle tree/compaction completion, including cancelled and failed manual compactions.
+- Trusted embedded project-agent tool declarations now reject `.ts`/`.js` extension-path aliases at scan, snapshot, and execution boundaries while ordinary agent extension tools remain supported.
 - `check-package-versions` now fails when the Pi version recorded in `config/pi-runtime/package-lock.json` (the `node_modules/@earendil-works/pi-coding-agent` entry or the root dependency) drifts from the managed Pi pin. [#760](https://github.com/diegopetrucci/the-last-harness/issues/760)
+- Interrupt and pause-all now use the file-based inbox without signalling persisted runner PIDs.
 - The `tlh` wrapper now refuses dangling symlinks and non-file entries without `--force` and writes its temporary file exclusively.
+- `tlh doctor --repair` now preserves pinned, branch, and local TLH package sources while repairing isolated settings drift.
 - `tlh update` keeps user-set filters on the TLH package entry.
 - `tlh defaults enable mcporter` no longer drops native MCP while the adapter stays filter-disabled.
 - The MCP adapter startup check now detects a stale cached adapter for `tlh-vX` git tag selections.
@@ -19,9 +30,15 @@ All notable changes to The Last Harness will be documented in this file.
 - `/tokens` counts each subagent once and includes compaction/`branch_summary` spend.
 - Header lines no longer exceed the terminal width.
 - `annotate-git-diff` now handles non-ASCII, space, and tab filenames and file-type changes.
+- `annotate-git-diff` now isolates shell startup output from Git name-status and binary revision data.
+- Diff reviews now keep POSIX filenames containing backslashes inside the repository boundary when loading text and binary working-tree content.
 - Subagent abort now escalates to `SIGKILL` when the child ignores `SIGTERM`, the result watcher rescans after a restart, and resume releases its reservation when project-agent retention fails.
 - The stale-run reconciler now recovers stopped runs under the lifecycle lock.
+- Async resume now waits for paused source ownership to stop before reusing its session.
 - Subagent session analysis now merges telemetry in transcript order.
+- Acceptance checks now use Git's quiet cached-diff exit status, so branch and color settings do not make clean work appear staged.
+- Async parallel planning now preserves inherited model provenance, so out-of-scope agent defaults and parent models warn without weakening explicit scope rejection.
+- Async project-agent launches now release retained snapshot references on preparation or launch failure without dropping successful or resumable runs.
 
 ### Changed
 
@@ -34,6 +51,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Internal
 
+- Corrected current context-cap guidance to the implemented 350k primary cap and role-specific child windows.
 - Fixed a flaky `tlh doctor ignores RTK executables on PATH` test that matched random temp-path suffixes.
 - Generated `.js` twins now carry a generated-file header pointing at their TypeScript source.
 - Removed `docs/subagents-history`; provenance lives in `docs/subagents.md` and git history.

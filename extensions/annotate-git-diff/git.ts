@@ -1,6 +1,6 @@
 import { lstatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { extname, relative, resolve } from "node:path";
+import { extname, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type {
   ChangeStatus,
@@ -67,10 +67,14 @@ async function runBashAllowFailure(
   pi: ExtensionAPI,
   repoRoot: string,
   script: string,
-): Promise<string> {
-  const result = await pi.exec("bash", ["-lc", script], { cwd: repoRoot });
+): Promise<string | null> {
+  const result = await pi.exec(
+    "env",
+    ["-u", "BASH_ENV", "bash", "--noprofile", "--norc", "-c", script],
+    { cwd: repoRoot },
+  );
   if (result.code !== 0) {
-    return "";
+    return null;
   }
   return result.stdout;
 }
@@ -297,11 +301,11 @@ function inspectWorkingTreePath(repoRoot: string, path: string): WorkingTreeEntr
   const repoBase = resolve(repoRoot);
   const candidate = resolve(repoBase, path);
   const relativePath = relative(repoBase, candidate);
-  if (relativePath.length === 0 || /^(\.\.(?:[/\\]|$))/.test(relativePath)) {
+  if (relativePath.length === 0 || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
     return { kind: "unsafe" };
   }
 
-  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  const parts = relativePath.split(sep).filter(Boolean);
   let currentPath = repoBase;
   for (let index = 0; index < parts.length; index += 1) {
     currentPath = resolve(currentPath, parts[index]);
@@ -358,11 +362,9 @@ async function getRevisionBytes(
   path: string,
 ): Promise<Buffer | null> {
   const spec = shellQuote(`${revision}:${path}`);
-  const result = await pi.exec("bash", ["-lc", `git show ${spec} | base64 | tr -d '\\n'`], {
-    cwd: repoRoot,
-  });
-  if (result.code !== 0) return null;
-  const encoded = (result.stdout ?? "").trim();
+  const output = await runBashAllowFailure(pi, repoRoot, `git show ${spec} | base64 | tr -d '\\n'`);
+  if (output == null) return null;
+  const encoded = output.trim();
   try {
     return Buffer.from(encoded, "base64");
   } catch {
@@ -547,7 +549,7 @@ async function getWorkingTreeSnapshotChanges(
       : "git diff --cached --find-renames -M --name-status -z --root --",
   );
   const output = await runBashAllowFailure(pi, repoRoot, scriptLines.join("\n"));
-  return parseNameStatus(output);
+  return parseNameStatus(output ?? "");
 }
 
 async function getBranchReviewChanges(

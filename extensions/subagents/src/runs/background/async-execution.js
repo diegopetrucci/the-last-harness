@@ -278,7 +278,9 @@ export function buildAsyncRunnerPlan(id, params) {
             throw new AsyncStartValidationError(validationError);
         const task = injectSingleOutputInstruction(`${readInstructions.prefix}${taskSpec.task ?? ""}${progressInstructions.suffix}`, outputPath);
         const requestedModel = behavior.model ?? agent.model;
-        const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
+        const modelSource = taskSpec.modelSource ??
+            (taskSpec.model?.trim() && taskSpec.model.trim() !== "inherit" ? "explicit" : "inherited");
+        const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: modelSource });
         const fallbackModels = buildFallbackModelList(taskSpec.providerFallbackModels, agent.fallbackModels);
         const effectiveThinking = agent.thinking;
         const attemptNotes = [];
