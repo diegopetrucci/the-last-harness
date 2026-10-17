@@ -27,6 +27,13 @@ const SKIP_DISCOVERY_KEYS = new Set([
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"] as const;
+// Once a node yields runs from results/steps, its telemetry/run siblings describe the same
+// children, so run discovery is skipped beneath them (refs are still collected).
+const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set<string>([
+  ...PREFERRED_SUBAGENT_CHILD_KEYS,
+  "telemetry",
+  "run",
+]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
 const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
@@ -434,6 +441,15 @@ export function analyzeSessionEntries(
           intercomTargets,
         },
       );
+      continue;
+    }
+
+    if (entry.type === "compaction" || entry.type === "branch_summary") {
+      // Summary generation is provider spend but not an assistant turn.
+      const usage = normalizeUsage((entry as { usage?: unknown }).usage);
+      if (usage) {
+        addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+      }
       continue;
     }
 
@@ -1332,10 +1348,7 @@ function collectStructuredDiscoveries(
         [...path, key],
         skipNestedRuns ||
           Boolean(run) ||
-          (nestedRuns.length > 0 &&
-            PREFERRED_SUBAGENT_CHILD_KEYS.includes(
-              key as (typeof PREFERRED_SUBAGENT_CHILD_KEYS)[number],
-            )),
+          (nestedRuns.length > 0 && SUBAGENT_DUPLICATE_VIEW_KEYS.has(key)),
       );
     }
   };

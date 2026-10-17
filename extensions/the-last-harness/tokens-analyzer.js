@@ -20,6 +20,11 @@ const SKIP_DISCOVERY_KEYS = new Set([
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"];
+const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set([
+    ...PREFERRED_SUBAGENT_CHILD_KEYS,
+    "telemetry",
+    "run",
+]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
 const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
@@ -88,6 +93,13 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 artifactRefs,
                 intercomTargets,
             });
+            continue;
+        }
+        if (entry.type === "compaction" || entry.type === "branch_summary") {
+            const usage = normalizeUsage(entry.usage);
+            if (usage) {
+                addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+            }
             continue;
         }
         if (entry.type === "usage" && entry.kind === "cache_warm") {
@@ -807,8 +819,7 @@ function collectStructuredDiscoveries(value, context) {
             }
             visit(current[key], [...path, key], skipNestedRuns ||
                 Boolean(run) ||
-                (nestedRuns.length > 0 &&
-                    PREFERRED_SUBAGENT_CHILD_KEYS.includes(key)));
+                (nestedRuns.length > 0 && SUBAGENT_DUPLICATE_VIEW_KEYS.has(key)));
         }
     };
     visit(value, [], false);
