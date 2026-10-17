@@ -423,12 +423,12 @@ describe("async execution health", () => {
         `compaction ${variant.name}`,
       );
       assert.equal(compacting.activityState, undefined);
-      const monitorOpportunityAt =
-        Date.now() +
-        Math.max(
-          ACTIVITY_MONITOR_INTERVAL_MS * 2,
-          scaleTestTimeout(ACTIVITY_MONITOR_INTERVAL_MS * 2),
-        );
+      // Negative window: the test always waits this out in full, so it is
+      // intentionally unscaled. No observable signal exists for a monitor tick
+      // that finds nothing to report; two intervals allow a monitor tick
+      // opportunity. Timers can fire late under heavy contention, so a slow
+      // runner can only weaken the absence check, never fail it falsely.
+      const monitorOpportunityAt = Date.now() + ACTIVITY_MONITOR_INTERVAL_MS * 2;
       const monitorObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
         assert.doesNotMatch(eventText, /"reason":"idle"/);
         return (

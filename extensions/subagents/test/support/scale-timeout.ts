@@ -7,6 +7,18 @@
  * `CI` is truthy so that GitHub-hosted macOS runners have enough headroom for
  * process-spawn and filesystem-polling operations without slowing local runs.
  *
+ * ## When to scale
+ *
+ * Scale only budgets for waiting until a condition becomes true (wait helpers,
+ * polling deadlines, spawn-ordering margins): they end early on success, so extra
+ * headroom costs nothing. Do NOT scale time the test always spends in full:
+ * (a) negative windows that assert something does not happen (a slow runner can
+ * only weaken such a check, never fail it falsely), and (b) product
+ * deadlines (`maxExecutionTimeMs`, `timeoutMs`) the test waits to fire. Scaling
+ * those triples mandatory CI wall time. Keep a product deadline scaled when the
+ * test needs the child to reach some state before the deadline fires, and keep
+ * ratio invariants (delay vs. bound) scaled together.
+ *
  * ## Branded type
  *
  * `scaleTestTimeout` returns a `ScaledMs` branded value so that raw numeric
