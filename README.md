@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/diegopetrucci/the-last-harness/actions/workflows/ci.yml)
 [![Downloads](https://img.shields.io/github/downloads/diegopetrucci/the-last-harness/total)](https://github.com/diegopetrucci/the-last-harness/releases)
-[![Node](https://img.shields.io/badge/node-%3E%3D22.19.0-339933?logo=nodedotjs)](package.json)
+[![Node](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdiegopetrucci%2Fthe-last-harness%2Fmain%2Fpackage.json&query=%24.engines.node&label=node&color=339933&logo=nodedotjs)](package.json)
 
 `tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
 
@@ -41,9 +41,9 @@ The architect has access to a few subagents, which can be divided in three big c
 
 - Single-purpose, automatically-invoked ones to keep its context smaller: the librarian to check git repos, web-scout for the internet, etc.
 - Core: as the agent does not write code, 1+ developer(s) are tasked to. The reviewer works the same way, so reviews happen automatically rather than requiring a manual command.
-- Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
+- Second opinions: the oracle, and the contrarian. Both ship by default, but invoking them is optional: the architect might suggest using them, and it will always be up to you whether to actually run them.
 
-Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Direct Anthropic sessions try OpenAI Codex first, then xAI; direct OpenAI/Codex sessions try Anthropic first, then xAI; direct xAI sessions try Anthropic first, then OpenAI Codex. OpenRouter sessions use the same three-family vendor-aware order with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
+Notably, the oracle, contrarian, and reviewer try to run on a different provider than your session, so the second opinion is actually independent. The exact fallback order lives in [docs/models.md](docs/models.md#review-independence-for-code-reviewer-oracle-and-contrarian).
 
 Again, the core idea: explore and plan with the architect. Double check with the oracle/contrarian. Go back and forth. This is where you, as a human, are required. Once happy, the implementation follows, until ready for your review.
 
@@ -62,11 +62,11 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 ### Disabled mode
 
-`disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Disabled mode receives no primary-role append, while each newly launched canonical minor agent still uses its own matching project append. It can also initiate an explicitly requested, freshly scoped project custom agent under the exact-root contract. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
+`disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Details are in the [command reference](docs/commands.md#disabled-primary-agent-mode). I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
 ### Optional iPhone companion
 
-The `session-mirror-observer` experimental feature is **off by default** and is not added to a fresh profile or enabled by installation. Use `/experimental` to inspect or change it in the isolated TLH profile. When enabled for a new session, it can mirror bounded TLH session state to a paired iPhone companion; the paired companion can submit bounded plain-text user-message replies while the feature is active. Enable, disable, and toggle changes take effect on the next session. Disabling is not immediate revocation: a currently enabled session retains activation until a new session.
+The `session-mirror-observer` experimental feature is **off by default**; nothing enables it on install. When you turn it on with `/experimental`, new sessions can mirror bounded TLH session state to a paired iPhone companion. Full behavior and limits are in the [command reference](docs/commands.md#experimental).
 
 TLH never automatically installs or pairs the companion, edits the normal profile, stores a second transcript, or promises background/network behavior. This is an experimental source and deterministic-test boundary, not a claim of fresh physical-device proof; see the [command reference](docs/commands.md) and [companion roadmap](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/companion-roadmap.md) for limits and reported evidence.
 
@@ -78,39 +78,15 @@ The footer refreshes local Git status every 8 seconds. Eligible non-default bran
 
 ### Subagents
 
-Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. TLH ships thirteen packaged roles: four primaries and nine bundled minors. Every bundled subagent starts a fresh child session, isolated from both the primary agent and one another, and receives only its task plus explicitly configured instructions. The reduced model-facing contract supports direct single or parallel execution in the foreground or through TLH-tracked `async: true` background work. `toolBudget`, native `contact_supervisor`, status/lifecycle controls, acceptance evidence, persisted `contextUsage`/`contextPressure` diagnostics, artifacts, model fallback, and timeout migration/undo details are covered in [docs/subagents.md](docs/subagents.md). Caller-supplied model-facing execution deadlines (root `timeoutMs` or public `tasks[].timeoutMs`) are not supported: humans own run and role policy in the isolated profile. An executable async-runner envelope/config's own root `timeoutMs` or a persisted plan's root `timeoutMs` fails closed before launch, while TLH-written per-step `plan.task.timeoutMs` and `plan.tasks[].timeoutMs` remain valid trusted role-ceiling metadata. Historical records remain readable and are not rewritten. Caller-supplied `context`, agent `defaultContext`, turn budgets, saved chains, and external pi-intercom detach request/result/control integration are not supported; TLH-tracked async work still uses a detached OS child process managed by TLH, and existing legacy artifacts are left untouched.
+Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there's no separate subagent package to install or pin. Every bundled subagent starts a fresh child session, isolated from the primary agent and from each other, and gets only its task plus explicitly configured instructions. Which roles exist, how dispatch works, what's not supported (like caller-supplied `timeoutMs`), and how status, artifacts, and context diagnostics behave all live in [docs/subagents.md](docs/subagents.md). The imported test suites run in CI but are not published.
 
-Every child instance has a bounded role budget. Canonical minor ceilings are code-owned defaults, applied before human overrides:
+Every child instance has a bounded run-time budget per role, owned by the role definition rather than by the model. The actual numbers live in code, so go to [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) if you want to see how ceilings and overrides work.
 
-| Role              | `maxExecutionTimeMs` |
-| ----------------- | -------------------: |
-| `developer`       |      3600000 ms (1h) |
-| `code-reviewer`   |     1800000 ms (30m) |
-| `test-runner`     |      3600000 ms (1h) |
-| `librarian`       |     14400000 ms (4h) |
-| `oracle`          |     2700000 ms (45m) |
-| `contrarian`      |     1800000 ms (30m) |
-| `repo-scout`      |      600000 ms (10m) |
-| `web-scout`       |       300000 ms (5m) |
-| `diff-summarizer` |       300000 ms (5m) |
+You can also add project custom subagents, but only from an exact file at the Git root's `.tlh/agents/custom/` and only after you've persistently `/trust`ed the project. The full rules (and what generic discovery no longer picks up) are in [docs/custom-subagents.md](docs/custom-subagents.md).
 
-Human canonical-role overrides use `subagents.agentOverrides.<role>.maxExecutionTimeMs` in the isolated `<agent-dir>/settings.json`. TLH selects the project's role entry when present, otherwise the profile entry, and does not merge the two objects field-by-field; a project entry that omits `maxExecutionTimeMs` therefore leaves the code-owned role default in effect unless authoritative frontmatter declares the field. Overrides must be positive safe integers. A legacy `maxExecutionTimeMs: false` is ignored and the bounded role ceiling remains active. Trusted custom agents declare a positive-safe-integer `maxExecutionTimeMs` in frontmatter, or use the **14400000 ms (4h)** bounded fallback when omitted. The retired shared `execution.maxRunTimeMs` key is ignored when present; TLH emits a presence-only warning, leaves the user-owned config untouched, and never treats it as a way to disable role budgets. See [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) for active-time continuation, exhaustion, migration, and rollback guidance.
+Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
 
-Stable, always-available trusted project custom subagents are available to the architect (and `disabled` mode) when an exact file at `<git-worktree-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md` authorizes them. Custom-agent execution requires a persisted positive `/trust` decision for the validated Git worktree root; session-only or configuration-trust approvals never authorize custom agents. TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides (except an active-profile `disabled: true` deny-only tombstone); those definitions do not appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths; see [docs/custom-subagents.md](docs/custom-subagents.md).
-
-Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. The execution-only `test-runner` uses cheap low-effort defaults and can be customized like the other bundled minors through `/subagent-settings` or project defaults. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
-
-All bundled subagents:
-
-- `repo-scout` for discovery
-- `diff-summarizer` for change overviews
-- `developer` for implementation and ticket-local validation
-- `test-runner` for exact final-validation shell/MCP steps and repository/ticket-safe reports
-- `code-reviewer` for review
-- `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
-- `web-scout` for web research
-- `oracle` for a deeper second opinion
-- `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
+The full roster of bundled primaries and minors is in [docs/subagents.md](docs/subagents.md#isolation-and-discovery).
 
 ### Direct model providers
 
@@ -139,23 +115,7 @@ After adding built-in append files, installing a package, or saving project trus
 
 #### Per-agent project guidance
 
-To give project-specific instructions to one packaged TLH role, add a plain Markdown prompt append under `.tlh/agents/builtin/` using one of these exact filenames:
-
-| Packaged role     | Exact filename                                         |
-| ----------------- | ------------------------------------------------------ |
-| `architect`       | `.tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md`       |
-| `rush`            | `.tlh/agents/builtin/RUSH_PROMPT_APPEND.md`            |
-| `product`         | `.tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md`         |
-| `bug-hunter`      | `.tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md`      |
-| `developer`       | `.tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md`       |
-| `test-runner`     | `.tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md`     |
-| `code-reviewer`   | `.tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md`   |
-| `repo-scout`      | `.tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md`      |
-| `diff-summarizer` | `.tlh/agents/builtin/DIFF-SUMMARIZER_PROMPT_APPEND.md` |
-| `librarian`       | `.tlh/agents/builtin/LIBRARIAN_PROMPT_APPEND.md`       |
-| `web-scout`       | `.tlh/agents/builtin/WEB-SCOUT_PROMPT_APPEND.md`       |
-| `oracle`          | `.tlh/agents/builtin/ORACLE_PROMPT_APPEND.md`          |
-| `contrarian`      | `.tlh/agents/builtin/CONTRARIAN_PROMPT_APPEND.md`      |
+To give project-specific instructions to one packaged TLH role, add a plain Markdown prompt append at `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md`, with `<ROLE>` the uppercase role name (e.g. `ARCHITECT_PROMPT_APPEND.md`, `BUG-HUNTER_PROMPT_APPEND.md`). The exact filename for every role is in the [table in docs/custom-subagents.md](docs/custom-subagents.md#canonical-packaged-roles-and-append-files).
 
 For each role, TLH starts at the current working directory and searches upward through the enclosing Git worktree; outside a Git worktree it checks only the current directory. Discovery is exact and non-recursive within each `.tlh/agents/builtin/` directory. The nearest exact match wins. A nearer blank, invalid, or unsafe match does not fall through to a farther same-role file. Only the matching role's append is added to that packaged role's prompt. Legacy `.tlh/<ROLE>.md` paths are no longer read and have no fallback. Files are append-only plain Markdown: they do not replace the packaged prompt, and they do not support YAML frontmatter or model, tool, or other agent configuration. Project custom embedded agents use the separate exact-root contract in [docs/custom-subagents.md](docs/custom-subagents.md), not this convention.
 

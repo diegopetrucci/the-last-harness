@@ -8,7 +8,7 @@ wrapper directory, credentials, or user cache.
 
 ## Reproduce the baseline
 
-Use Node.js >=22.19.0 from the repository root on a Unix-like system with
+Use Node.js (minimum in `engines.node` of `package.json`) from the repository root on a Unix-like system with
 network access and a PTY. The benchmark creates a temporary `HOME`, isolated
 profile/bin/cwd, npm cache, npm user/global configuration, Git configuration,
 XDG directories, and `TMPDIR`. It runs the installer and package manager in
@@ -21,12 +21,7 @@ Inspect the current CLI without creating a workspace:
 node scripts/check-installer-performance.mjs --help
 ```
 
-The release baseline commands were:
-
-```sh
-node scripts/check-installer-performance.mjs --mode remote --ref v0.40.0 --upgrade-from v0.39.0 --runs 3 --scenarios all
-node scripts/check-installer-performance.mjs --mode checkout --ref v0.40.0 --runs 1 --scenarios cold
-```
+The release baseline invocations (`remote` with `--upgrade-from`, and `checkout` cold-only) are in [VALIDATING.md](../VALIDATING.md#installer-performance-baseline); the checker's `--help` is authoritative for flags.
 
 `checkout` mode is intentionally cold-only. `remote` mode is the only mode that
 supports `--scenarios all`, including the changed-pin upgrade; use
@@ -54,9 +49,8 @@ failed before tracing. An installer that was not run is reported separately.
 The trace is opt-in, and
 instrumentation failures cannot change installer behavior.
 
-The original ticket's checkout command also contained
-`--upgrade-from v0.39.0`; that flag is invalid and unused for `--scenarios
-cold`. The corrected command above removes only that flag.
+`--upgrade-from` is invalid and unused for `--scenarios cold`, so the
+`checkout` invocation omits it.
 
 ## Focused clone-based A/B observation
 
