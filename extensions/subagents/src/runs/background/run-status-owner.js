@@ -44,7 +44,7 @@ function lifecycleTransitionErrorDetail(error, depth = 0) {
         return "unavailable";
     }
 }
-export function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
+function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
     try {
         appendDiagnosticEvent(JSON.stringify({
             type: "subagent.run.lifecycle_transition_failed",

@@ -7,7 +7,6 @@ import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
-export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;

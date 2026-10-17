@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 
-export const liveEvalResultSchemaVersion = 1;
+const liveEvalResultSchemaVersion = 1;
 
 function uniqueStrings(values) {
   return [

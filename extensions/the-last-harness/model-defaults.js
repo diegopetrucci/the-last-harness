@@ -484,7 +484,7 @@ export function formatUnavailableStoredModelWarning(agentName, model) {
     const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
     return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
-export function formatUnavailableProjectModelWarning(agentName, model) {
+function formatUnavailableProjectModelWarning(agentName, model) {
     const roleLabel = agentName ?? "this minor-agent role";
     return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
 }

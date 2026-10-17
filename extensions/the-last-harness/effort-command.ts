@@ -49,7 +49,7 @@ function readTlhThinkingDefault(): ThinkingLevel | undefined {
 }
 
 /** Persist a thinking default only in the guarded isolated TLH profile. */
-export function persistTlhThinkingDefault(
+function persistTlhThinkingDefault(
   cwd: string,
   level: ThinkingLevel,
 ): TlhThinkingDefaultWriteResult {
