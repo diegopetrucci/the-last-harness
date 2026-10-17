@@ -389,6 +389,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         const processGroupId = ownsProcessGroup && typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : undefined;
         const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
         let processClosed = false;
+        let abortKillTimer;
+        const clearAbortKillTimer = () => {
+            if (abortKillTimer)
+                clearTimeout(abortKillTimer);
+            abortKillTimer = undefined;
+        };
         let settled = false;
         let pendingSupervisorPause;
         let assistantError;
@@ -942,6 +948,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             result.stderr = stderrText;
             result.stderrTruncated = stderrTail.wasTruncated();
             processClosed = true;
+            clearAbortKillTimer();
             shared.runtimeTracker.freeze(Date.now());
             void (async () => {
                 await jsonlWriter.close().catch(() => {
@@ -1062,6 +1069,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }
             clearHealthForProgress(shared.healthState, progress);
             processClosed = true;
+            clearAbortKillTimer();
             shared.runtimeTracker.freeze(Date.now());
             void (async () => {
                 await jsonlWriter.close().catch(() => {
@@ -1082,7 +1090,13 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 clearHealthForProgress(shared.healthState, progress);
                 shared.runtimeTracker.freeze(Date.now());
                 proc.kill("SIGTERM");
-                setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
+                abortKillTimer = setTimeout(() => {
+                    abortKillTimer = undefined;
+                    if (!processClosed && proc.exitCode === null && proc.signalCode === null) {
+                        proc.kill("SIGKILL");
+                    }
+                }, 3000);
+                abortKillTimer.unref?.();
             };
             if (options.signal.aborted)
                 kill();
