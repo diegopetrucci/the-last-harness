@@ -264,7 +264,10 @@ describe("async execution lifecycle interruptions", () => {
       const previousNodeOptions = process.env.NODE_OPTIONS;
       const previousReadyPath = process.env.MOCK_PI_PUBLICATION_READY;
       const previousReleasePath = process.env.MOCK_PI_PUBLICATION_RELEASE;
-      const roleTimeoutMs = scaleTestTimeout(2_000);
+      // Product deadline the test waits to fire: unscaled. The test tolerates the
+      // deadline firing before the mock child publishes (see below) and asserts
+      // only the terminal result, so a slow runner cannot invalidate it.
+      const roleTimeoutMs = 2_000;
       const id = `async-role-timeout-before-call-record-${Date.now().toString(36)}`;
       mockPi.onCall({ delay: 60_000, output: "too late" });
       process.env.NODE_OPTIONS = [previousNodeOptions, `--require=${preloadPath}`]
@@ -810,7 +813,10 @@ describe("async execution lifecycle interruptions", () => {
           : undefined,
     },
     async () => {
-      const shortTimeoutMs = scaleTestTimeout(750);
+      // Product deadline the test waits to fire: unscaled. Neither child is
+      // required to start before the deadline (status is authoritative), and the
+      // timed-out child is held with ignoreSigterm until the assertions run.
+      const shortTimeoutMs = 750;
       const timeoutSiblingHold = path.join(tempDir, "timeout-sibling-hold");
       const supervisorPauseGate = path.join(tempDir, "supervisor-pause-after-timeout");
       mockPi.onCall({
@@ -1254,7 +1260,9 @@ describe("async execution lifecycle interruptions", () => {
         output: "timed out child",
       });
       const timedOutId = `async-synthesized-timeout-${Date.now().toString(36)}`;
-      const timedOutMs = scaleTestTimeout(500);
+      // Product deadline the test waits to fire: unscaled. The test waits only for
+      // the terminal result, which is valid whether or not the child spawned first.
+      const timedOutMs = 500;
       launch(
         timedOutId,
         [
