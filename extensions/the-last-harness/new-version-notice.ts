@@ -2,9 +2,6 @@
  * Suppresses the upstream Pi "Update Available — Run `pi update`" banner at launch.
  * See ../../docs/upstream-sync-inventory.md for sync/review guidance.
  *
- * WHY: TLH pins Pi to a supported version window, so the upstream update prompt is
- * misleading noise — the correct update path is `tlh update`, not `pi update`.
- *
  * HOW TO UNDO: remove the `installTlhNewVersionNotificationOverride()` call from
  * `extensions/the-last-harness.ts`.
  *
@@ -19,8 +16,6 @@ type TlhInteractiveModePrototype = typeof InteractiveMode.prototype & {
   [TLH_NEW_VERSION_NOTICE_PATCHED]?: boolean;
 };
 
-// Intentional no-op: TLH pins Pi to a supported version window, so the upstream
-// "Update Available — Run `pi update`" banner shown at launch is misleading noise.
 const noOpShowNewVersionNotification: typeof InteractiveMode.prototype.showNewVersionNotification =
   () => {};
 

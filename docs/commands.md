@@ -373,6 +373,8 @@ These are `tlh` command-line subcommands, distinct from the `/slash commands` us
 
 `tlh version` reports stable, machine-readable install information for external tools such as tlh-gui. It is read-only, makes no network calls, and dispatches before the MCP adapter startup guard and the runtime. Run `tlh version` for a human summary or `tlh version --json` for pretty-printed JSON on stdout. It exits 0 on success, 2 for argument errors (nothing on stdout), and 1 when the wrapper cannot run the reporter (missing or corrupt support files, or no `node`).
 
+The JSON below is a shape example. `tlhVersion`, `piVersion`, `ref`, and the other values vary by install.
+
 ```json
 {
   "schemaVersion": 1,
