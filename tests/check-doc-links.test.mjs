@@ -101,3 +101,62 @@ test("parses balanced and escaped parentheses in link destinations", () => {
   assert.match(problems[0], /a\.md:3: missing anchor "#nope"/);
   assert.match(problems[1], /a\.md:4: missing file for link "missing\(x\)\.md"/);
 });
+
+test("compares anchors exactly (no lowercase fallback)", () => {
+  const problems = check({ "a.md": "[x](b.md#Intro)\n[y](b.md#intro)\n", "b.md": "# Intro\n" }, [
+    "a.md",
+  ]);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /missing anchor "#Intro"/);
+});
+
+test("slugify strips HTML tags from headings", () => {
+  const problems = check(
+    { "a.md": "[x](b.md#hello-world)\n", "b.md": "# Hello <b>World</b> <<i>x\n" },
+    ["a.md"],
+  );
+  assert.equal(problems.length, 1);
+});
+
+test("closing fence must be a bare fence run of sufficient length", () => {
+  const problems = check({
+    "a.md": [
+      "````",
+      "```",
+      "[a](missing.md)",
+      "```` not a close",
+      "[b](missing.md)",
+      "````  ",
+      "[ok](missing-real.md)",
+    ].join("\n"),
+  });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /a\.md:7: missing file/);
+});
+
+test("masks code spans by backtick run length", () => {
+  const problems = check({
+    "a.md": "``a ` [x](missing.md) b`` and `[y](missing.md)` then [z](missing2.md)\n",
+  });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /missing2\.md/);
+});
+
+test("heading slugs strip emphasis but keep intraword underscores", () => {
+  const problems = check(
+    {
+      "a.md": [
+        "[a](b.md#emphasis-here)",
+        "[b](b.md#strong-text)",
+        "[c](b.md#star-text)",
+        "[d](b.md#snake_case-name)",
+        "[e](b.md#_x_-code)",
+        "[f](b.md#a_b_c)",
+      ].join("\n"),
+      "b.md":
+        "# _Emphasis_ here\n# __Strong__ text\n# *Star* text\n# snake_case name\n# `_x_` code\n# a_b_c\n",
+    },
+    ["a.md"],
+  );
+  assert.deepEqual(problems, []);
+});

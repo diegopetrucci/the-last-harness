@@ -10,7 +10,7 @@ Run the one-liner:
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. It also installs a managed `tk` ticket CLI at `~/.the-last-harness/agent/bin/tk`. Pins, overrides, fallbacks, and failure behavior for both are owned by [integrations.md](integrations.md#gnosis-integration). Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
+On supported platforms (linux/darwin × x64/arm64), it installs [Gnosis](https://github.com/skorokithakis/gnosis) automatically. It also installs a managed `tk` ticket CLI at `~/.the-last-harness/agent/bin/tk`. Pins, overrides, fallbacks, and failure behavior are owned by [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration). Once the installation is finished, start `tlh` by running… you guessed it, `tlh`.
 
 Normal `~/.pi/agent` settings are never mutated. The subagent orchestration runtime is first-party TLH code declared by this package, not a separate extension package that users must install or pin.
 
@@ -105,7 +105,7 @@ tlh update --track latest-release
 curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
 ```
 
-Normal updates keep Gnosis and ticket integration enabled and refresh the managed `gn` and `tk` when their pins change; see [integrations.md](integrations.md#gnosis-integration) for the behavior, opt-outs, and fallbacks. Existing repo-local `.gnosis` and `.tickets` data is left in place.
+Normal updates keep Gnosis and ticket integration enabled and refresh the managed `gn` and `tk` when their pins change; see [Gnosis integration](integrations.md#gnosis-integration) and [Ticket integration](integrations.md#ticket-integration) for the behavior, opt-outs, and fallbacks. Existing repo-local `.gnosis` and `.tickets` data is left in place.
 
 The updating process is intentionally conservative, and won't replace your custom extensions, themes, and so on. If you spot anything that was overridden, [please open an issue](https://github.com/diegopetrucci/the-last-harness/issues).
 

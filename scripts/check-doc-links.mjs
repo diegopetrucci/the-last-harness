@@ -15,7 +15,45 @@ import { fileURLToPath } from "node:url";
 
 const EXCLUDED_PREFIXES = ["skills/", "node_modules/", ".tickets/"];
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+/** Replace code spans (matching backtick run length) with spaces. */
+function maskCodeSpans(line) {
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== "`") {
+      out += line[i];
+      i += 1;
+      continue;
+    }
+    let end = i;
+    while (line[end] === "`") end += 1;
+    const run = end - i;
+    let close = -1;
+    for (let j = end; j < line.length;) {
+      if (line[j] !== "`") {
+        j += 1;
+        continue;
+      }
+      let k = j;
+      while (line[k] === "`") k += 1;
+      if (k - j === run) {
+        close = k;
+        break;
+      }
+      j = k;
+    }
+    if (close === -1) {
+      out += line.slice(i, end);
+      i = end;
+    } else {
+      out += " ".repeat(close - i);
+      i = close;
+    }
+  }
+  return out;
+}
 
 /** Remove fenced code blocks and inline code spans, keeping line numbers. */
 function stripCode(text, keepInline = false) {
@@ -24,23 +62,54 @@ function stripCode(text, keepInline = false) {
   return lines.map((line) => {
     const match = FENCE_RE.exec(line);
     if (fence !== null) {
-      if (match && match[1][0] === fence[0] && match[1].length >= fence.length) fence = null;
+      if (
+        match &&
+        match[1][0] === fence[0] &&
+        match[1].length >= fence.length &&
+        match[2].trim() === ""
+      ) {
+        fence = null;
+      }
       return "";
     }
     if (match) {
       fence = match[1];
       return "";
     }
-    if (keepInline) return line;
-    return line.replace(/(`+)[^`]*?\1/g, (span) => " ".repeat(span.length));
+    return keepInline ? line : maskCodeSpans(line);
   });
 }
 
+const WORD = String.raw`\p{L}\p{N}_`;
+const EMPHASIS_RE = new RegExp(
+  String.raw`(^|[^${WORD}])(_{1,2})(?=\S)(.+?)(?<=\S)\2(?![${WORD}])`,
+  "gu",
+);
+
+/** Strip `_x_`/`__x__` emphasis (not intraword underscores) and `*`/`~` markers. */
+function stripEmphasis(text) {
+  let previous;
+  let current = text;
+  do {
+    previous = current;
+    current = current.replace(EMPHASIS_RE, "$1$3");
+  } while (current !== previous);
+  return current.replace(/[*~]/g, "");
+}
+
 function slugify(heading) {
-  const plain = heading
-    .replace(/<[^>]*>/g, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[`*~]/g, "")
+  let plain = heading;
+  let previous;
+  do {
+    previous = plain;
+    plain = plain.replace(/<[^>]*>/g, "");
+  } while (plain !== previous);
+  plain = plain.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1");
+  // Emphasis applies outside code spans only; code content is literal.
+  const parts = plain.split(/(`+[^`]*`+)/);
+  plain = parts
+    .map((part, index) => (index % 2 === 1 ? part.replace(/`/g, "") : stripEmphasis(part)))
+    .join("")
     .trim()
     .toLowerCase();
   return plain.replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, "").replace(/ /g, "-");
@@ -174,10 +243,7 @@ export function checkDocLinks(root, files) {
       ) {
         continue;
       }
-      if (
-        !anchorsFor(absoluteTarget).has(anchor.toLowerCase()) &&
-        !anchorsFor(absoluteTarget).has(anchor)
-      ) {
+      if (!anchorsFor(absoluteTarget).has(anchor)) {
         problems.push(
           `${where}: missing anchor "#${anchor}" in ${relative(root, absoluteTarget).split(sep).join("/")}`,
         );

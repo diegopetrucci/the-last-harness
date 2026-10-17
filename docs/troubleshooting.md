@@ -262,7 +262,7 @@ Treat `--package-source`, `--repo`, `--ref`, and `--track` as one set for custom
 
 - **Main-track install not removed:** the uninstaller does not detect `main` installs. Pass `--wrapper-name tlh-main --agent-dir ~/.the-last-harness-main/agent`, preview with `--dry-run` first. See [Uninstall](install.md#uninstall).
 - **`Skip wrapper removal: ... not managed by The Last Harness installer`:** the file at the wrapper path isn't TLH's. Delete it yourself only if you know it's safe.
-- **Private runtime skipped:** the ownership marker is missing or invalid. Run `tlh update` once so it gets a marker, then uninstall again, or follow the printed manual-removal hint. See [Pi removal decision](install.md#pi-removal-decision).
+- **Private runtime skipped:** the ownership marker is missing or invalid. If install-state records `piInstalledByTlh: true`, run `tlh update` once so the runtime gets a marker, then uninstall again; otherwise follow the printed manual-removal hint. See [Pi removal decision](install.md#pi-removal-decision).
 - **`--force-include-pi and --keep-pi are mutually exclusive`:** pass only one. See [Uninstaller flags](install.md#uninstaller-flags).
 
 ## Related docs
