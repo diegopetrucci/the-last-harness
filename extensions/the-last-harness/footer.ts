@@ -45,16 +45,28 @@ function getCurrentThinkingLevel(pi: ExtensionAPI): string {
 }
 
 function collectUsageTotals(ctx: ExtensionContext) {
+  // Mirror upstream Pi footer getSessionStats: assistant + toolResult messages,
+  // standalone "usage" entries (e.g. cache_warm), and compaction/branch_summary usage.
   const totals = { cost: 0 };
   for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type !== "message" || entry.message.role !== "assistant") {
+    const raw = entry as {
+      type: string;
+      message?: { role?: string; usage?: unknown };
+      usage?: unknown;
+    };
+    let usage: unknown;
+    if (raw.type === "usage" || raw.type === "branch_summary" || raw.type === "compaction") {
+      usage = raw.usage;
+    } else if (
+      raw.type === "message" &&
+      (raw.message?.role === "assistant" || raw.message?.role === "toolResult")
+    ) {
+      usage = raw.message.usage;
+    }
+    if (!usage || typeof usage !== "object") {
       continue;
     }
-    const usage = entry.message.usage;
-    if (!usage) {
-      continue;
-    }
-    totals.cost += Number(usage.cost?.total) || 0;
+    totals.cost += Number((usage as { cost?: { total?: unknown } }).cost?.total) || 0;
   }
   return totals;
 }

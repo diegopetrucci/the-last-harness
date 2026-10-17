@@ -342,6 +342,26 @@ test("footer render reads cached usage snapshots without refreshing", () => {
   assert.equal(refreshCalls, 0);
 });
 
+test("footer cost matches upstream: includes usage, toolResult, compaction and branch_summary spend", () => {
+  const ctx = createCtx({
+    provider: "anthropic",
+    usingOAuth: false,
+    entries: [
+      assistantCostEntry(1),
+      { type: "usage", usage: { cost: { total: 0.5 } } },
+      { type: "message", message: { role: "toolResult", usage: { cost: { total: 0.25 } } } },
+      { type: "message", message: { role: "user", usage: { cost: { total: 100 } } } },
+      { type: "compaction", usage: { cost: { total: 0.125 } } },
+      { type: "branch_summary", usage: { cost: { total: 0.0625 } } },
+    ],
+  });
+  const line = renderSessionStatsLine(ctx, {
+    subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
+    shouldShowWeekly: () => true,
+  });
+  assert.match(line, /\$1\.938/);
+});
+
 test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {
   // Non-OAuth Anthropic session (e.g. API-key user): no subscription tracking and no OAuth gate,
   // so the dollar fallback must remain visible.
