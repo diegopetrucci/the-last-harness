@@ -153,14 +153,18 @@ run_stage0_case_alias_guard_smoke() {
     assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   else
     # A case-sensitive filesystem must keep a distinct .PI tree outside the
-    # protected .pi root; stage-0 should therefore hand off to local stage-1.
+    # protected .pi root; stdin stage-0 should therefore complete its
+    # bootstrap-only dry run without handing off to local stage-1.
     mkdir -p "${home_dir}/.PI/agent"
     : >"${stdout_file}"
     : >"${stderr_file}"
     (cd "${case_dir}" && run_scrubbed_installer_env TLH_SKIP_GNOSIS_INSTALL=1 HOME="${home_dir}" PATH="${fakebin}:${PATH}" bash -s -- --dry-run --agent-dir "${aliased_agent}" --bin-dir "${case_dir}/bin" < "${ROOT_DIR}/install.sh") >"${stdout_file}" 2>"${stderr_file}"
     combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+    assert_contains "${combined_file}" "Bootstrap-level/no-stage1 dry-run approximation (stage-1 was not downloaded or run)."
     assert_not_contains "${combined_file}" "refusing to place The Last Harness agent dir under normal Pi config root"
-    assert_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
+    assert_contains "${combined_file}" "Dry run only; no support files were downloaded."
+    assert_not_contains "${combined_file}" "fake curl was invoked"
+    assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   fi
 }
 
