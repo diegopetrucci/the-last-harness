@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/post-exit-stdio-guard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function trySignalChild(child, signal) {
     try {
         return child.kill(signal);

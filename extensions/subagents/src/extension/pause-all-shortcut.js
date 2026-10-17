@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/pause-all-shortcut.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { requestInterruptAllRunningSubagentRuns } from "../runs/foreground/subagent-executor.js";
 function formatRunCount(total, foreground, async) {
     const parts = [];

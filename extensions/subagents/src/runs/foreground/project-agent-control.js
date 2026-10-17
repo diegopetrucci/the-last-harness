@@ -1,7 +1,9 @@
+// Generated from extensions/subagents/src/runs/foreground/project-agent-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { discoverAgentsWithProjectSnapshot, } from "../../agents/agents.js";
 import { PROJECT_AGENT_DIRECTORY, PROJECT_AGENT_PACKAGE, resolveCanonicalGitWorktreeRoot, validateProjectAgentCwdContainment, } from "../../agents/project-agent-loader.js";
 import { createProjectAgentRunCapture, lookupProjectAgentRunReference, normalizeProjectAgentRunCapture, projectAgentRunCaptureEquals, resolveProjectAgentRunReference, resolveProjectAgentSnapshot, } from "../../agents/project-agent-snapshot.js";
+import { isExtensionToolPath } from "../../agents/identity.js";
 import { resolveProjectAgentSessionId } from "../../shared/session-identity.js";
 import { readStatus } from "../../shared/utils.js";
 const EMBEDDED_PROJECT_AGENT_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
@@ -81,6 +83,10 @@ export function projectAgentEntryIdentityError(projectRoot, entry) {
     }
     if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
         return `project agent '${runtimeName}' does not carry an explicit usable tools list`;
+    }
+    const extensionTool = agent.tools.find((tool) => typeof tool === "string" && isExtensionToolPath(tool.trim()));
+    if (extensionTool !== undefined) {
+        return `project agent '${runtimeName}' carries prohibited extension-path tool '${extensionTool}'`;
     }
     if (agent.extensions !== undefined || agent.subagentOnlyExtensions !== undefined) {
         return `project agent '${runtimeName}' carries a prohibited extension surface`;

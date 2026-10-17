@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/terminal-persistence.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, } from "../../shared/types.js";
 import { resolveSubagentTelemetryOutcome, telemetryFromRunnerResults, } from "../../shared/telemetry.js";
@@ -75,11 +76,28 @@ function terminalStatus(input) {
         return "failed";
     return input.results.every((result) => result.success) ? "complete" : "failed";
 }
+function clearPauseOwnerPid(pause) {
+    return pause ? { ...pause, ownerPid: undefined } : undefined;
+}
+function releaseStoppedInterruptedOwnership(input) {
+    if (input.statusPayload.state !== "paused" ||
+        !input.statusOwner.interrupted ||
+        input.pausedOwnershipConfirmedStopped !== true)
+        return false;
+    input.statusPayload.pid = undefined;
+    input.statusPayload.pause = clearPauseOwnerPid(input.statusPayload.pause);
+    input.statusPayload.steps = input.statusPayload.steps.map((step) => ({
+        ...step,
+        pause: clearPauseOwnerPid(step.pause),
+    }));
+    return true;
+}
 function applyTerminalStatus(input) {
     const { statusPayload } = input;
     const timedOut = timeoutWonRun(input);
     statusPayload.state = terminalStatus(input);
     statusPayload.activityState = undefined;
+    releaseStoppedInterruptedOwnership(input);
     if (timedOut)
         statusPayload.timedOut = true;
     if (input.statusOwner.timedOut) {
@@ -170,7 +188,7 @@ function resultPauseFromCanonicalStatus(input, fallback) {
 function canonicalStatusValue(input, value, fallback) {
     return input.statusOwner.concurrentTerminalStatusAdopted ? value : (value ?? fallback);
 }
-function resultItems(results) {
+function resultItems(results, clearPauseOwnerPids = false) {
     return results.map((result) => ({
         agent: result.agent,
         ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
@@ -207,7 +225,7 @@ function resultItems(results) {
         transcriptPath: result.transcriptPath,
         transcriptError: result.transcriptError,
         acceptance: result.acceptance,
-        pause: result.pause,
+        pause: clearPauseOwnerPids ? clearPauseOwnerPid(result.pause) : result.pause,
         activeRuntimeMs: result.activeRuntimeMs,
         activeRuntimeCheckpointAt: result.activeRuntimeCheckpointAt,
         activityState: result.activityState,
@@ -229,6 +247,9 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
     const cwd = canonicalStatusValue(input, input.statusPayload.cwd, input.cwd) ?? input.cwd;
     const sessionId = canonicalStatusValue(input, input.statusPayload.sessionId, input.config.sessionId ?? undefined);
     const projectAgents = canonicalStatusValue(input, input.statusPayload.projectAgents, input.config.projectAgents);
+    const clearPauseOwnerPids = state === "paused" &&
+        input.statusOwner.interrupted &&
+        input.pausedOwnershipConfirmedStopped === true;
     const result = {
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
         id: input.config.id,
@@ -260,7 +281,7 @@ function writeResultArtifact(input, telemetry, state, paused, startedAt, endedAt
                 activeRuntimeCheckpointAt: normalizeActiveRuntimeCheckpointAt(input.statusPayload.activeRuntimeCheckpointAt),
             }
             : {}),
-        results: resultItems(input.results),
+        results: resultItems(input.results, clearPauseOwnerPids),
         exitCode: state === "failed" ? 1 : 0,
         timestamp: endedAt,
         durationMs: Math.max(0, endedAt - startedAt),

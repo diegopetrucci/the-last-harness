@@ -27,6 +27,13 @@ const SKIP_DISCOVERY_KEYS = new Set([
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"] as const;
+// Once a node yields runs from results/steps, its telemetry/run siblings describe the same
+// children, so run discovery is skipped beneath them (refs are still collected).
+const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set<string>([
+  ...PREFERRED_SUBAGENT_CHILD_KEYS,
+  "telemetry",
+  "run",
+]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
 const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
@@ -286,10 +293,12 @@ export type TlhSessionUsageAnalysis = {
   primaryAssistant: {
     /** All provider-reported primary usage, including Pi-native cache_warm spend. */
     usage: TlhUsageTotals;
-    /** Usage attributed to assistant messages only; cache_warm entries are excluded. */
+    /** Usage attributed to assistant messages only; cache_warm and summary entries are excluded. */
     assistantTurnUsage: TlhUsageTotals;
     /** Usage attributed to Pi-native cache_warm entries only. */
     cacheWarmUsage: TlhUsageTotals;
+    /** Usage attributed to compaction/branch_summary entries only (non-turn, no model). */
+    summaryUsage: TlhUsageTotals;
     /** Number of Pi-native cache_warm entries with usable usage data. */
     cacheWarmRequestCount: number;
     usageCoverage: TlhUsageCoverage;
@@ -385,6 +394,7 @@ export function analyzeSessionEntries(
   const primaryTotals = createUsageTotals();
   const primaryAssistantUsage = createUsageTotals();
   const primaryCacheWarmUsage = createUsageTotals();
+  const primarySummaryUsage = createUsageTotals();
   let primaryCacheWarmRequestCount = 0;
   const primaryCoverage: TlhUsageCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
   const subagentTotals = createUsageTotals();
@@ -434,6 +444,16 @@ export function analyzeSessionEntries(
           intercomTargets,
         },
       );
+      continue;
+    }
+
+    if (entry.type === "compaction" || entry.type === "branch_summary") {
+      // Summary generation is provider spend but not an assistant turn.
+      const usage = normalizeUsage((entry as { usage?: unknown }).usage);
+      if (usage) {
+        addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+        addUsage(primarySummaryUsage, usage, { turns: 0, assistantMessages: 0 });
+      }
       continue;
     }
 
@@ -688,6 +708,7 @@ export function analyzeSessionEntries(
       usage: primaryTotals,
       assistantTurnUsage: primaryAssistantUsage,
       cacheWarmUsage: primaryCacheWarmUsage,
+      summaryUsage: primarySummaryUsage,
       cacheWarmRequestCount: primaryCacheWarmRequestCount,
       usageCoverage: primaryCoverage,
       models: sortModelUsage(
@@ -1332,10 +1353,7 @@ function collectStructuredDiscoveries(
         [...path, key],
         skipNestedRuns ||
           Boolean(run) ||
-          (nestedRuns.length > 0 &&
-            PREFERRED_SUBAGENT_CHILD_KEYS.includes(
-              key as (typeof PREFERRED_SUBAGENT_CHILD_KEYS)[number],
-            )),
+          (nestedRuns.length > 0 && SUBAGENT_DUPLICATE_VIEW_KEYS.has(key)),
       );
     }
   };

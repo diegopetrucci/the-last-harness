@@ -315,11 +315,8 @@ function renderUsageTotalsTable(
   const subAgentRows: string[][] = analysis.subagents.byAgent.map((entry: TlhAgentProviderUsage) =>
     usageRow(entry.agent ?? "unknown", entry.provider ?? em, entry.usage),
   );
-  const primaryBreakdownRows = hasCacheWarmUsage(primaryUsage)
-    ? [
-        usageRow("Assistant-turn usage", em, primaryUsage.assistantTurnUsage),
-        usageRow("Pi-native cache_warm (non-turn)", em, primaryUsage.cacheWarmUsage),
-      ]
+  const primaryBreakdownRows = hasNonTurnUsage(primaryUsage)
+    ? primaryBreakdownEntries(primaryUsage).map(([label, usage]) => usageRow(label, em, usage))
     : [];
   const rows: string[][] = [
     usageRow(primaryLabel, em, analysis.totals.primary),
@@ -329,7 +326,7 @@ function renderUsageTotalsTable(
     usageRow("Combined", em, analysis.totals.combined),
   ];
   return [
-    `<p class="section-note">${escapeHtml("The primary row is a total: it includes assistant-message usage plus Pi-native cache_warm spend. The cache_warm component is provider cost/tokens, not an assistant turn or message; its zero counts keep the primary total reconcilable.")}</p>`,
+    `<p class="section-note">${escapeHtml("The primary row is a total: it includes assistant-message usage plus Pi-native cache_warm and compaction/branch summary spend. The cache_warm and summary components are provider cost/tokens, not assistant turns or messages; their zero counts keep the primary total reconcilable.")}</p>`,
     renderTable(
       [
         "Bucket",
@@ -467,11 +464,8 @@ function renderCacheTotalsTable(
 ): string {
   const primaryUsage = getPrimaryUsageBreakdown(analysis);
   const rows: Array<[string, TlhUsageTotals]> = [[primaryLabel, analysis.totals.primary]];
-  if (hasCacheWarmUsage(primaryUsage)) {
-    rows.push(
-      ["Assistant-turn usage", primaryUsage.assistantTurnUsage],
-      ["Pi-native cache_warm (non-turn)", primaryUsage.cacheWarmUsage],
-    );
+  if (hasNonTurnUsage(primaryUsage)) {
+    rows.push(...primaryBreakdownEntries(primaryUsage));
   }
   rows.push(["Subagents", analysis.totals.subagents], ["Combined", analysis.totals.combined]);
   return renderTable(
@@ -704,17 +698,19 @@ function formatCurrency(value: number): string {
 type PrimaryUsageBreakdown = {
   assistantTurnUsage: TlhUsageTotals;
   cacheWarmUsage: TlhUsageTotals;
+  summaryUsage: TlhUsageTotals;
   cacheWarmRequestCount: number;
 };
 
 function getPrimaryUsageBreakdown(analysis: TlhSessionUsageAnalysis): PrimaryUsageBreakdown {
   const cacheWarmUsage = analysis.primaryAssistant.cacheWarmUsage ?? createUsageTotals();
+  const summaryUsage = analysis.primaryAssistant.summaryUsage ?? createUsageTotals();
   const assistantTurnUsage =
     analysis.primaryAssistant.assistantTurnUsage ??
-    subtractUsageTotals(analysis.totals.primary, cacheWarmUsage);
+    subtractUsageTotals(subtractUsageTotals(analysis.totals.primary, cacheWarmUsage), summaryUsage);
   const cacheWarmRequestCount =
     analysis.primaryAssistant.cacheWarmRequestCount ?? (hasUsage(cacheWarmUsage) ? 1 : 0);
-  return { assistantTurnUsage, cacheWarmUsage, cacheWarmRequestCount };
+  return { assistantTurnUsage, cacheWarmUsage, summaryUsage, cacheWarmRequestCount };
 }
 
 function subtractUsageTotals(total: TlhUsageTotals, subtract: TlhUsageTotals): TlhUsageTotals {
@@ -743,6 +739,18 @@ function hasUsage(usage: TlhUsageTotals): boolean {
 
 function hasCacheWarmUsage(usage: PrimaryUsageBreakdown): boolean {
   return usage.cacheWarmRequestCount > 0 || hasUsage(usage.cacheWarmUsage);
+}
+
+function hasNonTurnUsage(usage: PrimaryUsageBreakdown): boolean {
+  return hasCacheWarmUsage(usage) || hasUsage(usage.summaryUsage);
+}
+
+function primaryBreakdownEntries(usage: PrimaryUsageBreakdown): Array<[string, TlhUsageTotals]> {
+  return [
+    ["Assistant-turn usage", usage.assistantTurnUsage],
+    ["Pi-native cache_warm (non-turn)", usage.cacheWarmUsage],
+    ["Compaction/branch summaries (non-turn)", usage.summaryUsage],
+  ];
 }
 
 function formatCacheWarmCardDetail(usage: PrimaryUsageBreakdown): string {

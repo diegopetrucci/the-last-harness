@@ -1,3 +1,4 @@
+// Generated from extensions/shared/subagent-restore-contract.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const SUBAGENT_ASYNC_RESTORED_EVENT = "subagent:async-restored";
 const RESTORE_PROVIDER_STATE_KEY = "__tlhBundledSubagentRestoreProvider";
 function restoreProviderState() {

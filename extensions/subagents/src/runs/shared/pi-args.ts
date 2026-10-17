@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isExtensionToolPath } from "../../agents/identity.ts";
 import { TEMP_ROOT_DIR, type ResolvedToolBudget } from "../../shared/types.ts";
 import {
   findModelInfo,
@@ -135,10 +136,6 @@ interface ResolvedToolPolicy {
   toolExtensionPaths: string[];
   hasOnlyExtensionPaths: boolean;
   error?: string;
-}
-
-function isExtensionToolPath(tool: string): boolean {
-  return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
 }
 
 function canonicalChildExtensionPath(extensionPath: string, cwd: string): string {

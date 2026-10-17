@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { basename } from "node:path";
 import { AgentSession as TlhPiAgentSession, getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";

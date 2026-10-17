@@ -23,7 +23,12 @@ function entry(id, parentId, text) {
   };
 }
 
-function createHarness({ text = "reply text", now = () => 0, publishedBranchId = ROOT_ID } = {}) {
+function createHarness({
+  text = "reply text",
+  now = () => 0,
+  publishedBranchId = ROOT_ID,
+  expireBeforeInjection = false,
+} = {}) {
   let entries = [entry(ROOT_ID, null, "existing"), entry(LEAF_ID, ROOT_ID, "existing leaf")];
   let currentLeafId = LEAF_ID;
   const observer = {
@@ -40,6 +45,7 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     revision: 7,
   };
   const scheduled = [];
+  const lifecycleChecks = [];
   const timers = [];
   const persistenceChecks = [];
   const sent = [];
@@ -47,6 +53,7 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
   const channels = [];
   let sendHook = () => {};
   let idle = true;
+  let idleHook = () => {};
   let snapshots = 0;
   const manager = {
     getLeafId: () => currentLeafId,
@@ -61,7 +68,10 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
       sent.push(value);
       sendHook(value);
     },
-    isIdle: () => idle,
+    isIdle: () => {
+      idleHook();
+      return idle;
+    },
     requestSnapshot: () => {
       snapshots += 1;
     },
@@ -75,9 +85,13 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     },
     now,
     scheduleConfirmation: (task) => scheduled.push(task),
+    scheduleLifecycleCompletion: (task) => lifecycleChecks.push(task),
     setTimeout: (task, delay) => {
       if (delay === 0) persistenceChecks.push(task);
-      else timers.push(task);
+      else {
+        timers.push(task);
+        if (expireBeforeInjection) task();
+      }
       return timers.length + persistenceChecks.length;
     },
     clearTimeout: () => {},
@@ -102,6 +116,7 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     entries,
     observer,
     scheduled,
+    lifecycleChecks,
     timers,
     persistenceChecks,
     sent,
@@ -115,6 +130,9 @@ function createHarness({ text = "reply text", now = () => 0, publishedBranchId =
     },
     setIdle(value) {
       idle = value;
+    },
+    setIdleHook(hook) {
+      idleHook = hook;
     },
     setLeafId(value) {
       currentLeafId = value;
@@ -231,6 +249,14 @@ function createLifecycleHarness() {
 async function flushMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+async function acceptFreshReply(harness, requestId) {
+  const result = harness.request({ requestId });
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await result, "accepted");
 }
 
 test("producer accepts only after persisted user-message observation and requests a snapshot", async () => {
@@ -447,6 +473,17 @@ test("matching non-extension input invalidates a pending reply and latches busy"
   assert.deepEqual(harness.sent, ["reply text"]);
 });
 
+test("producer rejects concurrent replies while one request is in flight", async () => {
+  const harness = createHarness();
+  const first = harness.request({ requestId: "first-concurrent" });
+  assert.equal(await harness.request({ requestId: "second-concurrent" }), "busy");
+
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await first, "accepted");
+});
+
 test("producer rejects stale, busy, malformed, and non-idle requests before injection", async () => {
   const harness = createHarness();
   assert.equal(await harness.request({ text: "/not-a-command" }), "invalid");
@@ -579,12 +616,308 @@ test("terminal input and compaction invalidate pending replies before confirmati
   assert.equal(await afterCancelledCompaction, "unconfirmed");
 });
 
-test("producer expiry is bounded and never retries injection", async () => {
+test("producer releases tree busy only after the completed tree is idle", async () => {
   const harness = createHarness();
-  const result = harness.request({ ttlSeconds: 1 });
-  assert.equal(harness.timers.length, 1);
-  harness.timers[0]();
+  const lifecycleContext = { isIdle: () => harnessIdle };
+  let harnessIdle = false;
+
+  harness.producer.sessionBeforeTree();
+  harness.producer.sessionTree(
+    { type: "session_tree", newLeafId: LEAF_ID, oldLeafId: ROOT_ID },
+    lifecycleContext,
+  );
+  assert.equal(harness.producer.getState().busyLatch, true);
+  assert.equal(await harness.request({ requestId: "tree-while-active" }), "busy");
+  assert.equal(harness.sent.length, 0);
+
+  harnessIdle = true;
+  assert.equal(harness.lifecycleChecks.length, 1);
+  harness.lifecycleChecks.shift()();
+  assert.equal(harness.producer.getState().busyLatch, false);
+  await acceptFreshReply(harness, "tree-after-completion");
+});
+
+test("producer releases manual compaction success only after idle evidence", async () => {
+  const harness = createHarness();
+  let harnessIdle = false;
+  const lifecycleContext = { isIdle: () => harnessIdle };
+
+  harness.producer.sessionBeforeCompact();
+  harness.producer.sessionCompact(
+    { type: "session_compact", reason: "manual", willRetry: false },
+    lifecycleContext,
+  );
+  assert.equal(harness.producer.getState().compactionLatched, true);
+  assert.equal(await harness.request({ requestId: "compact-success-active" }), "busy");
+
+  harnessIdle = true;
+  harness.lifecycleChecks.shift()();
+  assert.equal(harness.producer.getState().busyLatch, false);
+  assert.equal(harness.producer.getState().compactionLatched, false);
+  await acceptFreshReply(harness, "compact-success-after");
+});
+
+test("producer fails closed when compaction completion omits event or retry evidence", async () => {
+  for (const [label, event] of [
+    ["missing-event", undefined],
+    ["missing-retry-evidence", { type: "session_compact", reason: "manual" }],
+  ]) {
+    const harness = createHarness();
+    harness.producer.sessionBeforeCompact();
+    harness.producer.sessionCompact(event, { isIdle: () => true });
+    assert.equal(harness.lifecycleChecks.length, 0, label);
+    assert.equal(harness.producer.getState().compactionLatched, true, label);
+    assert.equal(await harness.request({ requestId: label }), "busy", label);
+  }
+});
+
+test("producer lazily refreshes completed compaction after a slow handler", async () => {
+  const harness = createHarness();
+  let lifecycleIdle = false;
+  const lifecycleContext = { isIdle: () => lifecycleIdle };
+
+  harness.producer.sessionBeforeCompact();
+  harness.producer.sessionCompact(
+    { type: "session_compact", reason: "manual", willRetry: false },
+    lifecycleContext,
+  );
+  const deferredCheck = harness.lifecycleChecks.shift();
+  assert.equal(typeof deferredCheck, "function");
+  deferredCheck();
+  assert.equal(harness.lifecycleChecks.length, 0);
+  assert.equal(harness.producer.getState().compactionLatched, true);
+
+  lifecycleIdle = true;
+  await acceptFreshReply(harness, "compact-after-slow-handler");
+  assert.equal(harness.producer.getState().compactionLatched, false);
+});
+
+test("producer ignores scheduler arguments while lifecycle completion is still busy", async () => {
+  const harness = createHarness();
+  let lifecycleIdle = false;
+  const lifecycleContext = { isIdle: () => lifecycleIdle };
+
+  harness.producer.sessionBeforeTree();
+  harness.producer.sessionTree(
+    { type: "session_tree", newLeafId: LEAF_ID, oldLeafId: ROOT_ID },
+    lifecycleContext,
+  );
+  const deferredCheck = harness.lifecycleChecks.shift();
+  assert.equal(typeof deferredCheck, "function");
+  deferredCheck(true);
+  assert.equal(harness.producer.getState().busyLatch, true);
+  assert.equal(await harness.request({ requestId: "scheduler-argument" }), "busy");
+
+  lifecycleIdle = true;
+  await acceptFreshReply(harness, "scheduler-argument-after-idle");
+});
+
+test("producer releases cancelled and failed compaction through the failure lifecycle", async () => {
+  for (const [label, event] of [
+    [
+      "cancelled",
+      { type: "session_compact_failed", reason: "manual", aborted: true, willRetry: false },
+    ],
+    [
+      "failed",
+      { type: "session_compact_failed", reason: "manual", aborted: false, willRetry: false },
+    ],
+  ]) {
+    const harness = createHarness();
+    let harnessIdle = false;
+    const lifecycleContext = { isIdle: () => harnessIdle };
+
+    harness.producer.sessionBeforeCompact();
+    harness.producer.sessionCompactFailed(event, lifecycleContext);
+    assert.equal(harness.producer.getState().compactionLatched, true, label);
+    assert.equal(await harness.request({ requestId: `${label}-while-active` }), "busy", label);
+
+    harnessIdle = true;
+    harness.lifecycleChecks.shift()();
+    assert.equal(harness.producer.getState().busyLatch, false, label);
+    assert.equal(harness.producer.getState().compactionLatched, false, label);
+    await acceptFreshReply(harness, `${label}-after`);
+  }
+});
+
+test("producer admits a fresh reply after an unmatched idle manual failure", async () => {
+  const harness = createHarness();
+  const event = {
+    type: "session_compact_failed",
+    reason: "manual",
+    aborted: false,
+    willRetry: false,
+  };
+
+  harness.producer.sessionCompactFailed(event, { isIdle: () => true });
+  assert.equal(harness.producer.getState().busyLatch, false);
+  assert.equal(harness.producer.getState().compactionLatched, false);
+  await acceptFreshReply(harness, "unmatched-failure-after-idle");
+});
+
+test("producer keeps unmatched retries busy and releases a non-idle failure only after idle", async () => {
+  const retry = createHarness();
+  retry.producer.sessionCompactFailed(
+    { type: "session_compact_failed", reason: "manual", aborted: false, willRetry: true },
+    { isIdle: () => true },
+  );
+  assert.equal(retry.producer.getState().busyLatch, true);
+  assert.equal(retry.producer.getState().compactionLatched, true);
+  assert.equal(await retry.request({ requestId: "unmatched-retry" }), "busy");
+
+  const harness = createHarness();
+  let idle = false;
+  const context = { isIdle: () => idle };
+  harness.producer.sessionCompactFailed(
+    { type: "session_compact_failed", reason: "manual", aborted: false, willRetry: false },
+    context,
+  );
+  assert.equal(harness.producer.getState().busyLatch, true);
+  assert.equal(harness.producer.getState().compactionLatched, true);
+  assert.equal(await harness.request({ requestId: "unmatched-failure-while-active" }), "busy");
+
+  idle = true;
+  assert.equal(harness.lifecycleChecks.length, 1);
+  harness.lifecycleChecks.shift()();
+  assert.equal(harness.producer.getState().busyLatch, false);
+  assert.equal(harness.producer.getState().compactionLatched, false);
+  await acceptFreshReply(harness, "unmatched-failure-after-idle");
+});
+
+test("producer does not replace an unrelated tree or rearm a duplicate failure", async () => {
+  const tree = createHarness();
+  tree.producer.sessionBeforeTree();
+  tree.producer.sessionCompactFailed(
+    { type: "session_compact_failed", reason: "manual", aborted: false, willRetry: false },
+    { isIdle: () => true },
+  );
+  assert.equal(tree.producer.getState().busyLatch, true);
+  assert.equal(tree.producer.getState().compactionLatched, false);
+  assert.equal(tree.lifecycleChecks.length, 0);
+  assert.equal(await tree.request({ requestId: "unrelated-tree" }), "busy");
+
+  tree.producer.sessionTree(
+    { type: "session_tree", newLeafId: LEAF_ID, oldLeafId: ROOT_ID },
+    { isIdle: () => true },
+  );
+  await acceptFreshReply(tree, "unrelated-tree-after");
+
+  const duplicate = createHarness();
+  let idle = true;
+  const event = {
+    type: "session_compact_failed",
+    reason: "manual",
+    aborted: false,
+    willRetry: false,
+  };
+  const context = { isIdle: () => idle };
+  duplicate.producer.sessionCompactFailed(event, context);
+  assert.equal(duplicate.producer.getState().busyLatch, false);
+
+  idle = false;
+  duplicate.producer.sessionCompactFailed(event, context);
+  assert.equal(duplicate.producer.getState().busyLatch, false);
+  assert.equal(duplicate.producer.getState().compactionLatched, false);
+  await acceptFreshReply(duplicate, "duplicate-after");
+});
+
+test("producer keeps active compaction blocked and ignores stale completion callbacks", async () => {
+  const harness = createHarness();
+  let harnessIdle = false;
+  const lifecycleContext = { isIdle: () => harnessIdle };
+
+  harness.producer.sessionBeforeCompact();
+  harness.producer.sessionCompact(
+    { type: "session_compact", reason: "manual", willRetry: false },
+    lifecycleContext,
+  );
+  const staleCompletion = harness.lifecycleChecks.shift();
+
+  // A new compaction supersedes the first completion. Its callback must not
+  // clear the new operation's latch.
+  harness.producer.sessionBeforeCompact();
+  harnessIdle = true;
+  staleCompletion();
+  assert.equal(harness.producer.getState().compactionLatched, true);
+  assert.equal(await harness.request({ requestId: "stale-completion" }), "busy");
+
+  harness.producer.sessionCompact(
+    { type: "session_compact", reason: "manual", willRetry: false },
+    lifecycleContext,
+  );
+  assert.equal(harness.producer.getState().compactionLatched, false);
+
+  const retry = createHarness();
+  let retryIdle = true;
+  retry.producer.sessionBeforeCompact();
+  retry.producer.sessionCompact(
+    { type: "session_compact", reason: "threshold", willRetry: true },
+    { isIdle: () => retryIdle },
+  );
+  assert.equal(retry.lifecycleChecks.length, 0);
+  assert.equal(retry.producer.getState().compactionLatched, true);
+  assert.equal(await retry.request({ requestId: "retry-still-active" }), "busy");
+  retryIdle = false;
+  retry.producer.agentSettled();
+  assert.equal(retry.producer.getState().compactionLatched, false);
+});
+
+test("producer expiry before injection does not inject text and suppresses duplicates", async () => {
+  const harness = createHarness({ expireBeforeInjection: true });
+  const result = harness.request({ requestId: "pre-injection-expiry", ttlSeconds: 1 });
   assert.equal(await result, "expired");
+  assert.deepEqual(harness.sent, []);
+  assert.equal(harness.producer.getState().inFlight, false);
+  assert.equal(
+    await harness.request({ requestId: "pre-injection-expiry", ttlSeconds: 1 }),
+    "duplicate",
+  );
+});
+
+test("producer does not inject after a pre-injection expiry race", async () => {
+  const harness = createHarness();
+  harness.setIdleHook(() => harness.timers.shift()());
+  const result = harness.request({ requestId: "reentrant-expiry", ttlSeconds: 1 });
+
+  assert.equal(await result, "expired");
+  assert.deepEqual(harness.sent, []);
+});
+
+test("producer does not expire an injected reply at the admission TTL", async () => {
+  const harness = createHarness({ now: () => 0 });
+  const result = harness.request({ requestId: "post-injection-ttl", ttlSeconds: 1 });
   assert.deepEqual(harness.sent, ["reply text"]);
-  assert.equal(harness.timers.length, 1);
+
+  harness.timers.shift()();
+  assert.equal(harness.producer.getState().inFlight, true);
+  assert.equal(harness.scheduled.length, 1);
+  harness.scheduled.shift()();
+  assert.equal(await result, "unconfirmed");
+  assert.equal(harness.producer.getState().lastOutcome, "unconfirmed");
+});
+
+test("producer accepts persisted completion observed after TTL within confirmation bounds", async () => {
+  let now = 0;
+  const harness = createHarness({ now: () => now });
+  const result = harness.request({ requestId: "persisted-after-ttl", ttlSeconds: 1 });
+
+  harness.timers.shift()();
+  now = 2_100;
+  harness.producer.messageEnd({ message: { role: "user", content: "reply text" } });
+  harness.appendReply();
+  harness.persistenceChecks.shift()();
+  assert.equal(await result, "accepted");
+  assert.equal(harness.snapshots(), 1);
+});
+
+test("producer keeps lifecycle invalidation unknown and rejects the duplicate", async () => {
+  const harness = createHarness();
+  const result = harness.request({ requestId: "lifecycle-race", ttlSeconds: 1 });
+
+  harness.producer.sessionBeforeCompact();
+  assert.equal(await result, "unconfirmed");
+  assert.equal(await harness.request({ requestId: "lifecycle-race", ttlSeconds: 1 }), "duplicate");
+
+  harness.timers.shift()();
+  assert.equal(harness.producer.getState().lastOutcome, "unconfirmed");
 });

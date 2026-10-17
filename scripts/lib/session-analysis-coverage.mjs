@@ -1,3 +1,4 @@
+// Generated from scripts/lib/session-analysis-coverage.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /** Shared, read-only session scan coverage calculation. */
 /**
  * Aggregate coverage statistics across multiple scan results.

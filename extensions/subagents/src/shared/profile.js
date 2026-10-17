@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/profile.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as os from "node:os";
 import * as path from "node:path";
 import { getConfigDirName } from "./config-dir.js";

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -17,18 +17,19 @@ function tempFixture(t) {
   return dir;
 }
 
-function runCommand(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+function runCommand(command, args, cwd, options = {}) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", ...options });
   assert.equal(result.status, 0, result.stderr || String(result.error));
   return result;
 }
 
-function createExecApi() {
+function createExecApi(env = {}) {
   return {
     exec: async (command, args, options = {}) => {
       const result = spawnSync(command, args, {
         cwd: options.cwd,
         encoding: "utf8",
+        env: { ...process.env, ...env },
       });
       return {
         code: result.status ?? 1,
@@ -37,6 +38,45 @@ function createExecApi() {
       };
     },
   };
+}
+
+function createNoisyShellEnvironment(t) {
+  const home = mkdtempSync(join(tmpdir(), "tlh-annotate-git-diff-home-"));
+  const bashEnv = join(home, "bash-env.sh");
+  writeFileSync(join(home, ".bash_profile"), "printf '%s\\n' 'TLH_LOGIN_STARTUP_NOISE'\\n");
+  writeFileSync(bashEnv, "printf '%s\\n' 'TLH_BASH_ENV_STARTUP_NOISE'\\n");
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+
+  const env = { ...process.env, HOME: home, BASH_ENV: bashEnv };
+  const loginProbe = spawnSync("bash", ["-lc", "printf '%s\\n' probe"], {
+    env,
+    encoding: "utf8",
+  });
+  assert.match(loginProbe.stdout ?? "", /TLH_LOGIN_STARTUP_NOISE/u);
+  const envProbe = spawnSync("bash", ["-c", "printf '%s\\n' probe"], {
+    env,
+    encoding: "utf8",
+  });
+  assert.match(envProbe.stdout ?? "", /TLH_BASH_ENV_STARTUP_NOISE/u);
+  return env;
+}
+
+function createSyntheticHead(repoRoot) {
+  runCommand("git", ["add", "--", "."], repoRoot);
+  const tree = runCommand("git", ["write-tree"], repoRoot).stdout.trim();
+  const commit = runCommand("git", ["hash-object", "-t", "commit", "-w", "--stdin"], repoRoot, {
+    input: [
+      `tree ${tree}`,
+      "author TLH Test <tlh@example.com> 1700000000 +0000",
+      "committer TLH Test <tlh@example.com> 1700000000 +0000",
+      "",
+      "synthetic test head",
+      "",
+    ].join("\n"),
+  }).stdout.trim();
+  runCommand("git", ["update-ref", "refs/heads/main", commit], repoRoot);
+  runCommand("git", ["symbolic-ref", "HEAD", "refs/heads/main"], repoRoot);
+  return commit;
 }
 
 test("parseStatusPorcelainZ tracks reviewable changes and ignores ignored files", () => {
@@ -168,6 +208,64 @@ test("getReviewWindowData returns no files or commits for an empty repository wi
   assert.deepEqual(reviewData.commits, []);
 });
 
+test(
+  "machine-readable diff snapshots ignore noisy login and BASH_ENV startup output",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const repoRoot = tempFixture(t);
+    const noisyEnv = createNoisyShellEnvironment(t);
+    const revisionImage = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10, 0x80]);
+
+    runCommand("git", ["init"], repoRoot);
+    writeFileSync(join(repoRoot, "old-name.txt"), "rename me\n");
+    writeFileSync(join(repoRoot, "deleted.txt"), "delete me\n");
+    writeFileSync(join(repoRoot, "deleted-image.png"), revisionImage);
+    const baseRevision = createSyntheticHead(repoRoot);
+
+    renameSync(join(repoRoot, "old-name.txt"), join(repoRoot, "renamed.txt"));
+    rmSync(join(repoRoot, "deleted.txt"));
+    rmSync(join(repoRoot, "deleted-image.png"));
+    writeFileSync(join(repoRoot, "added.txt"), "added file\n");
+
+    const pi = createExecApi(noisyEnv);
+    const reviewData = await getReviewWindowData(pi, repoRoot);
+    assert.equal(reviewData.branchMergeBaseSha, baseRevision);
+    const filesByPath = new Map(reviewData.files.map((file) => [file.path, file]));
+    const addedFile = filesByPath.get("added.txt");
+    const renamedFile = filesByPath.get("renamed.txt");
+    const deletedFile = filesByPath.get("deleted.txt");
+    const deletedImageFile = filesByPath.get("deleted-image.png");
+
+    assert.ok(addedFile, "expected added file in review data");
+    assert.equal(addedFile.worktreeStatus, "added");
+    assert.equal(addedFile.gitDiff?.status, "added");
+    assert.ok(renamedFile, "expected renamed file in review data");
+    assert.equal(renamedFile.worktreeStatus, "renamed");
+    assert.equal(renamedFile.gitDiff?.status, "renamed");
+    assert.equal(renamedFile.gitDiff?.oldPath, "old-name.txt");
+    assert.equal(renamedFile.gitDiff?.newPath, "renamed.txt");
+    assert.ok(deletedFile, "expected deleted file in review data");
+    assert.equal(deletedFile.worktreeStatus, "deleted");
+    assert.equal(deletedFile.gitDiff?.status, "deleted");
+    assert.ok(deletedImageFile, "expected deleted image in review data");
+
+    const imageContents = await loadReviewFileContents(
+      pi,
+      repoRoot,
+      deletedImageFile,
+      "branch",
+      null,
+      reviewData.branchMergeBaseSha,
+    );
+    assert.equal(imageContents.originalExists, true);
+    assert.equal(imageContents.modifiedExists, false);
+    assert.equal(
+      imageContents.originalPreviewUrl,
+      `data:image/png;base64,${revisionImage.toString("base64")}`,
+    );
+  },
+);
+
 test("getCommitFiles returns an empty list for an invalid commit sha", async (t) => {
   const repoRoot = tempFixture(t);
   runCommand("git", ["init"], repoRoot);
@@ -225,6 +323,75 @@ test("loadReviewFileContents returns empty contents when commit or branch contex
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test(
+  "loadReviewFileContents keeps POSIX backslash filenames inside the repository",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const repoRoot = tempFixture(t);
+    const secretRoot = tempFixture(t);
+    const secretRootName = basename(secretRoot);
+    const externalText = "external text sentinel\n";
+    const externalImage = Buffer.from("external image sentinel");
+    const actualText = "repository text\n";
+    const actualImage = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]);
+    const traversalTextPath = `dir\\..\\..\\${secretRootName}\\outside.txt`;
+    const traversalImagePath = `images\\..\\..\\${secretRootName}\\outside.png`;
+    const ordinaryBackslashPath = "ordinary\\backslash.txt";
+
+    runCommand("git", ["init"], repoRoot);
+    mkdirSync(join(repoRoot, "dir"), { recursive: true });
+    mkdirSync(join(repoRoot, "images"), { recursive: true });
+    writeFileSync(join(secretRoot, "outside.txt"), externalText);
+    writeFileSync(join(secretRoot, "outside.png"), externalImage);
+    writeFileSync(join(repoRoot, traversalTextPath), actualText);
+    writeFileSync(join(repoRoot, traversalImagePath), actualImage);
+    writeFileSync(join(repoRoot, ordinaryBackslashPath), "ordinary backslash content\n");
+
+    const reviewData = await getReviewWindowData(createExecApi(), repoRoot);
+    const filesByPath = new Map(reviewData.files.map((file) => [file.path, file]));
+    const traversalTextFile = filesByPath.get(traversalTextPath);
+    const traversalImageFile = filesByPath.get(traversalImagePath);
+    const ordinaryBackslashFile = filesByPath.get(ordinaryBackslashPath);
+    assert.ok(traversalTextFile, "expected traversal-like text filename in review data");
+    assert.ok(traversalImageFile, "expected traversal-like image filename in review data");
+    assert.ok(ordinaryBackslashFile, "expected ordinary backslash filename in review data");
+
+    const textContents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      traversalTextFile,
+      "all",
+    );
+    assert.equal(textContents.modifiedExists, true);
+    assert.equal(textContents.modifiedContent, actualText);
+    assert.notEqual(textContents.modifiedContent, externalText);
+
+    const imageContents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      traversalImageFile,
+      "all",
+    );
+    assert.equal(imageContents.modifiedExists, true);
+    assert.equal(
+      imageContents.modifiedPreviewUrl,
+      `data:image/png;base64,${actualImage.toString("base64")}`,
+    );
+    assert.notEqual(
+      imageContents.modifiedPreviewUrl,
+      `data:image/png;base64,${externalImage.toString("base64")}`,
+    );
+
+    const ordinaryBackslashContents = await loadReviewFileContents(
+      createExecApi(),
+      repoRoot,
+      ordinaryBackslashFile,
+      "all",
+    );
+    assert.equal(ordinaryBackslashContents.modifiedContent, "ordinary backslash content\n");
+  },
+);
 
 test("loadReviewFileContents does not follow tracked working-tree symlinks for text files", async (t) => {
   const repoRoot = tempFixture(t);

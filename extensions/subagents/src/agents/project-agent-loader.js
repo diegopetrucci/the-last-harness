@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/project-agent-loader.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -5,7 +6,7 @@ import { resolveValidatedGitWorktreeRoot, } from "../../../shared/project-agent-
 import { getAgentDir } from "../shared/utils.js";
 import { getProjectAgentSnapshotProvenance, registerProjectAgentSnapshot, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { buildRuntimeName } from "./identity.js";
+import { buildRuntimeName, isExtensionToolPath } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
@@ -584,9 +585,6 @@ function validateCandidatePath(projectRoot, candidate, fileSystem) {
     }
     return { valid: true, canonicalPath, stat, identity };
 }
-function bytesFromRead(value) {
-    return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf-8");
-}
 function parseUtf8(bytes) {
     try {
         return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -729,6 +727,9 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         throw new ProjectAgentDefinitionError(filePath, "tools must declare at least one usable tool");
     }
     for (const tool of tools) {
+        if (isExtensionToolPath(tool)) {
+            throw new ProjectAgentDefinitionError(filePath, `tool '${tool}' is an extension path and is prohibited for project agents`);
+        }
         if (!PROJECT_AGENT_TOOL_NAME_PATTERN.test(tool)) {
             throw new ProjectAgentDefinitionError(filePath, `tool '${tool}' is not a valid runtime tool name`);
         }
@@ -813,10 +814,6 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
     };
     const digest = createHash("sha256").update(exactBytes).digest("hex");
     return { agent, digest, frontmatterFields };
-}
-export function parseProjectAgentDefinition(filePath, content) {
-    const bytes = bytesFromRead(content);
-    return parseProjectAgentDefinitionFromText(filePath, parseUtf8(bytes), bytes);
 }
 function readCandidate(projectRoot, candidate, options) {
     const fileSystem = options.fileSystem;

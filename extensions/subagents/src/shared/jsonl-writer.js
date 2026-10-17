@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/jsonl-writer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 const NO_OP_CLOSE_PROMISE = Promise.resolve();
 const DEFAULT_MAX_JSONL_BYTES = 50 * 1024 * 1024;

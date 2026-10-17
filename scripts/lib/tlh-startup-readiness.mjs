@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-startup-readiness.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const HEADER_TEXT_MARKERS = ["Context:", "run /context"];
 const HEADER_LOGO_PATTERN = /(^|\n)\s*tlh(?:\s+v\d[^\n]*)?\s*(?=\n|$)/u;
 const HEADER_RULE_PATTERN = /(^|\n)[^\n]*─(?:[^\n]*─){19,}[^\n]*(?=\n|$)/u;

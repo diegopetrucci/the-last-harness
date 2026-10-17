@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tickets.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { expandHomePath } from "./common.js";

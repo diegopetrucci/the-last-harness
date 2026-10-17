@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-lifecycle.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { join } from "node:path";

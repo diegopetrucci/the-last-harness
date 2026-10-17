@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-auth.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord } from "./common.js";
 import { parseProviderModelReference } from "./model-defaults.js";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";

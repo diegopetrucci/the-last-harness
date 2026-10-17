@@ -4,17 +4,11 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 
 ## Project invariants
 
-- `tlh` is an isolated profile/package for the upstream Pi runtime.
-- Do not overwrite or mutate a user's normal Pi configuration at `~/.pi/agent`.
-- The default isolated profile is `~/.the-last-harness/agent`; the default wrapper path is `~/.local/bin/tlh`.
-- Installer-created Pi commands must set `PI_CODING_AGENT_DIR` to the isolated profile directory.
-- The generated `tlh` wrapper should run upstream `pi` with that isolated profile, except for installer-owned helper subcommands such as `tlh defaults`.
-- Preserve user-owned isolated-profile settings. Merge defaults conservatively, respect opt-outs, and back up existing settings before writes.
-- Do not clobber unmanaged wrapper files unless the user explicitly passes `--force`.
+- `tlh` is an isolated profile/package for the upstream Pi runtime. It must never mutate a user's normal Pi configuration, and installer and wrapper changes must keep the isolated profile, conservative settings merge, and no-clobber `--force` rules. The full list of safety invariants is in [AGENTS.md](AGENTS.md#safety-requirements).
 
 ## Development setup
 
-Use Node.js >=22.19.0 from the repository root. Install dependencies with:
+Use the Node.js version required by `engines.node` in `package.json`, from the repository root. Install dependencies with:
 
 ```sh
 npm ci
@@ -30,11 +24,7 @@ Main repository validation:
 npm run validate
 ```
 
-That path inherits the default quiet `npm test` dot reporter. If you need the full Node test reporter while diagnosing a failure, rerun tests with:
-
-```sh
-npm run test:verbose
-```
+That path inherits the default quiet `npm test` dot reporter. For diagnostics, the verbose reporter and the full list of what validate runs are in [VALIDATING.md](VALIDATING.md).
 
 For installer-specific checks, use temporary paths, for example:
 
@@ -52,29 +42,36 @@ Docs-only changes may use narrower validation, but inspect the rendered/content 
 
 ## Packaged vs contributor-only files
 
-The `files` allowlist in `package.json` defines what ships in the published npm package. `tools/` is excluded by omission because it is contributor-only tooling that never ships. The negated `docs/*` entries (for example `!docs/subagents-history`, `!docs/brand`, `!docs/local-development.md`) keep contributor-only documentation out of the tarball while still publishing the core end-user docs.
+The `files` allowlist in `package.json` defines what ships in the published npm package. `tools/` is excluded by omission because it is contributor-only tooling that never ships. The negated `docs/*` entries (for example `!docs/brand`, `!docs/local-development.md`) keep contributor-only documentation out of the tarball while still publishing the core end-user docs.
 
 ## Repo-only eval workflows
 
-These workflows are contributor tooling for this repository only. They are not part of the packaged TLH install surface.
+These workflows are contributor tooling for this repository only and are not part of the packaged TLH install surface. The commands, scenarios, scoring, and guardrails (live evals are opt-in and must use temp paths) are in [docs/workflow-evals.md](docs/workflow-evals.md).
 
-For the full workflow-eval guide, including scenario details, scoring, and boundaries, see [docs/workflow-evals.md](docs/workflow-evals.md).
+## Documentation ownership
 
-Quick reference:
+State each fact once, in its owner. Everywhere else keep at most one sentence plus a relative link to the owner's heading, and never restate values that live in code or config (versions, defaults, rosters, timeout ceilings, context caps) in prose: name the source file instead. Historical records (`CHANGELOG.md`, `release-notes/`, dated investigation docs) keep their original values.
 
-- Default contributor/CI path: `npm run validate`
-- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
-- Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
-- Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
-- Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
-
-Guardrails to remember:
-
-- Keep the stack deterministic-first and use the lightest tier that answers your question.
-- The hermetic core-workflow integration test is deterministic and included in normal `npm test` / `npm run validate`.
-- Live evals are opt-in and not part of normal `npm run validate` or default CI.
-- Keep all live evals pointed at temp paths; never reuse real `~/.the-last-harness/agent`, `~/.pi/agent`, or normal shell wrapper paths.
-- Do not commit `results.json`, temp workspaces, or per-run score snapshots.
+| Topic | Owner |
+| --- | --- |
+| Safety invariants | [AGENTS.md](AGENTS.md#safety-requirements) |
+| Install, update, uninstall, installer flags | [docs/install.md](docs/install.md) |
+| Troubleshooting and recovery | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Slash commands and CLI subcommands | [docs/commands.md](docs/commands.md) |
+| Subagent dispatch, supervision, skills | [docs/subagents.md](docs/subagents.md) |
+| Timeout ceiling behavior | [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) |
+| Timeout ceiling values | `extensions/subagents/src/agents/execution-ceiling.ts` |
+| Project custom subagents | [docs/custom-subagents.md](docs/custom-subagents.md) |
+| Model/effort behavior and project defaults | [docs/models.md](docs/models.md) |
+| Per-role model/effort defaults, role roster | `agents/**/*.md` frontmatter |
+| Node and dependency versions, Pi pin | `package.json`, `config/pi-runtime/package.json` ([why](docs/local-development.md#direct-dependency-pin-decisions)) |
+| Bundled default extensions | `config/default-extensions.json` |
+| MCP, web search, telemetry, git attribution | [docs/mcp.md](docs/mcp.md), [docs/web-search.md](docs/web-search.md), [docs/telemetry.md](docs/telemetry.md), [docs/git-attribution.md](docs/git-attribution.md) |
+| Gnosis, `tk`, terminal bridge | [docs/integrations.md](docs/integrations.md) |
+| Validation | [VALIDATING.md](VALIDATING.md) |
+| Local development and testing | [docs/local-development.md](docs/local-development.md) |
+| Workflow evals | [docs/workflow-evals.md](docs/workflow-evals.md) |
+| Releases | [docs/releasing.md](docs/releasing.md) |
 
 ## Style and change expectations
 
@@ -82,7 +79,8 @@ Guardrails to remember:
 - Shell should be Bash with `set -euo pipefail` and careful quoting.
 - Node scripts are ESM and should use `node:` imports.
 - Keep installer output clear and actionable.
-- Update `README.md`, docs, or `CHANGELOG.md` when a user-visible behavior change warrants it.
+- Update `README.md` or docs when a user-visible behavior change warrants it.
+- Every PR adds a terse one-line `CHANGELOG.md` entry under `## Unreleased` with a PR link; contributor-only changes (CI, tests, docs tooling, agent instructions) go under `### Internal`.
 - Avoid broad refactors or unrelated cleanup in focused changes.
 
 ### Retiring installer migrations
@@ -96,12 +94,7 @@ The provenance-gated and force-removal mechanisms themselves stay in place while
 
 ## Pull requests and CI
 
-Before requesting review, check that:
-
-- the change preserves the isolation and installer safety invariants above;
-- relevant tests or smoke checks pass;
-- docs and changelog updates are included when needed;
-- the diff contains no secrets, local paths, or unintended generated files.
+Before requesting review, work through the checklist in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md); it covers the safety invariants, tests, docs and `CHANGELOG.md`, and secret/path hygiene.
 
 Every PR description should end with an `Install this branch` command using the branch name in both the raw URL and `--ref` value:
 

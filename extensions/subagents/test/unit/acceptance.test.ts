@@ -52,6 +52,58 @@ function tempGitRepo(): string {
   return dir;
 }
 
+function tempCleanGitRepo(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-acceptance-clean-"));
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("GIT_CONFIG_")) delete env[key];
+  }
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_GLOBAL = path.join(dir, "missing-global-config");
+  env.GIT_CONFIG_SYSTEM = path.join(dir, "missing-system-config");
+  env.GIT_TEMPLATE_DIR = "";
+  execFileSync("git", ["-c", "init.templateDir=", "init", "-q"], {
+    cwd: dir,
+    env,
+    stdio: "ignore",
+  });
+  return dir;
+}
+
+async function withGitConfig<T>(
+  config: Record<string, string>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const configEnvPattern = /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/;
+  const previous = new Map(
+    Object.keys(process.env)
+      .filter((key) => configEnvPattern.test(key))
+      .map((key) => [key, process.env[key]]),
+  );
+  for (const key of Object.keys(process.env)) {
+    if (configEnvPattern.test(key)) delete process.env[key];
+  }
+
+  const entries = Object.entries(config);
+  process.env.GIT_CONFIG_COUNT = String(entries.length);
+  entries.forEach(([key, value], index) => {
+    process.env[`GIT_CONFIG_KEY_${index}`] = key;
+    process.env[`GIT_CONFIG_VALUE_${index}`] = value;
+  });
+
+  try {
+    return await callback();
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (configEnvPattern.test(key)) delete process.env[key];
+    }
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 describe("acceptance gates", () => {
   it("infers only self-contained acceptance levels across reviewer, writer, async, and risky contexts", () => {
     assert.equal(
@@ -915,6 +967,63 @@ describe("acceptance gates", () => {
     assert.ok(raised.evidence.includes("tests-added"));
     assert.ok(raised.evidence.includes("validation-output"));
     assert.ok(raised.evidence.includes("no-staged-files"));
+  });
+
+  it("uses Git's quiet cached diff for clean, untracked-only, and staged repositories", async () => {
+    const cwd = tempCleanGitRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+      });
+      const check = (ledger: Awaited<ReturnType<typeof evaluateAcceptance>>) =>
+        ledger.runtimeChecks.find((runtimeCheck) => runtimeCheck.id === "no-staged-files");
+
+      await withGitConfig({ "status.branch": "true" }, async () => {
+        const ledger = await evaluateAcceptance({ acceptance, output: report(), cwd });
+        assert.equal(ledger.status, "checked");
+        assert.equal(check(ledger)?.status, "passed");
+      });
+
+      fs.writeFileSync(path.join(cwd, "untracked file.txt"), "untracked\n", "utf-8");
+      await withGitConfig({ "color.status": "always" }, async () => {
+        const ledger = await evaluateAcceptance({ acceptance, output: report(), cwd });
+        assert.equal(ledger.status, "checked");
+        assert.equal(check(ledger)?.status, "passed");
+      });
+
+      fs.writeFileSync(path.join(cwd, "staged file.txt"), "staged\n", "utf-8");
+      execFileSync("git", ["add", "--", "staged file.txt"], { cwd, stdio: "ignore" });
+      await withGitConfig({ "status.branch": "true", "color.status": "always" }, async () => {
+        const ledger = await evaluateAcceptance({ acceptance, output: report(), cwd });
+        assert.equal(ledger.status, "rejected");
+        assert.equal(check(ledger)?.status, "failed");
+        assert.equal(check(ledger)?.message, "Staged files present.");
+      });
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps non-repository no-staged-file behavior not-applicable", async () => {
+    const cwd = tempRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+      });
+      const ledger = await withGitConfig(
+        { "status.branch": "true", "color.status": "always" },
+        () => evaluateAcceptance({ acceptance, output: report(), cwd }),
+      );
+      assert.equal(ledger.status, "checked");
+      assert.equal(
+        ledger.runtimeChecks.find((check) => check.id === "no-staged-files")?.status,
+        "not-applicable",
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("keeps default staged-file protection while explicit omission allows staging", async () => {

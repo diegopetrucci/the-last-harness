@@ -3,7 +3,7 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
 • SINGLE: { agent, task? }.
-• PARALLEL: { tasks:[{ agent, task, cwd?, count?, output?, outputMode?, model? }, ...] }.
+• PARALLEL: { tasks:[{ agent, task, cwd?, output?, outputMode?, model? }, ...] }.
 • Optional execution fields: async:true, cwd, artifacts.
 • artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 

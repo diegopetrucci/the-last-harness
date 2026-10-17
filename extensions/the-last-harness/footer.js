@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
@@ -26,11 +27,16 @@ function getCurrentThinkingLevel(pi) {
 function collectUsageTotals(ctx) {
     const totals = { cost: 0 };
     for (const entry of ctx.sessionManager.getEntries()) {
-        if (entry.type !== "message" || entry.message.role !== "assistant") {
-            continue;
+        const raw = entry;
+        let usage;
+        if (raw.type === "usage" || raw.type === "branch_summary" || raw.type === "compaction") {
+            usage = raw.usage;
         }
-        const usage = entry.message.usage;
-        if (!usage) {
+        else if (raw.type === "message" &&
+            (raw.message?.role === "assistant" || raw.message?.role === "toolResult")) {
+            usage = raw.message.usage;
+        }
+        if (!usage || typeof usage !== "object") {
             continue;
         }
         totals.cost += Number(usage.cost?.total) || 0;

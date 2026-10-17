@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-tickets.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, ftruncateSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";

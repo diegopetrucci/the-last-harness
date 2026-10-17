@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/deadline-timer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const MAX_NODE_TIMEOUT_DELAY_MS = 2_147_483_647;
 function unrefTimeout(handle) {
     if (!handle || typeof handle !== "object" || !("unref" in handle))

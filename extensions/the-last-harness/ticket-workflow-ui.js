@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/ticket-workflow-ui.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { getAgentDir, } from "@earendil-works/pi-coding-agent";

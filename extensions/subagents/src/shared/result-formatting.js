@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/result-formatting.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { normalizeSubagentRunMode, } from "./types.js";
 import { truncateWithMarker } from "./string-utils.js";
 import { safeTerminalDocumentLeaf, safeTerminalText } from "./display-text.js";

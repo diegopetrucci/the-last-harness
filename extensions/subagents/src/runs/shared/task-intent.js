@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/task-intent.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN } from "./single-output.js";
 const REVIEW_ONLY_PATTERNS = [
     /\breview only\b/i,

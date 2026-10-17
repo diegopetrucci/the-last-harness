@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/tui/whimsical-phrases.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const WHIMSICAL_THINKING_PHRASES = [
     "Schlepping...",
     "Combobulating...",

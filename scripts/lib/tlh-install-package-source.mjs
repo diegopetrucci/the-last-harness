@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-package-source.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

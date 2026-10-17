@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/telemetry.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { splitKnownThinkingSuffix } from "./model-info.js";
 export const SUBAGENT_RUN_TELEMETRY_SCHEMA_VERSION = 1;
 const TERMINATION_REASONS = new Set([

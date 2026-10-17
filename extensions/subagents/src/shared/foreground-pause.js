@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/foreground-pause.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const UNCHANGED_SUPERVISOR_RESUME_MESSAGE = "Continue under the existing task and instructions. If the unresolved supervisor decision is still required, pause again rather than guess.";
 export const FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Foreground supervisor lifecycle update failed. Check status for the paused run and retry resume or cancel if needed.";
 export function formatForegroundPauseMessage(input) {

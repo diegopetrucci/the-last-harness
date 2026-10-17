@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/external-package-guard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([

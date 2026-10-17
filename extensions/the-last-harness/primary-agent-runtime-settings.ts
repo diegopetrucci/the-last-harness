@@ -71,7 +71,7 @@ export function parseTlhSettingsContent(content: string | undefined): Record<str
   if (!content) {
     return {};
   }
-  const parsed = JSON.parse(content) as unknown;
+  const parsed = JSON.parse(content.replace(/^\uFEFF/, "")) as unknown;
   if (!isRecord(parsed)) {
     throw new Error("settings.json must contain a JSON object");
   }

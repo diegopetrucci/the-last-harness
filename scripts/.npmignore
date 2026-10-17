@@ -8,6 +8,7 @@ installer-smoke/stage0.sh
 installer-smoke/stage1.sh
 installer-smoke/static-and-manifest.sh
 installer-smoke/uninstall-runtime.sh
+check-doc-links.mjs
 check-lazy-import-boundaries.mjs
 check-package-contents.mjs
 check-package-versions.mjs

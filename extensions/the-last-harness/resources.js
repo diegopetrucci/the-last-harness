@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/resources.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir, loadProjectContextFiles, loadSkills, } from "@earendil-works/pi-coding-agent";

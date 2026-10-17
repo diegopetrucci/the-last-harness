@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-parser.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { parseProviderModelReference } from "../../extensions/the-last-harness/model-defaults.js";

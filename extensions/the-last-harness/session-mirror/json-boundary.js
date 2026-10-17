@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/json-boundary.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function hasDuplicateJsonKeys(text) {
     try {
         if (typeof text !== "string" || text.length > 16 * 1024)

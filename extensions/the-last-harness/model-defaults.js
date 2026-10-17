@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-defaults.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { THINKING_LEVELS } from "./constants.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import { isRecord } from "./common.js";

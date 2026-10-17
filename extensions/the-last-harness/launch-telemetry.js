@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/launch-telemetry.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";

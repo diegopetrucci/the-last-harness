@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/annotate-last-message/session.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const SECTION_PREVIEW_LIMIT = 96;
 function truncatePreview(value, limit = SECTION_PREVIEW_LIMIT) {
     const normalized = value.replace(/\s+/g, " ").trim();

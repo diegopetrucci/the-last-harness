@@ -1,3 +1,4 @@
+// Generated from extensions/shared/subagent-temp-root.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as os from "node:os";
 import * as path from "node:path";
 function sanitizeTempScopeSegment(value) {

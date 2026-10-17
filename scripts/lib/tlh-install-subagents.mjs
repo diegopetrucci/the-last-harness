@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-subagents.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-aggregation.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { tupleKey } from "./subagent-analysis-keys.mjs";
 import { resolveParallelTelemetryOutcome } from "./subagent-analysis-parser.mjs";
 export function emptySubagentUsage() {

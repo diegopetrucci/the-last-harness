@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/notify.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
