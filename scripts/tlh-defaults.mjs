@@ -451,7 +451,8 @@ function commandEnable(settings, defaultExtensions, id, mcpDecision) {
     if (!mcpAdapterMigrationFrozen(extension, mcpDecision)) {
         enablePackage(settings, extension);
     }
-    if (extension.id === MCPORTER_EXTENSION_ID) {
+    if (extension.id === MCPORTER_EXTENSION_ID &&
+        !defaultExtensionPackageFilterDisables(settings, extension)) {
         applyBuiltinMcpExclusionOnEnable(settings);
     }
     if (extension.id === "anthropic-auth") {
