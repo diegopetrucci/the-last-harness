@@ -293,10 +293,12 @@ export type TlhSessionUsageAnalysis = {
   primaryAssistant: {
     /** All provider-reported primary usage, including Pi-native cache_warm spend. */
     usage: TlhUsageTotals;
-    /** Usage attributed to assistant messages only; cache_warm entries are excluded. */
+    /** Usage attributed to assistant messages only; cache_warm and summary entries are excluded. */
     assistantTurnUsage: TlhUsageTotals;
     /** Usage attributed to Pi-native cache_warm entries only. */
     cacheWarmUsage: TlhUsageTotals;
+    /** Usage attributed to compaction/branch_summary entries only (non-turn, no model). */
+    summaryUsage: TlhUsageTotals;
     /** Number of Pi-native cache_warm entries with usable usage data. */
     cacheWarmRequestCount: number;
     usageCoverage: TlhUsageCoverage;
@@ -392,6 +394,7 @@ export function analyzeSessionEntries(
   const primaryTotals = createUsageTotals();
   const primaryAssistantUsage = createUsageTotals();
   const primaryCacheWarmUsage = createUsageTotals();
+  const primarySummaryUsage = createUsageTotals();
   let primaryCacheWarmRequestCount = 0;
   const primaryCoverage: TlhUsageCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
   const subagentTotals = createUsageTotals();
@@ -449,6 +452,7 @@ export function analyzeSessionEntries(
       const usage = normalizeUsage((entry as { usage?: unknown }).usage);
       if (usage) {
         addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+        addUsage(primarySummaryUsage, usage, { turns: 0, assistantMessages: 0 });
       }
       continue;
     }
@@ -704,6 +708,7 @@ export function analyzeSessionEntries(
       usage: primaryTotals,
       assistantTurnUsage: primaryAssistantUsage,
       cacheWarmUsage: primaryCacheWarmUsage,
+      summaryUsage: primarySummaryUsage,
       cacheWarmRequestCount: primaryCacheWarmRequestCount,
       usageCoverage: primaryCoverage,
       models: sortModelUsage(

@@ -56,6 +56,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     const primaryTotals = createUsageTotals();
     const primaryAssistantUsage = createUsageTotals();
     const primaryCacheWarmUsage = createUsageTotals();
+    const primarySummaryUsage = createUsageTotals();
     let primaryCacheWarmRequestCount = 0;
     const primaryCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
     const subagentTotals = createUsageTotals();
@@ -99,6 +100,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             const usage = normalizeUsage(entry.usage);
             if (usage) {
                 addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+                addUsage(primarySummaryUsage, usage, { turns: 0, assistantMessages: 0 });
             }
             continue;
         }
@@ -325,6 +327,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             usage: primaryTotals,
             assistantTurnUsage: primaryAssistantUsage,
             cacheWarmUsage: primaryCacheWarmUsage,
+            summaryUsage: primarySummaryUsage,
             cacheWarmRequestCount: primaryCacheWarmRequestCount,
             usageCoverage: primaryCoverage,
             models: sortModelUsage([...modelUsage.values()].filter((model) => model.source === "primary")),

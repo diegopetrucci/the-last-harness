@@ -129,4 +129,11 @@ test("compaction and branch_summary usage is non-turn primary spend", () => {
   assert.equal(report.totals.combined.totalTokens, base.totals.combined.totalTokens + 240);
   assert.equal(report.totals.primary.turns, base.totals.primary.turns);
   assert.equal(report.totals.primary.assistantMessages, base.totals.primary.assistantMessages);
+  // Summary spend gets its own non-turn bucket; primary totals are unchanged.
+  assert.equal(report.primaryAssistant.summaryUsage.totalTokens, 240);
+  assert.equal(report.primaryAssistant.summaryUsage.costUsd, 1);
+  assert.equal(report.primaryAssistant.summaryUsage.turns, 0);
+  assert.equal(report.primaryAssistant.summaryUsage.assistantMessages, 0);
+  assert.equal(report.primaryAssistant.cacheWarmUsage.totalTokens, 0);
+  assert.equal(base.primaryAssistant.summaryUsage.totalTokens, 0);
 });
