@@ -27,7 +27,7 @@ For pin-PR title and body conventions (PRs updating `config/default-extensions.j
 
 ## Prepare a release
 
-From a clean `main` branch with Node.js >=22.19.0:
+From a clean `main` branch (Node.js per `engines.node` in `package.json`):
 
 ```sh
 version=0.1.0
@@ -36,7 +36,7 @@ npm version "$version" --no-git-tag-version
 git diff -- package.json
 ```
 
-Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section. It is the complete record: every merged PR has a terse one-line entry, with contributor-only changes under `### Internal`.
+Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section; the entry rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#style-and-change-expectations).
 
 Then draft or edit `release-notes/v$version.md`, the user-facing release body. The TLH architect drafts it from the `CHANGELOG.md` section and the maintainer edits it; follow [`release-notes/README.md`](../release-notes/README.md). Release creation fails if this file is missing or empty.
 
@@ -62,7 +62,7 @@ Then run the startup performance checker as release-tier manual validation:
 npm run check:startup-performance
 ```
 
-Keep this separate from `npm run validate`: it measures TLH PTY startup timing, so results vary with the machine and current load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. All measured runs in an invocation share one stable temporary profile path; run 1 is the cold sample and later runs are warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved. The release objective is a steady-state first TLH header mean below `1000ms`. The every-PR startup-performance workflow is informational and budgets `2500ms`. Release preparation still uses this `1000ms` objective.
+Keep this separate from `npm run validate`. The checker's behavior, the `1000ms` release objective, and the informational every-PR budget are described in [VALIDATING.md](../VALIDATING.md#release-tier-manual-validation).
 
 If the checker fails, investigate before release rather than treating it like a normal deterministic test failure.
 

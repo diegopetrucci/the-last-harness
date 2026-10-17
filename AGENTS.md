@@ -58,6 +58,7 @@ For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do n
 - Shell scripts should use Bash with `set -euo pipefail` and careful quoting.
 - Node scripts are ESM (`type: module`) and should use `node:` imports.
 - Keep installer output clear and actionable.
+- State each fact once in its owning doc and link to it elsewhere; never restate code/config values in prose (see [CONTRIBUTING.md](CONTRIBUTING.md#documentation-ownership)).
 - For every `.ts`/`.mts` with a same-layout generated `.js`/`.mjs` twin, edit the TypeScript source and run `npm run build`; never hand-edit the generated twin.
 - Keep package resources small, reviewable, and documented in `README.md`.
 - After implementing a feature or notable behavior change, consider whether `README.md` should be updated before calling the work complete.

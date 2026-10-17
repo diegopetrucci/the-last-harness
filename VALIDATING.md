@@ -10,7 +10,7 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. The first `check:package-versions` step checks installed versions for direct exact registry dependencies in `dependencies` and `devDependencies`, using the corresponding `packages["node_modules/<name>"].version` entries in `package-lock.json` as the expected resolved versions, and fails if the `package.json` exact pins differ from the lockfile. It intentionally does not audit the full transitive lock snapshot or check peer-only, ranged, or non-registry specs. Missing or stale direct packages are reported with this remediation. Run `npm ci` only in response to that dependency-check remediation; it is not a routine pre-validation step:
+**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. The first `check:package-versions` step checks installed versions for direct exact registry dependencies in `dependencies` and `devDependencies`, using the corresponding `packages["node_modules/<name>"].version` entries in `package-lock.json` as the expected resolved versions, and fails if the `package.json` exact pins differ from the lockfile. It intentionally does not audit the full transitive lock snapshot or check peer-only, ranged, or non-registry specs. Missing or stale direct packages are reported with `npm ci` as the remediation. Running `npm ci` in this repository is always allowed (see [AGENTS.md](AGENTS.md)); it is not required before every validation, only when this check reports missing or stale packages:
 
 ```sh
 npm ci
@@ -18,11 +18,11 @@ npm ci
 
 This is also how CI (`.github/workflows/ci.yml`, `release.yml`) and `.symphony/setup` install dependencies — always from the lockfile, never from a loose install.
 
-This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; and finishes with the settings merge dry-run.
+`npm run validate` is sequential and fail-fast. By category it runs: package/version checks, the main and runtime typechecks (plus the generated-runtime freshness check), installer smoke, the tests, lint/format/ShellCheck, the settings-merge dry-run, and the release-notes and doc-link checks. `scripts/validation-checks.mjs` and `scripts/run-validation.mjs` are the authoritative ordered inventory.
 
 Local gitleaks scans consume `.gitleaks.toml` as the allowlist for reviewed synthetic fixture values. That scan stays outside `npm run validate` and CI.
 
-The validation scripts retain Oxlint's built-in default rule selection while `.oxlintrc.json` registers the vendored anti-slop plugin for deliberate per-rule adoption. The global `max-lines` rule is enabled at error severity with a 2,000 physical-line ceiling (including blank lines and comments) for every file under `scripts/`, `tests/`, and `extensions/`, and for `protocol/` except `protocol/session-mirror/v1/conformance.ts`, which turns `max-lines` off and keeps the other rules. Source, test, and generated mirror files share this limit without further exemptions. The current rollout enables `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` at error severity; the other 6 anti-slop rule entries remain visibly commented out. `npm run lint` runs `oxlint --deny-warnings scripts tests extensions protocol`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check` (Oxfmt check mode over `scripts/`, `tests/`, `extensions/`, and `protocol/`). The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
+Oxlint keeps its built-in default rule selection; `.oxlintrc.json` is the source of truth for which vendored anti-slop rules are enabled, the `max-lines` ceiling, and its per-path overrides. `npm run lint` runs Oxlint with `--deny-warnings` (see `package.json`), so any warning or error fails validation, and CI uses the same script. The enforcing formatting gate is `npm run format:check` (Oxfmt check mode; paths in `package.json`). The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
 ## Fast checks for agents
 
@@ -85,7 +85,7 @@ an investigation aid, not a full-shard benchmark loop or a stable p90 claim.
 ## Manual macOS shard benchmark
 
 `.github/workflows/macos-ci-benchmark.yml` is a manual-only workflow. It uses
-`macos-latest`, Node `22.19.0`, read-only repository access, the normal npm and
+`macos-latest`, the Node version pinned in the workflow, read-only repository access, the normal npm and
 `node_modules` cache conventions, and exactly one shard-runner invocation in
 each of its two matrix jobs (`1/2` and `2/2`). The unchanged two-lane
 `baseline` layout remains the default; `experimental` uses separate `HOME`
@@ -139,9 +139,9 @@ npm run test:subagents:integration
 npm run test:subagents:e2e
 ```
 
-On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests.
+Full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests.
 
-CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts. The CI `tests` job has a 30-minute job timeout; this is not a per-test or product deadline.
+CI runs the suites on Linux and macOS (Node version: `.github/workflows/ci.yml`). Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts. The CI `tests` job has a 30-minute job timeout; this is not a per-test or product deadline.
 
 ### Focused diagnostic runs
 
@@ -171,6 +171,8 @@ Both `npm test` and `npm run test:verbose` run through `scripts/run-test-tmpdir-
 `npm run typecheck` covers production subagent sources and all subagent test files under `extensions/subagents/test` (the exclusion that previously omitted that subtree has been removed). `npm run typecheck:runtime` covers runtime-specific sources. Discovered subagent test files pass strict typechecking with zero errors; the `ScaledMs` branded type enforces that wait helpers receive a scaled timeout rather than a raw literal. `npm run typecheck:subagents-test` provides a developer-convenience target for running the subagents-test typecheck in isolation.
 
 For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
+
+`npm run check:doc-links` runs as part of `npm run validate` and verifies that relative links, images, and `#anchor` fragments in git-tracked Markdown files resolve to an existing file and heading (GitHub slug rules, including `-1` duplicate suffixes). External links and links inside code are skipped, and vendored `skills/`, `node_modules/`, and `.tickets/` are excluded.
 
 `npm run check:lazy-import-boundaries` runs as part of `npm run validate` and enforces that a dynamically imported extension module's static graph contains no bare specifiers and no module already reachable from the eager entry graph. This check exists because Pi's extension loader injects the `@earendil-works/pi-coding-agent` package alias only inside the jiti-loaded graph; a dynamic `import()` crosses into native ESM where that alias is absent, causing `ERR_MODULE_NOT_FOUND` at command-execution time. The check analyses generated `.js` files. If you need to add an entry to `SHARED_MODULE_ALLOWLIST`, first verify that the module is stateless — modules carrying mutable singleton state must not be shared across the jiti and native ESM graphs.
 
@@ -215,8 +217,8 @@ The opt-in installer benchmark and its recorded baseline are documented in
 script as the preferred invocation, passing checker options after `--`:
 
 ```sh
-npm run check:installer-performance -- --mode remote --ref v0.40.0 --upgrade-from v0.39.0 --runs 3 --scenarios all
-npm run check:installer-performance -- --mode checkout --ref v0.40.0 --runs 1 --scenarios cold
+npm run check:installer-performance -- --mode remote --ref <tag> --upgrade-from <older-tag> --runs 3 --scenarios all
+npm run check:installer-performance -- --mode checkout --ref <tag> --runs 1 --scenarios cold
 ```
 
 It performs real network/package-manager work only in benchmark-owned temporary
@@ -232,7 +234,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load. By default, the checker auto-detects the installed isolated profile and filters it into a fresh temporary profile; if no profile exists, it falls back to an empty profile. An explicit `--profile-source` overrides auto-detection. Measured runs within each invocation share one stable temporary profile path, with run 1 as the cold sample and later runs as warm samples. The clone omits top-level `sessions/`, `auth.json`, `mcp-oauth/`, and top-level `.bak`/`.backup` backup artifacts, plus unsafe, dangling, or cyclic symlinks and special filesystem entries; safe internal symlinks are materialized as regular files or directories while startup-relevant package and extension state is preserved.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the current Pi 1.3.0 release-candidate checks; the current Pi 1.3.0 checks are recorded below, and the historical Pi 1.1.0 and 1.2.0 comparison status lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md). [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. This baseline scope remains part of the release-candidate checks for the Pi version pinned in `config/pi-runtime/package.json`; those checks are recorded below, and the historical comparison status lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md). [docs/pin-bump-verification.md](docs/pin-bump-verification.md) keeps the completed `v0.43.0` checkbox record. Record the candidate, profile, session evidence, and outcomes in the release validation notes/current release tracking.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`. `.github/workflows/startup-performance.yml` runs on every pull request and on `main` as an informational check with `--budget-ms 2500`. That budget is slack above this release objective. The local checker default remains `1000ms`.
 
@@ -240,7 +242,7 @@ For the current investigation methodology, candidate ranking, and Pi `0.80.6` so
 
 If the checker fails, investigate before release instead of treating it like a normal unit-test failure. The output is a release signal to understand and address, not a standard deterministic test gate.
 
-The following carried-forward checks are required Pi 1.3.0 release-preparation work (first listed for Pi 1.1.0; v0.44.0 and v0.45.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
+The following carried-forward checks are required release-preparation work for the pinned Pi version (first listed for Pi 1.1.0; v0.44.0 and v0.45.0 shipped without running them), remain separate from `npm run validate`, and must be recorded against the packaged release candidate:
 
 - **MCP adapter coexistence:** at startup verify that the persisted `-builtin:mcp` exclusion prevents Pi's built-in-extension replacement warning and that `/mcp` is functional via the TLH adapter. This is temporary compatibility behavior; if TLH migrates away from `mcporter`, verify that it removes only a TLH-owned exclusion marked by `tlh.builtinMcpExclusionManaged: true`, clears the marker, and preserves unmarked user exclusions before validating native MCP.
 - **Default theme on fresh install:** verify that Pi's `system` theme (the Pi default since 0.99.0) renders correctly on a fresh isolated-profile install and that the terminal color scheme is respected; theme default behavior is tracked in tlha-epyp.
@@ -251,7 +253,7 @@ The following carried-forward checks are required Pi 1.3.0 release-preparation w
 - **Native cache behavior:** with a real provider, verify native streaming and idle cache warming, cache-miss notices, and `cache_warm` usage/accounting.
 - **Saved-session lifecycle:** after a saved assistant response, verify resume, branch/fork, and meaningful compaction.
 - **Provider-backed subagent flow:** verify a live parent/child subagent turn through the installed release candidate.
-- **Published-ref update convergence:** once the release ref advertises Pi `1.3.0`, verify update convergence from that published ref.
+- **Published-ref update convergence:** once the release ref advertises the Pi version pinned in `config/pi-runtime/package.json`, verify update convergence from that published ref.
 
 ### Pi 1.3.0 comparison status (reviewed 2026-10-15)
 
