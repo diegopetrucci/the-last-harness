@@ -786,7 +786,13 @@ function mergePackages(target, packageDefaults, changes) {
             const existingIndex = seen.get(identity);
             const existingSource = packageSourceOf(target.packages[existingIndex]);
             if (identity === HARNESS_PACKAGE_IDENTITY && existingSource !== source) {
-                target.packages[existingIndex] = clone(entry);
+                const existingEntry = target.packages[existingIndex];
+                if (isPlainObject(existingEntry)) {
+                    existingEntry.source = source;
+                }
+                else {
+                    target.packages[existingIndex] = clone(entry);
+                }
                 changes.push(`replace packages: ${existingSource} -> ${source}`);
             }
             continue;

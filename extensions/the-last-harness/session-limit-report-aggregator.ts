@@ -153,6 +153,46 @@ function aggregateFile(
       continue;
     }
 
+    // Non-turn spend (matches upstream Pi footer): usage entries, toolResult
+    // messages, compaction/branch_summary. Adds tokens/cost but no turn counts.
+    let nonTurnSource: Record<string, unknown> | undefined;
+    if (entry.type === "usage" || entry.type === "branch_summary" || entry.type === "compaction") {
+      nonTurnSource = entry;
+    } else if (
+      entry.type === "message" &&
+      isRecord(entry.message) &&
+      entry.message.role === "toolResult"
+    ) {
+      nonTurnSource = entry.message;
+    }
+    if (nonTurnSource) {
+      const entryTs = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : NaN;
+      if (!Number.isFinite(entryTs) || entryTs < window.startMs || entryTs > window.endMs) {
+        continue;
+      }
+      const usage = normalizeUsage(nonTurnSource.usage);
+      if (usage) {
+        const src = nonTurnSource;
+        const provider =
+          typeof src.provider === "string" && src.provider.length > 0
+            ? src.provider
+            : currentProvider;
+        const modelId =
+          typeof src.model === "string" && src.model.length > 0 ? src.model : currentModelId;
+        const counts = { turns: 0, assistantMessages: 0 };
+        const existing = providerUsageMap.get(provider);
+        if (existing) {
+          addUsage(existing.usage, usage, counts);
+        } else {
+          const providerTotals = createUsageTotals();
+          addUsage(providerTotals, usage, counts);
+          providerUsageMap.set(provider, { provider, modelId, usage: providerTotals });
+        }
+        addUsage(windowTotals, usage, counts);
+      }
+      continue;
+    }
+
     if (entry.type !== "message") {
       continue;
     }

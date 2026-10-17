@@ -1561,6 +1561,29 @@ describe(
       // Exit code is platform-dependent (Windows: often 1 or 0, Linux: null/143)
     });
 
+    it("escalates an aborted SIGTERM-ignoring child to SIGKILL after the grace period", async () => {
+      mockPi.onCall({ delay: 60_000, ignoreSigterm: true });
+      const agents = makeAgentConfigs(["stubborn"]);
+      const controller = new AbortController();
+
+      const start = Date.now();
+      // Give the child time to install its SIGTERM handler before aborting.
+      setTimeout(() => controller.abort(), 1000);
+
+      const result = await runSync(tempDir, agents, "stubborn", "Stubborn task", {
+        signal: controller.signal,
+      });
+      const elapsed = Date.now() - start;
+
+      assert.equal(
+        (result as { exitSignal?: string }).exitSignal,
+        "SIGKILL",
+        "SIGTERM is ignored, so SIGKILL must follow",
+      );
+      assert.ok(elapsed >= 3000, `SIGKILL should wait for the grace period, took ${elapsed}ms`);
+      assert.ok(elapsed < 20_000, `should not wait for the child delay, took ${elapsed}ms`);
+    });
+
     it("finalizes a pre-spawn timeout once and removes prepared prompt files", async () => {
       const isolatedTmpDir = path.join(tempDir, "pre-spawn-timeout-tmp");
       fs.mkdirSync(isolatedTmpDir);

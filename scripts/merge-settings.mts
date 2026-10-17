@@ -1099,7 +1099,12 @@ function mergePackages(target: JsonObject, packageDefaults: unknown, changes: st
       const existingIndex = seen.get(identity) as number;
       const existingSource = packageSourceOf(target.packages[existingIndex]);
       if (identity === HARNESS_PACKAGE_IDENTITY && existingSource !== source) {
-        target.packages[existingIndex] = clone(entry);
+        const existingEntry = target.packages[existingIndex];
+        if (isPlainObject(existingEntry)) {
+          existingEntry.source = source;
+        } else {
+          target.packages[existingIndex] = clone(entry);
+        }
         changes.push(`replace packages: ${existingSource} -> ${source}`);
       }
       continue;

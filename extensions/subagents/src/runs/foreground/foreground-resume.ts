@@ -1168,6 +1168,7 @@ export async function resumeAsyncRun(
       }
       projectRunTransferred = true;
     } catch (error) {
+      claimedPause?.rollbackReserved();
       return {
         content: [
           {

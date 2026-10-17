@@ -129,3 +129,31 @@ test("non-final wrapped lines end with ', ' and final line does not", () => {
     `Final line should not end with ', ': ${JSON.stringify(contentLines[contentLines.length - 1])}`,
   );
 });
+
+test("header never renders lines wider than the terminal at narrow widths", () => {
+  const resources = {
+    context: ["/very/long/context/path/".repeat(5)],
+    skills: ["skill-with-an-extremely-long-name-that-cannot-fit-anywhere", "b"],
+    prompts: ["p".repeat(150)],
+    extensions: ["x".repeat(90), "ext"],
+    themes: ["theme"],
+    projectGuidance: ["AGENTS.md-".repeat(10)],
+  };
+  const update = { version: "123.456.789", releasesUrl: "https://example.com/" + "r".repeat(60) };
+  for (const headerUpdate of [undefined, update]) {
+    const header = createTlhHeader(plainTheme, resources, headerUpdate, {
+      startupTip: "A fairly long startup tip ".repeat(4),
+    });
+    for (const expanded of [false, true]) {
+      header.setExpanded(expanded);
+      for (let width = 10; width <= 120; width++) {
+        for (const line of header.render(width)) {
+          assert.ok(
+            visibleWidth(line) <= width,
+            `width ${width} expanded=${expanded} update=${Boolean(headerUpdate)}: ${JSON.stringify(line)}`,
+          );
+        }
+      }
+    }
+  }
+});

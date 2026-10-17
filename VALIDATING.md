@@ -10,7 +10,7 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. The first `check:package-versions` step checks installed versions for direct exact registry dependencies in `dependencies` and `devDependencies`, using the corresponding `packages["node_modules/<name>"].version` entries in `package-lock.json` as the expected resolved versions. It intentionally does not audit the full transitive lock snapshot or check peer-only, ranged, or non-registry specs. Missing or stale direct packages are reported with this remediation. Run `npm ci` only in response to that dependency-check remediation; it is not a routine pre-validation step:
+**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. The first `check:package-versions` step checks installed versions for direct exact registry dependencies in `dependencies` and `devDependencies`, using the corresponding `packages["node_modules/<name>"].version` entries in `package-lock.json` as the expected resolved versions, and fails if the `package.json` exact pins differ from the lockfile. It intentionally does not audit the full transitive lock snapshot or check peer-only, ranged, or non-registry specs. Missing or stale direct packages are reported with this remediation. Run `npm ci` only in response to that dependency-check remediation; it is not a routine pre-validation step:
 
 ```sh
 npm ci

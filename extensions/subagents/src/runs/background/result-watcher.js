@@ -295,6 +295,8 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             try {
                 fsApi.mkdirSync(resultsDir, { recursive: true });
                 startResultWatcher();
+                if (state.watcher)
+                    primeExistingResults();
             }
             catch (error) {
                 if (shouldFallBackToPolling(error)) {

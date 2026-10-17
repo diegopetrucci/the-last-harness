@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import fsDefault from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { describe, it } from "node:test";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import {
   checkPidLiveness,
   reconcileAsyncRun,
 } from "../../src/runs/background/stale-run-reconciler.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
+import { transitionLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 
 function tempRoot(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -41,6 +45,55 @@ function errno(code: string): NodeJS.ErrnoException {
   const error = new Error(code) as NodeJS.ErrnoException;
   error.code = code;
   return error;
+}
+
+/** Runs `commit` right after the reconciler's first status.json read, before it can lock. */
+function withCommitAfterFirstStatusRead<T>(asyncDir: string, commit: () => void, run: () => T): T {
+  const originalOpen = fsDefault.openSync;
+  const originalClose = fsDefault.closeSync;
+  const statusFile = path.resolve(asyncDir, "status.json");
+  let statusFd: number | undefined;
+  let fired = false;
+  fsDefault.openSync = ((...args: Parameters<typeof originalOpen>) => {
+    const fd = originalOpen(...args);
+    if (!fired && statusFd === undefined && path.resolve(String(args[0])) === statusFile)
+      statusFd = fd;
+    return fd;
+  }) as typeof originalOpen;
+  fsDefault.closeSync = ((fd: number) => {
+    originalClose(fd);
+    if (!fired && fd === statusFd) {
+      fired = true;
+      commit();
+    }
+  }) as typeof originalClose;
+  syncBuiltinESMExports();
+  try {
+    const result = run();
+    assert.equal(fired, true, "commit seam never fired");
+    return result;
+  } finally {
+    fsDefault.openSync = originalOpen;
+    fsDefault.closeSync = originalClose;
+    syncBuiltinESMExports();
+  }
+}
+
+function readStatusFile(asyncDir: string): AsyncStatus | null {
+  return JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatus;
+}
+
+function pausedStatus(): Record<string, unknown> {
+  return {
+    runId: "run-race",
+    mode: "single",
+    state: "paused",
+    pid: 4567,
+    startedAt: 1000,
+    lastUpdate: 1500,
+    pause: { kind: "awaiting_supervisor", summary: "Need a decision", ownerPid: 4567 },
+    steps: [{ agent: "worker", status: "paused", startedAt: 1000 }],
+  };
 }
 
 describe("async stale-run reconciliation", () => {
@@ -1259,6 +1312,96 @@ describe("async stale-run reconciliation", () => {
       assert.equal(deadPidResult.repaired, true);
       assert.equal(deadPidResult.status?.pid, undefined);
       assert.match(deadPidResult.message ?? "", /cleared dead persisted pid/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a generation committed between the initial read and stopped-run recovery", () => {
+    const root = tempRoot("pi-stale-paused-race-");
+    try {
+      const asyncDir = path.join(root, "run-race");
+      writeStatus(asyncDir, pausedStatus());
+      const result = withCommitAfterFirstStatusRead(
+        asyncDir,
+        () =>
+          transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: 0,
+            mutate: (s) => ({ ...s, pause: { ...s.pause!, summary: "Reserved by continuation" } }),
+          }),
+        () =>
+          reconcileAsyncRun(asyncDir, {
+            resultsDir: path.join(root, "results"),
+            kill: () => true,
+            now: () => 2000,
+          }),
+      );
+      assert.equal(result.repaired, true);
+      const persisted = readStatusFile(asyncDir);
+      assert.equal(persisted?.lifecycle?.generation, 1);
+      assert.equal(persisted?.pause?.summary, "Reserved by continuation");
+      assert.equal(persisted?.pid, undefined);
+      assert.equal(result.status?.lifecycle?.generation, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes nothing when the re-read status no longer qualifies for stopped-run recovery", () => {
+    const root = tempRoot("pi-stale-paused-requalify-");
+    try {
+      const asyncDir = path.join(root, "run-race");
+      writeStatus(asyncDir, pausedStatus());
+      const result = withCommitAfterFirstStatusRead(
+        asyncDir,
+        () =>
+          transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: 0,
+            mutate: (s) => ({ ...s, state: "running", lastUpdate: 1800 }),
+          }),
+        () =>
+          reconcileAsyncRun(asyncDir, {
+            resultsDir: path.join(root, "results"),
+            kill: () => true,
+            now: () => 2000,
+          }),
+      );
+      assert.equal(result.repaired, false);
+      const persisted = readStatusFile(asyncDir);
+      assert.equal(persisted?.state, "running");
+      assert.equal(persisted?.pid, 4567);
+      assert.equal(persisted?.lifecycle?.generation, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the fresh status when a stopped run is re-read as another unrepaired stopped state", () => {
+    const root = tempRoot("pi-stale-paused-cancelled-");
+    try {
+      const asyncDir = path.join(root, "run-race");
+      writeStatus(asyncDir, pausedStatus());
+      const result = withCommitAfterFirstStatusRead(
+        asyncDir,
+        () =>
+          transitionLifecycleStatus({
+            asyncDir,
+            expectedGeneration: 0,
+            mutate: (s) => ({ ...s, state: "cancelled", pid: undefined, lastUpdate: 1800 }),
+          }),
+        () =>
+          reconcileAsyncRun(asyncDir, {
+            resultsDir: path.join(root, "results"),
+            kill: () => true,
+            now: () => 2000,
+          }),
+      );
+      assert.equal(result.repaired, false);
+      assert.equal(result.status?.state, "cancelled");
+      assert.equal(result.status?.lifecycle?.generation, 1);
+      assert.equal(readStatusFile(asyncDir)?.state, "cancelled");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

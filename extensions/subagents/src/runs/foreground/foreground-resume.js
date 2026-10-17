@@ -855,6 +855,7 @@ export async function resumeAsyncRun(input) {
             projectRunTransferred = true;
         }
         catch (error) {
+            claimedPause?.rollbackReserved();
             return {
                 content: [
                     {

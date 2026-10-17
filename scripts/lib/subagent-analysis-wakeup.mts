@@ -79,6 +79,8 @@ export interface WakeupAnalysisContext {
   ensureRun(runId: string): MutableRun;
   getRun(runId: string): MutableRun | undefined;
   addTelemetry(raw: unknown, sourceKind: string): NormalizedTelemetry | undefined;
+  /** Tags subsequent addTelemetry calls with the transcript entry being processed. */
+  setCurrentEntryIndex(entryIndex: number | undefined): void;
   addCompletionDetailsToRun(run: MutableRun, details: Record<string, unknown>): void;
   counters: WakeupCounters;
   wakeups: SyntheticWakeupRecord[];
@@ -1063,8 +1065,10 @@ export function analyzeWakeupsForScan(
       .map((pair) => pair.toolCallId),
   );
   for (let entryIndex = 0; entryIndex < scanResult.entries.length; entryIndex++) {
+    context.setCurrentEntryIndex(entryIndex);
     processWakeupEntry(context, state, scanResult, entryIndex, pairedSubagentCallIds);
   }
+  context.setCurrentEntryIndex(undefined);
   if (state.activeWake) {
     finishWakeup(context, state.activeWake, "missing-assistant-turn");
     state.activeWake = undefined;

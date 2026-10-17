@@ -238,10 +238,14 @@ function selectedVersion(source, options) {
         };
     }
     if (hasExplicitUnresolvedVersionSelector(source)) {
+        const tagVersion = stableTlhTagVersion(source);
         return {
             metadata,
             nativeIntent: hasObviousNativeIntent(source),
-            metadataConflict: false,
+            metadataConflict: tagVersion !== undefined &&
+                metadata.kind === "found" &&
+                metadata.version !== undefined &&
+                !versionsEqual(tagVersion, metadata.version),
         };
     }
     if (metadata.kind === "found") {

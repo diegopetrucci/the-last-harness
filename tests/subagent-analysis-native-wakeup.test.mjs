@@ -436,3 +436,102 @@ test("subagent analysis: a marked final chunk with triggersTurn true wakes nativ
   assert.equal(otherOut.coverage.wakeups.nativeObserved, 0);
   assert.equal(otherOut.coverage.wakeups.missingNudge, 1);
 });
+
+test("subagent analysis: telemetry snapshots merge in transcript order across notifications and tool results", async (t) => {
+  const withCost = (state, costUsd) => {
+    const envelope = telemetryEnvelope("order-run", "async", { outcome: { state } });
+    envelope.usage = { ...envelope.usage, costUsd };
+    envelope.steps[0].usage = { ...envelope.steps[0].usage, costUsd };
+    return envelope;
+  };
+  const filePath = writeFixture(t, [
+    sessionHeader("telemetry-order"),
+    messageEntry({
+      role: "assistant",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      content: [
+        {
+          type: "toolCall",
+          toolName: "subagent",
+          toolCallId: "order-call",
+          arguments: { action: "resume", id: "order-run" },
+        },
+      ],
+    }),
+    // Older snapshot arrives as a notification, newer one as the later tool result.
+    messageEntry({
+      role: "custom",
+      customType: "subagent-notify",
+      content: "Background task paused: order-run",
+      details: {
+        status: "paused",
+        asyncId: "order-run",
+        telemetry: withCost("paused", 0.25),
+      },
+    }),
+    messageEntry({
+      role: "toolResult",
+      timestamp: "2026-01-01T00:00:02.000Z",
+      toolCallId: "order-call",
+      toolName: "subagent",
+      content: [{ type: "text", text: "done" }],
+      details: { runId: "order-run", telemetry: withCost("completed", 1) },
+    }),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.runs.length, 1);
+  assert.equal(output.runs[0]?.telemetryRecordCount, 2);
+  assert.equal(output.runs[0]?.outcome?.state, "completed");
+  assert.equal(output.aggregates.usage.costUsd, 1);
+});
+
+test("subagent analysis: three telemetry snapshots fold in order so a usage-less newest keeps the middle usage", async (t) => {
+  const snapshot = (state, costUsd) => {
+    const envelope = telemetryEnvelope("fold-run", "async", { outcome: { state } });
+    if (costUsd === undefined) {
+      delete envelope.usage;
+      delete envelope.steps[0].usage;
+    } else {
+      envelope.usage = { ...envelope.usage, costUsd };
+      envelope.steps[0].usage = { ...envelope.steps[0].usage, costUsd };
+    }
+    return envelope;
+  };
+  const notify = (state, costUsd) =>
+    messageEntry({
+      role: "custom",
+      customType: "subagent-notify",
+      content: `Background task ${state}: fold-run`,
+      details: { status: state, asyncId: "fold-run", telemetry: snapshot(state, costUsd) },
+    });
+  const filePath = writeFixture(t, [
+    sessionHeader("telemetry-fold"),
+    messageEntry({
+      role: "assistant",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      content: [
+        {
+          type: "toolCall",
+          toolName: "subagent",
+          toolCallId: "fold-call",
+          arguments: { action: "resume", id: "fold-run" },
+        },
+      ],
+    }),
+    notify("paused", 0.25),
+    notify("paused", 0.5),
+    messageEntry({
+      role: "toolResult",
+      timestamp: "2026-01-01T00:00:02.000Z",
+      toolCallId: "fold-call",
+      toolName: "subagent",
+      content: [{ type: "text", text: "done" }],
+      details: { runId: "fold-run", telemetry: snapshot("completed") },
+    }),
+  ]);
+  const output = analyzeSubagentSessions([await scanSessionFile(filePath)]);
+  assert.equal(output.runs.length, 1);
+  assert.equal(output.runs[0]?.telemetryRecordCount, 3);
+  assert.equal(output.runs[0]?.outcome?.state, "completed");
+  assert.equal(output.aggregates.usage.costUsd, 0.5);
+});

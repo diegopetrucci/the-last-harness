@@ -22,6 +22,7 @@ import {
   normalizeActiveRuntimeCheckpointAt,
   normalizeActiveRuntimeMs,
   recoverStoppedLifecycleOwnership,
+  withLifecycleStatusLock,
 } from "../shared/lifecycle-state.ts";
 import {
   parseContextPressureCrossedThresholds,
@@ -824,6 +825,12 @@ function writeFailedRepair(
 
 export { checkPidLiveness };
 
+function isStoppedLifecycleState(state: AsyncStatus["state"]): boolean {
+  return (
+    state === "paused" || state === "cancelled" || state === "continued" || state === "pausing"
+  );
+}
+
 export function reconcileAsyncRun(
   asyncDir: string,
   options: ReconcileAsyncRunOptions = {},
@@ -834,23 +841,55 @@ export function reconcileAsyncRun(
     !status && options.startedRun
       ? buildStartedStatus(asyncDir, options.startedRun, now)
       : undefined;
-  const effectiveStatus = status ?? startedStatus;
+  let effectiveStatus = status ?? startedStatus;
   if (!effectiveStatus) return { status: null, repaired: false };
 
   const runId = effectiveStatus.runId || path.basename(asyncDir);
   const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
-  if (
-    effectiveStatus.state === "paused" ||
-    effectiveStatus.state === "cancelled" ||
-    effectiveStatus.state === "continued" ||
-    effectiveStatus.state === "pausing"
-  ) {
-    const recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
-      kill: options.kill,
-      now: options.now,
-    });
+  if (isStoppedLifecycleState(effectiveStatus.state)) {
+    let recovered: ReturnType<typeof recoverStoppedLifecycleOwnership>;
+    if (status) {
+      // Decide and write under the lifecycle lock against a fresh read so a
+      // concurrent transition (e.g. a continuation reservation) is never
+      // overwritten by the pre-lock snapshot. The lock is not re-entrant; no
+      // caller of reconcileAsyncRun holds it.
+      let locked:
+        | {
+            current: AsyncStatus | null;
+            recovered?: ReturnType<typeof recoverStoppedLifecycleOwnership>;
+          }
+        | undefined;
+      try {
+        locked = withLifecycleStatusLock(
+          asyncDir,
+          (current) => {
+            if (!current || !isStoppedLifecycleState(current.state)) return { current };
+            const result = recoverStoppedLifecycleOwnership(current, {
+              kill: options.kill,
+              now: options.now,
+            });
+            if (result.repaired) writeAtomicJson(path.join(asyncDir, "status.json"), result.status);
+            return { current, recovered: result };
+          },
+          { kill: options.kill, now: options.now },
+        );
+      } catch {
+        // Lock contention or unreadable status: skip the write for this pass;
+        // the reconciler runs again later. Never fall back to an unlocked write.
+        return { status: effectiveStatus, repaired: false };
+      }
+      // Status no longer qualifies for stopped-run recovery: write nothing.
+      if (!locked.recovered) return { status: locked.current ?? effectiveStatus, repaired: false };
+      effectiveStatus = locked.current as AsyncStatus;
+      recovered = locked.recovered;
+    } else {
+      recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
+        kill: options.kill,
+        now: options.now,
+      });
+      if (recovered.repaired) writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
+    }
     if (recovered.repaired) {
-      writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
       return {
         status: recovered.status,
         repaired: true,
@@ -904,7 +943,7 @@ export function reconcileAsyncRun(
   }
 
   if (effectiveStatus.state !== "running" || typeof effectiveStatus.pid !== "number") {
-    return { status: status ?? null, repaired: false, resultPath };
+    return { status: status ? effectiveStatus : null, repaired: false, resultPath };
   }
 
   if (!status) {
