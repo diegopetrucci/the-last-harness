@@ -24,15 +24,10 @@ import {
 } from "./lib/check-installer-performance-workspace.mjs";
 import {
   createReadinessObserver,
-  hasFooterMarker,
-  hasHeaderMarker,
   observeReadinessChunk,
   stripTerminalNoise,
   type ReadinessObservationState,
 } from "./lib/tlh-startup-readiness.mjs";
-
-export const hasTlhHeader = hasHeaderMarker;
-export const hasTlhFooter = hasFooterMarker;
 
 const DEFAULT_MODE = "remote";
 const DEFAULT_REF = "main";

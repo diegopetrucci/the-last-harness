@@ -9,8 +9,12 @@ import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-ag
 import { createProviderAuthHealthStore } from "../extensions/the-last-harness/provider-auth-health.ts";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment, formatReauthWarningLine } =
-  await jiti.import("../extensions/the-last-harness/footer.ts");
+const { createTlhFooter, formatReauthWarningLine } = await jiti.import(
+  "../extensions/the-last-harness/footer.ts",
+);
+const { formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
+  "../extensions/the-last-harness/footer-subscription-usage.ts",
+);
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;

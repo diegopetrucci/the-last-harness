@@ -61,6 +61,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Changelog policy: every PR gets an entry, with contributor-only changes under `### Internal`.
 - Removed production exports that only tests used (project-guidance/agent-definition/health/control-channel wrappers, session-mirror sink size aliases, and the unused `nudge-texts` module); tests now use live paths.
 - `check-package-versions` now fails on `package.json`-vs-lockfile pin drift, and CI `node_modules` cache keys include `package.json`.
+- Removed test-only script exports (`extractSubagentCorrelations`, `isRepositoryRelativeTimingFile`, `hasTlhHeader`/`hasTlhFooter`) and unused or module-internal extension/test-helper exports; tests now use the live APIs.
 - Docs now state each fact once in an owning doc (ownership table in CONTRIBUTING.md), drop version numbers from prose, and `npm run validate` checks internal Markdown links and anchors.
 
 ## [0.45.0] - 2026-10-14
