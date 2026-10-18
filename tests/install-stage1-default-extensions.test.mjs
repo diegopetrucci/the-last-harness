@@ -1021,8 +1021,10 @@ test("stage-1 batched npm pre-install lets the critical quiet-tools install skip
     fakeNpmBody,
   });
 
-  preInstallNpmDefaultExtensions(batched.config);
-  installDefaultExtensions(batched.config);
+  // runInstallFlow passes the batch result to installDefaultExtensions.
+  const promoted = preInstallNpmDefaultExtensions(batched.config);
+  assert.equal(promoted, true, "fresh batch reports promotion");
+  installDefaultExtensions(batched.config, promoted);
 
   assert.match(readFileSync(join(batched.agentDir, "npm.log"), "utf8"), /pi-quiet-tools@0\.1\.14/);
   assert.equal(existsSync(batched.piLog), false, "no per-package pi install should run");
@@ -1036,7 +1038,7 @@ test("stage-1 batched npm pre-install lets the critical quiet-tools install skip
   const manifestDir = join(mismatch.agentDir, "npm/node_modules/@diegopetrucci/pi-quiet-tools");
   mkdirSync(manifestDir, { recursive: true });
   writeFileSync(join(manifestDir, "package.json"), '{"version":"0.1.13"}');
-  installDefaultExtensions(mismatch.config);
+  installDefaultExtensions(mismatch.config, true);
   assertPiCommands(mismatch.piLog, mismatch.agentDir, [
     "install npm:@diegopetrucci/pi-quiet-tools@0.1.14",
   ]);
@@ -1055,12 +1057,14 @@ test("stage-1 falls back to the critical install when the batched npm pre-instal
     fakeNpmBody: "exit 1",
   });
 
+  let promoted = false;
   try {
-    preInstallNpmDefaultExtensions(config);
+    promoted = preInstallNpmDefaultExtensions(config);
   } catch {
     // A failed batch must not prevent the critical install below.
   }
-  installDefaultExtensions(config);
+  assert.equal(promoted, false, "failed batch never claims promotion");
+  installDefaultExtensions(config, promoted);
 
   assertPiCommands(piLog, agentDir, ["install npm:@diegopetrucci/pi-quiet-tools@0.1.14"]);
 });

@@ -13,7 +13,7 @@ import { mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
 import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
-import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
+import { assignRequiredEqualsValue, outputLines, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
@@ -1044,12 +1044,6 @@ async function writeInstallState(config) {
         args.push("--quiet");
     runNodeScript(config, config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT, args);
 }
-function outputLines(output) {
-    return output
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-}
 function splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput) {
     const criticalSourceSet = new Set(outputLines(criticalSourcesOutput));
     const sources = outputLines(sourcesOutput);
@@ -1091,11 +1085,11 @@ function preflightCriticalDefaultExtensionTargets(config, sources) {
         gitInstall.assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
     }
 }
-function installCriticalDefaultExtension(config, source) {
+function installCriticalDefaultExtension(config, source, batched) {
     verboseLog(config, `Installing critical bundled default extension package: ${source}`);
     const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
     gitInstall.assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
-    if (pinnedNpmInstallPresent(config, source, npmPreinstallIo(config)))
+    if (batched && pinnedNpmInstallPresent(config, source, npmPreinstallIo(config)))
         return;
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
@@ -1152,7 +1146,7 @@ function updateNonCriticalDefaultExtensions(config, sources, { mcpAdapterHeld = 
     }
     return 0;
 }
-function installDefaultExtensions(config) {
+function installDefaultExtensions(config, batched = false) {
     if (config.noSettings) {
         log(config, "Skipping bundled default extensions (--no-settings).");
         return;
@@ -1234,7 +1228,7 @@ function installDefaultExtensions(config) {
     if (failures !== 0)
         warn(`${failures} bundled default extension package(s) failed to update`);
     for (const source of safeCriticalSources)
-        installCriticalDefaultExtension(config, source);
+        installCriticalDefaultExtension(config, source, batched);
     if (failures === 0)
         verboseLog(config, "Bundled default extensions installed.");
 }
@@ -1471,8 +1465,7 @@ async function runInstallFlow(config) {
         cleanupOldSettingsBackups(config);
     await writeInstallState(config);
     // Batch first: `pi install` creates the npm root, which makes the batched pre-install skip.
-    preInstallNpmDefaultExtensions(config);
-    installDefaultExtensions(config);
+    installDefaultExtensions(config, preInstallNpmDefaultExtensions(config));
     configureGnosis(config);
     configureTickets(config);
     await writeWrapper(config);

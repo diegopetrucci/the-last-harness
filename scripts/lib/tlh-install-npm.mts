@@ -389,14 +389,14 @@ function promoteNpmStage(stagePath: string, npmRoot: string, io: NpmPreinstallIo
 export function preInstallNpmDefaultExtensions(
   config: NpmPreinstallConfig,
   io: NpmPreinstallIo,
-): void {
+): boolean {
   if (config.noSettings) {
     io.log("Skipping pinned npm default-extension pre-install (--no-settings).");
-    return;
+    return false;
   }
   if (truthyEnvironmentValue(config.env?.PI_OFFLINE)) {
     io.log("Skipping pinned npm default-extension pre-install (PI_OFFLINE is set).");
-    return;
+    return false;
   }
   if (
     !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE ||
@@ -405,14 +405,14 @@ export function preInstallNpmDefaultExtensions(
     if (config.dryRun) {
       io.log("Would pre-install pinned npm default extensions after settings merge.");
     }
-    return;
+    return false;
   }
 
   const settingsExists = existsSync(config.settingsPath);
   const settings =
     settingsExists || !config.dryRun ? readNpmPreinstallSettings(config, io) : undefined;
-  if (settingsExists && !settings) return;
-  if (!settingsExists && !config.dryRun) return;
+  if (settingsExists && !settings) return false;
+  if (!settingsExists && !config.dryRun) return false;
 
   let defaultExtensions;
   try {
@@ -420,7 +420,7 @@ export function preInstallNpmDefaultExtensions(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.warn(`could not read bundled default extensions for npm pre-install: ${message}`);
-    return;
+    return false;
   }
 
   const disabledIds = settings
@@ -476,7 +476,7 @@ export function preInstallNpmDefaultExtensions(
 
   if (npmSpecs.length === 0) {
     io.verboseLog("No enabled pinned npm default extensions match merged settings.");
-    return;
+    return false;
   }
 
   const npmCommand = configuredPlainNpmCommand(settings || {});
@@ -484,7 +484,7 @@ export function preInstallNpmDefaultExtensions(
     io.log(
       "Skipping pinned npm default-extension pre-install because Pi's configured npmCommand is not plain npm.",
     );
-    return;
+    return false;
   }
 
   const npmRoot = join(config.agentDir, "npm");
@@ -493,13 +493,13 @@ export function preInstallNpmDefaultExtensions(
       io.verboseLog(
         `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`,
       );
-      return;
+      return false;
     }
   } catch (error) {
     io.warn(
       `could not inspect the npm root safely; skipping pinned npm default-extension pre-install: ${String(error)}`,
     );
-    return;
+    return false;
   }
 
   const displayStagePath = join(config.agentDir, `${NPM_PREINSTALL_STAGE_PREFIX}<fresh>`);
@@ -520,10 +520,11 @@ export function preInstallNpmDefaultExtensions(
     );
     io.runCommand(installArgs.map((arg) => (arg === "<staging-root>" ? displayStagePath : arg)));
     io.log(`Would atomically promote the successful staging root to ${npmRoot}.`);
-    return;
+    return false;
   }
 
   let stagePath: string | undefined;
+  let promoted = false;
   try {
     const stageParent = ensureNpmStageParent(config);
     stagePath = mkdtempSync(join(stageParent, NPM_PREINSTALL_STAGE_PREFIX));
@@ -545,7 +546,10 @@ export function preInstallNpmDefaultExtensions(
     ];
     io.runCommand(commandArgs);
     assertNpmStageDirectory(config, stagePath, "after npm install");
-    if (promoteNpmStage(stagePath, npmRoot, io)) stagePath = undefined;
+    if (promoteNpmStage(stagePath, npmRoot, io)) {
+      stagePath = undefined;
+      promoted = true;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.warn(
@@ -554,4 +558,5 @@ export function preInstallNpmDefaultExtensions(
   } finally {
     cleanupNpmStage(config, stagePath, io);
   }
+  return promoted;
 }

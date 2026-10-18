@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -22,7 +22,7 @@ const QUIET_TOOLS = JSON.parse(
 // Flow-level regression for the runInstallFlow ordering: the batched npm pre-install must run
 // before installDefaultExtensions, because the first `pi install` creates the npm root and
 // would make the batched pre-install skip.
-test("stage-1 install flow batches pinned npm defaults before any per-package quiet-tools install", (t) => {
+function setupFlow(t) {
   const root = makeTempDir();
   const homeDir = join(root, "home");
   const agentDir = join(root, "agent");
@@ -66,6 +66,11 @@ test("stage-1 install flow batches pinned npm defaults before any per-package qu
       "fi",
     ].join("\n"),
   );
+  return { root, homeDir, agentDir, binDir, fakebin, piLog, npmLog };
+}
+
+test("stage-1 install flow batches pinned npm defaults before any per-package quiet-tools install", (t) => {
+  const { root, homeDir, agentDir, binDir, fakebin, piLog, npmLog } = setupFlow(t);
 
   const result = runInstaller(
     ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper"],
@@ -96,5 +101,43 @@ test("stage-1 install flow batches pinned npm defaults before any per-package qu
     perPackageQuietToolsInstalls,
     [],
     "no per-package quiet-tools pi install after a successful batch",
+  );
+});
+
+// Reruns on an existing profile (npm root already present, batch skipped) must keep running the
+// critical `pi install` even when the pinned quiet-tools version is already in the npm root.
+test("stage-1 install flow still runs the critical quiet-tools pi install when the npm root already exists", (t) => {
+  const { root, homeDir, agentDir, binDir, fakebin, piLog, npmLog } = setupFlow(t);
+  const manifestDir = join(
+    agentDir,
+    "npm",
+    "node_modules",
+    QUIET_TOOLS.slice(0, QUIET_TOOLS.lastIndexOf("@")),
+  );
+  mkdirSync(manifestDir, { recursive: true });
+  writeFileSync(
+    join(manifestDir, "package.json"),
+    JSON.stringify({ version: QUIET_TOOLS.slice(QUIET_TOOLS.lastIndexOf("@") + 1) }),
+  );
+
+  const result = runInstaller(
+    ["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper"],
+    scrubInstallerEnv({
+      HOME: homeDir,
+      PATH: `${fakebin}:${process.env.PATH || ""}`,
+      TLH_PACKAGE_SOURCE: join(root, "package-source"),
+      TLH_SKIP_GNOSIS_INSTALL: "1",
+    }),
+  );
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+  const batches = readFileSync(npmLog, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("install ") && line.includes("--prefix"));
+  assert.equal(batches.length, 0, "existing npm root skips the batched pre-install");
+  assert.equal(
+    readPiLog(piLog).filter((line) => /\|install npm:.*quiet-tools/.test(line)).length,
+    1,
+    "critical quiet-tools pi install still runs on reruns",
   );
 });
