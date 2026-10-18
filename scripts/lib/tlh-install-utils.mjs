@@ -323,3 +323,9 @@ export function assertNotInNormalPiConfig(path, message, options = {}) {
         return;
     throw new Error(typeof message === "function" ? message(path) : message);
 }
+export function outputLines(output) {
+    return output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+}

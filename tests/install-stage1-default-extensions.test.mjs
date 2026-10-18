@@ -1000,3 +1000,71 @@ test("stage-1 gate: missing profile settings is neutral and project-layer hold i
 // updates" (the first test in this file), which writes a profile settings file
 // with enabled defaults but no <agentDir>/.pi/settings.json, and asserts that
 // pi update --extensions runs.  No new test is needed.
+
+test("stage-1 batched npm pre-install lets the critical quiet-tools install skip `pi install`", (t) => {
+  const quietTools = {
+    id: "quiet-tools",
+    critical: true,
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+  };
+  const fakePiBody = 'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"';
+  const fakeNpmBody = [
+    'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+    'while [[ $# -gt 0 ]]; do if [[ "$1" == "--prefix" ]]; then prefix="$2"; fi; shift; done',
+    'mkdir -p "$prefix/node_modules/@diegopetrucci/pi-quiet-tools"',
+    'printf \'{"version":"0.1.14"}\' >"$prefix/node_modules/@diegopetrucci/pi-quiet-tools/package.json"',
+  ].join("\n");
+  const batched = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: [quietTools],
+    settings: { packages: [quietTools.source] },
+    fakePiBody,
+    fakeNpmBody,
+  });
+
+  // runInstallFlow passes the batch result to installDefaultExtensions.
+  const promoted = preInstallNpmDefaultExtensions(batched.config);
+  assert.equal(promoted, true, "fresh batch reports promotion");
+  installDefaultExtensions(batched.config, promoted);
+
+  assert.match(readFileSync(join(batched.agentDir, "npm.log"), "utf8"), /pi-quiet-tools@0\.1\.14/);
+  assert.equal(existsSync(batched.piLog), false, "no per-package pi install should run");
+
+  // Version mismatch in the npm root keeps the existing critical install behavior.
+  const mismatch = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: [quietTools],
+    settings: { packages: [quietTools.source] },
+    fakePiBody,
+  });
+  const manifestDir = join(mismatch.agentDir, "npm/node_modules/@diegopetrucci/pi-quiet-tools");
+  mkdirSync(manifestDir, { recursive: true });
+  writeFileSync(join(manifestDir, "package.json"), '{"version":"0.1.13"}');
+  installDefaultExtensions(mismatch.config, true);
+  assertPiCommands(mismatch.piLog, mismatch.agentDir, [
+    "install npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+  ]);
+});
+
+test("stage-1 falls back to the critical install when the batched npm pre-install fails", (t) => {
+  const quietTools = {
+    id: "quiet-tools",
+    critical: true,
+    source: "npm:@diegopetrucci/pi-quiet-tools@0.1.14",
+  };
+  const { config, agentDir, piLog } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: [quietTools],
+    settings: { packages: [quietTools.source] },
+    fakePiBody: 'printf \'%s|%s|%s\\n\' "${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${PI_LOG}"',
+    fakeNpmBody: "exit 1",
+  });
+
+  let promoted = false;
+  try {
+    promoted = preInstallNpmDefaultExtensions(config);
+  } catch {
+    // A failed batch must not prevent the critical install below.
+  }
+  assert.equal(promoted, false, "failed batch never claims promotion");
+  installDefaultExtensions(config, promoted);
+
+  assertPiCommands(piLog, agentDir, ["install npm:@diegopetrucci/pi-quiet-tools@0.1.14"]);
+});
