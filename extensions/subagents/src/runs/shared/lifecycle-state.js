@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/lifecycle-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -957,6 +958,9 @@ export function recoverStoppedLifecycleOwnership(status, options = {}) {
             repaired: true,
             pidLiveness,
         };
+    }
+    if (normalized.state === "paused" && pidLiveness !== "dead") {
+        return { status: normalized, repaired: false, pidLiveness };
     }
     const repaired = {
         ...normalized,

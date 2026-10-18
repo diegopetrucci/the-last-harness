@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/profile-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync, } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";

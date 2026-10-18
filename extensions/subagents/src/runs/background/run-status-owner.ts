@@ -237,7 +237,7 @@ function lifecycleTransitionErrorDetail(error: unknown, depth = 0): string {
   }
 }
 
-export function appendLifecycleTransitionDiagnostic(
+function appendLifecycleTransitionDiagnostic(
   appendDiagnosticEvent: (line: string, droppedEventType?: string) => void,
   runId: string,
   phase: LifecycleTransitionPhase,

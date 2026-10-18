@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer-git-cache.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import { parseGitStatusPorcelainV2, } from "./footer-git.js";
 const DEFAULT_REFRESH_INTERVAL_MS = 8_000;

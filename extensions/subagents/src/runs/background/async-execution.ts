@@ -50,7 +50,7 @@ import {
   type ModelRegistryEvidence,
   type ParentModel,
 } from "../shared/model-fallback.ts";
-import type { ModelScopeConfig } from "../shared/model-scope.ts";
+import type { ModelScopeConfig, ModelSource } from "../shared/model-scope.ts";
 import { contextWindowsForChildModels, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import {
   mergeContinuationAcceptance,
@@ -187,6 +187,8 @@ interface AsyncParallelTaskParams {
   output?: string | false;
   outputMode?: OutputMode;
   model?: string;
+  /** Provenance preserved when the parent executor already resolved this model. */
+  modelSource?: ModelSource;
   providerFallbackModels?: string[];
   modelFallbackNotice?: string;
   acceptance?: AcceptanceInput;
@@ -600,12 +602,15 @@ export function buildAsyncRunnerPlan(
     );
 
     const requestedModel = behavior.model ?? agent.model;
+    const modelSource: ModelSource =
+      taskSpec.modelSource ??
+      (taskSpec.model?.trim() && taskSpec.model.trim() !== "inherit" ? "explicit" : "inherited");
     const primaryModel = resolveSubagentModelOverride(
       requestedModel,
       ctx.currentModel,
       availableModels,
       ctx.currentModelProvider,
-      { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" },
+      { scope: ctx.modelScope, source: modelSource },
     );
     const fallbackModels = buildFallbackModelList(
       taskSpec.providerFallbackModels,

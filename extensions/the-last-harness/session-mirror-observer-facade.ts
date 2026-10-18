@@ -201,6 +201,7 @@ export interface SessionMirrorObserverFacadeOptions {
   readonly replyNotify?: SessionMirrorReplyProducerOptions["notify"];
   readonly replyNow?: SessionMirrorReplyProducerOptions["now"];
   readonly replyScheduleConfirmation?: SessionMirrorReplyProducerOptions["scheduleConfirmation"];
+  readonly replyScheduleLifecycleCompletion?: SessionMirrorReplyProducerOptions["scheduleLifecycleCompletion"];
   readonly replySetTimeout?: SessionMirrorReplyProducerOptions["setTimeout"];
   readonly replyClearTimeout?: SessionMirrorReplyProducerOptions["clearTimeout"];
 }
@@ -248,15 +249,21 @@ export interface SessionMirrorObserverFacade {
   readonly turnEnd: () => void;
   readonly agentSettled: () => void;
   readonly sessionBeforeTree: () => void;
-  readonly sessionTree: () => void;
+  readonly sessionTree: (event?: unknown, context?: unknown) => void;
   readonly sessionBeforeCompact: () => void;
-  readonly sessionCompact: () => void;
+  readonly sessionCompact: (event?: unknown, context?: unknown) => void;
+  readonly sessionCompactFailed: (event?: unknown, context?: unknown) => void;
   readonly requestSnapshot: () => boolean;
   readonly getStatus: (
     ctx: ExtensionContext | ExtensionCommandContext,
   ) => SessionMirrorObserverFacadeStatus;
   readonly handleStatus: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
+
+type SessionMirrorReplyIdleCapability = {
+  readonly isIdle: () => boolean;
+  readonly revoke: () => void;
+};
 
 type InternalState = {
   generation: number;
@@ -265,6 +272,7 @@ type InternalState = {
   attestation: FacadeAttestationState;
   attestationReason: SessionMirrorAttestationReason | undefined;
   probe: SessionMirrorObserverProbe | undefined;
+  replyIdleCapability: SessionMirrorReplyIdleCapability | undefined;
   loadTiming: SessionMirrorObserverTimingBucket;
   attestationTiming: SessionMirrorObserverTimingBucket;
 };
@@ -308,6 +316,7 @@ function initialState(): InternalState {
     attestation: "not-run",
     attestationReason: undefined,
     probe: undefined,
+    replyIdleCapability: undefined,
     loadTiming: ZERO_TIMING,
     attestationTiming: ZERO_TIMING,
   };
@@ -649,33 +658,44 @@ function safeShutdownProbe(probe: SessionMirrorObserverProbe | undefined): void 
   }
 }
 
-function weakReplyIsIdle(ctx: ExtensionContext): () => boolean {
-  let reference: WeakRef<ExtensionContext>;
+function readReplyIdleQuery(ctx: ExtensionContext | undefined): (() => boolean) | undefined {
   try {
-    reference = new WeakRef(ctx);
+    const candidate = ctx?.isIdle;
+    return typeof candidate === "function" ? candidate : undefined;
   } catch {
-    return () => false;
+    return undefined;
   }
-  return () => {
-    const current = reference.deref();
-    if (!current) return false;
-    try {
-      return current.isIdle() === true;
-    } catch {
-      return false;
-    }
-  };
 }
 
-function weakReplyNotifier(
-  ctx: ExtensionContext,
+function createRevocableReplyIdleCapability(
+  query: (() => boolean) | undefined,
+): SessionMirrorReplyIdleCapability {
+  let revoked = false;
+  return Object.freeze({
+    isIdle: (): boolean => {
+      if (revoked || query === undefined) return false;
+      try {
+        return query() === true;
+      } catch {
+        return false;
+      }
+    },
+    revoke: (): void => {
+      revoked = true;
+      query = undefined;
+    },
+  });
+}
+
+function revokeReplyIdleCapability(state: InternalState): void {
+  const capability = state.replyIdleCapability;
+  state.replyIdleCapability = undefined;
+  capability?.revoke();
+}
+
+function createWeakReplyNotifier(
+  reference: WeakRef<ExtensionContext>,
 ): (outcome: SessionMirrorReplyProducerOutcome) => void {
-  let reference: WeakRef<ExtensionContext>;
-  try {
-    reference = new WeakRef(ctx);
-  } catch {
-    return () => undefined;
-  }
   return (outcome) => {
     const current = reference.deref();
     if (!current) return;
@@ -683,6 +703,17 @@ function weakReplyNotifier(
       current.ui.notify(`session-mirror reply: ${outcome}`, "info");
     } catch {}
   };
+}
+
+function weakReplyNotifier(
+  ctx: ExtensionContext | undefined,
+): (outcome: SessionMirrorReplyProducerOutcome) => void {
+  if (ctx === undefined) return () => undefined;
+  try {
+    return createWeakReplyNotifier(new WeakRef(ctx));
+  } catch {
+    return () => undefined;
+  }
 }
 
 type SessionMirrorObserverActivationInput = {
@@ -701,6 +732,9 @@ type SessionMirrorObserverActivationInput = {
   readonly replyNow: SessionMirrorReplyProducerOptions["now"] | undefined;
   readonly replyScheduleConfirmation:
     | SessionMirrorReplyProducerOptions["scheduleConfirmation"]
+    | undefined;
+  readonly replyScheduleLifecycleCompletion:
+    | SessionMirrorReplyProducerOptions["scheduleLifecycleCompletion"]
     | undefined;
   readonly replySetTimeout: SessionMirrorReplyProducerOptions["setTimeout"] | undefined;
   readonly replyClearTimeout: SessionMirrorReplyProducerOptions["clearTimeout"] | undefined;
@@ -729,6 +763,7 @@ function continueSessionMirrorObserverActivation(
     replyNotify,
     replyNow,
     replyScheduleConfirmation,
+    replyScheduleLifecycleCompletion,
     replySetTimeout,
     replyClearTimeout,
   } = input;
@@ -749,6 +784,7 @@ function continueSessionMirrorObserverActivation(
     state.loadTiming = loadTiming;
     if (!current()) return Promise.resolve();
     state.load = "failed";
+    revokeReplyIdleCapability(state);
     return Promise.resolve();
   }
   if (!current()) return Promise.resolve();
@@ -777,12 +813,16 @@ function continueSessionMirrorObserverActivation(
           ...(replyNotify === undefined ? {} : { replyNotify }),
           ...(replyNow === undefined ? {} : { replyNow }),
           ...(replyScheduleConfirmation === undefined ? {} : { replyScheduleConfirmation }),
+          ...(replyScheduleLifecycleCompletion === undefined
+            ? {}
+            : { replyScheduleLifecycleCompletion }),
           ...(replySetTimeout === undefined ? {} : { replySetTimeout }),
           ...(replyClearTimeout === undefined ? {} : { replyClearTimeout }),
         });
       } catch {
         if (!current()) return;
         state.load = "failed";
+        revokeReplyIdleCapability(state);
         return;
       }
 
@@ -808,6 +848,7 @@ function continueSessionMirrorObserverActivation(
         }
         if (state.probe === probe) state.probe = undefined;
         state.load = "failed";
+        revokeReplyIdleCapability(state);
         safeShutdownProbe(probe);
         return;
       }
@@ -823,6 +864,7 @@ function continueSessionMirrorObserverActivation(
       state.loadTiming = loadTiming;
       if (!current()) return;
       state.load = "failed";
+      revokeReplyIdleCapability(state);
     },
   );
 }
@@ -881,9 +923,11 @@ export function createSessionMirrorObserverFacade(
   const isCurrent = (candidate: InternalState): boolean => state === candidate;
 
   const sessionStart = (
-    ctx: ExtensionContext,
+    initialContext: ExtensionContext | undefined,
     reason: SessionStartEvent["reason"] = "startup",
   ): Promise<void> => {
+    let ctx: ExtensionContext | undefined = initialContext;
+    initialContext = undefined;
     const previousState = state;
     const nextState: InternalState = {
       ...initialState(),
@@ -894,6 +938,7 @@ export function createSessionMirrorObserverFacade(
     // probe may synchronously re-enter sessionStart/sessionShutdown.
     state = nextState;
     previousState.probe = undefined;
+    revokeReplyIdleCapability(previousState);
     safeShutdownProbe(previousProbe);
     if (!isCurrent(nextState)) return Promise.resolve();
 
@@ -984,27 +1029,40 @@ export function createSessionMirrorObserverFacade(
         ? undefined
         : bridgeDirectory;
 
-    const isIdle = weakReplyIsIdle(ctx);
+    const sendUserMessage =
+      typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined;
+    const idleQuery = sendUserMessage === undefined ? undefined : readReplyIdleQuery(ctx);
+    const idleCapability =
+      sendUserMessage === undefined ? undefined : createRevocableReplyIdleCapability(idleQuery);
+    if (!isCurrent(nextState)) {
+      idleCapability?.revoke();
+      return Promise.resolve();
+    }
+    nextState.replyIdleCapability = idleCapability;
     const replyNotify = options.replyNotify ?? weakReplyNotifier(ctx);
-    return continueSessionMirrorObserverActivation({
+    // The continuation retains only extracted seams. Clear the event context
+    // parameter before it can be retained by an in-flight activation promise.
+    ctx = undefined;
+    const activation = continueSessionMirrorObserverActivation({
       state: nextState,
       isCurrent,
       sessionManager,
       loadProbe,
       attest,
       now,
-      isIdle,
+      isIdle: idleCapability?.isIdle,
       bridgeDirectory: usableBridgeDirectory,
       sink: injectedSink,
-      sendUserMessage:
-        typeof options.sendUserMessage === "function" ? options.sendUserMessage : undefined,
+      sendUserMessage,
       replyChannelFactory: options.replyChannelFactory,
       replyNotify,
       replyNow: options.replyNow,
       replyScheduleConfirmation: options.replyScheduleConfirmation,
+      replyScheduleLifecycleCompletion: options.replyScheduleLifecycleCompletion,
       replySetTimeout: options.replySetTimeout,
       replyClearTimeout: options.replyClearTimeout,
     });
+    return activation;
   };
 
   const sessionShutdown = (): void => {
@@ -1020,6 +1078,7 @@ export function createSessionMirrorObserverFacade(
       attestation: "shutdown",
     };
     previousState.probe = undefined;
+    revokeReplyIdleCapability(previousState);
     safeShutdownProbe(previousProbe);
   };
 
@@ -1036,6 +1095,7 @@ export function createSessionMirrorObserverFacade(
       | "sessionTree"
       | "sessionBeforeCompact"
       | "sessionCompact"
+      | "sessionCompactFailed"
     >,
     ...args: unknown[]
   ): void => {
@@ -1144,9 +1204,12 @@ export function createSessionMirrorObserverFacade(
     turnEnd: () => forward("turnEnd"),
     agentSettled: () => forward("agentSettled"),
     sessionBeforeTree: () => forward("sessionBeforeTree"),
-    sessionTree: () => forward("sessionTree"),
+    sessionTree: (event?: unknown, context?: unknown) => forward("sessionTree", event, context),
     sessionBeforeCompact: () => forward("sessionBeforeCompact"),
-    sessionCompact: () => forward("sessionCompact"),
+    sessionCompact: (event?: unknown, context?: unknown) =>
+      forward("sessionCompact", event, context),
+    sessionCompactFailed: (event?: unknown, context?: unknown) =>
+      forward("sessionCompactFailed", event, context),
     requestSnapshot,
     getStatus,
     handleStatus,
@@ -1194,7 +1257,8 @@ export function registerSessionMirrorObserverFacade(
   pi.on("message_end", (event) => facade.messageEnd(event));
   pi.on("turn_end", () => facade.turnEnd());
   pi.on("agent_settled", () => facade.agentSettled());
-  pi.on("session_tree", () => facade.sessionTree());
-  pi.on("session_compact", () => facade.sessionCompact());
+  pi.on("session_tree", (event, ctx) => facade.sessionTree(event, ctx));
+  pi.on("session_compact", (event, ctx) => facade.sessionCompact(event, ctx));
+  pi.on("session_compact_failed", (event, ctx) => facade.sessionCompactFailed(event, ctx));
   return facade;
 }

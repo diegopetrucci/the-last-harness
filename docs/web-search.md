@@ -1,8 +1,8 @@
 # Web search
 
-TLH ships [`@diegopetrucci/pi-web-access@0.29.2`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. It is an Exa-only selective fork, not a feature-parity release. The `web-scout` subagent uses its three tools for general web research; GitHub-specific research still goes to the TLH `librarian` subagent, which uses `gh` and `git` directly.
+TLH ships [`@diegopetrucci/pi-web-access`](https://github.com/diegopetrucci/pi-web-access) as a non-critical default extension. It is an Exa-only selective fork, not a feature-parity release. The `web-scout` subagent uses its three tools for general web research; GitHub-specific research still goes to the TLH `librarian` subagent, which uses `gh` and `git` directly.
 
-During an install or update, TLH migrates recognized upstream, manual, and prior TLH `pi-web-access` sources in the isolated profile to the scoped `0.29.2` package. If you need to keep another provider or one of the removed capabilities, opt out before updating, then explicitly reinstall the desired provider into the same isolated profile:
+During an install or update, TLH migrates recognized upstream, manual, and prior TLH `pi-web-access` sources in the isolated profile to the scoped package pinned in `config/default-extensions.json`. If you need to keep another provider or one of the removed capabilities, opt out before updating, then explicitly reinstall the desired provider into the same isolated profile:
 
 ```sh
 tlh defaults disable pi-web-access
@@ -82,7 +82,7 @@ Running another `pi-web-access` provider alongside the TLH-managed package is un
 
 ## Manual migration from the legacy settings file
 
-TLH does not automatically migrate an existing isolated `<agent>/web-search.json`, persist its key, or modify the normal `~/.pi/agent` profile. The old file contains options that 0.29.2 deliberately removed, so do not copy it wholesale. Review it first and migrate only the supported `exaApiKey` field (if present); configure the new `fetch`, `fetchContent.domainPolicy`, and `maxInlineContentChars` settings separately. An older isolated `$PI_CODING_AGENT_DIR/exa-usage.json`, if present, is unused by 0.29.2 and is not auto-deleted.
+TLH does not automatically migrate an existing isolated `<agent>/web-search.json`, persist its key, or modify the normal `~/.pi/agent` profile. The old file contains options that the current package deliberately removed, so do not copy it wholesale. Review it first and migrate only the supported `exaApiKey` field (if present); configure the new `fetch`, `fetchContent.domainPolicy`, and `maxInlineContentChars` settings separately. An older isolated `$PI_CODING_AGENT_DIR/exa-usage.json`, if present, is unused by the current package and is not auto-deleted.
 
 The following guarded example validates the profile and canonical paths inside Python, refuses the normal Pi profile and outside symlink targets, refuses to overwrite an existing destination, and writes only `exaApiKey`:
 
@@ -146,7 +146,7 @@ if "exaApiKey" in legacy:
 
 unsupported = sorted(set(legacy) - {"exaApiKey"})
 if unsupported:
-    print("Not migrated (unsupported by pi-web-access 0.29.2): " + ", ".join(unsupported), file=sys.stderr)
+    print("Not migrated (unsupported by the current pi-web-access): " + ", ".join(unsupported), file=sys.stderr)
 if not migrated:
     fail("No supported legacy settings were found; destination was not created")
 

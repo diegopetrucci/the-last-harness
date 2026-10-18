@@ -59,9 +59,13 @@ export function createTlhHeader(
   // Logo is computed at render time so that theme changes (Pi's theme is a
   // Proxy over globalThis that updates in-place on a theme switch) are always
   // reflected without stale color captures.
-  const renderLogo = (): string =>
+  const renderLogo = (width: number): string =>
     headerUpdate
-      ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
+      ? truncateToWidth(
+          `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`,
+          Math.max(0, width),
+          color.dim("..."),
+        )
       : theme.bold(color.accent(TLH_NAME));
 
   const section = (name: string, items: string[], width: number): string[] => {
@@ -75,7 +79,14 @@ export function createTlhHeader(
     const wrappedLines: string[] = [];
     let currentLine = prefix;
 
-    for (const item of items) {
+    for (const rawItem of items) {
+      // Truncate items wider than the available space so a lone oversized item
+      // never overflows the terminal.
+      const item = truncateToWidth(
+        rawItem,
+        Math.max(0, width - visibleWidth(prefix)),
+        color.dim("..."),
+      );
       const isFirstOnLine = currentLine === prefix;
       const candidate = isFirstOnLine ? prefix + item : currentLine + ", " + item;
 
@@ -149,7 +160,7 @@ export function createTlhHeader(
   ];
 
   const renderCollapsed = (width: number) => {
-    const lines = [renderLogo()];
+    const lines = [renderLogo(width)];
     const details = [...launchContextLines(width)];
     if (details.length > 0) {
       lines.push("", ...details);
@@ -162,7 +173,7 @@ export function createTlhHeader(
   };
 
   const renderExpanded = (width: number) => {
-    const lines = [renderLogo()];
+    const lines = [renderLogo(width)];
     const details = headerDetails(width);
     if (details.length > 0) {
       lines.push("", ...details);

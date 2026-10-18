@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/status-allowlists.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const SESSION_MIRROR_OBSERVER_DIAGNOSTIC_CODES = Object.freeze([
     "queue-overflow",
     "stale-generation",

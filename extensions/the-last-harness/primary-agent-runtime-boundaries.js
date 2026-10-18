@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-boundaries.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";

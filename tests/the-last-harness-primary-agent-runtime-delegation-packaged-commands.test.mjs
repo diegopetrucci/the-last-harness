@@ -744,6 +744,58 @@ test("/switch-primary-agent default writes tlh.primaryAgent with a backup", asyn
   }
 });
 
+test("primary-agent settings writers read BOM-prefixed settings like plain JSON and preserve unrelated values", async (t) => {
+  const writtenSettings = [];
+
+  for (const prefix of ["", "\uFEFF"]) {
+    const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
+      cwd: true,
+      test: t,
+    });
+    const settingsPath = join(fixture.agent, "settings.json");
+    const initialSettings = {
+      unrelated: { keep: true },
+      tlh: {
+        primaryAgent: { selected: "architect", custom: "keep-me" },
+        modelVisibility: { hidden: ["keep-me"] },
+      },
+    };
+    const initialContent = `${prefix}${JSON.stringify(initialSettings, null, 2)}\n`;
+    writeFileSync(settingsPath, initialContent);
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { pi } = registerRuntimeHarness({
+        primaryAgents: selectablePrimaryAgents(),
+        subagentMetadata: [],
+      });
+      const command = pi.commands.get("switch-primary-agent");
+      assert.ok(command, "registers /switch-primary-agent");
+
+      const writeDefault = createCommandContext([], { cwd: fixture.cwd });
+      await command.handler("default rush", writeDefault.ctx);
+
+      const content = readFileSync(settingsPath, "utf8");
+      assert.notEqual(content.charCodeAt(0), 0xfeff, "successful writes should normalize BOMs");
+      writtenSettings.push(JSON.parse(content));
+      const backups = readdirSync(fixture.agent).filter((entry) =>
+        entry.startsWith("settings.json.bak-"),
+      );
+      assert.equal(backups.length, 1);
+      assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialContent);
+      assert.equal(writeDefault.notifications.at(-1)?.type, "info");
+    });
+  }
+
+  assert.deepEqual(writtenSettings[0], writtenSettings[1]);
+  assert.deepEqual(writtenSettings[0], {
+    unrelated: { keep: true },
+    tlh: {
+      primaryAgent: { selected: "rush", custom: "keep-me", enabled: true },
+      modelVisibility: { hidden: ["keep-me"] },
+    },
+  });
+});
+
 test("primary-agent settings writers preserve malformed-object diagnostics", async (t) => {
   const cases = [
     {
@@ -794,6 +846,39 @@ test("primary-agent settings writers preserve malformed-object diagnostics", asy
       });
     });
   }
+});
+
+test("primary-agent settings writers preserve malformed JSON and report the guarded write failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
+    cwd: true,
+    test: t,
+  });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = '\uFEFF{"tlh":{"primaryAgent":';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { pi } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const command = pi.commands.get("switch-primary-agent");
+    assert.ok(command, "registers /switch-primary-agent");
+
+    const attempt = createCommandContext([], { cwd: fixture.cwd });
+    await command.handler("default rush", attempt.ctx);
+
+    assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+    assert.deepEqual(
+      readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+      [],
+    );
+    assert.equal(attempt.notifications.at(-1)?.type, "error");
+    assert.match(
+      attempt.notifications.at(-1)?.message ?? "",
+      /Could not update TLH primary-agent persistent default/,
+    );
+  });
 });
 
 test("/switch-primary-agent default refuses normal Pi settings", async () => {

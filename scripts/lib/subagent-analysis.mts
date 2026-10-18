@@ -161,6 +161,12 @@ function addLaunchRoleHints(run: MutableRun, operation: ParsedCallOperation): vo
  * This function is intentionally synchronous: callers decide how to scan files,
  * and no analyzer path ever opens run-history.jsonl or an async artifact file.
  */
+type TelemetrySnapshotEntry = NonNullable<MutableRun["telemetrySnapshots"]>[number];
+
+function compareTelemetrySnapshots(a: TelemetrySnapshotEntry, b: TelemetrySnapshotEntry): number {
+  return a.order.scan - b.order.scan || a.order.entry - b.order.entry || a.arrival - b.arrival;
+}
+
 export function analyzeSubagentSessions(
   scanResults: readonly SessionScanResult[],
   baseCoverage: ScanCoverage = aggregateCoverage(scanResults),
@@ -260,6 +266,13 @@ export function analyzeSubagentSessions(
     return created;
   }
 
+  // Transcript position of the entry currently being processed, so snapshots
+  // from tool results and notifications merge in entry order, not source order.
+  let currentScanIndex = 0;
+  let currentEntryIndex: number | undefined;
+
+  let telemetryArrival = 0;
+
   function addTelemetry(raw: unknown, sourceKind: string): NormalizedTelemetry | undefined {
     counters.telemetryRecordsObserved++;
     const rawExecution = telemetryExecutionFromRaw(raw);
@@ -283,9 +296,19 @@ export function analyzeSubagentSessions(
     const run = ensureRun(normalized.run.id);
     run.sourceKinds.add(sourceKind);
     run.telemetryRecordCount++;
-    run.execution = normalized.run.execution;
-    run.mode = normalized.run.mode;
-    run.telemetry = run.telemetry ? mergeTelemetrySnapshots(run.telemetry, normalized) : normalized;
+    // Unpositioned snapshots sort after positioned ones within the same pass.
+    const order = { scan: currentScanIndex, entry: currentEntryIndex ?? Infinity };
+    const snapshots = (run.telemetrySnapshots ??= []);
+    snapshots.push({ telemetry: normalized, order, arrival: telemetryArrival++ });
+    // Fold in (scan, entry, arrival) order; unpositioned snapshots sort after
+    // positioned ones within the same pass and keep arrival order.
+    const sorted = [...snapshots].sort(compareTelemetrySnapshots);
+    run.telemetry = sorted
+      .slice(1)
+      .reduce((acc, item) => mergeTelemetrySnapshots(acc, item.telemetry), sorted[0]!.telemetry);
+    const last = sorted[sorted.length - 1]!.telemetry;
+    run.execution = last.run.execution;
+    run.mode = last.run.mode;
     for (const step of normalized.steps) {
       run.roles.add(step.agent);
       if (step.model) run.models.set(modelKey(step.model), step.model);
@@ -429,7 +452,8 @@ export function analyzeSubagentSessions(
         .filter((pair) => pair.toolName === "subagent")
         .map((pair) => pair.toolCallId),
     );
-    for (const entry of scanResult.entries) {
+    for (let entryIndex = 0; entryIndex < scanResult.entries.length; entryIndex++) {
+      const entry = scanResult.entries[entryIndex];
       if (!isObject(entry) || entry.type !== "message" || !isObject(entry.message)) continue;
       const message = entry.message;
       if (message.role !== "toolResult") continue;
@@ -463,18 +487,25 @@ export function analyzeSubagentSessions(
       const subagentMessage =
         message.toolName === "subagent" ? message : { ...message, toolName: "subagent" };
       resultByCallId.set(toolCallId, details ? { details } : {});
+      currentEntryIndex = entryIndex;
       processToolResult(subagentMessage);
+      currentEntryIndex = undefined;
     }
     return resultByCallId;
   }
 
-  for (const scanResult of scanResults) {
+  for (let scanIndex = 0; scanIndex < scanResults.length; scanIndex++) {
+    const scanResult = scanResults[scanIndex]!;
+    currentScanIndex = scanIndex;
     const resultByCallId = parseResultMaps(scanResult);
     processToolCalls(scanResult, resultByCallId);
     analyzeWakeupsForScan(scanResult, {
       ensureRun,
       getRun: (runId) => runs.get(runId),
       addTelemetry,
+      setCurrentEntryIndex: (entryIndex) => {
+        currentEntryIndex = entryIndex;
+      },
       addCompletionDetailsToRun,
       counters,
       wakeups,

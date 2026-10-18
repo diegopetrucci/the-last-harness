@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/tlh-doctor.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";

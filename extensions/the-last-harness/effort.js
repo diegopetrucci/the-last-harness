@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/effort.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import { handleThinkingLevelCommand } from "./effort-command.js";
 function getThinkingLevelCompletions(prefix) {

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/foreground-support.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
 import { getUnfilteredAvailableModels } from "../../../../the-last-harness/model-visibility.js";

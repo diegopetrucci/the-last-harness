@@ -157,6 +157,10 @@ export function createSessionLimitReportCommandHandler(
  *     `{ type, timestamp, message: { role, usage, provider, model } }`.  `provider`
  *     and `model` are short identifier strings retained for authoritative per-turn
  *     attribution (they are not transcript content).
+ *   - `"message"` with `role === "toolResult"`: same slim shape (usage only), counted
+ *     as non-turn spend.
+ *   - `"usage"`, `"branch_summary"`, `"compaction"`: `{ type, timestamp, usage,
+ *     provider, model }` only (summary text is dropped), counted as non-turn spend.
  *
  * All other entry types (user messages, tool calls, etc.) are discarded.
  * This bounds peak memory and guarantees that no transcript text reaches later stages.
@@ -178,7 +182,8 @@ function slimEntries(entries: RawSessionEntry[]): RawSessionEntry[] {
         message !== null &&
         typeof message === "object" &&
         !Array.isArray(message) &&
-        (message as Record<string, unknown>).role === "assistant"
+        ((message as Record<string, unknown>).role === "assistant" ||
+          (message as Record<string, unknown>).role === "toolResult")
       ) {
         const msg = message as Record<string, unknown>;
         result.push({
@@ -187,6 +192,17 @@ function slimEntries(entries: RawSessionEntry[]): RawSessionEntry[] {
           message: { role: msg.role, usage: msg.usage, provider: msg.provider, model: msg.model },
         } as RawSessionEntry);
       }
+      continue;
+    }
+    if (entry.type === "usage" || entry.type === "branch_summary" || entry.type === "compaction") {
+      // Non-turn spend (cache_warm, summaries): keep only usage + attribution.
+      result.push({
+        type: entry.type,
+        timestamp: entry.timestamp,
+        usage: entry.usage,
+        provider: entry.provider,
+        model: entry.model,
+      } as RawSessionEntry);
     }
   }
   return result;

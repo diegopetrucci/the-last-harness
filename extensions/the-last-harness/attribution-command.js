@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/attribution-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";

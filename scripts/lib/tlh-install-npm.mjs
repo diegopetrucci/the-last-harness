@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-npm.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";

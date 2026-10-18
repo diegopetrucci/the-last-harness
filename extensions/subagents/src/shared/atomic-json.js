@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/atomic-json.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 const DEFAULT_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200, 500, 1000, 2000, 4000];

@@ -25,6 +25,7 @@ import {
   type ProjectAgentSnapshotExpected,
   type ProjectAgentSnapshotManifest,
 } from "../../agents/project-agent-snapshot.ts";
+import { isExtensionToolPath } from "../../agents/identity.ts";
 import { resolveProjectAgentSessionId } from "../../shared/session-identity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
@@ -147,6 +148,12 @@ export function projectAgentEntryIdentityError(
   }
   if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
     return `project agent '${runtimeName}' does not carry an explicit usable tools list`;
+  }
+  const extensionTool = agent.tools.find(
+    (tool) => typeof tool === "string" && isExtensionToolPath(tool.trim()),
+  );
+  if (extensionTool !== undefined) {
+    return `project agent '${runtimeName}' carries prohibited extension-path tool '${extensionTool}'`;
   }
   if (agent.extensions !== undefined || agent.subagentOnlyExtensions !== undefined) {
     return `project agent '${runtimeName}' carries a prohibited extension surface`;

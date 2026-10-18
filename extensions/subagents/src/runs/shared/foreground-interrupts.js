@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/foreground-interrupts.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function registerForegroundInterrupt(control, key, interrupt) {
     if (!control)
         return;

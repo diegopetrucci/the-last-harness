@@ -1,3 +1,4 @@
+// Generated from extensions/notify/index.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

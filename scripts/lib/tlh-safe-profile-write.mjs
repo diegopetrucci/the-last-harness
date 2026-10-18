@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-safe-profile-write.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync, } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { assertProfilePathWithinAgent, ensureSafeProfileDir, realpathForCompare, validateProfileRelativePath, isSymlink, } from "./tlh-install-paths.mjs";

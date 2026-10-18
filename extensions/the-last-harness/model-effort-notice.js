@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-effort-notice.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord } from "./common.js";
 import { getTlhGlobalSettings } from "./primary-agent-runtime-settings.js";
 import { backfillMissingBaselines, computeModelEffortDrift, hasMeaningfulSubagentOverride, isKnownProvider, isMeaningfulPrimaryOverride, readReconcileState, } from "./model-effort-reconcile.js";

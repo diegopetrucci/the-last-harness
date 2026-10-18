@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/primary-agent-runtime-delegation.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord } from "./common.js";
 import { applyProviderAwareSubagentModels } from "./model-defaults.js";
 import { collectSubagentTargets, isEmbeddedSubagentTarget, } from "../the-last-harness-subagent-safety.mjs";

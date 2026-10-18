@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-limit-report.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { formatHomePath } from "./common.js";
@@ -98,7 +99,8 @@ function slimEntries(entries) {
             if (message !== null &&
                 typeof message === "object" &&
                 !Array.isArray(message) &&
-                message.role === "assistant") {
+                (message.role === "assistant" ||
+                    message.role === "toolResult")) {
                 const msg = message;
                 result.push({
                     type: entry.type,
@@ -106,6 +108,16 @@ function slimEntries(entries) {
                     message: { role: msg.role, usage: msg.usage, provider: msg.provider, model: msg.model },
                 });
             }
+            continue;
+        }
+        if (entry.type === "usage" || entry.type === "branch_summary" || entry.type === "compaction") {
+            result.push({
+                type: entry.type,
+                timestamp: entry.timestamp,
+                usage: entry.usage,
+                provider: entry.provider,
+                model: entry.model,
+            });
         }
     }
     return result;

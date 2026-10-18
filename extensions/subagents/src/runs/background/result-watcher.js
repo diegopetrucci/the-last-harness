@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/result-watcher.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
@@ -294,6 +295,8 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             try {
                 fsApi.mkdirSync(resultsDir, { recursive: true });
                 startResultWatcher();
+                if (state.watcher)
+                    primeExistingResults();
             }
             catch (error) {
                 if (shouldFallBackToPolling(error)) {

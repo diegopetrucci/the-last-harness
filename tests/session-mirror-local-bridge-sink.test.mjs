@@ -15,11 +15,12 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES,
-  SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES,
-  createSessionMirrorObserverSocketSink,
-} = await jiti.import("../extensions/the-last-harness/session-mirror/local-bridge-sink.ts");
+const { createSessionMirrorObserverSocketSink } = await jiti.import(
+  "../extensions/the-last-harness/session-mirror/local-bridge-sink.ts",
+);
+const { MAX_CONTROL_BYTES, MAX_FRAME_BYTES } = await jiti.import(
+  "../extensions/the-last-harness/session-mirror/local-bridge-boundary.ts",
+);
 
 const PROTOCOL = { family: "local-bridge", major: 0, minor: 0 };
 const TOKEN = "b".repeat(32);
@@ -304,10 +305,7 @@ test("rejects malformed, unknown, closed, and oversized bridge result frames", a
     ],
     ["unknown result code", encode(Buffer.from('{"kind":"result","code":"unknown"}'))],
     ["closed result", result("closed")],
-    [
-      "oversized control frame",
-      encode(Buffer.alloc(SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES + 1)),
-    ],
+    ["oversized control frame", encode(Buffer.alloc(MAX_CONTROL_BYTES + 1))],
   ];
   for (const [name, response] of cases) {
     await t.test(name, async (nested) => {
@@ -337,17 +335,14 @@ test("accepts an exact 256 KiB body and rejects an oversized body before connect
     );
   });
   const prefix = Buffer.byteLength(JSON.stringify(envelope("")), "utf8");
-  const exact = envelope("x".repeat(SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES - prefix));
-  assert.equal(
-    Buffer.byteLength(JSON.stringify(exact), "utf8"),
-    SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES,
-  );
+  const exact = envelope("x".repeat(MAX_FRAME_BYTES - prefix));
+  assert.equal(Buffer.byteLength(JSON.stringify(exact), "utf8"), MAX_FRAME_BYTES);
   await sink(exact);
-  assert.equal(bodies[1].length, SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES);
+  assert.equal(bodies[1].length, MAX_FRAME_BYTES);
 
   await assert.rejects(
     createSessionMirrorObserverSocketSink({ bridgeDirectory: fixture.bridge })(
-      envelope("x".repeat(SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES - prefix + 1)),
+      envelope("x".repeat(MAX_FRAME_BYTES - prefix + 1)),
     ),
   );
   assert.equal(bodies.length, 2, "oversized data must not reach the bridge");

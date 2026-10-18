@@ -5,6 +5,7 @@
  * fixtures. Each suite owns its mock process, temporary directory, and hooks.
  */
 
+import * as executorModImport from "../../src/runs/foreground/subagent-executor.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -12,7 +13,7 @@ import { ASYNC_DIR, RESULTS_DIR, type ArtifactPaths } from "../../src/shared/typ
 import type { executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import type { runSync } from "../../src/runs/foreground/execution.ts";
 import type { MockPi } from "./helpers.ts";
-import { makeAgent, makeMinimalCtx, tryImport } from "./helpers.ts";
+import { makeAgent, makeMinimalCtx } from "./helpers.ts";
 import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
 import {
   startedMockPiPids,
@@ -58,7 +59,7 @@ export interface NativeExecutor {
 }
 
 interface ExecutorModule {
-  createSubagentExecutor?: (...args: unknown[]) => NativeExecutor;
+  createSubagentExecutor: (...args: unknown[]) => NativeExecutor;
 }
 
 export interface NativeExecutorOptions {
@@ -85,9 +86,8 @@ export interface NativeExecutorState {
   resultFileCoalescer: { schedule: () => boolean; clear: () => void };
 }
 
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
-export const available = !!executorMod?.createSubagentExecutor;
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
+const executorMod = executorModImport as ExecutorModule;
+const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 export function normalizePathForComparison(targetPath: string): string {
   try {
@@ -225,7 +225,7 @@ export function makeNativeResultLifecycleExecutor(
       clear: () => {},
     },
   };
-  const executor = createSubagentExecutor!({
+  const executor = createSubagentExecutor({
     pi: {
       events,
       getSessionName: () => "orchestrator",

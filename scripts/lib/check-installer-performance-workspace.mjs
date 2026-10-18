@@ -1,3 +1,4 @@
+// Generated from scripts/lib/check-installer-performance-workspace.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";

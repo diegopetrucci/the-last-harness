@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   aggregateCoverage,
   analyzeSubagentSessions,
-  extractSubagentCorrelations,
   extractSubagentCorrelationsWithStatus,
   readSessionHeader,
   recordCorrelationEvidenceFailures,
@@ -431,10 +430,10 @@ test("readSessionHeader: rejects run-history.jsonl via symlink", async (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 2: extractSubagentCorrelations — subagent-only, child resolution
+// Fix 2: extractSubagentCorrelationsWithStatus — subagent-only, child resolution
 // ---------------------------------------------------------------------------
 
-test("extractSubagentCorrelations: resolves parent -> child correlation from subagent tool result", async (t) => {
+test("extractSubagentCorrelationsWithStatus: resolves parent -> child correlation from subagent tool result", async (t) => {
   const childSessionFile =
     "/home/user/.the-last-harness/agent/sessions/proj/parent-sess/run-1/run-1/session.jsonl";
 
@@ -455,7 +454,7 @@ test("extractSubagentCorrelations: resolves parent -> child correlation from sub
   assert.equal(scan.toolPairs.length, 1);
   assert.equal(scan.toolPairs[0]?.observedLatencyMs, 10000);
 
-  const correlations = await extractSubagentCorrelations(scan);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan)).correlations;
   assert.equal(correlations.length, 1);
 
   const c = correlations[0];
@@ -466,7 +465,7 @@ test("extractSubagentCorrelations: resolves parent -> child correlation from sub
   assert.equal(c?.childSessionFile, childSessionFile);
 });
 
-test("extractSubagentCorrelations: only extracts from subagent tool calls, not other tools", async (t) => {
+test("extractSubagentCorrelationsWithStatus: only extracts from subagent tool calls, not other tools", async (t) => {
   const filePath = writeFixture(t, [
     sessionHeader("parent-filter"),
     // bash tool with subagent-like details — must NOT produce a correlation
@@ -490,12 +489,12 @@ test("extractSubagentCorrelations: only extracts from subagent tool calls, not o
   ]);
 
   const scan = await scanSessionFile(filePath);
-  const correlations = await extractSubagentCorrelations(scan);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan)).correlations;
   assert.equal(correlations.length, 1, "must only produce correlation from subagent tool");
   assert.equal(correlations[0]?.runId, "run-real");
 });
 
-test("extractSubagentCorrelations: emits one correlation per child sessionFile in results array", async (t) => {
+test("extractSubagentCorrelationsWithStatus: emits one correlation per child sessionFile in results array", async (t) => {
   const childA = "/sessions/child-a/session.jsonl";
   const childB = "/sessions/child-b/session.jsonl";
 
@@ -516,12 +515,12 @@ test("extractSubagentCorrelations: emits one correlation per child sessionFile i
   ]);
 
   const scan = await scanSessionFile(filePath);
-  const correlations = await extractSubagentCorrelations(scan);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan)).correlations;
   assert.equal(correlations.length, 2);
   assert.deepEqual(correlations.map((c) => c.childSessionFile).sort(), [childA, childB].sort());
 });
 
-test("extractSubagentCorrelations: ignores tool-call IDs added after the scan snapshot", async (t) => {
+test("extractSubagentCorrelationsWithStatus: ignores tool-call IDs added after the scan snapshot", async (t) => {
   const originalChild = "/sessions/original/session.jsonl";
   const addedChild = "/sessions/added/session.jsonl";
   const originalLines = [
@@ -562,13 +561,13 @@ test("extractSubagentCorrelations: ignores tool-call IDs added after the scan sn
     "utf8",
   );
 
-  const correlations = await extractSubagentCorrelations(scan);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan)).correlations;
   assert.equal(correlations.length, 1, "newer tool-call IDs must not be correlated");
   assert.equal(correlations[0]?.toolCallId, "tc-original");
   assert.equal(correlations[0]?.runId, "run-original");
 });
 
-test("extractSubagentCorrelations: rejects correlation evidence after a digest mismatch", async (t) => {
+test("extractSubagentCorrelationsWithStatus: rejects correlation evidence after a digest mismatch", async (t) => {
   const originalChild = "/sessions/original-generation/session.jsonl";
   const replacementChild = "/sessions/replaced-generation/session.jsonl";
   const originalLines = [
@@ -629,7 +628,7 @@ test("extractSubagentCorrelations: rejects correlation evidence after a digest m
   );
 });
 
-test("extractSubagentCorrelations: reports digest and generation mismatches", async (t) => {
+test("extractSubagentCorrelationsWithStatus: reports digest and generation mismatches", async (t) => {
   const lines = [
     sessionHeader("evidence-generation-mismatch"),
     assistantMessageLine("2026-01-01T00:00:00.000Z", [
@@ -722,7 +721,7 @@ test("scanSessionFile: repeated correlation evidence overflows per-ID bounds", a
   assert.equal(result.correlationEvidenceGeneration, 0);
 });
 
-test("extractSubagentCorrelations: reports bounded rescan overflow", async (t) => {
+test("extractSubagentCorrelationsWithStatus: reports bounded rescan overflow", async (t) => {
   const initialLines = [
     sessionHeader("evidence-rescan-overflow"),
     assistantMessageLine("2026-01-01T00:00:00.000Z", [
@@ -762,7 +761,7 @@ test("extractSubagentCorrelations: reports bounded rescan overflow", async (t) =
   assert.equal(coverage.correlationEvidenceFailures.rescanCaptureOverflow, 1);
 });
 
-test("extractSubagentCorrelations: skips the correlation rescan when no subagent call was paired", async (t) => {
+test("extractSubagentCorrelationsWithStatus: skips the correlation rescan when no subagent call was paired", async (t) => {
   const filePath = writeFixture(t, [
     sessionHeader("no-subagent-snapshot"),
     assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId: "tc-bash", toolName: "bash" }]),
@@ -784,11 +783,11 @@ test("extractSubagentCorrelations: skips the correlation rescan when no subagent
     },
   });
 
-  assert.deepEqual(await extractSubagentCorrelations(scan), []);
+  assert.deepEqual((await extractSubagentCorrelationsWithStatus(scan)).correlations, []);
   assert.equal(filePathRead, false, "empty paired-ID set must not reread the file");
 });
 
-test("extractSubagentCorrelations: returns empty array when no session header", async (t) => {
+test("extractSubagentCorrelationsWithStatus: returns empty array when no session header", async (t) => {
   // File with no session header entry
   const filePath = writeFixture(t, [
     assistantMessageLine("2026-01-01T00:00:00.000Z", [{ toolCallId: "tc-x", toolName: "bash" }]),
@@ -797,10 +796,10 @@ test("extractSubagentCorrelations: returns empty array when no session header", 
 
   const scan = await scanSessionFile(filePath);
   assert.equal(scan.sessionHeader, null);
-  assert.deepEqual(await extractSubagentCorrelations(scan), []);
+  assert.deepEqual((await extractSubagentCorrelationsWithStatus(scan)).correlations, []);
 });
 
-test("extractSubagentCorrelations: skips results missing sessionFile", async (t) => {
+test("extractSubagentCorrelationsWithStatus: skips results missing sessionFile", async (t) => {
   const filePath = writeFixture(t, [
     sessionHeader("sess-partial"),
     assistantMessageLine("2026-01-01T00:00:00.000Z", [
@@ -817,11 +816,11 @@ test("extractSubagentCorrelations: skips results missing sessionFile", async (t)
   ]);
 
   const scan = await scanSessionFile(filePath);
-  const correlations = await extractSubagentCorrelations(scan);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan)).correlations;
   assert.equal(correlations.length, 0);
 });
 
-test("extractSubagentCorrelations: marks child as resolved when child file is readable and under sessionsDir", async (t) => {
+test("extractSubagentCorrelationsWithStatus: marks child as resolved when child file is readable and under sessionsDir", async (t) => {
   const dir = makeTempDir("session-analysis-child-resolve-", t);
 
   // Write child session file
@@ -847,7 +846,8 @@ test("extractSubagentCorrelations: marks child as resolved when child file is re
   ]);
 
   const scan = await scanSessionFile(parentPath);
-  const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan, sessionsDir))
+    .correlations;
   assert.equal(correlations.length, 1);
   const c = correlations[0];
   assert.equal(c?.childResolved, true, "child must be marked resolved");
@@ -855,7 +855,7 @@ test("extractSubagentCorrelations: marks child as resolved when child file is re
   assert.ok(typeof c?.childStartedAt === "string");
 });
 
-test("extractSubagentCorrelations: marks child as unresolved when file does not exist", async (t) => {
+test("extractSubagentCorrelationsWithStatus: marks child as unresolved when file does not exist", async (t) => {
   const dir = makeTempDir("session-analysis-child-missing-", t);
   const sessionsDir = join(dir, "sessions");
   const missingChild = join(sessionsDir, "ghost", "session.jsonl");
@@ -874,13 +874,14 @@ test("extractSubagentCorrelations: marks child as unresolved when file does not 
   ]);
 
   const scan = await scanSessionFile(filePath);
-  const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan, sessionsDir))
+    .correlations;
   assert.equal(correlations.length, 1);
   assert.equal(correlations[0]?.childResolved, false);
   assert.equal(correlations[0]?.childSessionId, undefined);
 });
 
-test("extractSubagentCorrelations: does not resolve child outside sessionsDir (path safety)", async (t) => {
+test("extractSubagentCorrelationsWithStatus: does not resolve child outside sessionsDir (path safety)", async (t) => {
   const dir = makeTempDir("session-analysis-path-safety-", t);
   const sessionsDir = join(dir, "sessions");
 
@@ -904,7 +905,8 @@ test("extractSubagentCorrelations: does not resolve child outside sessionsDir (p
   ]);
 
   const scan = await scanSessionFile(filePath);
-  const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan, sessionsDir))
+    .correlations;
   assert.equal(correlations.length, 1);
   // Correlation is emitted (visible gap) but child is NOT resolved (outside boundary).
   assert.equal(
@@ -1138,7 +1140,7 @@ test("scanSessionFile: accepts fixture-style timestamps at entry level (not mess
 // Finding 3: path-boundary hardening — traversal and symlink
 // ---------------------------------------------------------------------------
 
-test("extractSubagentCorrelations: refuses path traversal escaping sessionsDir without throwing", async (t) => {
+test("extractSubagentCorrelationsWithStatus: refuses path traversal escaping sessionsDir without throwing", async (t) => {
   const { mkdirSync } = await import("node:fs");
   const dir = makeTempDir("session-analysis-traversal-", t);
 
@@ -1173,13 +1175,14 @@ test("extractSubagentCorrelations: refuses path traversal escaping sessionsDir w
 
   const scan = await scanSessionFile(filePath);
   // Must not throw; traversal path must be refused (childResolved = false).
-  const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan, sessionsDir))
+    .correlations;
   assert.equal(correlations.length, 1);
   assert.equal(correlations[0]?.childResolved, false, "traversal path must not be resolved");
   assert.equal(correlations[0]?.childSessionId, undefined);
 });
 
-test("extractSubagentCorrelations: refuses symlink pointing outside sessionsDir without throwing", async (t) => {
+test("extractSubagentCorrelationsWithStatus: refuses symlink pointing outside sessionsDir without throwing", async (t) => {
   const { mkdirSync } = await import("node:fs");
   const dir = makeTempDir("session-analysis-symlink-escape-", t);
 
@@ -1211,7 +1214,8 @@ test("extractSubagentCorrelations: refuses symlink pointing outside sessionsDir 
 
   const scan = await scanSessionFile(filePath);
   // Must not throw; symlink escape must be refused (childResolved = false).
-  const correlations = await extractSubagentCorrelations(scan, sessionsDir);
+  const correlations = (await extractSubagentCorrelationsWithStatus(scan, sessionsDir))
+    .correlations;
   assert.equal(correlations.length, 1);
   assert.equal(
     correlations[0]?.childResolved,

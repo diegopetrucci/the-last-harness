@@ -617,6 +617,11 @@ async function runSingleAttempt(
       ownsProcessGroup && typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : undefined;
     const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
     let processClosed = false;
+    let abortKillTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearAbortKillTimer = () => {
+      if (abortKillTimer) clearTimeout(abortKillTimer);
+      abortKillTimer = undefined;
+    };
     let settled = false;
     let pendingSupervisorPause: SingleResult["pause"] | undefined;
     let assistantError: string | undefined;
@@ -1235,6 +1240,7 @@ async function runSingleAttempt(
       // observe a stale false during the artifact flush window. Freeze accounting before
       // that async artifact/cleanup window so teardown time is never charged as execution.
       processClosed = true;
+      clearAbortKillTimer();
       shared.runtimeTracker.freeze(Date.now());
       void (async () => {
         // jsonlWriter.close() marks itself closed and drops its stream synchronously before
@@ -1364,6 +1370,7 @@ async function runSingleAttempt(
       // paths cannot observe a stale false and reinterpret a real process error. Freeze
       // before the async artifact flush, which is not child execution time.
       processClosed = true;
+      clearAbortKillTimer();
       shared.runtimeTracker.freeze(Date.now());
       void (async () => {
         await jsonlWriter.close().catch(() => {
@@ -1387,7 +1394,15 @@ async function runSingleAttempt(
         clearHealthForProgress(shared.healthState, progress);
         shared.runtimeTracker.freeze(Date.now());
         proc.kill("SIGTERM");
-        setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
+        // proc.killed only means a signal was delivered, not that the child exited,
+        // so escalate based on the observed close instead.
+        abortKillTimer = setTimeout(() => {
+          abortKillTimer = undefined;
+          if (!processClosed && proc.exitCode === null && proc.signalCode === null) {
+            proc.kill("SIGKILL");
+          }
+        }, 3000);
+        abortKillTimer.unref?.();
       };
       if (options.signal.aborted) kill();
       else {

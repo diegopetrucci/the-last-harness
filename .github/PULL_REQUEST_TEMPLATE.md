@@ -39,7 +39,7 @@ _Paste the relevant output or a summary here:_
   - settings merges are conservative: append missing packages, respect opt-outs, preserve existing isolated-user values, back up before writes
   - does not clobber unmanaged wrapper files without an explicit `--force`
 - [ ] Relevant tests or smoke checks pass
-- [ ] Docs and `CHANGELOG.md` updated where a user-visible change warrants it
+- [ ] Docs updated where a user-visible change warrants it, and `CHANGELOG.md` has a terse one-line entry for this PR (contributor-only changes under `### Internal`)
 - [ ] Diff contains no secrets, local paths, or unintended generated files
 
 ---

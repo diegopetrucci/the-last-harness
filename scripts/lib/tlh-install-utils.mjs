@@ -1,3 +1,4 @@
+// Generated from scripts/lib/tlh-install-utils.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

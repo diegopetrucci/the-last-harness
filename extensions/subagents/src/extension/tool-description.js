@@ -1,9 +1,10 @@
+// Generated from extensions/subagents/src/extension/tool-description.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the TLH minimal contract. Use exactly one mode per call.
 
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
 • SINGLE: { agent, task? }.
-• PARALLEL: { tasks:[{ agent, task, cwd?, count?, output?, outputMode?, model? }, ...] }.
+• PARALLEL: { tasks:[{ agent, task, cwd?, output?, outputMode?, model? }, ...] }.
 • Optional execution fields: async:true, cwd, artifacts.
 • artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 

@@ -616,10 +616,7 @@ describe("async interrupt action", () => {
           } else if (route === "async" && persistedState === "running") {
             assert.equal(result.isError, undefined);
             assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
-            assert.deepEqual(kills, [
-              { pid: 12345, signal: 0 },
-              { pid: 12345, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" },
-            ]);
+            assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
           } else {
             assert.equal(result.isError, true, `${route}/${persistedState}`);
             assert.match(
@@ -693,25 +690,37 @@ describe("async interrupt action", () => {
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
       assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
-      assert.deepEqual(kills, [
-        { pid: 12345, signal: 0 },
-        { pid: 12345, signal: process.platform === "win32" ? "SIGBREAK" : "SIGUSR2" },
-      ]);
+      assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
     } finally {
       cleanup(runId, asyncDir);
     }
   });
 
-  it("reports success and writes the portable request when the signal is unavailable", async () => {
+  it("does not signal a recycled persisted pid during a direct interrupt", async () => {
     const state = createState();
-    const runId = `interrupt-enosys-${Date.now().toString(36)}`;
-    const asyncDir = createRunningAsync(state, runId);
+    const runId = `interrupt-recycled-pid-${Date.now().toString(36)}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const persistedAt = Date.now() - 60 * 60 * 1000;
+    const sessionFile = path.join(asyncDir, "worker.jsonl");
+    fs.mkdirSync(asyncDir, { recursive: true });
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    writeJson(path.join(asyncDir, "status.json"), {
+      runId,
+      mode: "single",
+      state: "running",
+      pid: 12345,
+      sessionId: "session",
+      cwd: os.tmpdir(),
+      startedAt: persistedAt,
+      lastUpdate: persistedAt,
+      sessionFile,
+      steps: [{ agent: "worker", status: "running", startedAt: persistedAt, sessionFile }],
+    });
+    const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
     try {
-      const result = await executorWithKill(state, (_pid, signal) => {
-        if (signal === 0) return true;
-        const error = new Error("kill ENOSYS") as NodeJS.ErrnoException;
-        error.code = "ENOSYS";
-        throw error;
+      const result = await executorWithKill(state, (pid, signal) => {
+        kills.push({ pid, signal });
+        return true;
       }).execute(
         "interrupt",
         { action: "interrupt", id: runId },
@@ -723,6 +732,7 @@ describe("async interrupt action", () => {
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Interrupt requested for async run ${runId}`));
       assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), true);
+      assert.deepEqual(kills, [{ pid: 12345, signal: 0 }]);
     } finally {
       cleanup(runId, asyncDir);
     }

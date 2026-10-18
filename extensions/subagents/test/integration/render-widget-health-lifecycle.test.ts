@@ -1230,19 +1230,7 @@ describe("subagent async widget rendering", () => {
   });
 
   it("job-level health warning survives fitWidgetLineBudget truncation when step rows are cut", () => {
-    // tlhmf-ve09 (truncation safety): reviewer probe – a 15-step job rendered ten rows
-    // ending in the expand hint with NO health warning. The old unsound dedupe suppressed
-    // the job-level warning when a running step already carried a health activityState,
-    // but step rows are cut AFTER jobHealthWarningLines runs. The fix: always emit the
-    // job-level warning under the header (the only truncation-safe region).
-    //
-    // Shape: parallel job, 15 steps. The FIRST 13 steps carry currentTool (so their rows
-    // render without an inline health signal). Steps 13-14 carry needs_attention without
-    // currentTool (the steps that would trigger the old dedupe). At 30 rows,
-    // collapsedWidgetLineBudget(30)=10; with 2-line header + 15 step rows + hint = 18+
-    // lines the budget forces truncation, cutting steps 7-14 (the health-carrying ones).
-    // Without the job-level warning, no health signal survives. With the fix, the job-level
-    // warning at position 2 (header-region) is guaranteed to survive.
+    // Keep the job-level health warning under the header so it survives step truncation.
     const now = 200_000;
     const lastActivityAt = now - 180_000;
     resetWidgetLayout();

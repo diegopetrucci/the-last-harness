@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/types.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { resolveTempRootDir } from "../../../shared/subagent-temp-root.js";
 export function normalizeSubagentRunMode(value) {

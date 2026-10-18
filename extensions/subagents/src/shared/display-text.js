@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/display-text.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const BINARY_CONTENT_PLACEHOLDER = "[binary content]";
 const BINARY_DENSITY_THRESHOLD = 0.5;
 function isUnsafeControlCode(codePoint) {

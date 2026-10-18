@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/extension/index.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
