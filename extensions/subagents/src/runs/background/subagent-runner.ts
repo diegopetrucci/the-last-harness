@@ -72,6 +72,7 @@ import {
   type StepResult,
 } from "./cancellation-projection.ts";
 import {
+  buildPausedRunnerTelemetry,
   persistContinuationGateRejection,
   persistRunnerTerminalRun,
 } from "./terminal-persistence.ts";
@@ -1454,36 +1455,17 @@ async function runSubagentWithInput(
           const transition = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(statusPayload),
-            mutate: (status) => ({
-              ...status,
-              state: "paused",
-              pid: undefined,
-              pause: {
-                ...statusOwner.supervisorPauseRequest!.pause,
-                pausedAt: runEndedAt,
-                ownerPid: undefined,
-              },
-              activityState: undefined,
-              currentTool: undefined,
-              currentToolStartedAt: undefined,
-              currentPath: undefined,
-              endedAt: runEndedAt,
-              lastUpdate: runEndedAt,
-              sessionFile: pausedSessionFile ?? status.sessionFile,
-              totalCost: finalTotalCost,
-              shareUrl,
-              gistUrl,
-              shareError,
-              steps: status.steps?.map((step, index) =>
+            mutate: (status) => {
+              const pausedSteps = status.steps?.map((step, index) =>
                 step.status === "pausing" || step.status === "paused"
                   ? {
                       ...step,
                       ...(statusOwner.refreshTrackedSessionFile(index)
                         ? { sessionFile: statusOwner.refreshTrackedSessionFile(index) }
                         : {}),
-                      status: "paused",
+                      status: "paused" as const,
                       exitCode: 0,
-                      terminationReason: "paused",
+                      terminationReason: "paused" as const,
                       exitSignal: undefined,
                       activityState: undefined,
                       endedAt: step.endedAt ?? runEndedAt,
@@ -1493,8 +1475,44 @@ async function runSubagentWithInput(
                       pause: statusOwner.pauseMetadataForIndex(index, runEndedAt),
                     }
                   : step,
-              ),
-            }),
+              );
+              const pausedStatus = {
+                ...status,
+                state: "paused" as const,
+                pid: undefined,
+                pause: {
+                  ...statusOwner.supervisorPauseRequest!.pause,
+                  pausedAt: runEndedAt,
+                  ownerPid: undefined,
+                },
+                activityState: undefined,
+                currentTool: undefined,
+                currentToolStartedAt: undefined,
+                currentPath: undefined,
+                endedAt: runEndedAt,
+                lastUpdate: runEndedAt,
+                sessionFile: pausedSessionFile ?? status.sessionFile,
+                totalCost: finalTotalCost,
+                shareUrl,
+                gistUrl,
+                shareError,
+                steps: pausedSteps,
+              };
+              const pausedTelemetry = buildPausedRunnerTelemetry({
+                config,
+                plan,
+                results,
+                controlConfig,
+                overallStartTime,
+                endedAt: runEndedAt,
+                // activeRuntimeMs is not tracked on AsyncStatus in this branch.
+                statusSteps: pausedSteps ?? [],
+              });
+              return {
+                ...pausedStatus,
+                ...(pausedTelemetry ? { telemetry: pausedTelemetry } : { telemetry: undefined }),
+              };
+            },
           });
           Object.assign(statusPayload, transition.status);
         } catch (error) {

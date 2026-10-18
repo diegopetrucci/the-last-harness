@@ -634,9 +634,11 @@ export function createAsyncJobTracker(
       const warnings: string[] = [formatRestoredActiveJobsCount(runs.length)];
 
       // Deduplicate unsafe (non-regular) status artifacts and add a safe count-only warning.
+      const unsafeEntries = new Set<string>();
       let skippedUnsafeCount = 0;
       for (const issue of unsafeIssues) {
         const dedupeKey = `unsafe-status\0${issue.entry}`;
+        unsafeEntries.add(issue.entry);
         if (restoreWarningDedupe.has(dedupeKey)) continue;
         restoreWarningDedupe.add(dedupeKey);
         skippedUnsafeCount += 1;
@@ -646,7 +648,11 @@ export function createAsyncJobTracker(
           `skipped ${skippedUnsafeCount} unsafe status artifact${skippedUnsafeCount === 1 ? "" : "s"}`,
         );
 
-      if (issues.length > 0) warnings.push("left unreadable statuses in place");
+      // Exclude non-regular entries that are already counted as unsafe: those
+      // go through the unsafe deduplication above and must not generate a
+      // separate "left unreadable statuses in place" warning on each scan.
+      const nonUnsafeIssues = issues.filter((issue) => !unsafeEntries.has(issue.entry));
+      if (nonUnsafeIssues.length > 0) warnings.push("left unreadable statuses in place");
       if (warnings.length > 1)
         warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);
       for (const run of runs) {

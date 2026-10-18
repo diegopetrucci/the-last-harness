@@ -524,10 +524,10 @@ function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = 
     } catch (error) {
       if (!isAsyncStatusReadError(error)) throw error;
       // Non-regular artifacts (FIFO, symlink, directory) are routed to the
-      // unsafe callback; other unreadable artifacts go to the unreadable callback.
+      // unsafe callback AND to the unreadable callback so the status path is
+      // visible in the unreadable-status report (P2-a: no suppression).
       if (error.failure === "non_regular") {
         options.onUnsafe?.(Object.freeze({ entry }));
-        return;
       }
       reportUnreadable(entry, error);
     }

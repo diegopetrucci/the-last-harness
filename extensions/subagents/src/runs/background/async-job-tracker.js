@@ -568,9 +568,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         try {
             const warnings = [formatRestoredActiveJobsCount(runs.length)];
+            const unsafeEntries = new Set();
             let skippedUnsafeCount = 0;
             for (const issue of unsafeIssues) {
                 const dedupeKey = `unsafe-status\0${issue.entry}`;
+                unsafeEntries.add(issue.entry);
                 if (restoreWarningDedupe.has(dedupeKey))
                     continue;
                 restoreWarningDedupe.add(dedupeKey);
@@ -578,7 +580,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             }
             if (skippedUnsafeCount > 0)
                 warnings.push(`skipped ${skippedUnsafeCount} unsafe status artifact${skippedUnsafeCount === 1 ? "" : "s"}`);
-            if (issues.length > 0)
+            const nonUnsafeIssues = issues.filter((issue) => !unsafeEntries.has(issue.entry));
+            if (nonUnsafeIssues.length > 0)
                 warnings.push("left unreadable statuses in place");
             if (warnings.length > 1)
                 warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);

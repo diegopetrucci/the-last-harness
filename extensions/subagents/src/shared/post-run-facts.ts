@@ -10,6 +10,7 @@ import type {
 } from "./types.ts";
 import type { RequestedToolCalls } from "./session-tokens.ts";
 import { MAX_ATTRIBUTION_STATUS_BYTES, boundSubagentAttemptFacts } from "./terminal-result.ts";
+import { readRawAttributionStatus } from "./utils.ts";
 import {
   checkPidLiveness as defaultCheckPidLiveness,
   type PidLiveness,
@@ -179,22 +180,10 @@ interface AttributionIntervalOptions {
 }
 
 function readBoundedStatus(statusPath: string): PersistedAttributionStatus | null | undefined {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(statusPath);
-  } catch {
-    // A directory without a status file is not a tracked run. Treat a file
-    // removed between enumeration and read the same way.
-    return null;
-  }
-  if (!stat.isFile()) return null;
-  if (stat.size > MAX_ATTRIBUTION_STATUS_BYTES) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
-    return isRecord(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+  // Route through the safe reader: O_NONBLOCK|O_NOFOLLOW open, fstat, bounded
+  // fd reads. Returns the raw JSON object (no schema validation) to match the
+  // loose PersistedAttributionStatus interface used by attribution overlap scans.
+  return readRawAttributionStatus(statusPath) as PersistedAttributionStatus | null | undefined;
 }
 
 interface AttributionStatusFile {

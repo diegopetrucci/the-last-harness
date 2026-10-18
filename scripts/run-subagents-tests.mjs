@@ -25,8 +25,9 @@ export const suiteConfigs = {
     // Stage 1 (origin/main 0c8f4faa) measured pass count: 508/508 (leak-fix regression test added).
     // Stage 2 (origin/main 5bafc8d4) measured pass count: 514/514.
     // Stage 4 (origin/main 850903b4) measured pass count: 521/521.
+    // Stage 4B review fix (P2-c child-process-hardening tests): 525/525.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 521,
+    minimumTests: 525,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),

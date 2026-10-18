@@ -33,7 +33,7 @@ import { createBackgroundRunControlOwner } from "./run-control-owner.js";
 import { terminalResultForStatusStep } from "../../shared/terminal-result.js";
 import { appendDiagnosticJsonl, appendJsonl, findLatestSessionFile } from "./runner-event-log.js";
 import { ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, applyCancelledStatusStepProjection, applyCancelledStepProjection, isPausedStepStatus, normalizeFailedSupervisorPauseResults, preservedCancellationStepStatus, } from "./cancellation-projection.js";
-import { persistContinuationGateRejection, persistRunnerTerminalRun, } from "./terminal-persistence.js";
+import { buildPausedRunnerTelemetry, persistContinuationGateRejection, persistRunnerTerminalRun, } from "./terminal-persistence.js";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 function tokenUsageFromAttempts(attempts) {
     if (!attempts || attempts.length === 0)
@@ -1176,27 +1176,8 @@ async function runSubagentWithInput(config, plan) {
                     const transition = transitionLifecycleStatus({
                         asyncDir,
                         expectedGeneration: lifecycleGeneration(statusPayload),
-                        mutate: (status) => ({
-                            ...status,
-                            state: "paused",
-                            pid: undefined,
-                            pause: {
-                                ...statusOwner.supervisorPauseRequest.pause,
-                                pausedAt: runEndedAt,
-                                ownerPid: undefined,
-                            },
-                            activityState: undefined,
-                            currentTool: undefined,
-                            currentToolStartedAt: undefined,
-                            currentPath: undefined,
-                            endedAt: runEndedAt,
-                            lastUpdate: runEndedAt,
-                            sessionFile: pausedSessionFile ?? status.sessionFile,
-                            totalCost: finalTotalCost,
-                            shareUrl,
-                            gistUrl,
-                            shareError,
-                            steps: status.steps?.map((step, index) => step.status === "pausing" || step.status === "paused"
+                        mutate: (status) => {
+                            const pausedSteps = status.steps?.map((step, index) => step.status === "pausing" || step.status === "paused"
                                 ? {
                                     ...step,
                                     ...(statusOwner.refreshTrackedSessionFile(index)
@@ -1213,8 +1194,43 @@ async function runSubagentWithInput(config, plan) {
                                         : step.durationMs,
                                     pause: statusOwner.pauseMetadataForIndex(index, runEndedAt),
                                 }
-                                : step),
-                        }),
+                                : step);
+                            const pausedStatus = {
+                                ...status,
+                                state: "paused",
+                                pid: undefined,
+                                pause: {
+                                    ...statusOwner.supervisorPauseRequest.pause,
+                                    pausedAt: runEndedAt,
+                                    ownerPid: undefined,
+                                },
+                                activityState: undefined,
+                                currentTool: undefined,
+                                currentToolStartedAt: undefined,
+                                currentPath: undefined,
+                                endedAt: runEndedAt,
+                                lastUpdate: runEndedAt,
+                                sessionFile: pausedSessionFile ?? status.sessionFile,
+                                totalCost: finalTotalCost,
+                                shareUrl,
+                                gistUrl,
+                                shareError,
+                                steps: pausedSteps,
+                            };
+                            const pausedTelemetry = buildPausedRunnerTelemetry({
+                                config,
+                                plan,
+                                results,
+                                controlConfig,
+                                overallStartTime,
+                                endedAt: runEndedAt,
+                                statusSteps: pausedSteps ?? [],
+                            });
+                            return {
+                                ...pausedStatus,
+                                ...(pausedTelemetry ? { telemetry: pausedTelemetry } : { telemetry: undefined }),
+                            };
+                        },
                     });
                     Object.assign(statusPayload, transition.status);
                 }

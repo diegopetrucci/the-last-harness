@@ -337,7 +337,6 @@ function buildRunCollector(asyncDirRoot, options = {}) {
                 throw error;
             if (error.failure === "non_regular") {
                 options.onUnsafe?.(Object.freeze({ entry }));
-                return;
             }
             reportUnreadable(entry, error);
         }

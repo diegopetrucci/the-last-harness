@@ -17,6 +17,7 @@ All notable changes to The Last Harness will be documented in this file.
 - Detached async completions now deliver one fixed-shape notification immediately per run, with artifact paths before bounded summaries and A1c facts; live awaited owners consume their completions privately, while artifacts left without an owner remain recoverable.
 - Per-run status now exposes the bounded `view: "transcript"` inspection with optional `lines` from 1 through 500; status listings and transcript reads remain scoped to the current session.
 - Unreadable, invalid, or oversized async `status.json` files are retried once and then reported without automatic remediation; inspect and explicitly repair or undo the file and its sibling artifacts manually. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving needed evidence, remove them manually if desired, and note that the new runtime never auto-deletes them.
+- All thirteen packaged agents (four primaries and nine minor roles) now include explicit MCP gateway policy text. Primary agents and `developer` may use the generic `mcp` gateway within their authorized scope; `test-runner` is the intentional exception — it may invoke assigned MCP validation steps that change external server state, but only in the exact order and shape supplied by its final-validation ticket; all other minor agents restrict MCP to read-only research or inspection and must escalate uncertain side effects to the architect.
 
 ### Fixed
 

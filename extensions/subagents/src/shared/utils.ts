@@ -68,10 +68,23 @@ export const ASYNC_STATUS_RETRY_DELAY_MS = 10;
 
 let statusCacheBytes = 0;
 
+/** Keep status reads bounded before persisted JSON is trusted. */
+const STATUS_READ_CHUNK_BYTES = 64 * 1024;
+
+type OptionalOpenConstants = {
+  readonly O_NONBLOCK?: number;
+  readonly O_NOFOLLOW?: number;
+};
+
+const optionalOpenConstants: OptionalOpenConstants = fs.constants;
+const STATUS_NONBLOCK_FLAG = optionalOpenConstants.O_NONBLOCK ?? 0;
+const STATUS_NOFOLLOW_FLAG = optionalOpenConstants.O_NOFOLLOW ?? 0;
+const STATUS_OPEN_FLAGS = fs.constants.O_RDONLY | STATUS_NONBLOCK_FLAG | STATUS_NOFOLLOW_FLAG;
+
 export interface AsyncStatusReadOptions {
-  /** Test seam for status-file metadata reads. */
+  /** Test seam for status-file metadata reads (legacy path-based; ignored when no seams are set). */
   statSync?: (statusPath: string) => fs.Stats;
-  /** Test seam for status-file content reads. */
+  /** Test seam for status-file content reads (legacy path-based; ignored when no seams are set). */
   readFileSync?: (statusPath: string, encoding: BufferEncoding) => string | Buffer;
   /** Test seam for the bounded retry delay. */
   sleep?: (delayMs: number) => void;
@@ -111,6 +124,47 @@ function isNotFoundError(error: unknown): boolean {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+function isKnownUnsafeOpenError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ELOOP" || code === "EISDIR" || code === "ENXIO";
+}
+
+function isNonRegularStatusPath(statusPath: string): boolean {
+  try {
+    return !fs.lstatSync(statusPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+class StatusFileTooLargeError extends Error {}
+
+/**
+ * Read bounded status content from an already-opened file descriptor.
+ * The fd must have been opened with O_NONBLOCK|O_NOFOLLOW; reads stop once the
+ * MAX_ASYNC_STATUS_BYTES limit is exceeded so oversized files are detected
+ * without loading them fully into memory.
+ */
+function readBoundedStatusContent(fd: number): string {
+  const chunks: Buffer[] = [];
+  let bytesRead = 0;
+
+  while (bytesRead <= MAX_ASYNC_STATUS_BYTES) {
+    const bytesRemaining = MAX_ASYNC_STATUS_BYTES + 1 - bytesRead;
+    const buffer = Buffer.allocUnsafe(Math.min(STATUS_READ_CHUNK_BYTES, bytesRemaining));
+    const chunkSize = fs.readSync(fd, buffer, 0, buffer.byteLength, null);
+    if (chunkSize === 0) break;
+    chunks.push(buffer.subarray(0, chunkSize));
+    bytesRead += chunkSize;
+  }
+
+  if (bytesRead > MAX_ASYNC_STATUS_BYTES) {
+    throw new StatusFileTooLargeError(`status file exceeds ${MAX_ASYNC_STATUS_BYTES} bytes`);
+  }
+  return Buffer.concat(chunks, bytesRead).toString("utf-8");
 }
 
 function statusMetadata(stat: fs.Stats): StatusMetadata {
@@ -172,15 +226,93 @@ function isCacheableStatusFailure(error: AsyncStatusReadError): boolean {
 }
 
 /**
- * Read async job status from disk with one bounded retry. The JSON value is
- * unknown until the boundary parser validates and narrows it. Invalid or
- * unreadable status files are never repaired by this function.
+ * Check the cache and return a cached success or failure. Returns undefined
+ * when no valid cache entry exists and the caller should proceed with reading.
+ * Throws a cached deterministic failure if the metadata matches.
+ */
+function checkStatusCache(
+  statusPath: string,
+  metadata: StatusMetadata,
+  useCache: boolean,
+): AsyncStatus | undefined {
+  if (!useCache) return undefined;
+  const cachedFailure = statusFailureCache.get(statusPath);
+  if (cachedFailure) {
+    if (sameStatusMetadata(cachedFailure, metadata)) throw cachedFailure.error;
+    statusFailureCache.delete(statusPath);
+    deleteStatusCacheEntry(statusPath);
+  }
+  const cached = statusCache.get(statusPath);
+  if (cached && sameStatusMetadata(cached, metadata)) return cached.status;
+  return undefined;
+}
+
+/**
+ * Parse status content and update the cache. Returns the parsed status or
+ * sets lastFailure if parsing fails. The content is expected to be a bounded
+ * UTF-8 JSON string that fits within MAX_ASYNC_STATUS_BYTES.
+ */
+function parseAndCacheStatus(
+  content: string,
+  asyncDir: string,
+  statusPath: string,
+  metadata: StatusMetadata,
+  useCache: boolean,
+): AsyncStatus | AsyncStatusReadError {
+  if (Buffer.byteLength(content, "utf-8") > MAX_ASYNC_STATUS_BYTES) {
+    return statusReadFailure(
+      asyncDir,
+      statusPath,
+      "oversize",
+      `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+    );
+  }
+  try {
+    const parsed: unknown = JSON.parse(content);
+    const narrowed = parsePersistedAsyncStatus(parsed, asyncDir, statusPath);
+    const status = normalizeAsyncLifecycleStatus(narrowed);
+    if (useCache) {
+      statusFailureCache.delete(statusPath);
+      cacheStatus(statusPath, metadata, status);
+    }
+    return status;
+  } catch (error) {
+    if (error instanceof AsyncStatusReadError) return error;
+    return statusReadFailure(
+      asyncDir,
+      statusPath,
+      "invalid",
+      `Failed to parse async status file '${statusPath}': status JSON could not be parsed.`,
+    );
+  }
+}
+
+/**
+ * Read async job status from disk with one bounded retry.
+ *
+ * When no path-based seams are provided (production) the file is opened with
+ * O_NONBLOCK|O_NOFOLLOW so FIFOs never block and symlinks are never followed.
+ * fstat validates regular-file status on the same descriptor before any bytes
+ * are read, closing the TOCTOU window between path check and content read.
+ *
+ * When legacy test seams (statSync/readFileSync) are provided, the path-based
+ * read path is used instead so existing tests continue to work unchanged.
+ *
+ * Non-regular artifacts (FIFO, symlink, directory) are routed through the
+ * bounded retry and then surface as non_regular AsyncStatusReadError so
+ * callers can distinguish them from ordinary transient failures. The JSON
+ * value is unknown until the boundary parser validates and narrows it.
+ * Invalid or unreadable status files are never repaired by this function.
  */
 export function readStatus(
   asyncDir: string,
   options: AsyncStatusReadOptions = {},
 ): AsyncStatus | null {
   const statusPath = path.resolve(asyncDir, "status.json");
+  // When path seams are injected (test mode) use the legacy path-based reader
+  // so existing tests continue to work. Production code has no seams and uses
+  // the safe fd-based path below.
+  const hasPathSeams = options.statSync !== undefined || options.readFileSync !== undefined;
   const statSync = options.statSync ?? fs.statSync;
   const readFileSync =
     options.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
@@ -194,119 +326,174 @@ export function readStatus(
   let lastFailure: AsyncStatusReadError | undefined;
   let lastMetadata: StatusMetadata | undefined;
 
+  const clearMissing = (): null => {
+    if (useCache) {
+      deleteStatusCacheEntry(statusPath);
+      statusFailureCache.delete(statusPath);
+    }
+    return null;
+  };
+
   for (let attempt = 0; attempt < 2; attempt++) {
     lastFailure = undefined;
 
-    // Before reading, verify the path is a regular file via lstat (no symlink follow).
-    // FIFOs, symlinks, and directories must be rejected immediately without blocking.
-    if (attempt === 0) {
-      let lstat: fs.Stats;
+    if (!hasPathSeams) {
+      // Fd-based path (production): open with O_NONBLOCK|O_NOFOLLOW.
+      // The descriptor is validated with fstatSync before any bytes are read
+      // so a path replacement cannot redirect the read to another artifact.
+      // Non-regular paths set lastFailure (not throw) to allow the retry.
+      let fd: number | undefined;
       try {
-        lstat = fs.lstatSync(statusPath);
-      } catch (error) {
-        if (isNotFoundError(error)) {
-          if (useCache) {
-            deleteStatusCacheEntry(statusPath);
-            statusFailureCache.delete(statusPath);
-          }
-          return null;
-        }
-        lastFailure = statusReadFailure(
-          asyncDir,
-          statusPath,
-          "unreadable",
-          `Failed to read async status file '${statusPath}': status metadata could not be read.`,
-          error,
-        );
-        break;
-      }
-      if (!lstat.isFile()) {
-        // FIFOs and symlinks are blocking/unsafe hazards; route as non_regular so
-        // the restore scan can skip them silently with a count-only warning.
-        // Directories and other unexpected paths are reported as unreadable so
-        // callers get a per-entry statusPath in their issues list.
-        if (lstat.isFIFO() || lstat.isSymbolicLink()) {
-          throw statusReadFailure(
+        try {
+          fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
+        } catch (openError) {
+          if (isNotFoundError(openError)) return clearMissing();
+          lastFailure = statusReadFailure(
             asyncDir,
             statusPath,
-            "non_regular",
-            `Failed to read async status file '${statusPath}': status path is not a regular file`,
+            isKnownUnsafeOpenError(openError) || isNonRegularStatusPath(statusPath)
+              ? "non_regular"
+              : "unreadable",
+            `Failed to read async status file '${statusPath}': status${
+              isKnownUnsafeOpenError(openError) || isNonRegularStatusPath(statusPath)
+                ? " path is not a regular file"
+                : " metadata could not be read."
+            }`,
+            openError,
           );
         }
-        throw statusReadFailure(
-          asyncDir,
-          statusPath,
-          "unreadable",
-          `Failed to read async status file '${statusPath}': status path is not a regular file`,
-        );
-      }
-    }
-    if (lastFailure) break;
 
-    let stat: fs.Stats;
-    let metadata: StatusMetadata | undefined;
-    try {
-      stat = statSync(statusPath);
-      metadata = statusMetadata(stat);
-      lastMetadata = metadata;
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        if (useCache) {
-          deleteStatusCacheEntry(statusPath);
-          statusFailureCache.delete(statusPath);
-        }
-        return null;
-      }
-      lastFailure = statusReadFailure(
-        asyncDir,
-        statusPath,
-        "unreadable",
-        `Failed to read async status file '${statusPath}': status metadata could not be read.`,
-        error,
-      );
-    }
-
-    if (!lastFailure) {
-      if (useCache && metadata) {
-        const cachedFailure = statusFailureCache.get(statusPath);
-        if (cachedFailure) {
-          if (sameStatusMetadata(cachedFailure, metadata)) throw cachedFailure.error;
-          statusFailureCache.delete(statusPath);
-          deleteStatusCacheEntry(statusPath);
-        }
-      }
-      const cached = useCache ? statusCache.get(statusPath) : undefined;
-      if (cached && metadata && sameStatusMetadata(cached, metadata)) return cached.status;
-      if (!Number.isFinite(stat!.size) || stat!.size < 0 || stat!.size > MAX_ASYNC_STATUS_BYTES) {
-        lastFailure = statusReadFailure(
-          asyncDir,
-          statusPath,
-          "oversize",
-          `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
-        );
-      } else {
-        let content: string | undefined;
-        try {
-          const raw = readFileSync(statusPath, "utf-8");
-          content = typeof raw === "string" ? raw : raw.toString("utf-8");
-        } catch (error) {
-          if (isNotFoundError(error)) {
-            if (useCache) {
-              deleteStatusCacheEntry(statusPath);
-              statusFailureCache.delete(statusPath);
-            }
-            return null;
+        if (!lastFailure && fd !== undefined) {
+          let fdStat: fs.Stats | undefined;
+          try {
+            fdStat = fs.fstatSync(fd);
+          } catch (statError) {
+            lastFailure = statusReadFailure(
+              asyncDir,
+              statusPath,
+              "unreadable",
+              `Failed to read async status file '${statusPath}': status metadata could not be read.`,
+              statError,
+            );
           }
+
+          if (!lastFailure && fdStat !== undefined) {
+            if (!fdStat.isFile()) {
+              lastFailure = statusReadFailure(
+                asyncDir,
+                statusPath,
+                "non_regular",
+                `Failed to read async status file '${statusPath}': status path is not a regular file`,
+              );
+            } else if (
+              !Number.isFinite(fdStat.size) ||
+              fdStat.size < 0 ||
+              fdStat.size > MAX_ASYNC_STATUS_BYTES
+            ) {
+              lastFailure = statusReadFailure(
+                asyncDir,
+                statusPath,
+                "oversize",
+                `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+              );
+            } else {
+              const metadata = statusMetadata(fdStat);
+              lastMetadata = metadata;
+              const cached = checkStatusCache(statusPath, metadata, useCache);
+              if (cached !== undefined) return cached;
+
+              let content: string | undefined;
+              try {
+                content = readBoundedStatusContent(fd);
+              } catch (readError) {
+                lastFailure = statusReadFailure(
+                  asyncDir,
+                  statusPath,
+                  readError instanceof StatusFileTooLargeError ? "oversize" : "unreadable",
+                  `Failed to read async status file '${statusPath}': status${
+                    readError instanceof StatusFileTooLargeError
+                      ? ` exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`
+                      : " content could not be read."
+                  }`,
+                  readError,
+                );
+              }
+              if (!lastFailure && content !== undefined) {
+                const result = parseAndCacheStatus(
+                  content,
+                  asyncDir,
+                  statusPath,
+                  metadata,
+                  useCache,
+                );
+                if (result instanceof AsyncStatusReadError) lastFailure = result;
+                else return result;
+              }
+            }
+          }
+        }
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
+    } else {
+      // Legacy path-based path (test seams: statSync, readFileSync).
+      // On the first attempt, lstat verifies the path is a regular file.
+      // Non-regular (FIFO/symlink) sets lastFailure for retry; hard errors break.
+      if (attempt === 0) {
+        let hardLstatError = false;
+        try {
+          const lstat = fs.lstatSync(statusPath);
+          if (!lstat.isFile()) {
+            const isNonRegular = lstat.isFIFO() || lstat.isSymbolicLink();
+            lastFailure = statusReadFailure(
+              asyncDir,
+              statusPath,
+              isNonRegular ? "non_regular" : "unreadable",
+              `Failed to read async status file '${statusPath}': status path is not a regular file`,
+            );
+            if (!isNonRegular) hardLstatError = true;
+          }
+        } catch (error) {
+          if (isNotFoundError(error)) return clearMissing();
           lastFailure = statusReadFailure(
             asyncDir,
             statusPath,
             "unreadable",
-            `Failed to read async status file '${statusPath}': status content could not be read.`,
+            `Failed to read async status file '${statusPath}': status metadata could not be read.`,
+            error,
+          );
+          hardLstatError = true;
+        }
+        if (hardLstatError) break;
+      }
+
+      if (!lastFailure) {
+        let metadata: StatusMetadata | undefined;
+        let stat: fs.Stats | undefined;
+        try {
+          stat = statSync(statusPath);
+          metadata = statusMetadata(stat);
+          lastMetadata = metadata;
+        } catch (error) {
+          if (isNotFoundError(error)) return clearMissing();
+          lastFailure = statusReadFailure(
+            asyncDir,
+            statusPath,
+            "unreadable",
+            `Failed to read async status file '${statusPath}': status metadata could not be read.`,
             error,
           );
         }
-        if (!lastFailure && content !== undefined) {
-          if (Buffer.byteLength(content, "utf-8") > MAX_ASYNC_STATUS_BYTES) {
+
+        if (!lastFailure && metadata) {
+          const cached = checkStatusCache(statusPath, metadata, useCache);
+          if (cached !== undefined) return cached;
+
+          if (
+            !Number.isFinite(stat!.size) ||
+            stat!.size < 0 ||
+            stat!.size > MAX_ASYNC_STATUS_BYTES
+          ) {
             lastFailure = statusReadFailure(
               asyncDir,
               statusPath,
@@ -314,25 +501,24 @@ export function readStatus(
               `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
             );
           } else {
+            let content: string | undefined;
             try {
-              const parsed: unknown = JSON.parse(content);
-              const narrowed = parsePersistedAsyncStatus(parsed, asyncDir, statusPath);
-              const status = normalizeAsyncLifecycleStatus(narrowed);
-              if (useCache && metadata) {
-                statusFailureCache.delete(statusPath);
-                cacheStatus(statusPath, metadata, status);
-              }
-              return status;
+              const raw = readFileSync(statusPath, "utf-8");
+              content = typeof raw === "string" ? raw : raw.toString("utf-8");
             } catch (error) {
-              if (error instanceof AsyncStatusReadError) lastFailure = error;
-              else {
-                lastFailure = statusReadFailure(
-                  asyncDir,
-                  statusPath,
-                  "invalid",
-                  `Failed to parse async status file '${statusPath}': status JSON could not be parsed.`,
-                );
-              }
+              if (isNotFoundError(error)) return clearMissing();
+              lastFailure = statusReadFailure(
+                asyncDir,
+                statusPath,
+                "unreadable",
+                `Failed to read async status file '${statusPath}': status content could not be read.`,
+                error,
+              );
+            }
+            if (!lastFailure && content !== undefined) {
+              const result = parseAndCacheStatus(content, asyncDir, statusPath, metadata, useCache);
+              if (result instanceof AsyncStatusReadError) lastFailure = result;
+              else return result;
             }
           }
         }
@@ -373,6 +559,54 @@ export function readStatus(
     }
   }
   throw failure;
+}
+
+/**
+ * Read attribution status via a safe O_NONBLOCK|O_NOFOLLOW descriptor read.
+ * Returns the raw parsed JSON object (no schema validation) for attribution
+ * overlap scans that accept a loose PersistedAttributionStatus interface.
+ *
+ * Returns null when the file does not exist, undefined when the path is
+ * non-regular, oversized, or cannot be read.
+ */
+export function readRawAttributionStatus(
+  statusPath: string,
+): Record<string, unknown> | null | undefined {
+  let fd: number | undefined;
+  try {
+    try {
+      fd = fs.openSync(statusPath, STATUS_OPEN_FLAGS);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      return undefined;
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.fstatSync(fd);
+    } catch {
+      return undefined;
+    }
+    if (!stat.isFile()) return undefined;
+    if (stat.size > MAX_ASYNC_STATUS_BYTES) return undefined;
+
+    let content: string;
+    try {
+      content = readBoundedStatusContent(fd);
+    } catch {
+      return undefined;
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(content);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+      return parsed as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 /**

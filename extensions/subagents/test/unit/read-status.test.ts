@@ -90,7 +90,7 @@ describe("readStatus", () => {
     }
   });
 
-  it("rejects a FIFO promptly without a writer and leaves it untouched", () => {
+  it("rejects a FIFO promptly without a writer, retries once, and leaves it untouched", () => {
     if (process.platform === "win32") return;
 
     const root = createTempDir("tlh-read-status-fifo-");
@@ -99,10 +99,28 @@ describe("readStatus", () => {
     fs.mkdirSync(asyncDir);
     try {
       execFileSync("mkfifo", [statusPath]);
+      const sleeps: number[] = [];
       const startedAt = Date.now();
-      assert.throws(() => readStatus(asyncDir), /Failed to read async status file/);
+      assert.throws(
+        () => readStatus(asyncDir, { sleep: (ms) => sleeps.push(ms), retryDelayMs: 0 }),
+        /Failed to read async status file/,
+      );
       assert.ok(Date.now() - startedAt < 1_000, "FIFO read should not block");
       assert.equal(fs.lstatSync(statusPath).isFIFO(), true);
+      // P2-a: non-regular paths must go through the bounded retry (one sleep).
+      assert.equal(sleeps.length, 1, "non-regular path should be retried once");
+      // P2-a: the status path must be visible in the error message.
+      assert.throws(
+        () => readStatus(asyncDir, { sleep: () => {}, retryDelayMs: 0 }),
+        (err: unknown) => {
+          assert.ok(err instanceof Error);
+          assert.ok(
+            err.message.includes("status.json"),
+            `error message should contain the status path, got: ${err.message}`,
+          );
+          return true;
+        },
+      );
     } finally {
       removeTempDir(root);
     }
@@ -136,31 +154,37 @@ describe("readStatus", () => {
     }
   });
 
-  it("returns fresh content and invalidates the cache after the status file is replaced", () => {
+  it("reads from the opened descriptor after the path is replaced", () => {
     if (process.platform === "win32") return;
 
-    const root = createTempDir("tlh-read-status-replace-");
+    const root = createTempDir("tlh-read-status-toctou-");
     const asyncDir = path.join(root, "run");
     const statusPath = path.join(asyncDir, "status.json");
     const displacedPath = path.join(root, "displaced.json");
     fs.mkdirSync(asyncDir);
     writeStatus(statusPath, "original");
+    const originalContent = fs.readFileSync(statusPath);
+    const replacementContent = JSON.stringify(status("replacement"));
+    let replaced = false;
+    const originalReadSync = fsDefault.readSync;
+    fsDefault.readSync = ((fd, buffer, offset, length, position) => {
+      if (!replaced) {
+        fs.renameSync(statusPath, displacedPath);
+        fs.writeFileSync(statusPath, replacementContent, "utf-8");
+        replaced = true;
+      }
+      return originalReadSync(fd, buffer, offset, length, position);
+    }) as typeof fsDefault.readSync;
+    syncBuiltinESMExports();
     try {
       const first = readStatus(asyncDir);
       assert.equal(first?.runId, "original");
-      // The cache returns the same object identity on repeated calls.
-      assert.strictEqual(readStatus(asyncDir), first);
-
-      // Atomically replace the status file: move original aside and write fresh content.
-      fs.renameSync(statusPath, displacedPath);
-      fs.writeFileSync(statusPath, JSON.stringify(status("replacement")), "utf-8");
-
-      // The cache must detect the new inode/mtime and return the replacement.
-      const second = readStatus(asyncDir);
-      assert.equal(second?.runId, "replacement");
-      // The displaced file still holds the original bytes.
-      assert.equal(JSON.parse(fs.readFileSync(displacedPath, "utf-8")).runId, "original");
+      assert.deepEqual(fs.readFileSync(displacedPath), originalContent);
+      assert.equal(JSON.parse(fs.readFileSync(statusPath, "utf-8")).runId, "replacement");
+      assert.equal(readStatus(asyncDir)?.runId, "replacement");
     } finally {
+      fsDefault.readSync = originalReadSync;
+      syncBuiltinESMExports();
       removeTempDir(root);
     }
   });

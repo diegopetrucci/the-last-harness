@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { MAX_ATTRIBUTION_STATUS_BYTES, boundSubagentAttemptFacts } from "./terminal-result.js";
+import { readRawAttributionStatus } from "./utils.js";
 import { checkPidLiveness as defaultCheckPidLiveness, } from "../runs/shared/lifecycle-state.js";
 export { MAX_ATTRIBUTION_STATUS_BYTES };
 const MAX_GIT_COMMAND_OUTPUT_BYTES = 256 * 1024;
@@ -110,24 +111,7 @@ function finiteTimestamp(value) {
     return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 function readBoundedStatus(statusPath) {
-    let stat;
-    try {
-        stat = fs.statSync(statusPath);
-    }
-    catch {
-        return null;
-    }
-    if (!stat.isFile())
-        return null;
-    if (stat.size > MAX_ATTRIBUTION_STATUS_BYTES)
-        return undefined;
-    try {
-        const parsed = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
-        return isRecord(parsed) ? parsed : undefined;
-    }
-    catch {
-        return undefined;
-    }
+    return readRawAttributionStatus(statusPath);
 }
 function statusFileCandidates(root, ownDir) {
     try {

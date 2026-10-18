@@ -151,10 +151,13 @@ describe("real child process protocol hardening", () => {
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0);
       const asyncDir = path.join(ASYNC_DIR, id);
+      // Gate on step-level timeout evidence while the child is still alive
+      // (pid present), not on the top-level timedOut flag which is written
+      // only after teardown and would race with the release marker write.
       const timedOutStatus = await waitForAsyncStatusPredicate(
         asyncDir,
-        (status) => status.timedOut === true && status.steps?.[0]?.timedOut === true,
-        "async step timeout",
+        (status) => status.steps?.[0]?.timedOut === true && status.pid != null,
+        "async step timeout with child alive",
       );
       assert.equal(timedOutStatus.steps?.[0]?.terminationReason, "timed_out");
       fs.writeFileSync(releaseMarker, "", "utf-8");
@@ -281,6 +284,145 @@ describe("real child process protocol hardening", () => {
     const eventText = fs.readFileSync(path.join(ASYNC_DIR, id, "events.jsonl"), "utf8");
     assert.match(eventText, /subagent\.child\.stderr\.truncated/);
     assert.match(eventText, /subagent\.child\.stderr\.overflow/);
+  });
+
+  it(
+    "preserves interrupt precedence when stdout overflow arrives after interrupt",
+    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
+    async () => {
+      const id = `background-interrupt-before-overflow-${Date.now().toString(36)}`;
+      const releaseMarker = path.join(tempDir, "interrupt-then-overflow-release");
+      const oversizedLine = `INTERRUPT_WON_BEFORE_OVERFLOW_${"-".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
+      mockPi.onCall({
+        waitForMarker: releaseMarker,
+        rawStdout: oversizedLine,
+        keepAliveAfterFinalMessageMs: 10_000,
+        ignoreSigterm: true,
+      });
+      const start = executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Interrupt before overflow",
+        agentConfig: makeAgent("worker"),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: compactArtifactConfig(),
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+      assert.equal(start.isError, undefined);
+      // Wait for the child process to be alive before interrupting.
+      await waitForMockPiCall(mockPi, 0);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      requestAsyncInterrupt(asyncDir, { source: "interrupt-before-overflow-test" });
+      // Wait for the interrupt to be acknowledged (step enters pausing/paused state or
+      // interruptRequestedAt is set, indicating the runner has registered the interrupt).
+      await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) =>
+          status.steps?.[0]?.status === "paused" ||
+          status.steps?.[0]?.status === "pausing" ||
+          status.steps?.[0]?.interruptRequestedAt != null,
+        "step pausing or interrupt registered",
+      );
+      // Now release the child so it emits the oversized line during teardown.
+      fs.writeFileSync(releaseMarker, "", "utf-8");
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+      const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+      // Interrupt must win: state should be paused, not a protocol overflow failure.
+      assert.equal(result.state, "paused");
+      assert.equal(result.results[0]?.protocolOutputLimit, undefined);
+      assert.doesNotMatch(result.results[0]?.error ?? "", /protocol_output_limit/);
+    },
+  );
+
+  it("retains malformed protocol lines in result output regardless of artifact JSONL config", async () => {
+    const id = `background-malformed-protocol-${Date.now().toString(36)}`;
+    const malformedLine = "NOT_JSON_AT_ALL_{{{{ malformed protocol line";
+    mockPi.onCall({ jsonl: [malformedLine] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit malformed protocol line",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // Use artifact config with JSONL disabled to confirm output retention is independent.
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    const child = result.results[0];
+    // A malformed (non-JSON) line is treated as raw stdout and retained in output.
+    assert.ok(
+      child?.output.includes(malformedLine),
+      `malformed line should be retained in output; got: ${child?.output}`,
+    );
+  });
+
+  it("retains unknown protocol objects in events when projections are enabled", async () => {
+    const id = `background-unknown-protocol-${Date.now().toString(36)}`;
+    const unknownEvent = { type: "tlh_unknown_xyz_test", diagnostic: "test-value" };
+    // Include a proper message_end so the run completes successfully.
+    mockPi.onCall({ jsonl: [unknownEvent, events.assistantMessage("done")] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit unknown protocol object",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // Use debug mode so includeChildEventProjections is true.
+      artifactConfig: resolveArtifactConfig({ mode: "debug" }),
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    assert.equal(result.success, true);
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
+    // Unknown objects are appended as diagnostic events when projections are enabled.
+    assert.match(
+      eventText,
+      /tlh_unknown_xyz_test/,
+      "unknown protocol object should be retained in events when projections enabled",
+    );
+  });
+
+  it("drops unknown protocol objects silently when child event projections are disabled", async () => {
+    const id = `background-unknown-protocol-noprojections-${Date.now().toString(36)}`;
+    const unknownEvent = { type: "tlh_unknown_xyz_suppressed", diagnostic: "suppressed-value" };
+    // Include a proper message_end so the run completes successfully.
+    mockPi.onCall({ jsonl: [unknownEvent, events.assistantMessage("done")] });
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Emit unknown protocol object with projections off",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      // compact mode: includeChildEventProjections is false
+      artifactConfig: compactArtifactConfig(),
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(start.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+    // Run completes successfully; unknown lines do not cause errors or overflow.
+    assert.equal(result.success, true);
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const eventText = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8");
+    // Unknown objects are silently dropped when projections are disabled.
+    assert.doesNotMatch(
+      eventText,
+      /tlh_unknown_xyz_suppressed/,
+      "unknown protocol object should be dropped when projections disabled",
+    );
   });
 
   it("preserves the async startup interrupt trampoline when an interrupt arrives immediately", async () => {
