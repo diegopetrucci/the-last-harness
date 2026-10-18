@@ -733,7 +733,9 @@ describe("async execution runner deadlines and process failures", () => {
   });
 
   it("attributes an async single timeout to the binding role ceiling", async () => {
-    const roleTimeoutMs = scaleTestTimeout(500);
+    // Product deadline the test waits to fire: unscaled. The terminal result is the
+    // authoritative boundary (see below), so firing before spawn is a valid path.
+    const roleTimeoutMs = 500;
     mockPi.onCall({ delay: 60_000, output: "too late" });
     const id = `async-role-timeout-${Date.now().toString(36)}`;
     executeAsyncSingle(id, {

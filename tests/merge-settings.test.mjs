@@ -655,6 +655,60 @@ test("merge replaces the harness package when a slash ref keeps the same git ide
   assert.deepEqual(readJson(fixture.settings).packages, [branchHarnessPackage]);
 });
 
+test("merge preserves pinned and branch sources when the package source is omitted", () => {
+  for (const source of [`${harnessPackage}@v0.45.0`, branchHarnessPackage]) {
+    const fixture = tempFixture(
+      { packages: [harnessPackage], quietStartup: true },
+      {
+        packages: [
+          {
+            source,
+            extensions: ["keep"],
+            customField: { preserve: true },
+          },
+        ],
+      },
+    );
+
+    runMerge(fixture);
+
+    assert.deepEqual(readJson(fixture.settings).packages, [
+      {
+        source,
+        extensions: ["keep"],
+        customField: { preserve: true },
+      },
+    ]);
+    assert.equal(readJson(fixture.settings).quietStartup, true);
+  }
+});
+
+test("merge keeps source-object filters during an explicit harness source migration", () => {
+  const pinnedSource = `${harnessPackage}@v0.45.0`;
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [
+        {
+          source: pinnedSource,
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    },
+  );
+
+  runMerge(fixture, { packageSource: branchHarnessPackage });
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
+    {
+      source: branchHarnessPackage,
+      extensions: ["keep"],
+      customField: { preserve: true },
+    },
+  ]);
+});
+
 test("merge dedupes duplicate harness entries when rerun with a branch package source", () => {
   const fixture = tempFixture(
     { packages: [] },
@@ -677,7 +731,7 @@ test("merge dedupes duplicate harness entries when rerun with a branch package s
   ]);
 });
 
-test("merge dedupes duplicate harness entries when rerun from main", () => {
+test("merge dedupes duplicate harness entries without switching the selected source", () => {
   const fixture = tempFixture(
     { packages: [] },
     {
@@ -693,7 +747,7 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
   runMerge(fixture);
 
   assert.deepEqual(readJson(fixture.settings).packages, [
-    harnessPackage,
+    branchHarnessPackage,
     "npm:unrelated-package@1.0.0",
     "npm:unrelated-package",
   ]);
@@ -745,7 +799,41 @@ test("omitting the package source preserves a confirmed local TLH registration",
       extensions: ["keep"],
       customField: { preserve: true },
     },
+  ]);
+});
+
+test("omitting the package source preserves mixed canonical and local TLH registrations", () => {
+  const fixture = tempFixture(
+    { packages: [harnessPackage] },
+    {
+      packages: [
+        harnessPackage,
+        {
+          source: "./local-tlh",
+          extensions: ["keep"],
+          customField: { preserve: true },
+        },
+      ],
+    },
+  );
+  writePackageManifest(join(dirname(fixture.settings), "local-tlh"), {
+    name: "the-last-harness",
+  });
+
+  const beforeDryRun = readFileSync(fixture.settings, "utf8");
+  const dryRunOutput = runMerge(fixture, { dryRun: true, quiet: false });
+  assert.doesNotMatch(dryRunOutput, /remove canonical TLH package superseded by local source/);
+  assert.equal(readFileSync(fixture.settings, "utf8"), beforeDryRun);
+
+  runMerge(fixture);
+
+  assert.deepEqual(readJson(fixture.settings).packages, [
     harnessPackage,
+    {
+      source: "./local-tlh",
+      extensions: ["keep"],
+      customField: { preserve: true },
+    },
   ]);
 });
 

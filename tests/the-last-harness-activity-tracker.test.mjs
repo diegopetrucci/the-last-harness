@@ -1553,10 +1553,11 @@ test("registered tracker does not emit tlh:effective-activity when pi.events is 
     },
   };
   registerTlhEffectiveActivityTracker(pi);
-  for (const handler of eventHandlers.get("before_agent_start") ?? []) handler({});
-  // No assertion needed beyond "does not throw"; the test just verifies the
-  // absence-of-events-bus path is safe.
-  assert.ok(true);
+  const handlers = eventHandlers.get("before_agent_start") ?? [];
+  assert.ok(handlers.length >= 1, "expected a before_agent_start handler to be registered");
+  assert.doesNotThrow(() => {
+    for (const handler of handlers) handler({});
+  });
 });
 
 // ---------------------------------------------------------------------------

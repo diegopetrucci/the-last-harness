@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/check-installer-performance.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -6,9 +7,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildPtyCommand, runProcess, } from "./lib/check-installer-performance-process.mjs";
 import { assertOwnedWorkspacePath, buildChildEnvironment, createBenchmarkWorkspace, removeOwnedWorkspace, writeCredentialFreeTrustMetadata, BENCHMARK_ROOT_PREFIX, REPOSITORY, } from "./lib/check-installer-performance-workspace.mjs";
-import { createReadinessObserver, hasFooterMarker, hasHeaderMarker, observeReadinessChunk, stripTerminalNoise, } from "./lib/tlh-startup-readiness.mjs";
-export const hasTlhHeader = hasHeaderMarker;
-export const hasTlhFooter = hasFooterMarker;
+import { createReadinessObserver, observeReadinessChunk, stripTerminalNoise, } from "./lib/tlh-startup-readiness.mjs";
 const DEFAULT_MODE = "remote";
 const DEFAULT_REF = "main";
 const DEFAULT_RUNS = 3;

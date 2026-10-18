@@ -1,3 +1,4 @@
+// Generated from scripts/lib/default-extensions.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readFileSync } from "node:fs";
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 function isPlainObject(value) {

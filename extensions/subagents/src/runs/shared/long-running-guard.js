@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/long-running-guard.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const EMBEDDED_FILE_WRITE_PATTERNS = [
     /\b(writeFile|writeFileSync|appendFile|appendFileSync)\b/,
     /\bwrite_text\s*\(/,

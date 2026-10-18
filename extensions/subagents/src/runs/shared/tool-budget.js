@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/tool-budget.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const DEFAULT_TOOL_BUDGET_BLOCK = ["read", "grep", "find", "ls"];
 export const TOOL_BUDGET_ENV = "PI_SUBAGENT_TOOL_BUDGET";
 function normalizeToolBudgetBlock(block) {

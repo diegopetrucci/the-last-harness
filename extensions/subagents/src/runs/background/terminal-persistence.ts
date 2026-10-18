@@ -133,6 +133,8 @@ interface TerminalPersistenceInput {
   totalTasks?: number;
   pausedAwaitingSupervisor?: AsyncStatus["pause"];
   safePausedResultAfterReap?: AsyncStatus["pause"];
+  /** Set only after every interrupted child has reported its cleanup complete. */
+  pausedOwnershipConfirmedStopped?: boolean;
   skipFinalStatusWrite: boolean;
   pausedOutputForIndex: (index: number, agent: string) => string;
   appendEvent: (line: string) => void;
@@ -254,11 +256,34 @@ function terminalStatus(input: TerminalPersistenceInput): AsyncStatus["state"] {
   return input.results.every((result) => result.success) ? "complete" : "failed";
 }
 
+function clearPauseOwnerPid(
+  pause: AsyncStatus["pause"] | undefined,
+): AsyncStatus["pause"] | undefined {
+  return pause ? { ...pause, ownerPid: undefined } : undefined;
+}
+
+function releaseStoppedInterruptedOwnership(input: TerminalPersistenceInput): boolean {
+  if (
+    input.statusPayload.state !== "paused" ||
+    !input.statusOwner.interrupted ||
+    input.pausedOwnershipConfirmedStopped !== true
+  )
+    return false;
+  input.statusPayload.pid = undefined;
+  input.statusPayload.pause = clearPauseOwnerPid(input.statusPayload.pause);
+  input.statusPayload.steps = input.statusPayload.steps.map((step) => ({
+    ...step,
+    pause: clearPauseOwnerPid(step.pause),
+  }));
+  return true;
+}
+
 function applyTerminalStatus(input: TerminalPersistenceInput): SubagentRunTelemetry | undefined {
   const { statusPayload } = input;
   const timedOut = timeoutWonRun(input);
   statusPayload.state = terminalStatus(input);
   statusPayload.activityState = undefined;
+  releaseStoppedInterruptedOwnership(input);
   if (timedOut) statusPayload.timedOut = true;
   if (input.statusOwner.timedOut) {
     statusPayload.error = input.timeoutMessage ?? "Subagent timed out.";
@@ -374,7 +399,10 @@ function canonicalStatusValue<T>(
   return input.statusOwner.concurrentTerminalStatusAdopted ? value : (value ?? fallback);
 }
 
-function resultItems(results: RunnerStepResult[]): AsyncResultArtifact["results"] {
+function resultItems(
+  results: RunnerStepResult[],
+  clearPauseOwnerPids = false,
+): AsyncResultArtifact["results"] {
   return results.map((result) => ({
     agent: result.agent,
     ...(result.projectAgent ? { projectAgent: result.projectAgent } : {}),
@@ -411,7 +439,7 @@ function resultItems(results: RunnerStepResult[]): AsyncResultArtifact["results"
     transcriptPath: result.transcriptPath,
     transcriptError: result.transcriptError,
     acceptance: result.acceptance,
-    pause: result.pause,
+    pause: clearPauseOwnerPids ? clearPauseOwnerPid(result.pause) : result.pause,
     activeRuntimeMs: result.activeRuntimeMs,
     activeRuntimeCheckpointAt: result.activeRuntimeCheckpointAt,
     activityState: result.activityState,
@@ -465,6 +493,10 @@ function writeResultArtifact(
     input.statusPayload.projectAgents,
     input.config.projectAgents,
   );
+  const clearPauseOwnerPids =
+    state === "paused" &&
+    input.statusOwner.interrupted &&
+    input.pausedOwnershipConfirmedStopped === true;
   const result: AsyncResultArtifact = {
     lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
     id: input.config.id,
@@ -498,7 +530,7 @@ function writeResultArtifact(
           ),
         }
       : {}),
-    results: resultItems(input.results),
+    results: resultItems(input.results, clearPauseOwnerPids),
     exitCode: state === "failed" ? 1 : 0,
     timestamp: endedAt,
     durationMs: Math.max(0, endedAt - startedAt),

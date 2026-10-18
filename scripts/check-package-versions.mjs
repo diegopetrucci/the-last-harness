@@ -555,6 +555,45 @@ function readInstalledPackageVersion(path) {
   }
 }
 
+function exactPinVersion(spec) {
+  const trimmed = String(spec ?? "").trim();
+  const version = trimmed.startsWith("npm:") ? splitNpmPackageSpec(trimmed).version : trimmed;
+  return version.replace(/^v/, "");
+}
+
+function validateManifestLockPins(args, packageJson, packageLock, problems) {
+  const packageEntries = isPlainObject(packageLock.packages) ? packageLock.packages : {};
+  const rootEntry = isPlainObject(packageEntries[""]) ? packageEntries[""] : {};
+  const findings = [];
+
+  for (const { field, name } of collectDirectRegistryDependencies(packageJson)) {
+    const spec = String(packageJson[field][name]).trim();
+    const label = `${args.packagePath}#${field}.${name}`;
+    const lockVersion = packageEntries[`node_modules/${name}`]?.version;
+    // Missing/unusable lock versions are reported by validateInstalledDependencies.
+    if (typeof lockVersion === "string" && isPinnedExactVersion(lockVersion)) {
+      if (lockVersion.trim().replace(/^v/, "") !== exactPinVersion(spec)) {
+        findings.push(
+          `  - ${label} is pinned to ${JSON.stringify(spec)}, but ${args.lockfilePath} resolves ${JSON.stringify(name)} to ${JSON.stringify(lockVersion)}`,
+        );
+        continue;
+      }
+    }
+    const lockRootSpec = rootEntry[field]?.[name];
+    if (typeof lockRootSpec === "string" && lockRootSpec.trim() !== spec) {
+      findings.push(
+        `  - ${label} is pinned to ${JSON.stringify(spec)}, but ${args.lockfilePath}#packages[""].${field}.${name} records ${JSON.stringify(lockRootSpec)}`,
+      );
+    }
+  }
+
+  if (findings.length > 0) {
+    problems.push(
+      `package.json pins differ from package-lock.json — run npm install to refresh package-lock.json, then npm ci:\n${findings.join("\n")}`,
+    );
+  }
+}
+
 function validateInstalledDependencies(args, packageJson, packageLock, problems) {
   const dependencies = collectDirectRegistryDependencies(packageJson);
   if (dependencies.length === 0) return;
@@ -954,6 +993,7 @@ function collectProblems(args) {
     problems.push(error.message);
   }
 
+  validateManifestLockPins(args, packageJson, packageLock, problems);
   validateInstalledDependencies(args, packageJson, packageLock, problems);
   validatePinnedDependencies(packageJson, args.packagePath, problems);
   validateManagedPiPins(args, packageJson, problems);

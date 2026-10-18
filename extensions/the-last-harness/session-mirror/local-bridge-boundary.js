@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/local-bridge-boundary.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { hasDuplicateJsonKeys } from "./json-boundary.js";

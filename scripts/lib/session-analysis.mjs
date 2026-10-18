@@ -1,3 +1,4 @@
+// Generated from scripts/lib/session-analysis.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * Read-only session analysis module.
  *
@@ -1728,9 +1729,6 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
         }
     }
     return { correlations, failureReasons };
-}
-export async function extractSubagentCorrelations(scanResult, sessionsDir) {
-    return (await extractSubagentCorrelationsWithStatus(scanResult, sessionsDir)).correlations;
 }
 // ---------------------------------------------------------------------------
 export { aggregateCoverage, recordCorrelationEvidenceFailures, } from "./session-analysis-coverage.mjs";

@@ -339,7 +339,7 @@ test("/tokens explains cache_warm spend separately while keeping assistant count
 
   assert.match(
     html,
-    /primary row is a total: it includes assistant-message usage plus Pi-native cache_warm spend/,
+    /primary row is a total: it includes assistant-message usage plus Pi-native cache_warm and compaction\/branch summary spend/,
   );
   assert.match(html, /Pi-native cache_warm \(non-turn\)/);
   assert.match(html, /<th>Assistant turns<\/th>/);
@@ -354,6 +354,54 @@ test("/tokens explains cache_warm spend separately while keeping assistant count
     html,
     /<tr><td>Pi-native cache_warm \(non-turn\)<\/td><td>—<\/td><td>0<\/td><td>1<\/td><td>12,000<\/td><td>0<\/td><td>12,001<\/td><td>\$0\.001<\/td><td>0<\/td><td>0<\/td><\/tr>/,
   );
+});
+
+test("/tokens primary breakdown rows reconcile with the primary total when summaries exist", () => {
+  const assistant = assistantEntry("a1", null, "2026-07-12T10:00:00.000Z", {
+    provider: "anthropic",
+    model: "claude-3-5-sonnet",
+    usage: usage({ input: 1000, output: 100, cost: 0.01 }),
+  });
+  const compaction = {
+    type: "compaction",
+    id: "c1",
+    parentId: "a1",
+    timestamp: "2026-07-12T10:01:00.000Z",
+    summary: "s",
+    usage: usage({ input: 500, output: 50, cost: 0.005 }),
+  };
+  const warm = {
+    type: "usage",
+    id: "warm-1",
+    parentId: "c1",
+    timestamp: "2026-07-12T10:02:00.000Z",
+    kind: "cache_warm",
+    provider: "anthropic",
+    model: "claude-3-5-sonnet",
+    usage: usage({ output: 1, cacheRead: 2000, cost: 0.001 }),
+  };
+  const rowTotals = (html, label) => {
+    const m = new RegExp(
+      `<tr><td>${label}</td><td>—</td>(?:<td>[^<]*</td>){4}<td>([\\d,]+)</td>`,
+    ).exec(html);
+    assert.ok(m, `row ${label} present`);
+    return Number(m[1].replaceAll(",", ""));
+  };
+  for (const entries of [
+    [assistant, compaction],
+    [assistant, compaction, warm],
+  ]) {
+    const analysis = analyzeSessionEntries(entries);
+    const html = buildTokensReportHtml(analysis, { generatedAt: "2026-07-12T10:03:00.000Z" });
+    assert.match(html, /Compaction\/branch summaries \(non-turn\)/);
+    assert.match(html, /compaction\/branch summary spend/);
+    const parts =
+      rowTotals(html, "Assistant-turn usage") +
+      rowTotals(html, "Pi-native cache_warm \\(non-turn\\)") +
+      rowTotals(html, "Compaction/branch summaries \\(non-turn\\)");
+    assert.equal(parts, rowTotals(html, "Primary assistant"));
+    assert.ok(rowTotals(html, "Compaction/branch summaries \\(non-turn\\)") > 0);
+  }
 });
 
 test("buildTokensReportHtml escapes dynamic content while preserving required report structure", () => {

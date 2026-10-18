@@ -9,8 +9,12 @@ import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-ag
 import { createProviderAuthHealthStore } from "../extensions/the-last-harness/provider-auth-health.ts";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment, formatReauthWarningLine } =
-  await jiti.import("../extensions/the-last-harness/footer.ts");
+const { createTlhFooter, formatReauthWarningLine } = await jiti.import(
+  "../extensions/the-last-harness/footer.ts",
+);
+const { formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
+  "../extensions/the-last-harness/footer-subscription-usage.ts",
+);
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;
@@ -340,6 +344,26 @@ test("footer render reads cached usage snapshots without refreshing", () => {
 
   assert.match(sessionLine, /session 42% used/);
   assert.equal(refreshCalls, 0);
+});
+
+test("footer cost matches upstream: includes usage, toolResult, compaction and branch_summary spend", () => {
+  const ctx = createCtx({
+    provider: "anthropic",
+    usingOAuth: false,
+    entries: [
+      assistantCostEntry(1),
+      { type: "usage", usage: { cost: { total: 0.5 } } },
+      { type: "message", message: { role: "toolResult", usage: { cost: { total: 0.25 } } } },
+      { type: "message", message: { role: "user", usage: { cost: { total: 100 } } } },
+      { type: "compaction", usage: { cost: { total: 0.125 } } },
+      { type: "branch_summary", usage: { cost: { total: 0.0625 } } },
+    ],
+  });
+  const line = renderSessionStatsLine(ctx, {
+    subscriptionUsage: usageProvider(anthropicSnapshot(), undefined, false),
+    shouldShowWeekly: () => true,
+  });
+  assert.match(line, /\$1\.938/);
 });
 
 test("footer falls back to dollar cost when subscription usage is not strictly eligible", () => {

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/annotate-last-message/prompt.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 const EXCERPT_LIMIT = 120;
 function truncateExcerpt(value, limit = EXCERPT_LIMIT) {
     const normalized = value.replace(/\s+/g, " ").trim();

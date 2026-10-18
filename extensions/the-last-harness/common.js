@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/common.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 export function readText(path) {

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/completion-dedupe.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 function asNonEmptyString(value) {
     if (typeof value !== "string")
         return undefined;

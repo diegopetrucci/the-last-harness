@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/run-status.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, } from "./async-status.js";

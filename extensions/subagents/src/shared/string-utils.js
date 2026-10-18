@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/string-utils.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export function sliceSafe(value, end) {
     const sliced = value.slice(0, end);
     const last = sliced.charCodeAt(sliced.length - 1);

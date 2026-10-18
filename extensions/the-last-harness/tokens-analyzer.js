@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/tokens-analyzer.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
 import { getMcpToolKind } from "./mcp-tools.js";
 const NOISE_FLOOR_TOKENS = 1024;
@@ -19,6 +20,11 @@ const SKIP_DISCOVERY_KEYS = new Set([
 ]);
 const SUBAGENT_NESTED_KEYS = new Set(["results", "steps", "children", "modelAttempts"]);
 const PREFERRED_SUBAGENT_CHILD_KEYS = ["results", "steps"];
+const SUBAGENT_DUPLICATE_VIEW_KEYS = new Set([
+    ...PREFERRED_SUBAGENT_CHILD_KEYS,
+    "telemetry",
+    "run",
+]);
 const MAX_DISCOVERY_DEPTH = 8;
 const MAX_DISCOVERY_ARRAY_ITEMS = 64;
 const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
@@ -50,6 +56,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     const primaryTotals = createUsageTotals();
     const primaryAssistantUsage = createUsageTotals();
     const primaryCacheWarmUsage = createUsageTotals();
+    const primarySummaryUsage = createUsageTotals();
     let primaryCacheWarmRequestCount = 0;
     const primaryCoverage = { assistantMessages: 0, withUsage: 0, withoutUsage: 0 };
     const subagentTotals = createUsageTotals();
@@ -87,6 +94,14 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 artifactRefs,
                 intercomTargets,
             });
+            continue;
+        }
+        if (entry.type === "compaction" || entry.type === "branch_summary") {
+            const usage = normalizeUsage(entry.usage);
+            if (usage) {
+                addUsage(primaryTotals, usage, { turns: 0, assistantMessages: 0 });
+                addUsage(primarySummaryUsage, usage, { turns: 0, assistantMessages: 0 });
+            }
             continue;
         }
         if (entry.type === "usage" && entry.kind === "cache_warm") {
@@ -312,6 +327,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             usage: primaryTotals,
             assistantTurnUsage: primaryAssistantUsage,
             cacheWarmUsage: primaryCacheWarmUsage,
+            summaryUsage: primarySummaryUsage,
             cacheWarmRequestCount: primaryCacheWarmRequestCount,
             usageCoverage: primaryCoverage,
             models: sortModelUsage([...modelUsage.values()].filter((model) => model.source === "primary")),
@@ -806,8 +822,7 @@ function collectStructuredDiscoveries(value, context) {
             }
             visit(current[key], [...path, key], skipNestedRuns ||
                 Boolean(run) ||
-                (nestedRuns.length > 0 &&
-                    PREFERRED_SUBAGENT_CHILD_KEYS.includes(key)));
+                (nestedRuns.length > 0 && SUBAGENT_DUPLICATE_VIEW_KEYS.has(key)));
         }
     };
     visit(value, [], false);

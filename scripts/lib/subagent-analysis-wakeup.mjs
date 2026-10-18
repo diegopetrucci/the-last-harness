@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-wakeup.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createHash } from "node:crypto";
 import { BACKGROUND_COMPLETION_NUDGE, CONTROL_NOTICE_NUDGE, SUBAGENT_ACTIONS, SUBAGENT_CONTROL_TYPE, SUBAGENT_NOTIFY_TYPE, TARGETING_ACTIONS, controlSourceKey, hasOwn, isCompletionBatchCandidate, isLegacyCompletionText, isLegacyControlText, isObject, MAX_COMPLETION_BATCH_STATES, parseCompletionBatchDetails, parseDirectSubagentControlEvent, parseLegacyUsage, parseNormalizedTelemetry, parseSubagentControlEvent, parsedCallOperation, safeMetadataString, safeOpaqueRunId, safeRunId, syntheticNudgeKind, } from "./subagent-analysis-parser.mjs";
 import { tupleKey } from "./subagent-analysis-keys.mjs";
@@ -805,8 +806,10 @@ export function analyzeWakeupsForScan(scanResult, context) {
         .filter((pair) => pair.toolName === "subagent")
         .map((pair) => pair.toolCallId));
     for (let entryIndex = 0; entryIndex < scanResult.entries.length; entryIndex++) {
+        context.setCurrentEntryIndex(entryIndex);
         processWakeupEntry(context, state, scanResult, entryIndex, pairedSubagentCallIds);
     }
+    context.setCurrentEntryIndex(undefined);
     if (state.activeWake) {
         finishWakeup(context, state.activeWake, "missing-assistant-turn");
         state.activeWake = undefined;

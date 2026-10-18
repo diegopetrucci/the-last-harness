@@ -670,9 +670,9 @@ async function runSubagentWithInput(
   };
   controlOwner.startActivityTimer();
   statusOwner.startRuntimeCheckpointTimer();
-  // Portable control inbox: the parent drops control request files here when
-  // it cannot deliver OS signals (e.g. ENOSYS on Windows) or when steering a
-  // live child. Interrupts still route into the same graceful interruptRunner().
+  // Portable control inbox: the parent drops control request files here for
+  // every platform and for live-child steering. Interrupts still route into the
+  // same graceful interruptRunner().
   const disposeControlInbox = controlOwner.watchControlInbox({
     onInterrupt: () => interruptRunner?.(),
     onTimeout: timeoutRunner,
@@ -1593,6 +1593,12 @@ async function runSubagentWithInput(
       );
     }
   }
+  // All session-writing children have settled before terminal publication. Keep
+  // the interrupted owner fields until this point so a delayed child can never
+  // race a continuation, then let terminal persistence clear them in its locked
+  // merge only after cleanup has been confirmed.
+  const pausedOwnershipConfirmedStopped =
+    statusOwner.interrupted && statusOwner.ownedPauseProcessesConfirmedStopped();
   persistRunnerTerminalRun({
     config,
     plan,
@@ -1616,6 +1622,7 @@ async function runSubagentWithInput(
     totalTasks,
     pausedAwaitingSupervisor,
     safePausedResultAfterReap,
+    pausedOwnershipConfirmedStopped,
     skipFinalStatusWrite,
     pausedOutputForIndex,
     appendEvent,

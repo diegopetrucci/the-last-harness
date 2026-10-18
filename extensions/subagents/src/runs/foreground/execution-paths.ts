@@ -129,7 +129,6 @@ interface TaskParam {
   agent: string;
   task: string;
   cwd?: string;
-  count?: number;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
   model?: string;

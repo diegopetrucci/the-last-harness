@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/foreground-run-state.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS, normalizeProjectAgentRunCapture, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";

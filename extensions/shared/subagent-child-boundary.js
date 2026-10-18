@@ -1,3 +1,4 @@
+// Generated from extensions/shared/subagent-child-boundary.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
     "You are a child subagent, not the parent orchestrator.",
     "The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",

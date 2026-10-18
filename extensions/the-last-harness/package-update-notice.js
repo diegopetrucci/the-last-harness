@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/package-update-notice.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { DynamicBorder, InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { Spacer, Text } from "@earendil-works/pi-tui";
 const TLH_PACKAGE_UPDATE_NOTICE_PATCHED = Symbol.for("tlh.packageUpdateNoticePatched");

@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/session-adapter.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SESSION_MIRROR_PROJECTION_REASONS } from "./status-allowlists.js";
 export { SESSION_MIRROR_PROJECTION_REASONS };
 const MAX_ENVELOPE_BYTES = 256 * 1024;

@@ -54,20 +54,18 @@ describe("SubagentParams schema", () => {
     assert.equal(SubagentParams.additionalProperties, false);
   });
 
-  it("includes count and omits retired caller execution controls", () => {
+  it("omits retired caller execution controls", () => {
     const taskSchemaOwner = getPropertySchema(SubagentParams, ["tasks"]);
     const taskItemsSchema = isSchemaObject(taskSchemaOwner?.items)
       ? taskSchemaOwner.items
       : undefined;
     const taskProperties: unknown = taskItemsSchema?.properties;
     const taskSchema = isSchemaObject(taskProperties) ? taskProperties : undefined;
-    const taskCountSchema = isSchemaObject(taskSchema?.count) ? taskSchema.count : undefined;
-    assert.ok(taskCountSchema, "tasks[].count schema should exist");
-    assert.equal(taskCountSchema.minimum, 1);
+    assert.equal(taskSchema?.count, undefined, "tasks[].count is retired");
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      ["agent", "task", "cwd", "count", "output", "outputMode", "model"].sort(),
+      ["agent", "task", "cwd", "output", "outputMode", "model"].sort(),
       "tasks[] allowlist mismatch",
     );
     const taskCwdSchema = isSchemaObject(taskSchema?.cwd) ? taskSchema.cwd : undefined;
@@ -241,10 +239,10 @@ describe("SubagentParams schema", () => {
 
     const tasksSchema = getPropertySchema(schema, ["tasks"]);
     const taskItemsSchema = isSchemaObject(tasksSchema?.items) ? tasksSchema.items : undefined;
-    const taskCountSchema = getPropertySchema(taskItemsSchema, ["count"]);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~kind")?.enumerable, false);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.value, true);
-    assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.enumerable, false);
+    const taskOutputSchema = getPropertySchema(taskItemsSchema, ["model"]);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~kind")?.enumerable, false);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~optional")?.value, true);
+    assert.equal(Object.getOwnPropertyDescriptor(taskOutputSchema, "~optional")?.enumerable, false);
   });
 
   it("does not emit provider-rejected schema shapes", () => {

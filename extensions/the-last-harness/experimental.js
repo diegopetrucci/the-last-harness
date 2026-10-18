@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/experimental.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const SESSION_MIRROR_OBSERVER_FEATURE = "session-mirror-observer";

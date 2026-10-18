@@ -4,7 +4,6 @@ import {
   frame,
   json,
   MAX_CONTROL_BYTES,
-  MAX_FRAME_BYTES,
   option,
   parseReadyResult,
   parseResult,
@@ -31,8 +30,6 @@ import type { SessionMirrorObserverSink } from "./observer.js";
 import type { SessionMirrorSnapshotProjectionEnvelope } from "./session-adapter.js";
 
 export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
-export const SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES = MAX_FRAME_BYTES;
-export const SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES = MAX_CONTROL_BYTES;
 
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"] as const;
 const FAILURE = "local bridge publication failed";

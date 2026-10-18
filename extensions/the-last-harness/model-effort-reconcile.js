@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/model-effort-reconcile.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { isRecord, readText } from "./common.js";
 import { formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";

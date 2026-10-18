@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/attribution.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import {} from "@earendil-works/pi-coding-agent";
 import { commandBasename, extractHereDocBodies, getEnvLeadingOptionParseResult, getProcessSubstitutionOutput, getWrappedShellCommand, getWrappedShellCommandFromTokens, isSupportedEnvCommand, MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH, normalizeShellCommandTokens, normalizeShellCommandTokensFromTokens, normalizeTrailingLineEnding, splitShellCommandSegments, stripLeadingOptionTerminator, stripLeadingShellCommandPrefixes, tokenizeShellWords, } from "./shell-parser.js";
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Generated from scripts/generate-pi-runtime-lock.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /**
  * generate-pi-runtime-lock — regenerate config/pi-runtime/package-lock.json.
  *

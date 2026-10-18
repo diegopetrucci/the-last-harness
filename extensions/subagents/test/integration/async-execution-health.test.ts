@@ -19,7 +19,6 @@ import {
   withLifecycleContinuation,
 } from "../../src/runs/shared/lifecycle-state.ts";
 import { ACTIVITY_MONITOR_INTERVAL_MS } from "../../src/runs/shared/health-transition.ts";
-import { deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import {
   ASYNC_DIR,
   type AsyncResultPayload,
@@ -423,12 +422,12 @@ describe("async execution health", () => {
         `compaction ${variant.name}`,
       );
       assert.equal(compacting.activityState, undefined);
-      const monitorOpportunityAt =
-        Date.now() +
-        Math.max(
-          ACTIVITY_MONITOR_INTERVAL_MS * 2,
-          scaleTestTimeout(ACTIVITY_MONITOR_INTERVAL_MS * 2),
-        );
+      // Negative window: the test always waits this out in full, so it is
+      // intentionally unscaled. No observable signal exists for a monitor tick
+      // that finds nothing to report; two intervals allow a monitor tick
+      // opportunity. Timers can fire late under heavy contention, so a slow
+      // runner can only weaken the absence check, never fail it falsely.
+      const monitorOpportunityAt = Date.now() + ACTIVITY_MONITOR_INTERVAL_MS * 2;
       const monitorObserved = await waitForAsyncControlCondition(asyncDir, (status, eventText) => {
         assert.doesNotMatch(eventText, /"reason":"idle"/);
         return (
@@ -845,7 +844,11 @@ describe("async execution health", () => {
         true,
       );
       if (variant === "interrupt") requestAsyncInterrupt(asyncDir);
-      else deliverTimeoutRequest({ asyncDir });
+      else {
+        // The runner's inbox watcher treats the presence of timeout.json as the request.
+        fs.mkdirSync(path.join(asyncDir, "control"), { recursive: true });
+        fs.writeFileSync(path.join(asyncDir, "control", "timeout.json"), "{}\n", "utf8");
+      }
       const cleanupObserved = await waitForAsyncStatusPredicate(
         asyncDir,
         (status) =>

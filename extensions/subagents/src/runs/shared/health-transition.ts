@@ -267,11 +267,6 @@ export function transitionHealth(
   };
 }
 
-/** Convenience wrapper for a validated activity boundary. */
-export function recoverValidatedActivity(state: HealthTransitionState): HealthTransitionResult {
-  return transitionHealth(state, { type: "validated_activity" });
-}
-
 /** Convenience wrapper for cleanup or model-attempt replacement. */
 export function resetHealthTransitionState(
   state: HealthTransitionState,

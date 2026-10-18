@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/footer-first-line.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { formatTlhGitFooterSegments, } from "./footer-git.js";
 const FOOTER_FIRST_LINE_SEPARATOR = " • ";
 export function composeTlhFooterFirstLine(input) {

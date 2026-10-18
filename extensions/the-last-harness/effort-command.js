@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/effort-command.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { ThinkingSelectorComponent, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord, readText } from "./common.js";
 import { safeTlhProfileFilePath, withLockedTlhSettingsWrite } from "./profile-state.js";
@@ -24,7 +25,7 @@ function readTlhThinkingDefault() {
         return undefined;
     }
 }
-export function persistTlhThinkingDefault(cwd, level) {
+function persistTlhThinkingDefault(cwd, level) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write thinking defaults outside the isolated TLH profile.", (current) => {
         const settings = current && current.trim() ? parseSettingsObject(current) : {};
         if (settings.defaultThinkingLevel === level) {

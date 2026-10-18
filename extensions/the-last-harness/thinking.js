@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/thinking.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { THINKING_LEVELS } from "./constants.js";
 export function getAvailableThinkingLevels(model) {
     if (!model) {

@@ -1119,6 +1119,81 @@ describe("completed-run revival", () => {
     assert.deepEqual(revivedAcceptance.effectiveAcceptance, pausedEffectiveAcceptance);
   });
 
+  it("blocks paused revival until delayed source-runner exit is proven", async () => {
+    const runId = `resume-delayed-exit-${Date.now()}`;
+    const asyncDir = path.join(ASYNC_DIR, runId);
+    const sessionFile = path.join(tempDir, "delayed-exit-session.jsonl");
+    let sourceStopped = false;
+    let launches = 0;
+    const acceptance = pausedAcceptanceLedger();
+    const observedExecuteAsyncSingle: typeof executeAsyncSingle = (continuedId) => {
+      launches += 1;
+      return {
+        content: [{ type: "text", text: "queued continuation" }],
+        details: { mode: "management", results: [], asyncId: continuedId },
+      };
+    };
+    try {
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId,
+            mode: "single",
+            state: "paused",
+            pid: 4242,
+            sessionId: "session-123",
+            startedAt: 100,
+            lastUpdate: 200,
+            cwd: tempDir,
+            sessionFile,
+            steps: [{ agent: "worker", status: "paused", sessionFile, acceptance }],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+      const { executor } = makeExecutor({
+        kill: (pid, signal) => {
+          assert.equal(pid, 4242);
+          assert.equal(signal, 0);
+          if (!sourceStopped) return true;
+          const error = new Error("delayed source exit") as NodeJS.ErrnoException;
+          error.code = "ESRCH";
+          throw error;
+        },
+        executeAsyncSingle: observedExecuteAsyncSingle,
+      });
+
+      const blocked = await executor.execute(
+        "resume-before-source-exit",
+        { action: "resume", id: runId, message: "Continue after cleanup." },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(blocked.isError, true);
+      assert.match(blocked.content[0]?.text ?? "", /still stopping/);
+      assert.equal(launches, 0);
+
+      sourceStopped = true;
+      const resumed = await executor.execute(
+        "resume-after-source-exit",
+        { action: "resume", id: runId, message: "Continue after cleanup." },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(resumed.isError, undefined, resumed.content[0]?.text ?? "");
+      assert.equal(launches, 1);
+    } finally {
+      fs.rmSync(asyncDir, { recursive: true, force: true });
+    }
+  });
+
   it("resume action revives completed async runs with concise status receipts", async () => {
     mockPi.onCall({ output: "revived answer" });
     const runId = `resume-revive-${Date.now()}`;

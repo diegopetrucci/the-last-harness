@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/execution-paths.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { clearForegroundMessageInbox, emitControlNotification, enrichPersistedPausedForegroundSingleRun, getRequestedModeLabel, providerFallbackModelsForTarget, readModelRegistrySnapshot, recoverFailedPausedForegroundTransition, registerForegroundMessageInbox, rememberForegroundRun, resetForegroundControlHealth, resolveSingleRunOutputBaseDir, updateForegroundControlProgress, updateRememberedForegroundChild, clearForegroundControlEphemeralHealth, } from "./foreground-control.js";
 import { buildCohortPauseStep, buildPausedStepFromResult, isTerminalForegroundResultSnapshot, persistPausedForegroundCohortRun, persistPausedForegroundSingleRun, } from "./foreground-pause-state.js";

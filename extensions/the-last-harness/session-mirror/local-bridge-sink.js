@@ -1,9 +1,8 @@
+// Generated from extensions/the-last-harness/session-mirror/local-bridge-sink.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createConnection } from "node:net";
-import { frame, json, MAX_CONTROL_BYTES, MAX_FRAME_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
+import { frame, json, MAX_CONTROL_BYTES, option, parseReadyResult, parseResult, readRendezvous, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";
 export const SESSION_MIRROR_OBSERVER_SINK_DEADLINE_MS = 5_000;
-export const SESSION_MIRROR_OBSERVER_SINK_MAX_FRAME_BYTES = MAX_FRAME_BYTES;
-export const SESSION_MIRROR_OBSERVER_SINK_MAX_CONTROL_BYTES = MAX_CONTROL_BYTES;
 const CAPABILITIES = ["snapshot-replace", "cursor-recovery"];
 const FAILURE = "local bridge publication failed";
 function publishedSnapshotTarget(envelope) {

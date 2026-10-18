@@ -1349,24 +1349,34 @@ describe("lifecycle state helpers", () => {
     }
   });
 
-  it("drops persisted stopped-state pids without signaling them", () => {
-    const paused = recoverStoppedLifecycleOwnership(
-      {
-        runId: "run-paused",
-        mode: "single",
-        state: "paused",
-        pid: 999,
-        startedAt: 100,
-        pause: { kind: "cohort_pause", ownerPid: 999, summary: "wait" },
-        steps: [{ agent: "worker", status: "paused" }],
+  it("keeps a live paused owner pid until cleanup is proven complete", () => {
+    const status = {
+      runId: "run-paused",
+      mode: "single" as const,
+      state: "paused" as const,
+      pid: 999,
+      startedAt: 100,
+      pause: { kind: "cohort_pause" as const, ownerPid: 999, summary: "wait" },
+      steps: [{ agent: "worker", status: "paused" as const }],
+    };
+    const stillRunning = recoverStoppedLifecycleOwnership(status, {
+      kill: () => true,
+    });
+    assert.equal(stillRunning.repaired, false);
+    assert.equal(stillRunning.pidLiveness, "alive");
+    assert.equal(stillRunning.status.pid, 999);
+    assert.equal(stillRunning.status.pause?.ownerPid, 999);
+
+    const stopped = recoverStoppedLifecycleOwnership(status, {
+      kill: () => {
+        const error = new Error("delayed exit") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
       },
-      {
-        kill: () => true,
-      },
-    );
-    assert.equal(paused.repaired, true);
-    assert.equal(paused.pidLiveness, "alive");
-    assert.equal(paused.status.pid, undefined);
-    assert.equal(paused.status.pause?.ownerPid, undefined);
+    });
+    assert.equal(stopped.repaired, true);
+    assert.equal(stopped.pidLiveness, "dead");
+    assert.equal(stopped.status.pid, undefined);
+    assert.equal(stopped.status.pause?.ownerPid, undefined);
   });
 });

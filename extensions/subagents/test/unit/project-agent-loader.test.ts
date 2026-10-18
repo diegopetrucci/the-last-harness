@@ -16,7 +16,6 @@ import {
   MAX_PROJECT_AGENT_FILE_BYTES,
   MAX_PROJECT_AGENT_FILES,
   MAX_PROJECT_AGENT_TOTAL_BYTES,
-  parseProjectAgentDefinition,
   resolveCanonicalGitWorktreeRoot,
   resolveProjectAgentTrust,
   scanProjectAgentDefinitions,
@@ -35,6 +34,18 @@ function tempProject(options: { git?: boolean } = {}): string {
 
 function customDirectory(projectRoot: string): string {
   return path.join(projectRoot, ".tlh", "agents", "custom");
+}
+
+/** Parse one definition through the live scanner, isolated in its own project. */
+function parseProjectAgentDefinition(filePath: string, bytes: Buffer) {
+  const project = tempProject();
+  const copyPath = path.join(customDirectory(project), path.basename(filePath));
+  fs.mkdirSync(path.dirname(copyPath), { recursive: true });
+  fs.writeFileSync(copyPath, bytes);
+  const scan = scanProjectAgentDefinitions(project);
+  const entry = scan.entries[0];
+  if (!entry) throw new Error(scan.diagnostics.join("\n") || "no entry parsed");
+  return entry;
 }
 
 function writeDefinition(
@@ -187,7 +198,7 @@ describe("trusted project-agent loader", () => {
     assert.equal(entry.digest, createHash("sha256").update(bytes).digest("hex"));
     assert.throws(
       () => parseProjectAgentDefinition(filePath.replace("REVIEWER.md", "reviewer.md"), bytes),
-      /uppercase ASCII/,
+      /invalid project-agent basename/,
     );
   });
 
@@ -235,6 +246,9 @@ describe("trusted project-agent loader", () => {
         { tools: "mcp:unsafe-project-tool" },
         /tools must declare at least one usable tool/,
       ],
+      ["EXTENSION-TOOL-TS.md", { tools: "payload.ts" }, /extension path and is prohibited/],
+      ["EXTENSION-TOOL-JS.md", { tools: "payload.js" }, /extension path and is prohibited/],
+      ["EXTENSION-TOOL-SLASH.md", { tools: "read,./payload" }, /extension path and is prohibited/],
       ["INVALID-TOOL.md", { tools: "read,grep[]" }, /valid runtime tool name/],
       ["INVALID-TOOL-PREFIX.md", { tools: "-read" }, /valid runtime tool name/],
       [
@@ -303,6 +317,24 @@ describe("trusted project-agent loader", () => {
         expected,
       );
     }
+  });
+
+  it("tombstones extension-path aliases while retaining named tools", () => {
+    const project = tempProject();
+    writeDefinition(project, "ALIAS-TS.md", { tools: "payload.ts" });
+    writeDefinition(project, "ALIAS-JS.md", { tools: "payload.js" });
+    writeDefinition(project, "NAMED.md", { tools: "read,bash" });
+
+    const result = scanProjectAgentDefinitions(project);
+
+    assert.equal(result.status, "stable");
+    assert.deepEqual(
+      result.entries.map((entry) => entry.agent.name),
+      ["embedded.named"],
+    );
+    assert.deepEqual(result.entries[0]?.agent.tools, ["read", "bash"]);
+    assert.deepEqual(result.tombstones, ["embedded.alias-js", "embedded.alias-ts"]);
+    assert.match(result.diagnostics.join("\n"), /extension path and is prohibited/);
   });
 
   it("loads only direct uppercase custom files at the Git root", async () => {

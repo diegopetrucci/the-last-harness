@@ -1,8 +1,9 @@
+// Generated from extensions/subagents/src/runs/background/stale-run-reconciler.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
-import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
+import { checkPidLiveness, normalizeActiveRuntimeCheckpointAt, normalizeActiveRuntimeMs, recoverStoppedLifecycleOwnership, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { normalizeTkTicketId } from "../shared/tk-ticket.js";
@@ -587,27 +588,54 @@ function writeFailedRepair(asyncDir, status, resultPath, now, reason) {
     return { status: repair.status, repaired: true, resultPath, message: repair.message };
 }
 export { checkPidLiveness };
+function isStoppedLifecycleState(state) {
+    return (state === "paused" || state === "cancelled" || state === "continued" || state === "pausing");
+}
 export function reconcileAsyncRun(asyncDir, options = {}) {
     const now = options.now?.() ?? Date.now();
     const status = readStatusFile(asyncDir);
     const startedStatus = !status && options.startedRun
         ? buildStartedStatus(asyncDir, options.startedRun, now)
         : undefined;
-    const effectiveStatus = status ?? startedStatus;
+    let effectiveStatus = status ?? startedStatus;
     if (!effectiveStatus)
         return { status: null, repaired: false };
     const runId = effectiveStatus.runId || path.basename(asyncDir);
     const resultPath = path.join(options.resultsDir ?? RESULTS_DIR, `${runId}.json`);
-    if (effectiveStatus.state === "paused" ||
-        effectiveStatus.state === "cancelled" ||
-        effectiveStatus.state === "continued" ||
-        effectiveStatus.state === "pausing") {
-        const recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
-            kill: options.kill,
-            now: options.now,
-        });
+    if (isStoppedLifecycleState(effectiveStatus.state)) {
+        let recovered;
+        if (status) {
+            let locked;
+            try {
+                locked = withLifecycleStatusLock(asyncDir, (current) => {
+                    if (!current || !isStoppedLifecycleState(current.state))
+                        return { current };
+                    const result = recoverStoppedLifecycleOwnership(current, {
+                        kill: options.kill,
+                        now: options.now,
+                    });
+                    if (result.repaired)
+                        writeAtomicJson(path.join(asyncDir, "status.json"), result.status);
+                    return { current, recovered: result };
+                }, { kill: options.kill, now: options.now });
+            }
+            catch {
+                return { status: effectiveStatus, repaired: false };
+            }
+            if (!locked.recovered)
+                return { status: locked.current ?? effectiveStatus, repaired: false };
+            effectiveStatus = locked.current;
+            recovered = locked.recovered;
+        }
+        else {
+            recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
+                kill: options.kill,
+                now: options.now,
+            });
+            if (recovered.repaired)
+                writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
+        }
         if (recovered.repaired) {
-            writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
             return {
                 status: recovered.status,
                 repaired: true,
@@ -651,7 +679,7 @@ export function reconcileAsyncRun(asyncDir, options = {}) {
         return { status: effectiveStatus, repaired: false, resultPath };
     }
     if (effectiveStatus.state !== "running" || typeof effectiveStatus.pid !== "number") {
-        return { status: status ?? null, repaired: false, resultPath };
+        return { status: status ? effectiveStatus : null, repaired: false, resultPath };
     }
     if (!status) {
         const startedAt = options.startedRun?.startedAt ?? effectiveStatus.startedAt;

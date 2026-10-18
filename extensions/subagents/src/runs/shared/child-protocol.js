@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/shared/child-protocol.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { Buffer } from "node:buffer";
 export const MAX_CHILD_PENDING_LINE_BYTES = 16 * 1024 * 1024;
 export const MAX_CHILD_STDERR_BYTES = 128 * 1024;

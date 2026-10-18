@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/update-check.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { TLH_LATEST_RELEASE_API_URL, TLH_MAIN_COMPARE_API_URL, TLH_NAME, TLH_RELEASES_URL, TLH_UPDATE_CHECK_INTERVAL_MS, TLH_UPDATE_CHECK_TIMEOUT_MS, } from "./constants.js";
 import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion, } from "./package-version.js";

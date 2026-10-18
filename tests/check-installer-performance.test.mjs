@@ -26,8 +26,6 @@ import {
   createReadinessObserver,
   diagnoseReadinessFailure,
   finishPhaseObserver,
-  hasTlhFooter,
-  hasTlhHeader,
   installedRevisionMismatchDiagnostic,
   npmVersion,
   observeInstallerChunk,
@@ -49,6 +47,7 @@ import {
   summarizeSamples,
   writeCredentialFreeTrustMetadata,
 } from "../scripts/check-installer-performance.mjs";
+import { hasFooterMarker, hasHeaderMarker } from "../scripts/lib/tlh-startup-readiness.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const benchmarkScript = join(repoRoot, "scripts", "check-installer-performance.mjs");
@@ -543,8 +542,8 @@ test("readiness requires actual header and footer markers, not first output", ()
   assert.equal(readiness.firstOutputMs, 1);
   assert.equal(readiness.headerMs, 8);
   assert.equal(readiness.footerMs, 12);
-  assert.equal(hasTlhHeader(readiness.normalizedOutput), true);
-  assert.equal(hasTlhFooter(readiness.normalizedOutput), true);
+  assert.equal(hasHeaderMarker(readiness.normalizedOutput), true);
+  assert.equal(hasFooterMarker(readiness.normalizedOutput), true);
 
   const missing = createReadinessObserver();
   observeReadinessChunk(missing, "first output only\n", 3);

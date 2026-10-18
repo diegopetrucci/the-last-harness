@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/background/run-status-owner.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -43,7 +44,7 @@ function lifecycleTransitionErrorDetail(error, depth = 0) {
         return "unavailable";
     }
 }
-export function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
+function appendLifecycleTransitionDiagnostic(appendDiagnosticEvent, runId, phase, error) {
     try {
         appendDiagnosticEvent(JSON.stringify({
             type: "subagent.run.lifecycle_transition_failed",

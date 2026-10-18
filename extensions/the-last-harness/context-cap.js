@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/context-cap.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isPlainObject } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
@@ -646,7 +647,7 @@ function assertContextCapSettings(settings) {
 }
 function toggleContextCapSetting(cwd) {
     return withLockedTlhSettingsWrite(cwd, "Refusing to write context-cap settings outside the isolated TLH profile.", (current) => {
-        const settings = current ? JSON.parse(current) : {};
+        const settings = current ? JSON.parse(current.replace(/^\uFEFF/, "")) : {};
         assertContextCapSettings(settings);
         const currentlyDisabled = settings.tlh?.contextCap?.disabled === true;
         const nowDisabled = !currentlyDisabled;

@@ -1,3 +1,4 @@
+// Generated from scripts/lib/subagent-analysis-validation.mts by scripts/runtime-typescript.mjs; edit the source, not this file.
 /** Strict validation for persisted subagent telemetry before normalization. */
 function isObject(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);

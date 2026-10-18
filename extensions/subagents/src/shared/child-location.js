@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/shared/child-location.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { normalizeComparableCwd } from "./utils.js";

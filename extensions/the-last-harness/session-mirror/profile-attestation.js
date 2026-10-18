@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/profile-attestation.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { lstatSync, realpathSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";

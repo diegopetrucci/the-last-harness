@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/runs/foreground/foreground-control.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeProjectAgentRunCapture, projectAgentRunCaptureEquals, } from "../../agents/project-agent-snapshot.js";
@@ -175,8 +176,6 @@ function requestAsyncInterruptForTarget(state, target, kill) {
     try {
         deliverInterruptRequest({
             asyncDir: target.asyncDir,
-            pid: status.pid,
-            kill,
             source: "interrupt-action",
         });
         const tracked = state.asyncJobs.get(target.asyncId);

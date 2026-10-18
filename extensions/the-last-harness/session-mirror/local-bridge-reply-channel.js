@@ -1,3 +1,4 @@
+// Generated from extensions/the-last-harness/session-mirror/local-bridge-reply-channel.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { createConnection } from "node:net";
 import { frame, json, MAX_CONTROL_BYTES, option, parseReadyResult, parseReplyRequest, readRendezvous, replyCloseFrame, replyReceiptFrame, REPLY_TEXT_CAPABILITY, socketIsSafe, socketPath, sourceInstanceId, validIdentity, validPath, } from "./local-bridge-boundary.js";
 import { bestEffort, FAILURE_EVENTS, hasMethod, isBridgeSocket, remove, waitConnect, writeFrame, } from "./local-bridge-socket.js";

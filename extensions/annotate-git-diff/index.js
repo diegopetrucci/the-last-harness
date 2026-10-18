@@ -1,3 +1,4 @@
+// Generated from extensions/annotate-git-diff/index.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { readSystemClipboard, writeSystemClipboard } from "./clipboard.js";
 import { getCommitFiles, getReviewWindowData, loadReviewFileContents } from "./git.js";
 import { composeReviewPrompt } from "./prompt.js";

@@ -1,3 +1,4 @@
+// Generated from extensions/subagents/src/agents/skills.ts by scripts/runtime-typescript.mjs; edit the source, not this file.
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
