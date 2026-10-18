@@ -695,13 +695,3 @@ export function timingEnvironmentForCommand(config, command) {
 export function timingReporterPath(config) {
   return join(config.repoRoot, "scripts", "ci-timing-reporter.mjs");
 }
-
-/**
- * Exposed for focused tests and the contributor reporter.
- *
- * @param {string} file
- * @returns {boolean}
- */
-export function isRepositoryRelativeTimingFile(file) {
-  return repositoryRelativeFile(file) !== null;
-}

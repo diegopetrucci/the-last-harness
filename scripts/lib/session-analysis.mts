@@ -1965,12 +1965,6 @@ export async function extractSubagentCorrelationsWithStatus(
   }
   return { correlations, failureReasons };
 }
-export async function extractSubagentCorrelations(
-  scanResult: SessionScanResult,
-  sessionsDir?: string,
-): Promise<SubagentCorrelation[]> {
-  return (await extractSubagentCorrelationsWithStatus(scanResult, sessionsDir)).correlations;
-}
 // ---------------------------------------------------------------------------
 export {
   aggregateCoverage,

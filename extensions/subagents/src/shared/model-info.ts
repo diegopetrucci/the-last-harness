@@ -119,7 +119,7 @@ function getGlobalContextWindowPolicy(
  * The global symbol and non-enumerable model property keep this handoff intact
  * when TLH's eager and native subagent loaders instantiate separate modules.
  */
-export function getModelContextWindowPolicy(model: unknown): ModelContextWindowPolicy | undefined {
+function getModelContextWindowPolicy(model: unknown): ModelContextWindowPolicy | undefined {
   if (!isModelContextWindowOwner(model)) return undefined;
   const descriptor = Object.getOwnPropertyDescriptor(model, MODEL_CONTEXT_WINDOW_POLICY_KEY);
   const policy: unknown = descriptor?.value;

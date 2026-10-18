@@ -19,7 +19,6 @@ import {
 import type { TlhInstallNotice } from "./types.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
 import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
-export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;

@@ -1730,9 +1730,6 @@ export async function extractSubagentCorrelationsWithStatus(scanResult, sessions
     }
     return { correlations, failureReasons };
 }
-export async function extractSubagentCorrelations(scanResult, sessionsDir) {
-    return (await extractSubagentCorrelationsWithStatus(scanResult, sessionsDir)).correlations;
-}
 // ---------------------------------------------------------------------------
 export { aggregateCoverage, recordCorrelationEvidenceFailures, } from "./session-analysis-coverage.mjs";
 export { analyzeSubagentSessions } from "./subagent-analysis.mjs";
