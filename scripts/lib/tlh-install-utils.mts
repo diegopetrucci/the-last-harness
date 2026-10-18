@@ -475,3 +475,10 @@ export function assertNotInNormalPiConfig(
   if (!pathIsInNormalPiConfig(path, options)) return;
   throw new Error(typeof message === "function" ? message(path) : message);
 }
+
+export function outputLines(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line: string) => line.trim())
+    .filter(Boolean);
+}

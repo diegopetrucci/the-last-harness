@@ -46,12 +46,14 @@ import {
 import type { ProfileCleanupConfig, ProfileCleanupIo } from "./lib/tlh-install-profile-cleanup.mjs";
 import {
   mcpAdapterCutoverHeldForInstall,
+  pinnedNpmInstallPresent,
   preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl,
   type NpmPreinstallConfig,
   type NpmPreinstallIo,
 } from "./lib/tlh-install-npm.mjs";
 import {
   assignRequiredEqualsValue,
+  outputLines,
   readConfiguredNpmCommand,
   renderShellWords,
   requiredValue,
@@ -1415,13 +1417,6 @@ async function writeInstallState(config: InstallConfig): Promise<void> {
   runNodeScript(config, config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT, args);
 }
 
-function outputLines(output: string): string[] {
-  return output
-    .split(/\r?\n/)
-    .map((line: string) => line.trim())
-    .filter(Boolean);
-}
-
 function splitDefaultExtensionSources(
   sourcesOutput: string,
   criticalSourcesOutput: string,
@@ -1482,7 +1477,11 @@ function preflightCriticalDefaultExtensionTargets(config: InstallConfig, sources
   }
 }
 
-function installCriticalDefaultExtension(config: InstallConfig, source: string): void {
+function installCriticalDefaultExtension(
+  config: InstallConfig,
+  source: string,
+  batched: boolean,
+): void {
   verboseLog(config, `Installing critical bundled default extension package: ${source}`);
   const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
   gitInstall.assertGitSourceTargetSafe(
@@ -1491,6 +1490,7 @@ function installCriticalDefaultExtension(config: InstallConfig, source: string):
     "critical default extension package checkout",
     gitCheckoutIo(config),
   );
+  if (batched && pinnedNpmInstallPresent(config, source, npmPreinstallIo(config))) return;
   try {
     runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
   } catch {
@@ -1565,7 +1565,7 @@ function updateNonCriticalDefaultExtensions(
   return 0;
 }
 
-function installDefaultExtensions(config: InstallConfig): void {
+function installDefaultExtensions(config: InstallConfig, batched = false): void {
   if (config.noSettings) {
     log(config, "Skipping bundled default extensions (--no-settings).");
     return;
@@ -1669,7 +1669,8 @@ function installDefaultExtensions(config: InstallConfig): void {
     mcpAdapterHeld,
   });
   if (failures !== 0) warn(`${failures} bundled default extension package(s) failed to update`);
-  for (const source of safeCriticalSources) installCriticalDefaultExtension(config, source);
+  for (const source of safeCriticalSources)
+    installCriticalDefaultExtension(config, source, batched);
 
   if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
 }
@@ -1683,12 +1684,10 @@ function npmPreinstallIo(config: InstallConfig): NpmPreinstallIo {
     inheritedCommandEnv: () => inheritedCommandEnv(config),
   };
 }
-function preInstallNpmDefaultExtensions(config: InstallConfig): void {
+const preInstallNpmDefaultExtensions = (config: InstallConfig): boolean =>
   preInstallNpmDefaultExtensionsImpl(config as NpmPreinstallConfig, npmPreinstallIo(config));
-}
 function gnosisInstallSkippedByEnv(config: InstallConfig): boolean {
-  const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
-  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+  return ["1", "true", "yes"].includes(config.env?.TLH_SKIP_GNOSIS_INSTALL?.toLowerCase() ?? "");
 }
 
 function configureGnosis(config: InstallConfig): void {
@@ -1924,8 +1923,8 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   if (!config.noSettings) reclaimRetiredExtensionResidues(config);
   if (!config.noSettings) cleanupOldSettingsBackups(config);
   await writeInstallState(config);
-  installDefaultExtensions(config);
-  preInstallNpmDefaultExtensions(config);
+  // Batch first: `pi install` creates the npm root, which makes the batched pre-install skip.
+  installDefaultExtensions(config, preInstallNpmDefaultExtensions(config));
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);
