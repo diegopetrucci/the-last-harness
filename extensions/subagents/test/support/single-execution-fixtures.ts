@@ -5,10 +5,14 @@
  * fixtures. Each suite owns its mock process, temporary directory, and hooks.
  */
 
+import type { RunSyncOptions } from "../../src/shared/types.ts";
+import * as executionImport from "../../src/runs/foreground/execution.ts";
+import * as utilsImport from "../../src/shared/utils.ts";
+import * as executorModImport from "../../src/runs/foreground/subagent-executor.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createEventBus, makeAgent, tryImport } from "./helpers.ts";
+import { createEventBus, makeAgent } from "./helpers.ts";
 import type { AgentConfig } from "./helpers.ts";
 import type { SubagentTelemetryProvenance } from "../../src/shared/telemetry.ts";
 import type {
@@ -189,7 +193,7 @@ export interface ExecutionModule {
     agents: AgentConfig[],
     agentName: string,
     task: string,
-    options: Record<string, unknown>,
+    options: RunSyncOptions | Record<string, unknown>,
   ): Promise<RunSyncResult>;
 }
 
@@ -227,7 +231,7 @@ export interface ExecutorToolResult {
 }
 
 export interface ExecutorModule {
-  createSubagentExecutor?: (...args: unknown[]) => {
+  createSubagentExecutor: (...args: unknown[]) => {
     execute: (...args: unknown[]) => Promise<ExecutorToolResult>;
   };
 }
@@ -269,14 +273,13 @@ export function writePackageSkill(packageRoot: string, skillName: string): void 
   );
 }
 
-const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
-const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
-export const available = !!(execution && utils);
+const execution = executionImport as ExecutionModule;
+const utils = utilsImport as UtilsModule;
+const executorMod = executorModImport as ExecutorModule;
 
-export const runSync = execution?.runSync;
-export const getFinalOutput = utils?.getFinalOutput;
-export const createSubagentExecutor = executorMod?.createSubagentExecutor;
+export const runSync = execution.runSync;
+export const getFinalOutput = utils.getFinalOutput;
+export const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 type TestEventBus = ReturnType<typeof createEventBus>;
 
@@ -297,7 +300,7 @@ export function makeExecutor(
   telemetryProvenance?: SubagentTelemetryProvenance,
   piOverride?: { events: TestEventBus; getSessionName: () => undefined },
 ) {
-  return createSubagentExecutor!({
+  return createSubagentExecutor({
     pi: piOverride ?? { events: createEventBus(), getSessionName: () => undefined },
     state,
     config,

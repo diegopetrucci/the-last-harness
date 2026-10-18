@@ -1,13 +1,8 @@
+import * as executorModImport from "../../src/runs/foreground/subagent-executor.ts";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { MockPi } from "../support/helpers.ts";
-import {
-  createMockPi,
-  createTempDir,
-  removeTempDir,
-  events,
-  tryImport,
-} from "../support/helpers.ts";
+import { createMockPi, createTempDir, removeTempDir, events } from "../support/helpers.ts";
 
 interface ResultContent {
   text?: string;
@@ -33,7 +28,7 @@ interface ExecutorResult {
 }
 
 interface ExecutorModule {
-  createSubagentExecutor?: (...args: unknown[]) => {
+  createSubagentExecutor: (...args: unknown[]) => {
     execute: (
       id: string,
       params: Record<string, unknown>,
@@ -44,9 +39,8 @@ interface ExecutorModule {
   };
 }
 
-const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
-const available = !!executorMod?.createSubagentExecutor;
-const createSubagentExecutor = executorMod?.createSubagentExecutor;
+const executorMod = executorModImport as ExecutorModule;
+const createSubagentExecutor = executorMod.createSubagentExecutor;
 
 function makeState(cwd: string) {
   return {
@@ -67,7 +61,7 @@ function makeState(cwd: string) {
 }
 
 function makeExecutor(cwd: string) {
-  return createSubagentExecutor!({
+  return createSubagentExecutor({
     pi: {
       events: { emit: () => {} },
       getSessionName: () => undefined,
@@ -111,120 +105,114 @@ function buildDockerNoiseChunk(step: number): string {
   return lines.join("\n");
 }
 
-describe(
-  "foreground result payload compaction",
-  {
-    skip: !available ? "subagent executor not importable" : undefined,
-  },
-  () => {
-    let tempDir: string;
-    let mockPi: MockPi;
+describe("foreground result payload compaction", () => {
+  let tempDir: string;
+  let mockPi: MockPi;
 
-    before(() => {
-      mockPi = createMockPi();
-      mockPi.install();
-    });
+  before(() => {
+    mockPi = createMockPi();
+    mockPi.install();
+  });
 
-    after(() => {
-      mockPi.uninstall();
-    });
+  after(() => {
+    mockPi.uninstall();
+  });
 
-    beforeEach(() => {
-      tempDir = createTempDir("pi-subagent-payload-test-");
-      mockPi.reset();
-    });
+  beforeEach(() => {
+    tempDir = createTempDir("pi-subagent-payload-test-");
+    mockPi.reset();
+  });
 
-    afterEach(() => {
-      removeTempDir(tempDir);
-    });
+  afterEach(() => {
+    removeTempDir(tempDir);
+  });
 
-    it("keeps foreground single-run payloads compact after tool-heavy runs", async () => {
-      const jsonl: unknown[] = [];
-      jsonl.push({
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [
-            {
-              type: "toolCall",
-              name: "write",
-              arguments: {
-                path: "/tmp/huge-report.md",
-                content: "x".repeat(50_000),
-              },
+  it("keeps foreground single-run payloads compact after tool-heavy runs", async () => {
+    const jsonl: unknown[] = [];
+    jsonl.push({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            name: "write",
+            arguments: {
+              path: "/tmp/huge-report.md",
+              content: "x".repeat(50_000),
             },
-          ],
-          model: "mock/test-model",
-          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
-        },
-      });
-      jsonl.push(
-        events.toolStart("write", { path: "/tmp/huge-report.md", content: "x".repeat(50_000) }),
-      );
-      jsonl.push(events.toolResult("write", "ok"));
-      jsonl.push(events.toolEnd("write"));
-      for (let step = 0; step < 60; step++) {
-        jsonl.push(
-          events.toolStart("bash", {
-            command: `docker compose run --rm api test-shard-${step} --retry --verbose`,
-          }),
-        );
-        jsonl.push(events.toolResult("bash", buildDockerNoiseChunk(step)));
-        jsonl.push(events.toolEnd("bash"));
-      }
-      jsonl.push(
-        events.assistantMessage(
-          "Finished the test sweep. Three failures reproduced, two were flaky, and the smallest fix is to retry the image bootstrap before the integration shard starts.",
-        ),
-      );
-      mockPi.onCall({ jsonl });
-
-      const executor = makeExecutor(tempDir);
-      const result = await executor.execute(
-        "id",
-        { agent: "tester", task: "Run the full noisy test sweep" },
-        new AbortController().signal,
-        undefined,
-        makeCtx(tempDir),
-      );
-
-      assert.equal(result.isError, undefined);
-      assert.equal(result.details?.mode, "single");
-      assert.equal(result.details?.results?.length, 1);
-      assert.equal(
-        result.details?.progress,
-        undefined,
-        "terminal foreground details should keep the concise default and omit aggregate progress",
-      );
-
-      const displayText = result.content[0]?.text ?? "";
-      assert.ok(
-        displayText.length < 2_000,
-        `expected small visible output, got ${displayText.length} bytes`,
-      );
-
-      const step = result.details?.results?.[0];
-      assert.equal(step?.exitCode, 0);
-      assert.ok(
-        step?.messages === undefined,
-        "completed foreground results should not inline raw messages",
-      );
-      assert.ok(
-        step?.progress === undefined,
-        "completed foreground results should not inline full progress objects",
-      );
-      assert.ok(
-        step?.toolCalls?.length,
-        "completed foreground results should preserve compact tool-call summaries",
-      );
-      assert.equal(step?.toolCalls?.[0]?.text, "write /tmp/huge-report.md");
-      assert.equal(step?.toolCalls?.[0]?.expandedText, undefined);
-
-      const payloadSize = JSON.stringify(result).length;
-      assert.ok(
-        payloadSize < 80_000,
-        `expected compact foreground payload, got ${payloadSize} bytes`,
-      );
+          },
+        ],
+        model: "mock/test-model",
+        usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+      },
     });
-  },
-);
+    jsonl.push(
+      events.toolStart("write", { path: "/tmp/huge-report.md", content: "x".repeat(50_000) }),
+    );
+    jsonl.push(events.toolResult("write", "ok"));
+    jsonl.push(events.toolEnd("write"));
+    for (let step = 0; step < 60; step++) {
+      jsonl.push(
+        events.toolStart("bash", {
+          command: `docker compose run --rm api test-shard-${step} --retry --verbose`,
+        }),
+      );
+      jsonl.push(events.toolResult("bash", buildDockerNoiseChunk(step)));
+      jsonl.push(events.toolEnd("bash"));
+    }
+    jsonl.push(
+      events.assistantMessage(
+        "Finished the test sweep. Three failures reproduced, two were flaky, and the smallest fix is to retry the image bootstrap before the integration shard starts.",
+      ),
+    );
+    mockPi.onCall({ jsonl });
+
+    const executor = makeExecutor(tempDir);
+    const result = await executor.execute(
+      "id",
+      { agent: "tester", task: "Run the full noisy test sweep" },
+      new AbortController().signal,
+      undefined,
+      makeCtx(tempDir),
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.details?.mode, "single");
+    assert.equal(result.details?.results?.length, 1);
+    assert.equal(
+      result.details?.progress,
+      undefined,
+      "terminal foreground details should keep the concise default and omit aggregate progress",
+    );
+
+    const displayText = result.content[0]?.text ?? "";
+    assert.ok(
+      displayText.length < 2_000,
+      `expected small visible output, got ${displayText.length} bytes`,
+    );
+
+    const step = result.details?.results?.[0];
+    assert.equal(step?.exitCode, 0);
+    assert.ok(
+      step?.messages === undefined,
+      "completed foreground results should not inline raw messages",
+    );
+    assert.ok(
+      step?.progress === undefined,
+      "completed foreground results should not inline full progress objects",
+    );
+    assert.ok(
+      step?.toolCalls?.length,
+      "completed foreground results should preserve compact tool-call summaries",
+    );
+    assert.equal(step?.toolCalls?.[0]?.text, "write /tmp/huge-report.md");
+    assert.equal(step?.toolCalls?.[0]?.expandedText, undefined);
+
+    const payloadSize = JSON.stringify(result).length;
+    assert.ok(
+      payloadSize < 80_000,
+      `expected compact foreground payload, got ${payloadSize} bytes`,
+    );
+  });
+});

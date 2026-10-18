@@ -1,24 +1,3 @@
-/**
- * Unit tests verifying that the child-location snapshot flows correctly through
- * the foreground dispatch plumbing.
- *
- * Coverage:
- * - Single-run path (runSinglePath): snapshot captured in RunSyncOptions at
- *   dispatch time; absent when cwds match.
- * - Parallel-run path (runForegroundParallelTasks): per-task snapshot captured
- *   in each RunSyncOptions at dispatch time.
- * - Streaming updates: childLocation survives intermediate onUpdate callbacks
- *   for both single and parallel paths.
- * - Consumer-level assertion: the field is present on the SingleResult that
- *   reaches the render layer (Details["results"][number]).
- *
- * No subprocess is spawned in the dispatch tests; runSync is replaced with an
- * injectable seam that captures received options and emits controlled onUpdate
- * events. The setup-failure regression block (ts-1496) calls the real runSync
- * with an agent whose invalid tool policy causes buildPiArgs to throw before
- * any subprocess is spawned.
- */
-
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

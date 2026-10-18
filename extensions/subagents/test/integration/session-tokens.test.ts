@@ -1,17 +1,17 @@
+import * as tokensModImport from "../../src/shared/session-tokens.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
+import { createTempDir, removeTempDir } from "../support/helpers.ts";
 
 interface SessionTokensModule {
   parseSessionTokens(sessionDir: string): { input: number; output: number; total: number } | null;
 }
 
-const tokensMod = await tryImport<SessionTokensModule>("./src/shared/session-tokens.ts");
-const available = !!tokensMod;
+const tokensMod = tokensModImport as SessionTokensModule;
 
-describe("session tokens", { skip: !available ? "pi packages not available" : undefined }, () => {
+describe("session tokens", () => {
   it("parses token usage from session message entries", () => {
     const sessionDir = createTempDir("pi-subagent-session-tokens-");
     try {
@@ -34,7 +34,7 @@ describe("session tokens", { skip: !available ? "pi packages not available" : un
       ].join("\n");
       fs.writeFileSync(sessionFile, lines + "\n", "utf-8");
 
-      const tokens = tokensMod!.parseSessionTokens(sessionDir);
+      const tokens = tokensMod.parseSessionTokens(sessionDir);
       assert.deepEqual(tokens, { input: 200, output: 50, total: 250 });
     } finally {
       removeTempDir(sessionDir);
@@ -61,7 +61,7 @@ describe("session tokens", { skip: !available ? "pi packages not available" : un
       fs.utimesSync(olderFile, olderTime, olderTime);
       fs.utimesSync(newerFile, newerTime, newerTime);
 
-      const tokens = tokensMod!.parseSessionTokens(sessionDir);
+      const tokens = tokensMod.parseSessionTokens(sessionDir);
       assert.deepEqual(tokens, { input: 90, output: 10, total: 100 });
     } finally {
       removeTempDir(sessionDir);
