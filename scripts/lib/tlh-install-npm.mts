@@ -178,6 +178,30 @@ function npmPinnedSpec(source: string): string | undefined {
   return spec;
 }
 
+/** True when the pinned npm source is already installed at that exact version (Pi's launch check). */
+export function pinnedNpmInstallPresent(
+  config: { agentDir: string },
+  source: string,
+  io: Pick<NpmPreinstallIo, "verboseLog">,
+): boolean {
+  const spec = npmPinnedSpec(source);
+  if (!spec) return false;
+  const separator = spec.startsWith("@") ? spec.indexOf("@", 1) : spec.lastIndexOf("@");
+  const name = spec.slice(0, separator);
+  const version = spec.slice(separator + 1);
+  try {
+    const manifest = join(config.agentDir, "npm", "node_modules", name, "package.json");
+    const installed: unknown = JSON.parse(readFileSync(manifest, "utf8"));
+    if (!isJsonRecord(installed) || installed.version !== version) return false;
+  } catch {
+    return false;
+  }
+  io.verboseLog(
+    `Skipping pi install for ${source}: pinned version already present in the npm root.`,
+  );
+  return true;
+}
+
 function readNpmPreinstallSettings(
   config: NpmPreinstallConfig,
   io: NpmPreinstallIo,

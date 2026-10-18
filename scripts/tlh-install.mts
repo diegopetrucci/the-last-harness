@@ -46,6 +46,7 @@ import {
 import type { ProfileCleanupConfig, ProfileCleanupIo } from "./lib/tlh-install-profile-cleanup.mjs";
 import {
   mcpAdapterCutoverHeldForInstall,
+  pinnedNpmInstallPresent,
   preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl,
   type NpmPreinstallConfig,
   type NpmPreinstallIo,
@@ -1491,6 +1492,7 @@ function installCriticalDefaultExtension(config: InstallConfig, source: string):
     "critical default extension package checkout",
     gitCheckoutIo(config),
   );
+  if (pinnedNpmInstallPresent(config, source, npmPreinstallIo(config))) return;
   try {
     runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
   } catch {
@@ -1683,12 +1685,10 @@ function npmPreinstallIo(config: InstallConfig): NpmPreinstallIo {
     inheritedCommandEnv: () => inheritedCommandEnv(config),
   };
 }
-function preInstallNpmDefaultExtensions(config: InstallConfig): void {
+const preInstallNpmDefaultExtensions = (config: InstallConfig): void =>
   preInstallNpmDefaultExtensionsImpl(config as NpmPreinstallConfig, npmPreinstallIo(config));
-}
 function gnosisInstallSkippedByEnv(config: InstallConfig): boolean {
-  const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
-  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+  return ["1", "true", "yes"].includes(config.env?.TLH_SKIP_GNOSIS_INSTALL?.toLowerCase() ?? "");
 }
 
 function configureGnosis(config: InstallConfig): void {
@@ -1924,8 +1924,9 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   if (!config.noSettings) reclaimRetiredExtensionResidues(config);
   if (!config.noSettings) cleanupOldSettingsBackups(config);
   await writeInstallState(config);
-  installDefaultExtensions(config);
+  // Batch first: `pi install` creates the npm root, which makes the batched pre-install skip.
   preInstallNpmDefaultExtensions(config);
+  installDefaultExtensions(config);
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);

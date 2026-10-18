@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fresh installs again batch-install pinned npm default extensions before the critical quiet-tools install, so they no longer install one-by-one on first launch.
 - Uninstall now accepts installer-compatible symlinked HOME/ancestor aliases while retaining canonical path and profile safety guards.
 - Normal Pi path guards now recognize existing case aliases on case-insensitive filesystems without folding distinct case-sensitive paths.
 - Uninstall preserves an unmarked agent dir after a late install failure while still cleaning independently owned runtime and managed-wrapper artifacts, with an actionable warning and nonzero status.

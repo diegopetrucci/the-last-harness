@@ -12,7 +12,7 @@ import { packageIdentity, readDefaultExtensions } from "./lib/default-extensions
 import { mcpAdapterPackageIdentities, MCP_ADAPTER_CUTOVER_EXTENSION_ID, } from "./lib/mcp-adapter-cutover.mjs";
 import { assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, } from "./lib/tlh-install-paths.mjs";
 import { LEGACY_MANAGED_PROFILE_ARTIFACTS, cleanupLegacyManagedProfileArtifacts as cleanupLegacyManagedProfileArtifactsImpl, cleanupOldSettingsBackups as cleanupOldSettingsBackupsImpl, backupExistingSettingsBeforePiInstall as backupExistingSettingsBeforePiInstallImpl, reclaimRetiredExtensionResidues as reclaimRetiredExtensionResiduesImpl, pruneAndPrewarmRuntimeCompileCache as pruneRuntimeCache, } from "./lib/tlh-install-profile-cleanup.mjs";
-import { mcpAdapterCutoverHeldForInstall, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
+import { mcpAdapterCutoverHeldForInstall, pinnedNpmInstallPresent, preInstallNpmDefaultExtensions as preInstallNpmDefaultExtensionsImpl, } from "./lib/tlh-install-npm.mjs";
 import { assignRequiredEqualsValue, readConfiguredNpmCommand, renderShellWords, requiredValue, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, formatSubagentExtensionConfigMigration, migrateSubagentExtensionConfig, missingTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import * as gitInstall from "./lib/tlh-install-git.mjs";
@@ -1095,6 +1095,8 @@ function installCriticalDefaultExtension(config, source) {
     verboseLog(config, `Installing critical bundled default extension package: ${source}`);
     const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
     gitInstall.assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
+    if (pinnedNpmInstallPresent(config, source, npmPreinstallIo(config)))
+        return;
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
     }
@@ -1245,12 +1247,9 @@ function npmPreinstallIo(config) {
         inheritedCommandEnv: () => inheritedCommandEnv(config),
     };
 }
-function preInstallNpmDefaultExtensions(config) {
-    preInstallNpmDefaultExtensionsImpl(config, npmPreinstallIo(config));
-}
+const preInstallNpmDefaultExtensions = (config) => preInstallNpmDefaultExtensionsImpl(config, npmPreinstallIo(config));
 function gnosisInstallSkippedByEnv(config) {
-    const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
-    return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+    return ["1", "true", "yes"].includes(config.env?.TLH_SKIP_GNOSIS_INSTALL?.toLowerCase() ?? "");
 }
 function configureGnosis(config) {
     if (gnosisInstallSkippedByEnv(config)) {
@@ -1471,8 +1470,9 @@ async function runInstallFlow(config) {
     if (!config.noSettings)
         cleanupOldSettingsBackups(config);
     await writeInstallState(config);
-    installDefaultExtensions(config);
+    // Batch first: `pi install` creates the npm root, which makes the batched pre-install skip.
     preInstallNpmDefaultExtensions(config);
+    installDefaultExtensions(config);
     configureGnosis(config);
     configureTickets(config);
     await writeWrapper(config);
