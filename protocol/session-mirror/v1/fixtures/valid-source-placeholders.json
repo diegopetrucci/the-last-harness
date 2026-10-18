@@ -1,0 +1,88 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-placeholder",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-placeholder",
+    "revision": 0,
+    "cursor": "opaque-cursor-placeholder",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-placeholder",
+      "status": "idle",
+      "tree": {
+        "rootIds": [
+          "placeholder-tool",
+          "placeholder-provider",
+          "placeholder-image",
+          "placeholder-custom",
+          "placeholder-unsupported"
+        ],
+        "activeLeafId": null,
+        "entries": [
+          {
+            "id": "placeholder-tool",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "tool"
+            }
+          },
+          {
+            "id": "placeholder-provider",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "provider"
+            }
+          },
+          {
+            "id": "placeholder-image",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "image"
+            }
+          },
+          {
+            "id": "placeholder-custom",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "custom"
+            }
+          },
+          {
+            "id": "placeholder-unsupported",
+            "parentId": null,
+            "kind": "source-placeholder",
+            "status": "completed",
+            "payload": {
+              "sourceType": "unsupported"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

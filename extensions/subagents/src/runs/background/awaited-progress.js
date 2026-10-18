@@ -189,6 +189,7 @@ function buildAwaitedProgressStep(status, index, planned, persisted, now) {
     });
     if (progress.lastActivityAt === undefined)
         progress.lastActivityAt = status.startedAt;
+    result.progress = progress;
     return { progress, result };
 }
 export function buildAwaitedProgressUpdate(input, status, now) {

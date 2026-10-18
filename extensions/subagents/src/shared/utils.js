@@ -82,7 +82,7 @@ function statusReadFailure(asyncDir, statusPath, failure, message, cause) {
     return statusReadError({ asyncDir, statusPath, failure, message, cause });
 }
 function isCacheableStatusFailure(error) {
-    return error.failure === "invalid" || error.failure === "oversize";
+    return (error.failure === "invalid" || error.failure === "oversize" || error.failure === "non_regular");
 }
 export function readStatus(asyncDir, options = {}) {
     const statusPath = path.resolve(asyncDir, "status.json");
@@ -98,6 +98,31 @@ export function readStatus(asyncDir, options = {}) {
     let lastMetadata;
     for (let attempt = 0; attempt < 2; attempt++) {
         lastFailure = undefined;
+        if (attempt === 0) {
+            let lstat;
+            try {
+                lstat = fs.lstatSync(statusPath);
+            }
+            catch (error) {
+                if (isNotFoundError(error)) {
+                    if (useCache) {
+                        deleteStatusCacheEntry(statusPath);
+                        statusFailureCache.delete(statusPath);
+                    }
+                    return null;
+                }
+                lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", `Failed to read async status file '${statusPath}': status metadata could not be read.`, error);
+                break;
+            }
+            if (!lstat.isFile()) {
+                if (lstat.isFIFO() || lstat.isSymbolicLink()) {
+                    throw statusReadFailure(asyncDir, statusPath, "non_regular", `Failed to read async status file '${statusPath}': status path is not a regular file`);
+                }
+                throw statusReadFailure(asyncDir, statusPath, "unreadable", `Failed to read async status file '${statusPath}': status path is not a regular file`);
+            }
+        }
+        if (lastFailure)
+            break;
         let stat;
         let metadata;
         try {
@@ -113,7 +138,7 @@ export function readStatus(asyncDir, options = {}) {
                 }
                 return null;
             }
-            lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", "status metadata could not be read.", error);
+            lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", `Failed to read async status file '${statusPath}': status metadata could not be read.`, error);
         }
         if (!lastFailure) {
             if (useCache && metadata) {
@@ -129,7 +154,7 @@ export function readStatus(asyncDir, options = {}) {
             if (cached && metadata && sameStatusMetadata(cached, metadata))
                 return cached.status;
             if (!Number.isFinite(stat.size) || stat.size < 0 || stat.size > MAX_ASYNC_STATUS_BYTES) {
-                lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
+                lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
             }
             else {
                 let content;
@@ -145,11 +170,11 @@ export function readStatus(asyncDir, options = {}) {
                         }
                         return null;
                     }
-                    lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", "status content could not be read.", error);
+                    lastFailure = statusReadFailure(asyncDir, statusPath, "unreadable", `Failed to read async status file '${statusPath}': status content could not be read.`, error);
                 }
                 if (!lastFailure && content !== undefined) {
                     if (Buffer.byteLength(content, "utf-8") > MAX_ASYNC_STATUS_BYTES) {
-                        lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
+                        lastFailure = statusReadFailure(asyncDir, statusPath, "oversize", `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`);
                     }
                     else {
                         try {
@@ -166,7 +191,7 @@ export function readStatus(asyncDir, options = {}) {
                             if (error instanceof AsyncStatusReadError)
                                 lastFailure = error;
                             else {
-                                lastFailure = statusReadFailure(asyncDir, statusPath, "invalid", "status JSON could not be parsed.");
+                                lastFailure = statusReadFailure(asyncDir, statusPath, "invalid", `Failed to parse async status file '${statusPath}': status JSON could not be parsed.`);
                             }
                         }
                     }

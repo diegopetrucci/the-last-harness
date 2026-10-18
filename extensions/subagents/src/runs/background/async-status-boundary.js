@@ -126,14 +126,17 @@ function validateOptionalFiniteFields(asyncDir, statusPath, value, fields, prefi
 function validateCoreStatus(asyncDir, statusPath, value) {
     if (!isRecordValue(value))
         throw invalidStatus(asyncDir, statusPath, "status must be an object.");
-    if (typeof value.runId !== "string")
+    if (value.runId !== undefined && typeof value.runId !== "string")
         throw invalidStatus(asyncDir, statusPath, "runId must be a string.");
-    if (typeof value.mode !== "string" || !["single", "parallel", "chain"].includes(value.mode)) {
+    if (value.mode !== undefined &&
+        (typeof value.mode !== "string" || !["single", "parallel", "chain"].includes(value.mode))) {
         throw invalidStatus(asyncDir, statusPath, "mode is invalid.");
     }
     if (typeof value.state !== "string")
         throw invalidStatus(asyncDir, statusPath, "state must be a string.");
-    if (!finiteNumber(value.startedAt))
+    if (value.mode !== undefined && !finiteNumber(value.startedAt))
+        throw invalidStatus(asyncDir, statusPath, "startedAt must be a finite number.");
+    else if (value.startedAt !== undefined && !finiteNumber(value.startedAt))
         throw invalidStatus(asyncDir, statusPath, "startedAt must be a finite number.");
     validateOptionalFiniteFields(asyncDir, statusPath, value, ROOT_FINITE_FIELDS, "");
     if (value.steps !== undefined && !Array.isArray(value.steps))

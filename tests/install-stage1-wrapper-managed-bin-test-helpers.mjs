@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { TLH_PINNED_PI_VERSION } from "./install-stage1-core-test-helpers.mjs";
 import { makeTempDir } from "./install-stage1-test-helpers.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,7 +64,7 @@ export function setupTicketsEnabledWrapperFixture(t) {
   writeFakePi(
     fakebin,
     [
-      'if [[ "${1:-}" == "--version" ]]; then printf \'0.87.1\\n\'; exit 0; fi',
+      `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
       'printf \'path=%s\\n\' "${PATH:-}" >"${PI_WRAPPER_LOG}"',
     ].join("\n"),
   );

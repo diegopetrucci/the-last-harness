@@ -1,0 +1,11 @@
+{
+  "handle": "launch-handle-a",
+  "status": "active",
+  "freshness": "fresh",
+  "revisions": [1, 2, 1],
+  "expected": {
+    "first": "accepted",
+    "replacement": "coalesced",
+    "stale": "stale-snapshot"
+  }
+}

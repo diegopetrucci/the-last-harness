@@ -1,0 +1,16 @@
+{
+  "scenario": "eight-conversations",
+  "installationId": "fixture-installation",
+  "launchToken": "0123456789abcdef0123456789abcdef",
+  "expected": { "acceptedConnections": 8 },
+  "conversations": [
+    "conversation-1",
+    "conversation-2",
+    "conversation-3",
+    "conversation-4",
+    "conversation-5",
+    "conversation-6",
+    "conversation-7",
+    "conversation-8"
+  ]
+}

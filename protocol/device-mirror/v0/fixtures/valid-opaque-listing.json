@@ -1,0 +1,15 @@
+{
+  "requestId": "list-request",
+  "conversations": [
+    {
+      "handle": "launch-handle-a",
+      "status": "active",
+      "freshness": "fresh"
+    },
+    {
+      "handle": "launch-handle-b",
+      "status": "idle",
+      "freshness": "unknown"
+    }
+  ]
+}

@@ -114,6 +114,32 @@ describe("subagent context and termination diagnostics", () => {
       const oversizedWithNewline = path.join(root, "oversized-with-newline.jsonl");
       fs.writeFileSync(oversizedWithNewline, `${exactBoundaryHeader} \n`, "utf-8");
       assert.equal(hasUsableSessionArtifact(oversizedWithNewline), false);
+
+      // Pi 0.99.0 changed when session files are written: the session file is now created when the
+      // first user message is sent instead of after the first assistant response. A session file
+      // containing only a valid header plus a first user message (no assistant turn yet) must still
+      // be recognised as a usable artifact so resume works correctly after an interrupted first turn.
+      const headerPlusUserMsg = path.join(root, "header-plus-user-msg.jsonl");
+      const userMsgLine = JSON.stringify({
+        type: "message",
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      });
+      fs.writeFileSync(headerPlusUserMsg, `${validHeader}\n${userMsgLine}\n`, "utf-8");
+      assert.equal(
+        hasUsableSessionArtifact(headerPlusUserMsg),
+        true,
+        "session with header + first user message only (Pi 0.99.0 early write) must be usable",
+      );
+
+      // A session file that is just a user message with no session header must be rejected.
+      const userMsgOnly = path.join(root, "user-msg-only.jsonl");
+      fs.writeFileSync(userMsgOnly, `${userMsgLine}\n`, "utf-8");
+      assert.equal(
+        hasUsableSessionArtifact(userMsgOnly),
+        false,
+        "first line must be a session header; a bare user-message line must be rejected",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

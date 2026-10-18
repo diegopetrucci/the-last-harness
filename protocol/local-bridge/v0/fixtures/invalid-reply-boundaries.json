@@ -1,0 +1,49 @@
+{
+  "scenario": "invalid-reply-boundaries",
+  "minorZeroWithReply": {
+    "kind": "hello",
+    "protocol": { "family": "local-bridge", "major": 0, "minor": 0 },
+    "installationId": "fixture-installation",
+    "sessionId": "fixture-session",
+    "sourceInstanceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "launchToken": "0123456789abcdef0123456789abcdef",
+    "capabilities": ["snapshot-replace", "cursor-recovery", "reply-text"]
+  },
+  "invalidText": {
+    "kind": "reply",
+    "requestId": "fixture-request",
+    "generation": 1,
+    "branchId": "fixture-branch",
+    "leafId": "fixture-leaf",
+    "sourceRevision": 1,
+    "ttlSeconds": 30,
+    "text": "/not-a-command"
+  },
+  "leadingWhitespaceSlashTexts": [" /quit", "\t/quit", "\n/quit", "\u00a0/quit"],
+  "controlText": "safe\u0000text",
+  "formatText": "safe\u200btext",
+  "bidiText": "safe\u202etext",
+  "lineSeparatorText": "safe\u2028text",
+  "invalidTtl": {
+    "kind": "reply",
+    "requestId": "fixture-request",
+    "generation": 1,
+    "branchId": "fixture-branch",
+    "leafId": "fixture-leaf",
+    "sourceRevision": 1,
+    "ttlSeconds": 0,
+    "text": "bounded"
+  },
+  "invalidReceipt": {
+    "kind": "receipt",
+    "code": "accepted",
+    "requestId": "fixture-request"
+  },
+  "wrongDirection": {
+    "kind": "receipt",
+    "code": "busy"
+  },
+  "unicodeTextCharacter": "😀",
+  "unicodeTextExactCharacters": 512,
+  "unicodeTextOverCharacters": 513
+}

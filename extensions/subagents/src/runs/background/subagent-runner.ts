@@ -238,6 +238,22 @@ function writeRunLog(
 type SingleStepResult = Awaited<ReturnType<typeof runSingleStep>>;
 type ParallelStepExecutionResult = SingleStepResult & { skipped?: boolean };
 
+function normalizeTimedOutStepResult(
+  step: RunnerStatusStep | undefined,
+  result: SingleStepResult,
+  timeoutMessage?: string,
+): SingleStepResult {
+  if (!step?.timedOut && !result.timedOut) return result;
+  return {
+    ...result,
+    interrupted: false,
+    timedOut: true,
+    exitCode: 1,
+    error: step?.error ?? result.error ?? timeoutMessage ?? "Subagent timed out.",
+    terminationReason: "timed_out",
+  };
+}
+
 const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
 const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR =
   "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
@@ -667,6 +683,9 @@ async function runSubagentWithInput(
     for (let t = 0; t < parallelResults.length; t++) {
       const pr = parallelResults[t]!;
       const fi = groupStartFlatIndex + t;
+      // Check both the child result and the status step for timeout evidence;
+      // recordStepTimeout may have set timedOut before the child reported interrupted.
+      const prTimedOut = pr.timedOut === true || statusPayload.steps[fi]?.timedOut === true;
       const persistedStepStatus = statusPayload.steps[fi]?.status;
       const preservedTerminalStep = Boolean(
         preservedCancellationStepStatus(persistedStepStatus, true, null),
@@ -679,7 +698,7 @@ async function runSubagentWithInput(
         ticketId: pr.ticketId,
         output: cancelProjection
           ? "Cancelled by parent abort."
-          : pr.interrupted
+          : pr.interrupted && !prTimedOut
             ? pausedOutputForIndex(fi, pr.agent)
             : pr.output,
         finalOutput: pr.finalOutput,
@@ -688,16 +707,20 @@ async function runSubagentWithInput(
         stderr: pr.stderr,
         stderrTruncated: pr.stderrTruncated,
         protocolOutputLimit: pr.protocolOutputLimit,
-        success: !cancelProjection && pr.interrupted !== true && pr.exitCode === 0,
-        exitCode: cancelProjection ? 1 : pr.interrupted === true ? 0 : pr.exitCode,
+        success: !cancelProjection && !prTimedOut && pr.interrupted !== true && pr.exitCode === 0,
+        exitCode: cancelProjection ? 1 : prTimedOut ? 1 : pr.interrupted === true ? 0 : pr.exitCode,
         exitSignal: pr.exitSignal,
         skipped: pr.skipped,
-        interrupted: pr.interrupted,
-        timedOut: pr.timedOut,
+        interrupted: prTimedOut ? undefined : pr.interrupted,
+        timedOut: prTimedOut ? true : pr.timedOut,
         contextUsage: pr.contextUsage,
         contextPressure: pr.contextPressure,
         contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
-        terminationReason: cancelProjection ? "cancelled" : pr.terminationReason,
+        terminationReason: cancelProjection
+          ? "cancelled"
+          : prTimedOut
+            ? "timed_out"
+            : pr.terminationReason,
         sessionFile: statusOwner.refreshTrackedSessionFile(fi, pr.sessionFile),
         model: pr.model,
         modelIdentity: pr.modelIdentity,
@@ -718,7 +741,7 @@ async function runSubagentWithInput(
         outputReference: pr.outputReference,
         outputSaveError: pr.outputSaveError,
         pause:
-          !cancelProjection && pr.interrupted
+          !cancelProjection && pr.interrupted && !prTimedOut
             ? statusOwner.pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
             : undefined,
         activityState: statusPayload.steps[fi]?.activityState,
@@ -749,6 +772,18 @@ async function runSubagentWithInput(
       statusOwner.latestSessionFile = resolvedSeqSessionFile;
     }
     // Invoke immediately below; this snapshots mutable lifecycle state captured by the runner.
+    singleResult = normalizeTimedOutStepResult(
+      statusPayload.steps[flatIndex],
+      singleResult,
+      timeoutMessage,
+    );
+    const stepTimedOut =
+      statusPayload.steps[flatIndex]?.timedOut === true || singleResult.timedOut === true;
+    const timeoutOutput =
+      statusPayload.steps[flatIndex]?.error ??
+      singleResult.error ??
+      timeoutMessage ??
+      "Subagent timed out.";
     const projectSingleStepResult = (): StepResult => {
       const projectedResult: StepResult = {
         agent: singleResult.agent,
@@ -756,16 +791,16 @@ async function runSubagentWithInput(
         ticketId: singleResult.ticketId,
         output: statusOwner.cancelled
           ? "Cancelled by parent abort."
-          : statusOwner.timedOut
-            ? (timeoutMessage ?? "Subagent timed out.")
+          : stepTimedOut || statusOwner.timedOut
+            ? (timeoutOutput ?? timeoutMessage ?? "Subagent timed out.")
             : singleResult.interrupted
               ? pausedOutputForIndex(flatIndex, singleResult.agent)
               : singleResult.output,
         finalOutput: singleResult.finalOutput,
         error: statusOwner.cancelled
           ? "Cancelled by parent abort."
-          : statusOwner.timedOut
-            ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+          : stepTimedOut || statusOwner.timedOut
+            ? boundChildError(timeoutOutput ?? timeoutMessage ?? "Subagent timed out.")
             : singleResult.error,
         cancel: statusOwner.cancelled ? statusPayload.cancel : singleResult.cancel,
         stderr: singleResult.stderr,
@@ -773,12 +808,13 @@ async function runSubagentWithInput(
         protocolOutputLimit: singleResult.protocolOutputLimit,
         success:
           !statusOwner.cancelled &&
+          !stepTimedOut &&
           !statusOwner.timedOut &&
           singleResult.interrupted !== true &&
           singleResult.exitCode === 0,
         exitCode: statusOwner.cancelled
           ? 1
-          : statusOwner.timedOut
+          : stepTimedOut || statusOwner.timedOut
             ? 1
             : singleResult.interrupted === true
               ? 0
@@ -804,11 +840,11 @@ async function runSubagentWithInput(
         outputReference: singleResult.outputReference,
         outputSaveError: singleResult.outputSaveError,
         pause:
-          !statusOwner.cancelled && singleResult.interrupted
+          !statusOwner.cancelled && !stepTimedOut && singleResult.interrupted
             ? statusOwner.pauseMetadataForIndex(flatIndex)
             : undefined,
-        interrupted: singleResult.interrupted,
-        timedOut: statusOwner.timedOut || singleResult.timedOut ? true : undefined,
+        interrupted: stepTimedOut ? undefined : singleResult.interrupted,
+        timedOut: stepTimedOut || statusOwner.timedOut || singleResult.timedOut ? true : undefined,
         contextUsage: singleResult.contextUsage,
         contextPressure: singleResult.contextPressure,
         contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
@@ -845,14 +881,16 @@ async function runSubagentWithInput(
     }
     const stepEndTime = Date.now();
     const stepDurationStart = statusPayload.steps[flatIndex].startedAt ?? stepStartTime;
-    const childInterrupted = singleResult.interrupted === true;
+    const childInterrupted = !stepTimedOut && singleResult.interrupted === true;
     if (childInterrupted && !statusOwner.cancelled) statusOwner.interrupted = true;
     const priorStepStatus = statusPayload.steps[flatIndex].status;
     const pausedStep =
-      !statusOwner.cancelled && (childInterrupted || isPausedStepStatus(priorStepStatus));
+      !stepTimedOut &&
+      !statusOwner.cancelled &&
+      (childInterrupted || isPausedStepStatus(priorStepStatus));
     statusPayload.steps[flatIndex].status = statusOwner.cancelled
       ? "cancelled"
-      : statusOwner.timedOut
+      : stepTimedOut || statusOwner.timedOut
         ? "failed"
         : pausedStep
           ? "paused"
@@ -873,14 +911,13 @@ async function runSubagentWithInput(
     if (settledStepResult) settledStepResult.terminalResult = settledTerminalResult;
     statusPayload.steps[flatIndex].exitCode = statusOwner.cancelled
       ? 1
-      : statusOwner.timedOut
+      : stepTimedOut || statusOwner.timedOut
         ? 1
         : childInterrupted
           ? 0
           : singleResult.exitCode;
     statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
-    statusPayload.steps[flatIndex].timedOut =
-      statusOwner.timedOut || singleResult.timedOut ? true : undefined;
+    statusPayload.steps[flatIndex].timedOut = stepTimedOut ? true : undefined;
     statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
     statusPayload.steps[flatIndex].contextUsage =
       singleResult.contextUsage ?? statusPayload.steps[flatIndex].contextUsage;
@@ -902,8 +939,8 @@ async function runSubagentWithInput(
     statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
     statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
     statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
-    statusPayload.steps[flatIndex].error = statusOwner.timedOut
-      ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+    statusPayload.steps[flatIndex].error = stepTimedOut
+      ? boundChildError(timeoutOutput)
       : singleResult.error;
     statusPayload.steps[flatIndex].stderr = singleResult.stderr
       ? boundChildStderrError(
@@ -934,7 +971,7 @@ async function runSubagentWithInput(
       JSON.stringify({
         type: statusOwner.cancelled
           ? "subagent.step.cancelled"
-          : statusOwner.timedOut
+          : stepTimedOut || statusOwner.timedOut
             ? "subagent.step.failed"
             : childInterrupted
               ? "subagent.step.paused"
@@ -945,7 +982,8 @@ async function runSubagentWithInput(
         runId: id,
         stepIndex: flatIndex,
         agent: seqStep.agent,
-        exitCode: statusOwner.timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+        exitCode:
+          stepTimedOut || statusOwner.timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
         durationMs: stepEndTime - stepDurationStart,
         tokens: stepTokens,
       }),
@@ -1054,6 +1092,7 @@ async function runSubagentWithInput(
               interruptMessage: "Interrupted. Waiting for explicit next action.",
               timeoutSignal: timeoutAbortController.signal,
               timeoutMessage,
+              onTimeout: (message) => statusOwner.recordStepTimeout(fi, message),
               timeoutMs: task.timeoutMs,
               deadlineAt: config.deadlineAt,
               startedAt: taskStartTime,
@@ -1079,9 +1118,11 @@ async function runSubagentWithInput(
             statusOwner.latestSessionFile = task.sessionFile;
           }
           const taskEndTime = Date.now();
+          const stepTimedOut =
+            statusPayload.steps[fi]?.timedOut === true || singleResult.timedOut === true;
           const taskDurationStart = statusPayload.steps[fi].startedAt ?? taskStartTime;
           const taskDuration = taskEndTime - taskDurationStart;
-          const childInterrupted = singleResult.interrupted === true;
+          const childInterrupted = !stepTimedOut && singleResult.interrupted === true;
           if (childInterrupted && !statusOwner.cancelled) statusOwner.interrupted = true;
           const priorStepStatus = statusPayload.steps[fi].status as RunnerStatusStep["status"];
           const preservedTerminalStatus = preservedCancellationStepStatus(
@@ -1091,10 +1132,12 @@ async function runSubagentWithInput(
           );
           const cancelProjection = statusOwner.cancelled && !preservedTerminalStatus;
           const pausedStep =
-            !statusOwner.cancelled && (childInterrupted || isPausedStepStatus(priorStepStatus));
+            !stepTimedOut &&
+            !statusOwner.cancelled &&
+            (childInterrupted || isPausedStepStatus(priorStepStatus));
           statusPayload.steps[fi].status = cancelProjection
             ? "cancelled"
-            : statusOwner.timedOut
+            : stepTimedOut || statusOwner.timedOut
               ? "failed"
               : (preservedTerminalStatus ??
                 (pausedStep ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed"));
@@ -1106,7 +1149,7 @@ async function runSubagentWithInput(
           );
           statusPayload.steps[fi].exitCode = cancelProjection
             ? 1
-            : statusOwner.timedOut
+            : stepTimedOut || statusOwner.timedOut
               ? 1
               : preservedTerminalStatus === "complete"
                 ? 0
@@ -1114,8 +1157,7 @@ async function runSubagentWithInput(
                   ? 0
                   : singleResult.exitCode;
           statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
-          statusPayload.steps[fi].timedOut =
-            statusOwner.timedOut || singleResult.timedOut ? true : undefined;
+          statusPayload.steps[fi].timedOut = stepTimedOut ? true : undefined;
           statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
           statusPayload.steps[fi].contextUsage =
             singleResult.contextUsage ?? statusPayload.steps[fi].contextUsage;
@@ -1128,7 +1170,11 @@ async function runSubagentWithInput(
             ? "cancelled"
             : preservedTerminalStatus === "complete"
               ? "completed"
-              : singleResult.terminationReason;
+              : // Preserve the durable step-owned timeout reason written by recordStepTimeout
+                // rather than letting the child's interrupted classification overwrite it.
+                stepTimedOut
+                ? (statusPayload.steps[fi].terminationReason ?? "timed_out")
+                : singleResult.terminationReason;
           statusPayload.steps[fi].model = singleResult.model;
           statusPayload.steps[fi].thinking = singleResult.modelIdentity
             ? singleResult.modelIdentity.thinking
@@ -1141,7 +1187,7 @@ async function runSubagentWithInput(
           statusPayload.steps[fi].totalCost = singleResult.totalCost;
           statusPayload.steps[fi].error = cancelProjection
             ? "Cancelled by parent abort."
-            : statusOwner.timedOut
+            : stepTimedOut || statusOwner.timedOut
               ? boundChildError(timeoutMessage ?? "Subagent timed out.")
               : singleResult.error;
           statusPayload.steps[fi].stderr = singleResult.stderr
@@ -1169,7 +1215,7 @@ async function runSubagentWithInput(
             JSON.stringify({
               type: cancelProjection
                 ? "subagent.step.cancelled"
-                : statusOwner.timedOut
+                : stepTimedOut || statusOwner.timedOut
                   ? "subagent.step.failed"
                   : childInterrupted
                     ? "subagent.step.paused"
@@ -1182,7 +1228,7 @@ async function runSubagentWithInput(
               agent: task.agent,
               exitCode: cancelProjection
                 ? 1
-                : statusOwner.timedOut
+                : stepTimedOut || statusOwner.timedOut
                   ? 1
                   : preservedTerminalStatus === "complete"
                     ? 0
@@ -1286,6 +1332,7 @@ async function runSubagentWithInput(
           interruptMessage: "Interrupted. Waiting for explicit next action.",
           timeoutSignal: timeoutAbortController.signal,
           timeoutMessage,
+          onTimeout: (message) => statusOwner.recordStepTimeout(flatIndex, message),
           timeoutMs: seqStep.timeoutMs,
           deadlineAt: config.deadlineAt,
           startedAt: stepStartTime,

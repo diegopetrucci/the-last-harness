@@ -24,6 +24,7 @@ import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
+import { registerSessionMirrorObserverFacade } from "./the-last-harness/session-mirror-observer-facade.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
 import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
@@ -190,6 +191,9 @@ export default function theLastHarness(pi) {
     if (!primaryAgentRuntime) {
         return;
     }
+    registerSessionMirrorObserverFacade(pi, {
+        sendUserMessage: (text) => pi.sendUserMessage(text),
+    });
     installTlhPackageUpdateNotificationOverride();
     installTlhNewVersionNotificationOverride();
     registerToggleTlhGitAttributionCommand(pi);

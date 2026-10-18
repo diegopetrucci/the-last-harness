@@ -269,6 +269,7 @@ function buildAwaitedProgressStep(
     finalOutput,
   });
   if (progress.lastActivityAt === undefined) progress.lastActivityAt = status.startedAt;
+  result.progress = progress;
   return { progress, result };
 }
 

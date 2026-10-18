@@ -279,6 +279,33 @@ function readInstallStateHint(agentDir) {
         return "install-state invalid";
     }
 }
+function addRuntimeLockfileCheck(results, agentDir, packageRoot) {
+    const shippedLockPath = join(packageRoot, "config", "pi-runtime", "package-lock.json");
+    if (!existsSync(shippedLockPath)) {
+        // Shipped lock unavailable — skip, not a failure.
+        recordCheck(results, "OK", "runtime lockfile", "shipped config/pi-runtime/package-lock.json not available; skipping lockfile check");
+        return;
+    }
+    const runtimeDir = runtimeDirForAgent(agentDir);
+    const runtimeLockPath = join(runtimeDir, "lib", "package-lock.json");
+    if (!existsSync(runtimeLockPath)) {
+        recordCheck(results, "WARN", "runtime lockfile", `runtime lib/package-lock.json missing at ${runtimeLockPath}; run \`tlh update\` to reprovision`);
+        return;
+    }
+    try {
+        const runtimeLock = readFileSync(runtimeLockPath);
+        const shippedLock = readFileSync(shippedLockPath);
+        if (runtimeLock.equals(shippedLock)) {
+            recordCheck(results, "OK", "runtime lockfile", "runtime lock matches shipped lock");
+        }
+        else {
+            recordCheck(results, "WARN", "runtime lockfile", `runtime lib/package-lock.json differs from shipped config/pi-runtime/package-lock.json; run \`tlh update\` to reprovision`);
+        }
+    }
+    catch (error) {
+        recordCheck(results, "WARN", "runtime lockfile", `could not compare runtime lockfiles (${String(error)}); run \`tlh update\` to reprovision`);
+    }
+}
 function addRuntimeCheck(results, agentDir, expectedPiVersion) {
     const runtimeDir = runtimeDirForAgent(agentDir);
     const markerPath = join(runtimeDir, DEFAULT_RUNTIME_MARKER);
@@ -634,6 +661,7 @@ function collectHealthResults(agentDir, packageRoot, settingsPath, env) {
     }
     if (!agentDirIsProtected) {
         addRuntimeCheck(results, agentDir, expectedPiVersion);
+        addRuntimeLockfileCheck(results, agentDir, packageRoot);
         addGnosisCheck(results, packageRoot, agentDir, env);
         if (!settingsPathIsProtected) {
             addTicketsCheck(results, packageRoot, agentDir, settingsPath, env);

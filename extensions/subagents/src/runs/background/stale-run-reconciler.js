@@ -172,10 +172,18 @@ export function reconcileNestedAsyncDescendants(route, options = {}) {
         const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
         if (!asyncDir)
             continue;
-        const result = reconcileAsyncRun(asyncDir, {
-            ...options,
-            resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-        });
+        let result;
+        try {
+            result = reconcileAsyncRun(asyncDir, {
+                ...options,
+                resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
+            });
+        }
+        catch (error) {
+            if (isAsyncStatusReadError(error) && error.failure === "non_regular")
+                continue;
+            throw error;
+        }
         if (!result.status || (!result.repaired && !isTerminalLifecycleState(result.status.state)))
             continue;
         const ts = options.now?.() ?? Date.now();

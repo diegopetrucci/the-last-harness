@@ -1,0 +1,4 @@
+{
+  "cases": ["cycle", "accessor", "prototype", "array-hole"],
+  "expectedCode": "malformed-frame"
+}

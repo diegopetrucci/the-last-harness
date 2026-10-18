@@ -56,9 +56,13 @@ export function createTlhHeader(
     accent: (text: string) => theme.fg("accent", text),
   };
 
-  const logo = headerUpdate
-    ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
-    : theme.bold(color.accent(TLH_NAME));
+  // Logo is computed at render time so that theme changes (Pi's theme is a
+  // Proxy over globalThis that updates in-place on a theme switch) are always
+  // reflected without stale color captures.
+  const renderLogo = (): string =>
+    headerUpdate
+      ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
+      : theme.bold(color.accent(TLH_NAME));
 
   const section = (name: string, items: string[], width: number): string[] => {
     if (items.length === 0) {
@@ -145,7 +149,7 @@ export function createTlhHeader(
   ];
 
   const renderCollapsed = (width: number) => {
-    const lines = [logo];
+    const lines = [renderLogo()];
     const details = [...launchContextLines(width)];
     if (details.length > 0) {
       lines.push("", ...details);
@@ -158,7 +162,7 @@ export function createTlhHeader(
   };
 
   const renderExpanded = (width: number) => {
-    const lines = [logo];
+    const lines = [renderLogo()];
     const details = headerDetails(width);
     if (details.length > 0) {
       lines.push("", ...details);

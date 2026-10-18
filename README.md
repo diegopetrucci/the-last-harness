@@ -64,6 +64,12 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 `disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Disabled mode receives no primary-role append, while each newly launched canonical minor agent still uses its own matching project append. It can also initiate an explicitly requested, freshly scoped project custom agent under the exact-root contract. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
+### Optional iPhone companion
+
+The `session-mirror-observer` experimental feature is **off by default** and is not added to a fresh profile or enabled by installation. Use `/experimental` to inspect or change it in the isolated TLH profile. When enabled for a new session, it can mirror bounded TLH session state to a paired iPhone companion; the paired companion can submit bounded plain-text user-message replies while the feature is active. Enable, disable, and toggle changes take effect on the next session. Disabling is not immediate revocation: a currently enabled session retains activation until a new session.
+
+TLH never automatically installs or pairs the companion, edits the normal profile, stores a second transcript, or promises background/network behavior. This is an experimental source and deterministic-test boundary, not a claim of fresh physical-device proof; see the [command reference](docs/commands.md) and [companion roadmap](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/companion-roadmap.md) for limits and reported evidence.
+
 ## Everything else
 
 ### Subagents
@@ -72,17 +78,17 @@ Subagent orchestration is first-party TLH functionality: the runtime, prompts, a
 
 The shared human-owned run ceiling is `execution.maxRunTimeMs` in `<agent-dir>/extensions/subagent/config.json` (normally `~/.the-last-harness/agent/extensions/subagent/config.json`): omission means **14400000 ms (4h)**, and the value must be a positive safe integer or `false`. Canonical minor role ceilings are code-owned defaults, applied before human overrides:
 
-| Role | `maxExecutionTimeMs` |
-| --- | ---: |
-| `developer` | 3600000 ms (1h) |
-| `code-reviewer` | 1800000 ms (30m) |
-| `test-runner` | 3600000 ms (1h) |
-| `librarian` | 14400000 ms (4h) |
-| `oracle` | 2700000 ms (45m) |
-| `contrarian` | 1800000 ms (30m) |
-| `repo-scout` | 600000 ms (10m) |
-| `web-scout` | 300000 ms (5m) |
-| `diff-summarizer` | 300000 ms (5m) |
+| Role              | `maxExecutionTimeMs` |
+| ----------------- | -------------------: |
+| `developer`       |      3600000 ms (1h) |
+| `code-reviewer`   |     1800000 ms (30m) |
+| `test-runner`     |      3600000 ms (1h) |
+| `librarian`       |     14400000 ms (4h) |
+| `oracle`          |     2700000 ms (45m) |
+| `contrarian`      |     1800000 ms (30m) |
+| `repo-scout`      |      600000 ms (10m) |
+| `web-scout`       |       300000 ms (5m) |
+| `diff-summarizer` |       300000 ms (5m) |
 
 Human canonical-role overrides use `subagents.agentOverrides.<role>.maxExecutionTimeMs` in the isolated `<agent-dir>/settings.json`. TLH selects the project's role entry when present, otherwise the profile entry, and does not merge the two objects field-by-field; a project entry that omits `maxExecutionTimeMs` therefore leaves the code-owned role default in effect unless authoritative frontmatter declares the field. Trusted custom agents declare a positive-safe-integer `maxExecutionTimeMs` in frontmatter, or use the **14400000 ms (4h)** fallback when omitted. A parallel batch has one shared deadline covering queueing and fallback/retry work, not one caller budget per task. `false` clears only the layer where it is set; another applicable run/role bound may still constrain execution. See [docs/subagents.md](docs/subagents.md#timeout-ownership-and-execution-ceilings) for active-time continuation rules, migration/restart guidance, and rollback details.
 

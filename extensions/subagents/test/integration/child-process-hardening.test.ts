@@ -1,5 +1,3 @@
-/** Integration coverage for async child-process protocol and diagnostic hardening. */
-
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -10,7 +8,6 @@ import {
   requestAsyncInterrupt,
   startedMockPiPids,
   waitForAsyncResultFile,
-  waitForAsyncState,
   waitForAsyncStatusPredicate,
   waitForMockPiCall,
   waitForPidsToExit,
@@ -31,7 +28,10 @@ import {
   MAX_CHILD_STDERR_BYTES,
 } from "../../src/runs/shared/child-protocol.ts";
 import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
-import type { AsyncResultArtifact, AsyncStatus } from "../../src/shared/types.ts";
+import type { AsyncResultArtifact } from "../../src/shared/types.ts";
+
+// Note: the foreground runner (execution.ts) was removed from this branch.
+// All foreground-specific tests from upstream have been dropped from this merge.
 
 function readAsyncEventTypes(asyncDir: string): string[] {
   const eventPath = path.join(asyncDir, "events.jsonl");
@@ -66,23 +66,7 @@ async function killMockChildren(mockPi: MockPi): Promise<void> {
   });
 }
 
-function asyncSingleParams(
-  tempDir: string,
-  overrides: Record<string, unknown> = {},
-): Parameters<typeof executeAsyncSingle>[1] {
-  return {
-    agent: "worker",
-    task: "Exercise async child process handling.",
-    agentConfig: makeAgent("worker"),
-    ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-    artifactConfig: compactArtifactConfig(),
-    shareEnabled: false,
-    maxSubagentDepth: 2,
-    ...overrides,
-  };
-}
-
-describe("async child process protocol hardening", () => {
+describe("real child process protocol hardening", () => {
   let tempDir: string;
   let mockPi: MockPi;
 
@@ -106,22 +90,29 @@ describe("async child process protocol hardening", () => {
   });
 
   it("uses a bounded raw stdout prefix with a visible truncation marker", async () => {
-    const id = `async-raw-stdout-prefix-${Date.now().toString(36)}`;
+    const id = `background-raw-stdout-prefix-${Date.now().toString(36)}`;
     const prefixStart = "RAW_STDOUT_PREFIX_BEGIN_";
     const suffix = "_RAW_STDOUT_PREFIX_END";
     mockPi.onCall({
       rawStdout: `${prefixStart}${"x".repeat(MAX_CHILD_RAW_STDOUT_BYTES)}${suffix}`,
     });
-
-    const start = executeAsyncSingle(
-      id,
-      asyncSingleParams(tempDir, {
-        task: "Capture the startup diagnostic.",
-        agentConfig: makeAgent("worker"),
-      }),
-    );
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Capture the startup diagnostic",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
     assert.equal(start.isError, undefined);
-
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
     const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
     const child = result.results[0];
@@ -134,11 +125,58 @@ describe("async child process protocol hardening", () => {
   });
 
   it(
-    "terminates async stdout protocol overflow with SIGTERM then bounded SIGKILL escalation",
+    "preserves async timeout precedence when stdout overflow arrives later",
     { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
     async () => {
-      const id = `async-protocol-overflow-${Date.now().toString(36)}`;
-      const oversizedLine = `ASYNC_PROTOCOL_BEGIN_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}_ASYNC_PROTOCOL_END`;
+      const id = `background-timeout-before-overflow-${Date.now().toString(36)}`;
+      const oversizedLine = `ASYNC_TIMEOUT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
+      const releaseMarker = path.join(tempDir, "async-timeout-release");
+      mockPi.onCall({
+        waitForMarker: releaseMarker,
+        rawStdout: oversizedLine,
+        keepAliveAfterFinalMessageMs: 10_000,
+        ignoreSigterm: true,
+      });
+      const start = executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Wait for timeout before emitting overflow",
+        agentConfig: makeAgent("worker", {
+          maxExecutionTimeMs: scaleTestTimeout(1_000),
+        }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: compactArtifactConfig(),
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+      assert.equal(start.isError, undefined);
+      await waitForMockPiCall(mockPi, 0);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      const timedOutStatus = await waitForAsyncStatusPredicate(
+        asyncDir,
+        (status) => status.timedOut === true && status.steps?.[0]?.timedOut === true,
+        "async step timeout",
+      );
+      assert.equal(timedOutStatus.steps?.[0]?.terminationReason, "timed_out");
+      fs.writeFileSync(releaseMarker, "", "utf-8");
+
+      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+      const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
+      const child = result.results[0];
+      assert.equal(result.success, false);
+      assert.equal(result.timedOut, true);
+      assert.equal(child?.timedOut, true);
+      assert.equal(child?.terminationReason, "timed_out");
+      assert.equal(child?.protocolOutputLimit, undefined);
+      assert.doesNotMatch(child?.error ?? "", /protocol_output_limit/);
+    },
+  );
+
+  it(
+    "terminates background stdout protocol overflow deterministically",
+    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
+    async () => {
+      const id = `background-protocol-overflow-${Date.now().toString(36)}`;
+      const oversizedLine = `BG_PROTOCOL_BEGIN_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}_BG_PROTOCOL_END`;
       mockPi.onCall({
         steps: [
           {
@@ -146,21 +184,22 @@ describe("async child process protocol hardening", () => {
             stderr: "ordinary child stderr\n",
           },
           {
-            stderr: `ASYNC_STDERR_BEGIN_${"x".repeat(MAX_CHILD_STDERR_BYTES)}_ASYNC_STDERR_END\n`,
+            stderr: `BG_STDERR_BEGIN_${"x".repeat(MAX_CHILD_STDERR_BYTES)}_BG_STDERR_END\n`,
           },
           { jsonl: [oversizedLine] },
         ],
         keepAliveAfterFinalMessageMs: 60_000,
         ignoreSigterm: true,
       });
-
-      const start = executeAsyncSingle(
-        id,
-        asyncSingleParams(tempDir, {
-          task: "Trigger protocol overflow.",
-          agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
-        }),
-      );
+      const start = executeAsyncSingle(id, {
+        agent: "worker",
+        task: "Trigger overflow",
+        agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: compactArtifactConfig(),
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
       assert.equal(start.isError, undefined);
       await waitForMockPiCall(mockPi, 0, scaleTestTimeout(5_000));
 
@@ -174,7 +213,6 @@ describe("async child process protocol hardening", () => {
       assert.equal(child?.success, false);
       assert.equal(child?.exitSignal, "SIGKILL");
       assert.equal(child?.protocolOutputLimit?.code, "protocol_output_limit");
-
       const pid = startedMockPiPids(mockPi)[0];
       assert.ok(pid);
       const signals = fs.readFileSync(path.join(mockPi.dir, `signals-${pid}.jsonl`), "utf8");
@@ -202,28 +240,36 @@ describe("async child process protocol hardening", () => {
   );
 
   it("bounds async stderr tails and reports overflow in the result and event log", async () => {
-    const id = `async-stderr-overflow-${Date.now().toString(36)}`;
-    const beginning = "ASYNC_STDERR_BEGIN_";
-    const ending = "_ASYNC_STDERR_END";
+    const id = `background-stderr-overflow-${Date.now().toString(36)}`;
+    const beginning = "BG_STDERR_BEGIN_";
+    const ending = "_BG_STDERR_END";
     mockPi.onCall({
       stderr: `${beginning}${"x".repeat(MAX_CHILD_STDERR_BYTES)}${ending}`,
       exitCode: 1,
     });
-
-    const start = executeAsyncSingle(
-      id,
-      asyncSingleParams(tempDir, {
-        task: "Capture stderr.",
-      }),
-    );
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Capture stderr",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
     assert.equal(start.isError, undefined);
-
     const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
     const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
     const child = result.results[0];
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8"),
-    ) as AsyncStatus;
+    const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf8")) as {
+      steps?: Array<{ stderr?: string; stderrTruncated?: boolean }>;
+    };
     assert.equal(result.success, false);
     assert.equal(child?.stderrTruncated, true);
     assert.equal(status.steps?.[0]?.stderrTruncated, true);
@@ -238,15 +284,24 @@ describe("async child process protocol hardening", () => {
   });
 
   it("preserves the async startup interrupt trampoline when an interrupt arrives immediately", async () => {
-    const id = `async-startup-interrupt-${Date.now().toString(36)}`;
+    const id = `background-startup-interrupt-${Date.now().toString(36)}`;
     mockPi.onCall({ waitForMarker: path.join(tempDir, "never-created.marker") });
-
-    const start = executeAsyncSingle(
-      id,
-      asyncSingleParams(tempDir, {
-        task: "Wait for an interrupt.",
-      }),
-    );
+    const start = executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Wait for an interrupt",
+      agentConfig: makeAgent("worker"),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
     assert.equal(start.isError, undefined);
     requestAsyncInterrupt(path.join(ASYNC_DIR, id), { source: "startup-interrupt-test" });
 
@@ -255,88 +310,4 @@ describe("async child process protocol hardening", () => {
     assert.equal(result.state, "paused");
     assert.equal(result.success, false);
   });
-
-  it(
-    "preserves timeout precedence when async stdout overflow arrives later",
-    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
-    async () => {
-      const id = `async-timeout-before-overflow-${Date.now().toString(36)}`;
-      const releaseMarker = path.join(tempDir, "async-timeout-release");
-      const oversizedLine = `ASYNC_TIMEOUT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
-      mockPi.onCall({
-        waitForMarker: releaseMarker,
-        rawStdout: oversizedLine,
-        keepAliveAfterFinalMessageMs: 10_000,
-        ignoreSigint: true,
-        ignoreSigterm: true,
-      });
-
-      const start = executeAsyncSingle(
-        id,
-        asyncSingleParams(tempDir, {
-          task: "Timeout before overflow.",
-          // Leave enough startup headroom for a loaded runner process while
-          // still timing out well before the released overflow line.
-          timeoutMs: scaleTestTimeout(1_500),
-        }),
-      );
-      assert.equal(start.isError, undefined);
-      await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000));
-      const asyncDir = path.join(ASYNC_DIR, id);
-      await waitForAsyncStatusPredicate(
-        asyncDir,
-        (status) => status.timedOut === true,
-        "async timeout before protocol overflow",
-        scaleTestTimeout(10_000),
-      );
-      fs.writeFileSync(releaseMarker, "", "utf8");
-
-      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
-      const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
-      const child = result.results[0];
-      assert.equal(result.success, false);
-      assert.equal(result.timedOut, true);
-      assert.equal(child?.timedOut, true);
-      assert.equal(child?.terminationReason, "timed_out");
-      assert.equal(child?.protocolOutputLimit, undefined);
-    },
-  );
-
-  it(
-    "preserves interrupt precedence when async stdout overflow arrives later",
-    { skip: process.platform === "win32" ? "POSIX signal escalation fixture" : undefined },
-    async () => {
-      const id = `async-interrupt-before-overflow-${Date.now().toString(36)}`;
-      const releaseMarker = path.join(tempDir, "async-interrupt-release");
-      const oversizedLine = `ASYNC_INTERRUPT_WON_FIRST_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}`;
-      mockPi.onCall({
-        waitForMarker: releaseMarker,
-        rawStdout: oversizedLine,
-        keepAliveAfterFinalMessageMs: 10_000,
-        ignoreSigint: true,
-        ignoreSigterm: true,
-      });
-
-      const start = executeAsyncSingle(
-        id,
-        asyncSingleParams(tempDir, {
-          task: "Interrupt before overflow.",
-        }),
-      );
-      assert.equal(start.isError, undefined);
-      await waitForMockPiCall(mockPi, 0, scaleTestTimeout(5_000));
-      const asyncDir = path.join(ASYNC_DIR, id);
-      requestAsyncInterrupt(asyncDir, { source: "interrupt-precedence-test" });
-      await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
-      fs.writeFileSync(releaseMarker, "", "utf8");
-
-      const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
-      const result = JSON.parse(fs.readFileSync(resultPath, "utf8")) as AsyncResultArtifact;
-      const child = result.results[0];
-      assert.equal(result.state, "paused");
-      assert.equal(result.success, false);
-      assert.equal(child?.terminationReason, "paused");
-      assert.equal(child?.protocolOutputLimit, undefined);
-    },
-  );
 });

@@ -120,13 +120,10 @@ exit 0
     "npm",
     [
       `printf 'npm:%s\\n' "$*" >>${JSON.stringify(eventLog)}`,
-      `prefix=""`,
-      `previous=""`,
-      `for argument in "$@"; do if [[ "$previous" == "--prefix" ]]; then prefix="$argument"; fi; previous="$argument"; done`,
-      `if [[ "\${1:-}" == "install" && "\${2:-}" == "-g" ]]; then`,
-      `  mkdir -p "$prefix/bin"`,
-      `  cp ${JSON.stringify(templatePi)} "$prefix/bin/pi"`,
-      `  chmod +x "$prefix/bin/pi"`,
+      `if [[ "\${1:-}" == "ci" ]]; then`,
+      `  mkdir -p "node_modules/@earendil-works/pi-coding-agent/dist/bundle"`,
+      `  cp ${JSON.stringify(templatePi)} "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
+      `  chmod +x "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"`,
       `fi`,
     ].join("\n"),
   );

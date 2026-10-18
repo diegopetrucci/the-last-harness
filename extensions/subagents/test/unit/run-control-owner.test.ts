@@ -99,6 +99,7 @@ function makeOwner(options: { enabled: boolean } = { enabled: true }): {
       cloneStepObjects(payload);
     },
     recordAttemptFacts() {},
+    recordStepTimeout() {},
     onChildProtocolOutputLimit() {},
     pausedStepResult() {
       throw new Error("not used in run-control projection tests");

@@ -1,0 +1,71 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-f0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-f5",
+    "revision": 5,
+    "cursor": "opaque-cursor-f5",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-f5",
+      "status": "idle",
+      "tree": {
+        "activeLeafId": "entry-f5",
+        "entries": [
+          {
+            "id": "entry-f1",
+            "parentId": null,
+            "kind": "user-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic compacted root turn"
+              }
+            }
+          },
+          {
+            "id": "entry-f2",
+            "parentId": "entry-f1",
+            "kind": "assistant-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic compacted assistant turn"
+              }
+            }
+          },
+          {
+            "id": "entry-f5",
+            "parentId": "entry-f2",
+            "kind": "compaction",
+            "status": "completed",
+            "payload": {
+              "summary": "synthetic compacted summary",
+              "firstKeptEntryId": "entry-f2"
+            }
+          }
+        ],
+        "rootIds": ["entry-f1"]
+      }
+    }
+  }
+}

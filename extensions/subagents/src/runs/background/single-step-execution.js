@@ -679,8 +679,17 @@ export async function runSingleStep(step, ctx, appendDiagnosticJsonl) {
             attemptDeadlineAt !== undefined &&
             (stepCtx.deadlineAt === undefined || attemptDeadlineAt <= stepCtx.deadlineAt);
         setup.childDeadlineAt = childDeadlineAt;
+        const attemptTimeoutMessage = attemptOwnsDeadline
+            ? `Subagent timed out after ${step.timeoutMs}ms.`
+            : stepCtx.timeoutMessage;
         const attemptTimeoutTimer = childDeadlineAt !== undefined
             ? scheduleDeadline(childDeadlineAt, () => {
+                try {
+                    stepCtx.onTimeout?.(attemptTimeoutMessage);
+                }
+                catch (error) {
+                    console.error(`Failed to record timeout status for run '${stepCtx.id}' step ${stepCtx.flatIndex}; continuing timeout cleanup:`, error);
+                }
                 setup.triggerTimeout();
             })
             : undefined;

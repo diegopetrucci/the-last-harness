@@ -1,0 +1,31 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-m0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "future-update",
+    "eventId": "stable-event-m1",
+    "revision": 1,
+    "baseRevision": 0,
+    "cursor": "opaque-cursor-m1",
+    "operation": "append",
+    "event": {
+      "type": "synthetic.future"
+    }
+  }
+}

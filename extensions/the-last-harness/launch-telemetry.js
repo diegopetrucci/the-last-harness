@@ -17,6 +17,7 @@ const PUBLIC_PROVIDER_IDS = new Set([
     "amazon-bedrock",
     "ant-ling",
     "anthropic",
+    "azure",
     "azure-openai-responses",
     "cerebras",
     "cloudflare-ai-gateway",

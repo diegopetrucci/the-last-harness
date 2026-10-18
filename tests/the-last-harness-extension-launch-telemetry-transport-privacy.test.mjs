@@ -106,6 +106,8 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
 
 test("launch telemetry allowlists current public runtime provider IDs and rejects stale aliases", () => {
   assert.equal(privacySafeTlhTelemetryProviderId("amazon-bedrock"), "amazon-bedrock");
+  // Pi 1.0.3 renamed azure-openai-responses → azure; both must pass through.
+  assert.equal(privacySafeTlhTelemetryProviderId("azure"), "azure");
   assert.equal(
     privacySafeTlhTelemetryProviderId("azure-openai-responses"),
     "azure-openai-responses",

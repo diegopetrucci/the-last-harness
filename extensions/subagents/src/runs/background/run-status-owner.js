@@ -306,7 +306,7 @@ export function createBackgroundRunStatusOwner(input) {
     }
     function pauseMetadataForIndex(index, pausedAt) {
         const request = owner.supervisorPauseRequest;
-        if (!request)
+        if (!request || statusPayload.steps[index]?.timedOut === true)
             return undefined;
         if (index === request.requesterIndex)
             return {
@@ -390,6 +390,23 @@ export function createBackgroundRunStatusOwner(input) {
             clearHeartbeatTimer();
         return succeeded;
     }
+    function recordStepTimeout(flatIndex, message) {
+        if (owner.concurrentTerminalStatusAdopted ||
+            statusPayload.state !== "running" ||
+            owner.timedOut ||
+            owner.interrupted)
+            return;
+        const now = Date.now();
+        const timeoutError = message ?? timeoutMessage ?? "Subagent timed out.";
+        const step = statusPayload.steps[flatIndex];
+        if (!step)
+            return;
+        step.timedOut = true;
+        step.error ??= timeoutError;
+        step.terminationReason = "timed_out";
+        statusPayload.lastUpdate = now;
+        writeStatusPayload();
+    }
     function onChildProtocolOutputLimit(limit) {
         if (owner.concurrentTerminalStatusAdopted ||
             !isActiveLifecycleState(statusPayload.state) ||
@@ -420,12 +437,17 @@ export function createBackgroundRunStatusOwner(input) {
             observedBytes: limit.observedBytes,
         }));
     }
+    function hasNonTimedOutActiveStep() {
+        return statusPayload.steps.some((step) => step.timedOut !== true && (step.status === "running" || step.status === "pending"));
+    }
     function requestSupervisorPause(index, pause) {
         if (owner.supervisorPauseRequest ||
             owner.interrupted ||
             owner.cancelled ||
             owner.timedOut ||
             statusPayload.state !== "running" ||
+            statusPayload.steps[index]?.timedOut === true ||
+            !hasNonTimedOutActiveStep() ||
             !claimChildTerminalReason(terminalReason, "paused"))
             return;
         const requestedAt = pause.requestedAt ?? Date.now();
@@ -447,7 +469,7 @@ export function createBackgroundRunStatusOwner(input) {
             activityState: undefined,
             lastUpdate: now,
             sessionFile: refreshTrackedSessionFile(index) ?? status.sessionFile,
-            steps: status.steps?.map((step, stepIndex) => step.status !== "running"
+            steps: status.steps?.map((step, stepIndex) => step.status !== "running" || step.timedOut === true
                 ? step
                 : {
                     ...step,
@@ -523,6 +545,7 @@ export function createBackgroundRunStatusOwner(input) {
         if (owner.cancelled ||
             owner.interrupted ||
             statusPayload.state !== "running" ||
+            !hasNonTimedOutActiveStep() ||
             !claimChildTerminalReason(terminalReason, "interrupted"))
             return;
         const now = Date.now();
@@ -629,7 +652,7 @@ export function createBackgroundRunStatusOwner(input) {
     }
     function applyPausedStepMetadata(index, endedAt) {
         const step = statusPayload.steps[index];
-        if (!step)
+        if (!step || step.timedOut === true)
             return;
         const sessionFile = refreshTrackedSessionFile(index);
         if (sessionFile)
@@ -664,6 +687,7 @@ export function createBackgroundRunStatusOwner(input) {
         refreshTrackedSessionFile,
         writeStatusPayload,
         recordAttemptFacts,
+        recordStepTimeout,
         onChildProtocolOutputLimit,
         pausedStepResult,
         timedOutStepResult,

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { getPackageDir, initTheme } from "@earendil-works/pi-coding-agent";
@@ -14,14 +15,19 @@ const { registerEffortCommand } = await jiti.import("../extensions/the-last-harn
 initTheme("dark", false);
 
 // Pi 0.85.1 moved keybinding initialisation to interactive app startup; seed
-// the global keybindings (pi-coding-agent's nested pi-tui instance) so that
+// the global keybindings (pi-coding-agent's pi-tui instance) so that
 // ThinkingSelectorComponent hints (e.g. app.thinking.save / Ctrl+S) render
 // correctly in tests without a live TUI session.
+// Use createRequire anchored at pi-coding-agent's package.json to resolve pi-tui
+// from the same location pi-coding-agent uses — preserving the singleton intent
+// even when pi-tui is hoisted into the repo's node_modules.
 {
   const piPkg = getPackageDir();
   const piKeybindingsUrl = pathToFileURL(join(piPkg, "dist", "core", "keybindings.js")).href;
+  const req = createRequire(join(piPkg, "package.json"));
+  const piTuiPkgPath = req.resolve("@earendil-works/pi-tui/package.json");
   const piTuiKeybindingsUrl = pathToFileURL(
-    join(piPkg, "node_modules", "@earendil-works", "pi-tui", "dist", "keybindings.js"),
+    join(dirname(piTuiPkgPath), "dist", "keybindings.js"),
   ).href;
   const { KeybindingsManager: PiKeybindingsManager } = await import(piKeybindingsUrl);
   const { setKeybindings: setPiKeybindings } = await import(piTuiKeybindingsUrl);

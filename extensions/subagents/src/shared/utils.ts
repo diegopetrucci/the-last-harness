@@ -166,7 +166,9 @@ function statusReadFailure(
 }
 
 function isCacheableStatusFailure(error: AsyncStatusReadError): boolean {
-  return error.failure === "invalid" || error.failure === "oversize";
+  return (
+    error.failure === "invalid" || error.failure === "oversize" || error.failure === "non_regular"
+  );
 }
 
 /**
@@ -194,6 +196,53 @@ export function readStatus(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     lastFailure = undefined;
+
+    // Before reading, verify the path is a regular file via lstat (no symlink follow).
+    // FIFOs, symlinks, and directories must be rejected immediately without blocking.
+    if (attempt === 0) {
+      let lstat: fs.Stats;
+      try {
+        lstat = fs.lstatSync(statusPath);
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          if (useCache) {
+            deleteStatusCacheEntry(statusPath);
+            statusFailureCache.delete(statusPath);
+          }
+          return null;
+        }
+        lastFailure = statusReadFailure(
+          asyncDir,
+          statusPath,
+          "unreadable",
+          `Failed to read async status file '${statusPath}': status metadata could not be read.`,
+          error,
+        );
+        break;
+      }
+      if (!lstat.isFile()) {
+        // FIFOs and symlinks are blocking/unsafe hazards; route as non_regular so
+        // the restore scan can skip them silently with a count-only warning.
+        // Directories and other unexpected paths are reported as unreadable so
+        // callers get a per-entry statusPath in their issues list.
+        if (lstat.isFIFO() || lstat.isSymbolicLink()) {
+          throw statusReadFailure(
+            asyncDir,
+            statusPath,
+            "non_regular",
+            `Failed to read async status file '${statusPath}': status path is not a regular file`,
+          );
+        }
+        throw statusReadFailure(
+          asyncDir,
+          statusPath,
+          "unreadable",
+          `Failed to read async status file '${statusPath}': status path is not a regular file`,
+        );
+      }
+    }
+    if (lastFailure) break;
+
     let stat: fs.Stats;
     let metadata: StatusMetadata | undefined;
     try {
@@ -212,7 +261,7 @@ export function readStatus(
         asyncDir,
         statusPath,
         "unreadable",
-        "status metadata could not be read.",
+        `Failed to read async status file '${statusPath}': status metadata could not be read.`,
         error,
       );
     }
@@ -233,7 +282,7 @@ export function readStatus(
           asyncDir,
           statusPath,
           "oversize",
-          `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+          `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
         );
       } else {
         let content: string | undefined;
@@ -252,7 +301,7 @@ export function readStatus(
             asyncDir,
             statusPath,
             "unreadable",
-            "status content could not be read.",
+            `Failed to read async status file '${statusPath}': status content could not be read.`,
             error,
           );
         }
@@ -262,7 +311,7 @@ export function readStatus(
               asyncDir,
               statusPath,
               "oversize",
-              `status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
+              `Failed to read async status file '${statusPath}': status exceeds the ${MAX_ASYNC_STATUS_BYTES}-byte limit.`,
             );
           } else {
             try {
@@ -281,7 +330,7 @@ export function readStatus(
                   asyncDir,
                   statusPath,
                   "invalid",
-                  "status JSON could not be parsed.",
+                  `Failed to parse async status file '${statusPath}': status JSON could not be parsed.`,
                 );
               }
             }

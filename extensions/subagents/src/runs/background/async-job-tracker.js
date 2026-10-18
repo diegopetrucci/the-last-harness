@@ -111,6 +111,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             })(),
             nestedChildren: run.nestedChildren,
             projectAgents: run.projectAgents,
+            ...(run.tkTicket ? { tkTicket: run.tkTicket } : {}),
         };
     };
     const cancelCleanup = (asyncId) => {
@@ -549,8 +550,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         let runs;
         let issues;
+        let unsafeIssues;
         try {
-            ({ runs, issues } = scanAsyncRunsForRestore(asyncDirRoot, {
+            ({ runs, issues, unsafeIssues } = scanAsyncRunsForRestore(asyncDirRoot, {
                 states: ["queued", "running"],
                 sessionId,
                 resultsDir,
@@ -566,10 +568,20 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         }
         try {
             const warnings = [formatRestoredActiveJobsCount(runs.length)];
-            if (issues.length > 0) {
-                warnings.push("left unreadable statuses in place");
-                warnRestoreIssues(`Async restore skipped unreadable startup statuses: ${warnings.join("; ")}.`);
+            let skippedUnsafeCount = 0;
+            for (const issue of unsafeIssues) {
+                const dedupeKey = `unsafe-status\0${issue.entry}`;
+                if (restoreWarningDedupe.has(dedupeKey))
+                    continue;
+                restoreWarningDedupe.add(dedupeKey);
+                skippedUnsafeCount += 1;
             }
+            if (skippedUnsafeCount > 0)
+                warnings.push(`skipped ${skippedUnsafeCount} unsafe status artifact${skippedUnsafeCount === 1 ? "" : "s"}`);
+            if (issues.length > 0)
+                warnings.push("left unreadable statuses in place");
+            if (warnings.length > 1)
+                warnRestoreIssues(`Async restore skipped startup runs: ${warnings.join("; ")}.`);
             for (const run of runs) {
                 state.asyncJobs.set(run.id, summaryToJob(run));
             }

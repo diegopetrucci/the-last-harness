@@ -244,11 +244,11 @@ test("production bundled agents declare well-formed xAI defaults", () => {
 
 test("production bundled agents use the approved OpenAI Codex defaults", () => {
   const expectedDefaults = new Map([
-    ["architect", { model: "gpt-5.6-sol", effort: "medium" }],
-    ["rush", { model: "gpt-5.6-sol", effort: "low" }],
-    ["product", { model: "gpt-5.6-sol", effort: "medium" }],
-    ["bug-hunter", { model: "gpt-5.6-sol", effort: "medium" }],
-    ["code-reviewer", { model: "gpt-5.6-sol", effort: "medium" }],
+    ["architect", { model: "gpt-6.1-sol", effort: "medium" }],
+    ["rush", { model: "gpt-6.1-sol", effort: "low" }],
+    ["product", { model: "gpt-6.1-sol", effort: "medium" }],
+    ["bug-hunter", { model: "gpt-6.1-sol", effort: "medium" }],
+    ["code-reviewer", { model: "gpt-6.1-sol", effort: "medium" }],
     ["contrarian", { model: "gpt-6-astra", effort: "medium" }],
     ["developer", { model: "gpt-5.6-luna", effort: "max" }],
     ["diff-summarizer", { model: "gpt-5.6-luna", effort: "medium" }],

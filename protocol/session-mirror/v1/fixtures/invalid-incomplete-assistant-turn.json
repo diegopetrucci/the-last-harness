@@ -1,0 +1,61 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-p0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-p1",
+    "revision": 1,
+    "cursor": "opaque-cursor-p1",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-p1",
+      "status": "active",
+      "tree": {
+        "activeLeafId": "entry-p1",
+        "entries": [
+          {
+            "id": "entry-p0",
+            "parentId": null,
+            "kind": "user-turn",
+            "status": "completed",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic incomplete-turn parent"
+              }
+            }
+          },
+          {
+            "id": "entry-p1",
+            "parentId": "entry-p0",
+            "kind": "assistant-turn",
+            "status": "active",
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic unfinished assistant output"
+              }
+            }
+          }
+        ],
+        "rootIds": ["entry-p0"]
+      }
+    }
+  }
+}

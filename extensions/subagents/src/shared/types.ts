@@ -700,6 +700,12 @@ export interface NestedRouteInfo {
 }
 
 /** Canonical provider/model/thinking identity persisted with resumable children. */
+/** A tk ticket ID + sanitized title, persisted and displayed alongside async jobs. */
+export interface TkTicketMetadata {
+  id: string;
+  title: string;
+}
+
 export interface SubagentModelIdentity {
   provider: string;
   model: string;
@@ -737,6 +743,8 @@ export interface AsyncStatus {
   awaited?: boolean;
   /** Optional privacy-safe run-level telemetry envelope. */
   telemetry?: SubagentRunTelemetry;
+  /** Optional tk ticket associated with this run. */
+  tkTicket?: TkTicketMetadata;
   runId: string;
   sessionId?: string;
   mode: SubagentRunMode;
@@ -970,6 +978,8 @@ export interface AsyncResultArtifact {
 export interface AsyncJobState {
   /** Optional privacy-safe run-level telemetry restored with the lifecycle. */
   telemetry?: import("./telemetry.ts").SubagentRunTelemetry;
+  /** Optional tk ticket metadata sanitized for display. */
+  tkTicket?: TkTicketMetadata;
   asyncId: string;
   asyncDir: string;
   /** Internal-only marker retained while an awaited run is visible. */

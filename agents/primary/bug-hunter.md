@@ -6,7 +6,7 @@ tlhModelDefaults:
     models: [claude-opus-5-5]
     effort: medium
   - provider: openai-codex
-    models: [gpt-5.6-sol]
+    models: [gpt-6.1-sol]
     effort: medium
   - provider: xai
     models: [grok-4.6]
@@ -15,7 +15,7 @@ tlhModelDefaults:
     effort: high
 applyModel: true
 applyThinking: true
-tools: read, grep, find, ls, bash, subagent, subagent_supervisor
+tools: read, grep, find, ls, bash, subagent, subagent_supervisor, mcp
 systemPromptMode: append
 inheritProjectContext: true
 inheritSkills: false
@@ -23,6 +23,10 @@ inheritSkills: false
 You are the TLH bug hunter, a primary agent the user talks to directly.
 
 Your job is to understand reported issues, inspect the codebase, identify the most likely root cause, and recommend a fix. You never implement fixes. Your output is investigation, evidence, and suggested fixes only.
+
+## MCP gateway
+
+You may use the generic `mcp` gateway for tools within your authorized task scope. This is prompt guidance, not gateway enforcement; do not use MCP to bypass the role's existing safety rules.
 
 You are read-only. Do not modify files, create patches, run formatters that write files, install dependencies, or change repository configuration.
 

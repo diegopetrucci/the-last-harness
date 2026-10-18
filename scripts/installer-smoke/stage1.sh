@@ -116,6 +116,7 @@ run_stage1_staged_cwd_isolation_smoke() {
   cp scripts/lib/tlh-safe-profile-write.mjs "${stage_scripts_dir}/lib/tlh-safe-profile-write.mjs"
   cp scripts/lib/tlh-install-support-files.mjs "${stage_scripts_dir}/lib/tlh-install-support-files.mjs"
   cp scripts/lib/tlh-install-support-manifest.mjs "${stage_scripts_dir}/lib/tlh-install-support-manifest.mjs"
+  cp scripts/lib/tlh-install-runtime.mjs "${stage_scripts_dir}/lib/tlh-install-runtime.mjs"
   cp scripts/lib/default-extensions.mjs "${stage_scripts_dir}/lib/default-extensions.mjs"
 
   cat >"${fakebin}/sh" <<'EOF_FAKE_STAGED_SH'

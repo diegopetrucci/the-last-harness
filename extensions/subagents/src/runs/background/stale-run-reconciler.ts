@@ -272,10 +272,18 @@ export function reconcileNestedAsyncDescendants(
     if (isTerminalLifecycleState(run.state)) continue;
     const asyncDir = resolveNestedAsyncDir(route.rootRunId, run);
     if (!asyncDir) continue;
-    const result = reconcileAsyncRun(asyncDir, {
-      ...options,
-      resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
-    });
+    let result: ReturnType<typeof reconcileAsyncRun>;
+    try {
+      result = reconcileAsyncRun(asyncDir, {
+        ...options,
+        resultsDir: path.join(options.resultsDir ?? RESULTS_DIR, "nested", route.rootRunId),
+      });
+    } catch (error) {
+      // Non-regular status artifacts (FIFO, symlink, directory) are skipped;
+      // other read errors propagate so callers can observe unexpected failures.
+      if (isAsyncStatusReadError(error) && error.failure === "non_regular") continue;
+      throw error;
+    }
     if (!result.status || (!result.repaired && !isTerminalLifecycleState(result.status.state)))
       continue;
 

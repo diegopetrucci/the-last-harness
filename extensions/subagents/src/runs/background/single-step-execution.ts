@@ -156,6 +156,7 @@ interface SingleStepContext {
   interruptMessage?: string;
   timeoutSignal?: AbortSignal;
   timeoutMessage?: string;
+  onTimeout?: (message?: string) => void;
   timeoutMs?: number;
   deadlineAt?: number;
   startedAt?: number;
@@ -277,6 +278,7 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   const relayInheritedTimeout = () => activeTimeoutInterrupt?.();
   if (inheritedTimeoutSignal?.aborted) relayInheritedTimeout();
   else inheritedTimeoutSignal?.addEventListener("abort", relayInheritedTimeout, { once: true });
+
   const parentRegisterTimeout = ctx.registerTimeout;
   const roleTimeoutMessage =
     step.timeoutOwner !== "run" && step.timeoutMs !== undefined
@@ -1058,9 +1060,22 @@ export async function runSingleStep(
       attemptDeadlineAt !== undefined &&
       (stepCtx.deadlineAt === undefined || attemptDeadlineAt <= stepCtx.deadlineAt);
     setup.childDeadlineAt = childDeadlineAt;
+    const attemptTimeoutMessage = attemptOwnsDeadline
+      ? `Subagent timed out after ${step.timeoutMs}ms.`
+      : stepCtx.timeoutMessage;
     const attemptTimeoutTimer =
       childDeadlineAt !== undefined
         ? scheduleDeadline(childDeadlineAt, () => {
+            // Record the timeout before signaling or reaping the child so later
+            // terminal signals cannot replace its canonical classification.
+            try {
+              stepCtx.onTimeout?.(attemptTimeoutMessage);
+            } catch (error) {
+              console.error(
+                `Failed to record timeout status for run '${stepCtx.id}' step ${stepCtx.flatIndex}; continuing timeout cleanup:`,
+                error,
+              );
+            }
             setup.triggerTimeout();
           })
         : undefined;

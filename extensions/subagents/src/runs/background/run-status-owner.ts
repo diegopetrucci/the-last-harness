@@ -120,6 +120,7 @@ export interface BackgroundRunStatusOwner {
   refreshTrackedSessionFile(index: number, fallback?: string): string | undefined;
   writeStatusPayload(options?: { projectNested?: boolean; lifecycleLocked?: boolean }): void;
   recordAttemptFacts(index: number, facts: SubagentAttemptFacts): void;
+  recordStepTimeout(flatIndex: number, message?: string): void;
   onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void;
   pausedStepResult(task: StatusTask): SingleStepResultValue;
   timedOutStepResult(task: StatusTask): SingleStepResultValue;
@@ -566,7 +567,7 @@ export function createBackgroundRunStatusOwner(
     pausedAt?: number,
   ): AsyncStatus["pause"] | undefined {
     const request = owner.supervisorPauseRequest;
-    if (!request) return undefined;
+    if (!request || statusPayload.steps[index]?.timedOut === true) return undefined;
     if (index === request.requesterIndex)
       return {
         ...request.pause,
@@ -680,6 +681,28 @@ export function createBackgroundRunStatusOwner(
     return succeeded;
   }
 
+  function recordStepTimeout(flatIndex: number, message?: string): void {
+    if (
+      owner.concurrentTerminalStatusAdopted ||
+      statusPayload.state !== "running" ||
+      owner.timedOut ||
+      owner.interrupted
+    )
+      return;
+    const now = Date.now();
+    const timeoutError = message ?? timeoutMessage ?? "Subagent timed out.";
+    const step = statusPayload.steps[flatIndex];
+    if (!step) return;
+    // A step-owned deadline is durable evidence for the canonical result, but it
+    // is not a run-wide terminal transition: sibling interrupt/pause/output
+    // signals must still be able to claim the run if they end this segment.
+    step.timedOut = true;
+    step.error ??= timeoutError;
+    step.terminationReason = "timed_out";
+    statusPayload.lastUpdate = now;
+    writeStatusPayload();
+  }
+
   function onChildProtocolOutputLimit(limit: ProtocolOutputLimit): void {
     if (
       owner.concurrentTerminalStatusAdopted ||
@@ -719,6 +742,12 @@ export function createBackgroundRunStatusOwner(
     );
   }
 
+  function hasNonTimedOutActiveStep(): boolean {
+    return statusPayload.steps.some(
+      (step) => step.timedOut !== true && (step.status === "running" || step.status === "pending"),
+    );
+  }
+
   function requestSupervisorPause(index: number, pause: NonNullable<AsyncStatus["pause"]>): void {
     if (
       owner.supervisorPauseRequest ||
@@ -726,6 +755,8 @@ export function createBackgroundRunStatusOwner(
       owner.cancelled ||
       owner.timedOut ||
       statusPayload.state !== "running" ||
+      statusPayload.steps[index]?.timedOut === true ||
+      !hasNonTimedOutActiveStep() ||
       !claimChildTerminalReason(terminalReason, "paused")
     )
       return;
@@ -750,7 +781,7 @@ export function createBackgroundRunStatusOwner(
       lastUpdate: now,
       sessionFile: refreshTrackedSessionFile(index) ?? status.sessionFile,
       steps: status.steps?.map((step, stepIndex) =>
-        step.status !== "running"
+        step.status !== "running" || step.timedOut === true
           ? step
           : {
               ...step,
@@ -838,6 +869,7 @@ export function createBackgroundRunStatusOwner(
       owner.cancelled ||
       owner.interrupted ||
       statusPayload.state !== "running" ||
+      !hasNonTimedOutActiveStep() ||
       !claimChildTerminalReason(terminalReason, "interrupted")
     )
       return;
@@ -964,7 +996,7 @@ export function createBackgroundRunStatusOwner(
 
   function applyPausedStepMetadata(index: number, endedAt: number): void {
     const step = statusPayload.steps[index];
-    if (!step) return;
+    if (!step || step.timedOut === true) return;
     const sessionFile = refreshTrackedSessionFile(index);
     if (sessionFile) step.sessionFile = sessionFile;
     step.pause = pauseMetadataForIndex(index, endedAt);
@@ -998,6 +1030,7 @@ export function createBackgroundRunStatusOwner(
     refreshTrackedSessionFile,
     writeStatusPayload,
     recordAttemptFacts,
+    recordStepTimeout,
     onChildProtocolOutputLimit,
     pausedStepResult,
     timedOutStepResult,

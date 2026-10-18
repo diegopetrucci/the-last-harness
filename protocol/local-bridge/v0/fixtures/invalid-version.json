@@ -1,0 +1,23 @@
+{
+  "unsupportedFamily": {
+    "family": "future-local-bridge",
+    "major": 0,
+    "minor": 0
+  },
+  "unsupportedMajor": {
+    "family": "local-bridge",
+    "major": 1,
+    "minor": 0
+  },
+  "unsupportedMinor": {
+    "family": "local-bridge",
+    "major": 0,
+    "minor": 2
+  },
+  "negativeZero": {
+    "family": "local-bridge",
+    "major": 0,
+    "minor": -0
+  },
+  "expectedCode": "incompatible-protocol"
+}

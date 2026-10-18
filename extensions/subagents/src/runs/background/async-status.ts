@@ -48,6 +48,59 @@ import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/li
 import { isCompletedLifecycleStepState } from "../shared/lifecycle-state.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { normalizeSubagentRunTelemetry } from "../../shared/telemetry.ts";
+import type { TkTicketMetadata } from "../../shared/types.ts";
+
+/** Strip ANSI escape sequences and C1 control characters from a tk ticket title. */
+function sanitizeTkTicketTitle(raw: string): string | undefined {
+  let cleaned = "";
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code === 0x1b) {
+      const next = raw.charCodeAt(++i);
+      if (next === 0x5b) {
+        while (++i < raw.length) {
+          const fc = raw.charCodeAt(i);
+          if (fc >= 0x40 && fc <= 0x7e) break;
+        }
+      } else if (next === 0x5d) {
+        while (++i < raw.length) {
+          const sc = raw.charCodeAt(i);
+          if (sc === 0x07) break;
+          if (sc === 0x1b && raw.charCodeAt(i + 1) === 0x5c) {
+            i++;
+            break;
+          }
+        }
+      }
+      continue;
+    }
+    if (
+      code <= 0x08 ||
+      code === 0x0b ||
+      code === 0x0c ||
+      (code >= 0x0e && code <= 0x1f) ||
+      (code >= 0x7f && code <= 0x9f)
+    ) {
+      cleaned += " ";
+      continue;
+    }
+    cleaned += raw[i];
+  }
+  const trimmed = cleaned.replace(/\s+/g, " ").trim();
+  return trimmed || undefined;
+}
+
+/** Normalize and sanitize raw `tkTicket` data from a persisted status file. */
+function normalizeTkTicketMetadata(raw: unknown): TkTicketMetadata | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === "string" && /^[A-Za-z0-9][A-Za-z0-9-]*$/.test(r.id) ? r.id : undefined;
+  if (!id) return undefined;
+  if (typeof r.title !== "string") return undefined;
+  const title = sanitizeTkTicketTitle(r.title);
+  if (!title) return undefined;
+  return { id, title };
+}
 interface AsyncRunStepSummary {
   index: number;
   agent: string;
@@ -137,6 +190,7 @@ export interface AsyncRunSummary {
   nestedWarnings?: string[];
   projectAgents?: import("../../agents/project-agent-loader.ts").ProjectAgentIdentity[];
   telemetry?: import("../../shared/telemetry.ts").SubagentRunTelemetry;
+  tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
 }
 
 export interface AsyncRunUnreadableStatusIssue {
@@ -145,9 +199,15 @@ export interface AsyncRunUnreadableStatusIssue {
   statusPath: string;
 }
 
+/** A status artifact that is unsafe to read (FIFO, symlink, directory, etc.). */
+export interface AsyncRunUnsafeEntryIssue {
+  entry: string;
+}
+
 interface AsyncRunRestoreScanResult {
   runs: AsyncRunSummary[];
   issues: AsyncRunUnreadableStatusIssue[];
+  unsafeIssues: AsyncRunUnsafeEntryIssue[];
 }
 
 interface AsyncRunListOptions {
@@ -160,6 +220,7 @@ interface AsyncRunListOptions {
   reconcile?: boolean;
   statusRead?: AsyncStatusReadOptions;
   onUnreadable?: (issue: AsyncRunUnreadableStatusIssue) => void;
+  onUnsafe?: (issue: AsyncRunUnsafeEntryIssue) => void;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -363,6 +424,9 @@ function statusToSummary(
     ...(status.pause ? { pause: status.pause } : {}),
     ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
     ...(telemetry ? { telemetry } : {}),
+    ...(normalizeTkTicketMetadata(status.tkTicket) !== undefined
+      ? { tkTicket: normalizeTkTicketMetadata(status.tkTicket) }
+      : {}),
   };
 }
 
@@ -459,6 +523,12 @@ function buildRunCollector(asyncDirRoot: string, options: AsyncRunListOptions = 
       runs.push(statusToSummary(asyncDir, status, nestedWarnings, nestedRoute));
     } catch (error) {
       if (!isAsyncStatusReadError(error)) throw error;
+      // Non-regular artifacts (FIFO, symlink, directory) are routed to the
+      // unsafe callback; other unreadable artifacts go to the unreadable callback.
+      if (error.failure === "non_regular") {
+        options.onUnsafe?.(Object.freeze({ entry }));
+        return;
+      }
       reportUnreadable(entry, error);
     }
   };
@@ -486,15 +556,20 @@ export function scanAsyncRunsForRestore(
 ): AsyncRunRestoreScanResult {
   const entries = listAsyncRunEntries(asyncDirRoot);
   const issues: AsyncRunUnreadableStatusIssue[] = [];
+  const unsafeIssues: AsyncRunUnsafeEntryIssue[] = [];
   const collector = buildRunCollector(asyncDirRoot, {
     ...options,
     onUnreadable: (issue) => {
       issues.push(issue);
       options.onUnreadable?.(issue);
     },
+    onUnsafe: (issue) => {
+      unsafeIssues.push(issue);
+      options.onUnsafe?.(issue);
+    },
   });
   for (const entry of entries) collector.collectEntry(entry);
-  return { runs: finalizeRunList(collector.runs, options.limit), issues };
+  return { runs: finalizeRunList(collector.runs, options.limit), issues, unsafeIssues };
 }
 
 function formatActivityFacts(input: {

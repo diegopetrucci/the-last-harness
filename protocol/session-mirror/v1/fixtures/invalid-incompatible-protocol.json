@@ -1,0 +1,36 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 2,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-k0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-k0",
+    "revision": 0,
+    "cursor": "opaque-cursor-k0",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-k0",
+      "status": "idle",
+      "tree": {
+        "activeLeafId": null,
+        "entries": [],
+        "rootIds": []
+      }
+    }
+  }
+}

@@ -1337,7 +1337,8 @@ test("production footer wiring: footer remains visible on non-startup session re
 test("session_start sends zero Herdr requests even when HERDR_* env is set in the outer process", async () => {
   // Regression: the harness must scrub HERDR_* so tests run from a live Herdr
   // pane never send real pane.report_agent / pane.report_metadata traffic.
-  const tmpSocketDir = mkdtempSync(join(tmpdir(), "tlh-herdr-smoke-"));
+  // Keep the Unix socket path short even when CI supplies a deeply nested TMPDIR.
+  const tmpSocketDir = mkdtempSync(join("/tmp", "tlh-herdr-smoke-"));
   const socketPath = join(tmpSocketDir, "herdr.sock");
   let connectionCount = 0;
   const server = net.createServer(() => {

@@ -16,15 +16,17 @@ export const suiteConfigs = {
     // Stage 2 (origin/main 5bafc8d4) measured pass count: 1189/1189.
     // Stage 2 fix (persistContinuationTelemetry regression test): 1197/1197.
     // Stage 3 review fix (awaited-progress startedAt projection): 1233/1233.
+    // Stage 4 (origin/main 850903b4) measured pass count: 1245/1245.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 1233,
+    minimumTests: 1245,
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
     // Stage 1 (origin/main 0c8f4faa) measured pass count: 508/508 (leak-fix regression test added).
     // Stage 2 (origin/main 5bafc8d4) measured pass count: 514/514.
+    // Stage 4 (origin/main 850903b4) measured pass count: 521/521.
     // minimumFiles is omitted per gnosis ceenzk/chuquy (no file-count guard).
-    minimumTests: 514,
+    minimumTests: 521,
   },
   e2e: {
     directory: join(repoRoot, "extensions/subagents/test/e2e"),
