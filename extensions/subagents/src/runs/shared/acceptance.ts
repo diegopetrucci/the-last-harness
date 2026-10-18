@@ -1394,24 +1394,22 @@ function reportEvidencePresent(report: AcceptanceReport, kind: AcceptanceEvidenc
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-  const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
-  if (result.status !== 0) {
+  const result = spawnSync("git", ["diff", "--cached", "--quiet", "--exit-code"], { cwd });
+  if (result.status === 0) {
+    return { id: "no-staged-files", status: "passed", message: "No staged files detected." };
+  }
+  if (result.status === 1) {
     return {
       id: "no-staged-files",
-      status: "not-applicable",
-      message: "git status unavailable; no staged-files check skipped",
+      status: "failed",
+      message: "Staged files present.",
     };
   }
-  const staged = result.stdout
-    .split(/\r?\n/)
-    .filter((line) => line.length >= 2 && line[0] !== " " && line[0] !== "?");
-  return staged.length === 0
-    ? { id: "no-staged-files", status: "passed", message: "No staged files detected." }
-    : {
-        id: "no-staged-files",
-        status: "failed",
-        message: `Staged files present: ${staged.join(", ")}`,
-      };
+  return {
+    id: "no-staged-files",
+    status: "not-applicable",
+    message: "git status unavailable; no staged-files check skipped",
+  };
 }
 
 function runStructuralChecks(

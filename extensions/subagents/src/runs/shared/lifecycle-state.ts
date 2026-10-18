@@ -1332,6 +1332,13 @@ export function recoverStoppedLifecycleOwnership(
       pidLiveness,
     };
   }
+  // A normal interrupt is published as paused before the source runner has
+  // finished draining its children. Keep its owner PID visible until that
+  // process is proven stopped; otherwise reconciliation would erase the only
+  // durable cleanup gate before a continuation claim can inspect it.
+  if (normalized.state === "paused" && pidLiveness !== "dead") {
+    return { status: normalized, repaired: false, pidLiveness };
+  }
   const repaired: AsyncStatus = {
     ...normalized,
     pid: undefined,

@@ -6,7 +6,7 @@ import { resolveValidatedGitWorktreeRoot, } from "../../../shared/project-agent-
 import { getAgentDir } from "../shared/utils.js";
 import { getProjectAgentSnapshotProvenance, registerProjectAgentSnapshot, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { buildRuntimeName } from "./identity.js";
+import { buildRuntimeName, isExtensionToolPath } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.js";
 export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
@@ -727,6 +727,9 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         throw new ProjectAgentDefinitionError(filePath, "tools must declare at least one usable tool");
     }
     for (const tool of tools) {
+        if (isExtensionToolPath(tool)) {
+            throw new ProjectAgentDefinitionError(filePath, `tool '${tool}' is an extension path and is prohibited for project agents`);
+        }
         if (!PROJECT_AGENT_TOOL_NAME_PATTERN.test(tool)) {
             throw new ProjectAgentDefinitionError(filePath, `tool '${tool}' is not a valid runtime tool name`);
         }

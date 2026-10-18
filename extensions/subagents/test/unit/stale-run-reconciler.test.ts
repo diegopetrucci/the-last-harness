@@ -1020,7 +1020,7 @@ describe("async stale-run reconciliation", () => {
     }
   });
 
-  it("clears pid ownership when reconciling a paused stopped lifecycle", () => {
+  it("keeps paused ownership while the runner pid is live", () => {
     const root = tempRoot("pi-stale-paused-lifecycle-");
     try {
       const asyncDir = path.join(root, "run-paused");
@@ -1044,10 +1044,13 @@ describe("async stale-run reconciliation", () => {
         now: () => 2000,
       });
 
-      assert.equal(result.repaired, true);
+      assert.equal(result.repaired, false);
       assert.equal(result.status?.state, "paused");
-      assert.equal(result.status?.pid, undefined);
-      assert.equal(result.status?.pause?.ownerPid, undefined);
+      assert.equal(result.status?.pid, 12345);
+      assert.equal(result.status?.pause?.ownerPid, 12345);
+      const persisted = readStatusFile(asyncDir);
+      assert.equal(persisted?.pid, 12345);
+      assert.equal(persisted?.pause?.ownerPid, 12345);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1266,7 +1269,7 @@ describe("async stale-run reconciliation", () => {
     }
   });
 
-  it("repairs paused ownership metadata by clearing persisted pids deterministically", () => {
+  it("reconciles paused ownership only after liveness is confirmed dead", () => {
     const root = tempRoot("pi-stale-paused-pid-");
     try {
       const asyncDir = path.join(root, "run-paused");
@@ -1287,10 +1290,32 @@ describe("async stale-run reconciliation", () => {
         kill: () => true,
         now: () => 2000,
       });
-      assert.equal(livePidResult.repaired, true);
+      assert.equal(livePidResult.repaired, false);
       assert.equal(livePidResult.status?.state, "paused");
-      assert.equal(livePidResult.status?.pid, undefined);
-      assert.match(livePidResult.message ?? "", /ownership could not be verified/);
+      assert.equal(livePidResult.status?.pid, 4567);
+      assert.equal(livePidResult.status?.pause?.ownerPid, 4567);
+
+      writeStatus(asyncDir, {
+        runId: "run-paused",
+        mode: "single",
+        state: "paused",
+        pid: 4567,
+        startedAt: 1000,
+        lastUpdate: 1500,
+        pause: { kind: "awaiting_supervisor", summary: "Need a decision", ownerPid: 4567 },
+        steps: [{ agent: "worker", status: "paused", startedAt: 1000 }],
+      });
+      const unknownPidResult = reconcileAsyncRun(asyncDir, {
+        resultsDir,
+        kill: () => {
+          throw errno("EPERM");
+        },
+        now: () => 2000,
+      });
+      assert.equal(unknownPidResult.repaired, false);
+      assert.equal(unknownPidResult.status?.state, "paused");
+      assert.equal(unknownPidResult.status?.pid, 4567);
+      assert.equal(unknownPidResult.status?.pause?.ownerPid, 4567);
 
       writeStatus(asyncDir, {
         runId: "run-paused",
@@ -1311,6 +1336,7 @@ describe("async stale-run reconciliation", () => {
       });
       assert.equal(deadPidResult.repaired, true);
       assert.equal(deadPidResult.status?.pid, undefined);
+      assert.equal(deadPidResult.status?.pause?.ownerPid, undefined);
       assert.match(deadPidResult.message ?? "", /cleared dead persisted pid/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1333,7 +1359,9 @@ describe("async stale-run reconciliation", () => {
         () =>
           reconcileAsyncRun(asyncDir, {
             resultsDir: path.join(root, "results"),
-            kill: () => true,
+            kill: () => {
+              throw errno("ESRCH");
+            },
             now: () => 2000,
           }),
       );
@@ -1342,6 +1370,7 @@ describe("async stale-run reconciliation", () => {
       assert.equal(persisted?.lifecycle?.generation, 1);
       assert.equal(persisted?.pause?.summary, "Reserved by continuation");
       assert.equal(persisted?.pid, undefined);
+      assert.equal(persisted?.pause?.ownerPid, undefined);
       assert.equal(result.status?.lifecycle?.generation, 1);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1364,7 +1393,9 @@ describe("async stale-run reconciliation", () => {
         () =>
           reconcileAsyncRun(asyncDir, {
             resultsDir: path.join(root, "results"),
-            kill: () => true,
+            kill: () => {
+              throw errno("ESRCH");
+            },
             now: () => 2000,
           }),
       );

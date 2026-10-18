@@ -32,6 +32,10 @@ export function buildRuntimeName(localName: string, packageName?: string): strin
   return trimmedPackage ? `${trimmedPackage}.${localName}` : localName;
 }
 
+export function isExtensionToolPath(tool: string): boolean {
+  return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+
 export function frontmatterNameForConfig(
   config: Pick<AgentConfig, "name" | "localName" | "packageName">,
 ): string {

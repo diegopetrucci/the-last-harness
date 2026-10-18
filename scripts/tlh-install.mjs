@@ -705,15 +705,7 @@ function absolutePiCmd(config) {
     // sensible display output without breaking the dry-run flow.
     return config.piCmd || join(runtimePrefix(config), "bin", "pi");
 }
-/**
- * Assert that the private runtime prefix is either absent/empty (safe for a
- * fresh install) or affirmatively TLH-owned via the ownership marker.  Throws
- * on symlinked prefix, or on a non-empty prefix with no valid marker and no
- * recorded provenance (the shared-prefix data-loss scenario).
- *
- * Returns { origin } that must be forwarded to writeRuntimeMarker after
- * a successful provision/repair/reuse.
- */
+/** Assert a fresh prefix or affirmative ownership; reject foreign leftovers. */
 function assertRuntimePrefixOwnedOrEmpty(config) {
     const prefix = piInstallPrefix(config);
     // Refuse symlinked runtime directory up-front — a symlink could resolve to a
@@ -724,28 +716,22 @@ function assertRuntimePrefixOwnedOrEmpty(config) {
             `Remove the symlink or choose a dedicated profile directory (e.g. ~/.the-last-harness/agent).`);
     }
     if (!existsSync(prefix))
-        return { origin: "created" }; // absent → fresh install
+        return { origin: "created", checkpointFreshPrefix: true };
     const entries = readdirSync(prefix); // never returns '.' or '..'; includes dotfiles
     if (entries.length === 0)
-        return { origin: "created" }; // empty → fresh install
-    // Check for an affirmative ownership marker.
+        return { origin: "created", checkpointFreshPrefix: true };
     const marker = readRuntimeMarker(prefix);
     if (marker && isRuntimeMarkerPathMatched(marker, prefix)) {
-        // Valid marker whose recorded path matches the actual prefix → TLH owns this.
-        return { origin: marker.origin };
+        return { origin: marker.origin, checkpointFreshPrefix: false };
     }
     // No valid marker. Check install-state provenance as a one-time migration gate.
     const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
     if (piInstalledByTlhPreference === true) {
-        // Provenance-gated migration: TLH installed this runtime before the ownership
-        // marker was introduced.  Accept and emit origin='migrated' so the caller
-        // writes the marker, making future runs marker-gated.
+        // Provenance-gated migration writes a marker, making future runs marker-gated.
         verboseLog(config, `Migrating TLH runtime ownership: writing marker for pre-existing TLH-installed runtime at ${prefix}`);
-        return { origin: "migrated" };
+        return { origin: "migrated", checkpointFreshPrefix: false };
     }
-    // Non-empty, no valid marker, no provenance → refuse.  This is the P1
-    // shared-prefix data-loss scenario: a foreign npm --prefix directory that
-    // happens to sit next to a non-default --agent-dir.
+    // Non-empty, unmarked, and without provenance: refuse shared-prefix adoption.
     throw new Error(`TLH runtime prefix ${prefix} is not TLH-owned: ` +
         `no ownership marker (${RUNTIME_MARKER_FILENAME}) was found and no TLH install ` +
         `provenance is recorded. A non-default --agent-dir may point at a profile whose ` +
@@ -753,9 +739,20 @@ function assertRuntimePrefixOwnedOrEmpty(config) {
         `Choose a dedicated or default profile directory (e.g. ~/.the-last-harness/agent), ` +
         `or remove ${prefix} if it is safe to do so.`);
 }
+/** Checkpoint only a verified fresh prefix; never adopt unmarked leftovers. */
+function checkpointFreshRuntimeOwnership(config, prefix) {
+    if (config.dryRun)
+        return;
+    mkdirSync(prefix, { recursive: true });
+    if (isSymlink(prefix) || readdirSync(prefix).length !== 0)
+        throw new Error(`TLH runtime prefix ${prefix} was not a fresh, non-symlink empty directory; refusing unmarked contents.`);
+    writeRuntimeMarker(config, prefix, "created");
+}
 function installPiIfNeeded(config) {
-    const { origin } = assertRuntimePrefixOwnedOrEmpty(config);
+    const { origin, checkpointFreshPrefix } = assertRuntimePrefixOwnedOrEmpty(config);
     const prefix = piInstallPrefix(config);
+    if (checkpointFreshPrefix)
+        checkpointFreshRuntimeOwnership(config, prefix);
     const piBinDir = join(prefix, "bin");
     const piBin = join(piBinDir, "pi");
     // Shipped lock files: resolved from supportFilePaths (set by preflightRuntimeSupportFiles).

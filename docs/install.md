@@ -240,7 +240,9 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
   --wrapper-name tlh-main --agent-dir ~/.the-last-harness-main/agent
 ```
 
-The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. A legacy `~/.local` pi is handled separately (see [Pi removal decision](#pi-removal-decision)). The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+The script removes the isolated agent dir under `~/.the-last-harness/agent`, the `tlh` wrapper, and the private Pi runtime at `~/.the-last-harness/runtime` when a valid ownership marker (`.tlh-runtime-owned` inside the runtime directory) is present. An unmarked or pre-marker runtime is skipped and a manual-removal hint is printed instead. If the agent dir exists without its TLH install-state marker, it is preserved while independently owned runtime and managed-wrapper cleanup can continue; the uninstaller prints an actionable warning and exits nonzero so the incomplete cleanup is visible. A legacy `~/.local` pi is handled separately (see [Pi removal decision](#pi-removal-decision)). The parent dir `~/.the-last-harness` is removed only when empty after the agent dir is gone. Normal Pi config at `~/.pi/agent` is never touched.
+
+The uninstaller also accepts the default profile through a symlinked `HOME` or a symlinked ancestor on `HOME`'s own path, after validating its physical target. Exact platform root aliases remain supported; other symlinked profile parents, symlinked agent roots, and profile descendants remain refused. For an explicit agent path reached through an unrelated alias, pass its canonical physical path instead; this keeps symlink aliases from expanding recursive deletion authority.
 
 ### Uninstaller flags
 

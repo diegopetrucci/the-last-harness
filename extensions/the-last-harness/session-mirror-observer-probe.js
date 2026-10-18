@@ -273,6 +273,7 @@ export function createSessionMirrorObserverProbe(options = {}) {
             createChannel: options.replyChannelFactory,
             now: options.replyNow,
             scheduleConfirmation: options.replyScheduleConfirmation,
+            scheduleLifecycleCompletion: options.replyScheduleLifecycleCompletion,
             setTimeout: options.replySetTimeout,
             clearTimeout: options.replyClearTimeout,
             notify: options.replyNotify,
@@ -367,15 +368,16 @@ export function createSessionMirrorObserverProbe(options = {}) {
         invokeLifecycle(() => runtime.agentSettled(), metrics);
     };
     const sessionBeforeTree = () => invokeReply(() => replyProducer?.sessionBeforeTree());
-    const sessionTree = () => {
-        invokeReply(() => replyProducer?.sessionTree());
+    const sessionTree = (event, context) => {
+        invokeReply(() => replyProducer?.sessionTree(event, context));
         invokeLifecycle(() => runtime.sessionTree(), metrics);
     };
     const sessionBeforeCompact = () => invokeReply(() => replyProducer?.sessionBeforeCompact());
-    const sessionCompact = () => {
-        invokeReply(() => replyProducer?.sessionCompact());
+    const sessionCompact = (event, context) => {
+        invokeReply(() => replyProducer?.sessionCompact(event, context));
         invokeLifecycle(() => runtime.sessionCompact(), metrics);
     };
+    const sessionCompactFailed = (event, context) => invokeReply(() => replyProducer?.sessionCompactFailed(event, context));
     const sessionShutdown = () => {
         invokeReply(() => replyProducer?.sessionShutdown());
         shutdownSink(publicationSink);
@@ -399,6 +401,7 @@ export function createSessionMirrorObserverProbe(options = {}) {
         sessionTree,
         sessionBeforeCompact,
         sessionCompact,
+        sessionCompactFailed,
         sessionShutdown,
         requestSnapshot,
         getState,

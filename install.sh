@@ -261,6 +261,65 @@ path_within_or_equal_stage0() {
   [[ "${path}" == "${root}" || "${path}" == "${root}/"* ]]
 }
 
+# Compare existing filesystem identity instead of folding path case. This keeps
+# .pi and .PI distinct on case-sensitive filesystems while recognizing aliases
+# on case-insensitive filesystems, including a missing suffix after an existing root.
+filesystem_identity_stage0() {
+  local path="$1"
+  local identity=""
+
+  identity="$(stat -c '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  identity="$(stat -f '%d:%i' "${path}" 2>/dev/null || true)"
+  if [[ -n "${identity}" ]]; then
+    printf '%s\n' "${identity}"
+    return 0
+  fi
+  return 1
+}
+
+path_within_existing_identity_stage0() {
+  local root="$1"
+  local path="$2"
+  local root_identity=""
+  local current="/"
+  local remainder part identity
+
+  root_identity="$(filesystem_identity_stage0 "${root}" || true)"
+  [[ -n "${root_identity}" ]] || return 1
+
+  path="$(normalize_path_for_stage0 "${path}")"
+  remainder="${path#/}"
+  while [[ -n "${remainder}" ]]; do
+    if [[ "${remainder}" == */* ]]; then
+      part="${remainder%%/*}"
+      remainder="${remainder#*/}"
+    else
+      part="${remainder}"
+      remainder=""
+    fi
+
+    if [[ "${current}" == "/" ]]; then
+      current="/${part}"
+    else
+      current="${current}/${part}"
+    fi
+
+    if [[ ! -e "${current}" && ! -L "${current}" ]]; then
+      return 1
+    fi
+    identity="$(filesystem_identity_stage0 "${current}" || true)"
+    if [[ -n "${identity}" && "${identity}" == "${root_identity}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 path_is_protected_pi_config_stage0() {
   local path="$1"
   local normal_pi_root="${2:-}"
@@ -273,7 +332,10 @@ path_is_protected_pi_config_stage0() {
     normal_pi_agent_root="$(realpath_for_compare_stage0 "${HOME}/.pi/agent")"
   fi
 
-  path_within_or_equal_stage0 "${normal_pi_root}" "${path}" || path_within_or_equal_stage0 "${normal_pi_agent_root}" "${path}"
+  path_within_or_equal_stage0 "${normal_pi_root}" "${path}" \
+    || path_within_or_equal_stage0 "${normal_pi_agent_root}" "${path}" \
+    || path_within_existing_identity_stage0 "${normal_pi_root}" "${path}" \
+    || path_within_existing_identity_stage0 "${normal_pi_agent_root}" "${path}"
 }
 
 validate_stage0_fallback_targets() {

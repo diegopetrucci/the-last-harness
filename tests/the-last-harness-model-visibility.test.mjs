@@ -179,6 +179,42 @@ test("model visibility settings are isolated-profile only and normalize hidden/v
   });
 });
 
+test("model visibility reads BOM-prefixed settings like plain JSON and fails closed on malformed content", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const settings = {
+    unrelated: { keep: true },
+    tlh: {
+      modelVisibility: {
+        hidden: ["anthropic/claude-opus-4-*"],
+        visible: ["anthropic/claude-opus-4-6"],
+      },
+    },
+  };
+  const configs = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    for (const prefix of ["", "\uFEFF"]) {
+      writeFileSync(settingsPath, `${prefix}${JSON.stringify(settings)}\n`);
+      configs.push(getTlhModelVisibilityConfig());
+    }
+
+    writeFileSync(settingsPath, '\uFEFF{"tlh":{"modelVisibility":');
+    assert.deepEqual(getTlhModelVisibilityConfig(), {
+      disabled: false,
+      hidden: [],
+      visible: [],
+    });
+  });
+
+  assert.deepEqual(configs[0], {
+    disabled: false,
+    hidden: ["anthropic/claude-opus-4-*"],
+    visible: ["anthropic/claude-opus-4-6"],
+  });
+  assert.deepEqual(configs[1], configs[0]);
+});
+
 test("installed model visibility filter is idempotent, hides defaults, and preserves an unfiltered internal escape hatch", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
   const settingsPath = join(fixture.agent, "settings.json");

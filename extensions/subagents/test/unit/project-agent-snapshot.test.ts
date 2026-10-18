@@ -189,6 +189,41 @@ describe("project agent snapshot provider", () => {
     revokeProjectAgentSnapshot(capability);
   });
 
+  it("rejects extension-path tools at registration and persisted-capture boundaries", () => {
+    for (const tools of [["payload.ts"], ["payload.js"], ["read", "./payload"]]) {
+      const agent = makeAgent(`extension-${tools[0]}`);
+      agent.tools = tools;
+      assert.throws(
+        () => register({ entries: [makeEntry(agent, `digest-${tools[0]}`)] }),
+        /tools must not contain extension paths/,
+      );
+    }
+
+    const agent = makeAgent("capture-extension");
+    agent.tools = ["read"];
+    const capability = register({ entries: [makeEntry(agent, "capture-extension-digest")] });
+    const manifest = resolveProjectAgentSnapshot(
+      capability,
+      getProjectAgentSnapshotProvenance(capability),
+    );
+    const capture = createProjectAgentRunCapture(manifest, agent);
+
+    for (const tools of [["payload.ts"], ["payload.js"], ["read", "./payload"]]) {
+      const malformed = {
+        ...capture,
+        config: { ...capture.config, tools },
+      };
+      assert.equal(normalizeProjectAgentRunCapture(malformed), undefined);
+    }
+    assert.ok(
+      normalizeProjectAgentRunCapture({
+        ...capture,
+        config: { ...capture.config, tools: ["read", "bash"] },
+      }),
+    );
+    revokeProjectAgentSnapshot(capability);
+  });
+
   it("protects retained run generations until terminal release and then cleans them up", () => {
     const agent = makeAgent("retained-run");
     const capability = register({

@@ -7,7 +7,10 @@ import { afterEach, describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   getProjectAgentSnapshotProvenance,
+  projectAgentSnapshotRegistryStats,
   registerProjectAgentSnapshot,
+  releaseProjectAgentRunReference,
+  revokeProjectAgentSnapshot,
   type ProjectAgentSnapshotCapability,
 } from "../../src/agents/project-agent-snapshot.ts";
 import {
@@ -126,6 +129,8 @@ function makeExecutor(
       task: string,
       options: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    executeAsyncSingle?: (...args: any[]) => any;
+    executeAsyncParallel?: (...args: any[]) => any;
   } = {},
 ) {
   const pi = asFixture<ExtensionAPI>({
@@ -152,6 +157,8 @@ function makeExecutor(
       ...(options.canInitiate !== undefined ? { canInitiate: options.canInitiate } : {}),
     }),
     runSync: options.runSync as never,
+    executeAsyncSingle: options.executeAsyncSingle,
+    executeAsyncParallel: options.executeAsyncParallel,
   });
 }
 
@@ -171,6 +178,83 @@ function identityEntry(projectRoot: string, overrides: Record<string, unknown> =
     digest: "digest-execution-test",
     frontmatterFields: ["tools"],
   } as never;
+}
+
+type AsyncDispatchMode = "single" | "parallel";
+
+type AsyncLaunchOutcome = "success" | "error" | "resumable";
+
+function configureModelScope(projectRoot: string): void {
+  const profileDir = path.join(projectRoot, "profile");
+  process.env.PI_CODING_AGENT_DIR = profileDir;
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(profileDir, "settings.json"),
+    JSON.stringify({ subagents: { modelScope: { enforce: true, allow: ["anthropic/*"] } } }),
+    "utf8",
+  );
+}
+
+function asyncProjectParams(
+  projectRoot: string,
+  mode: AsyncDispatchMode,
+  model?: string,
+): SubagentParamsLike {
+  if (mode === "single") {
+    return {
+      agent: "embedded.xyz",
+      task: "exercise async project retention",
+      agentScope: "project",
+      cwd: projectRoot,
+      async: true,
+      ...(model ? { model } : {}),
+    };
+  }
+  return {
+    tasks: [
+      {
+        agent: "embedded.xyz",
+        task: "exercise async project retention",
+        cwd: projectRoot,
+        ...(model ? { model } : {}),
+      },
+    ],
+    agentScope: "project",
+    cwd: projectRoot,
+    async: true,
+  };
+}
+
+function asyncLaunchResult(mode: AsyncDispatchMode, outcome: AsyncLaunchOutcome) {
+  return {
+    content: [{ type: "text", text: `fake async ${outcome}` }],
+    ...(outcome !== "success" ? { isError: true } : {}),
+    details: {
+      mode,
+      results:
+        outcome === "resumable"
+          ? [{ agent: "embedded.xyz", interrupted: true, pause: { kind: "awaiting_supervisor" } }]
+          : [],
+    },
+  };
+}
+
+function assertRetainedDuringAsyncDispatch(
+  baseline: ReturnType<typeof projectAgentSnapshotRegistryStats>,
+): void {
+  assert.deepEqual(projectAgentSnapshotRegistryStats(), {
+    generations: baseline.generations,
+    retainedRuns: baseline.retainedRuns + 1,
+    references: baseline.references + 1,
+  });
+}
+
+function revokeIfRegistered(capability: ProjectAgentSnapshotCapability): void {
+  try {
+    revokeProjectAgentSnapshot(capability);
+  } catch {
+    // A rejected run may already have collected its unreferenced generation.
+  }
 }
 
 function addNestedLinkedWorktree(projectRoot: string): string {
@@ -262,6 +346,21 @@ describe("project-agent executor authorization", () => {
         expected: /does not carry an explicit usable tools list/,
       },
       {
+        name: "extension-path-only TypeScript tool",
+        overrides: { tools: ["payload.ts"] },
+        expected: /carries prohibited extension-path tool/,
+      },
+      {
+        name: "mixed JavaScript extension-path tool",
+        overrides: { tools: ["read", "payload.js"] },
+        expected: /carries prohibited extension-path tool/,
+      },
+      {
+        name: "slash extension-path tool",
+        overrides: { tools: ["read", "./payload"] },
+        expected: /carries prohibited extension-path tool/,
+      },
+      {
         name: "extensions",
         overrides: { extensions: ["project-extension"] },
         expected: /carries a prohibited extension surface/,
@@ -299,6 +398,13 @@ describe("project-agent executor authorization", () => {
       );
       assert.match(error ?? "", expected, name);
     }
+    assert.equal(
+      projectAgentEntryIdentityError(
+        canonicalRoot,
+        identityEntry(projectRoot, { tools: ["read", "bash"] }),
+      ),
+      undefined,
+    );
   });
 
   it("rejects malformed registered snapshots before foreground or parallel spawn", async () => {
@@ -666,6 +772,146 @@ Profile developer prompt.
     );
     assert.equal(explicitResult.isError, undefined);
     assert.equal(calls[2]?.options.modelOverride, "openai/explicit-model");
+  });
+
+  it("releases async project references when model enforcement rejects single and parallel dispatch", async () => {
+    for (const mode of ["single", "parallel"] as const) {
+      const projectRoot = makeProject();
+      const registryBaseline = projectAgentSnapshotRegistryStats();
+      const snapshot = registerSnapshot(projectRoot);
+      configureModelScope(projectRoot);
+      let fakeCalls = 0;
+      const fakeAsyncExecutor = () => {
+        fakeCalls += 1;
+        return asyncLaunchResult(mode, "success");
+      };
+      const executor = makeExecutor(
+        projectRoot,
+        snapshot.capability,
+        snapshot.expected,
+        { count: 0 },
+        true,
+        {
+          executeAsyncSingle: fakeAsyncExecutor,
+          executeAsyncParallel: fakeAsyncExecutor,
+        },
+      );
+
+      try {
+        const result = await executor.execute(
+          `project-async-model-rejection-${mode}`,
+          asyncProjectParams(projectRoot, mode, "openai/out-of-scope") as never,
+          new AbortController().signal,
+          undefined,
+          makeContext(projectRoot),
+        );
+        assert.equal(result.isError, true);
+        assert.match(resultText(result), /outside the configured subagent model scope/);
+        assert.equal(fakeCalls, 0, "model rejection must happen before the fake launch");
+        assert.deepEqual(projectAgentSnapshotRegistryStats(), registryBaseline);
+      } finally {
+        revokeIfRegistered(snapshot.capability);
+      }
+    }
+  });
+
+  it("releases async project references after preparation throws and returned launch errors", async () => {
+    for (const mode of ["single", "parallel"] as const) {
+      for (const failure of ["throw", "return-error"] as const) {
+        const projectRoot = makeProject();
+        const registryBaseline = projectAgentSnapshotRegistryStats();
+        const snapshot = registerSnapshot(projectRoot);
+        const baseline = projectAgentSnapshotRegistryStats();
+        let fakeCalls = 0;
+        let runId = "";
+        const fakeAsyncExecutor = (id: string) => {
+          fakeCalls += 1;
+          runId = id;
+          assertRetainedDuringAsyncDispatch(baseline);
+          if (failure === "throw") throw new Error("injected preparation exception");
+          return asyncLaunchResult(mode, "error");
+        };
+        const executor = makeExecutor(
+          projectRoot,
+          snapshot.capability,
+          snapshot.expected,
+          { count: 0 },
+          true,
+          {
+            executeAsyncSingle: fakeAsyncExecutor,
+            executeAsyncParallel: fakeAsyncExecutor,
+          },
+        );
+
+        try {
+          const result = await executor.execute(
+            `project-async-${mode}-${failure}`,
+            asyncProjectParams(projectRoot, mode),
+            new AbortController().signal,
+            undefined,
+            makeContext(projectRoot),
+          );
+          assert.equal(result.isError, true);
+          assert.match(
+            resultText(result),
+            failure === "throw" ? /injected preparation exception/ : /fake async error/,
+          );
+          assert.equal(fakeCalls, 1);
+          assert.deepEqual(projectAgentSnapshotRegistryStats(), registryBaseline);
+        } finally {
+          if (runId) releaseProjectAgentRunReference(runId);
+          revokeIfRegistered(snapshot.capability);
+        }
+      }
+    }
+  });
+
+  it("hands successful and resumable async project references to the lifecycle owner", async () => {
+    for (const mode of ["single", "parallel"] as const) {
+      for (const outcome of ["success", "resumable"] as const) {
+        const projectRoot = makeProject();
+        const registryBaseline = projectAgentSnapshotRegistryStats();
+        const snapshot = registerSnapshot(projectRoot);
+        const baseline = projectAgentSnapshotRegistryStats();
+        let runId = "";
+        const fakeAsyncExecutor = (id: string) => {
+          runId = id;
+          assertRetainedDuringAsyncDispatch(baseline);
+          return asyncLaunchResult(mode, outcome);
+        };
+        const executor = makeExecutor(
+          projectRoot,
+          snapshot.capability,
+          snapshot.expected,
+          { count: 0 },
+          true,
+          {
+            executeAsyncSingle: fakeAsyncExecutor,
+            executeAsyncParallel: fakeAsyncExecutor,
+          },
+        );
+
+        try {
+          const result = await executor.execute(
+            `project-async-${mode}-${outcome}`,
+            asyncProjectParams(projectRoot, mode),
+            new AbortController().signal,
+            undefined,
+            makeContext(projectRoot),
+          );
+          assert.equal(result.isError, outcome === "resumable" ? true : undefined);
+          assert.deepEqual(projectAgentSnapshotRegistryStats(), {
+            generations: baseline.generations,
+            retainedRuns: baseline.retainedRuns + 1,
+            references: baseline.references + 1,
+          });
+        } finally {
+          releaseProjectAgentRunReference(runId);
+          assert.deepEqual(projectAgentSnapshotRegistryStats(), registryBaseline);
+          revokeIfRegistered(snapshot.capability);
+        }
+      }
+    }
   });
 
   it("allows disabled mode to initiate a project run only with explicit capability access", async () => {

@@ -18,7 +18,7 @@ import {
   type ProjectAgentSnapshotProvenance,
 } from "./project-agent-snapshot.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
-import { buildRuntimeName } from "./identity.ts";
+import { buildRuntimeName, isExtensionToolPath } from "./identity.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { resolveCustomAgentMaxExecutionTimeMs } from "./execution-ceiling.ts";
 import type { AgentConfig } from "./agents.ts";
@@ -1050,6 +1050,12 @@ function parseProjectAgentDefinitionFromText(
     throw new ProjectAgentDefinitionError(filePath, "tools must declare at least one usable tool");
   }
   for (const tool of tools) {
+    if (isExtensionToolPath(tool)) {
+      throw new ProjectAgentDefinitionError(
+        filePath,
+        `tool '${tool}' is an extension path and is prohibited for project agents`,
+      );
+    }
     if (!PROJECT_AGENT_TOOL_NAME_PATTERN.test(tool)) {
       throw new ProjectAgentDefinitionError(
         filePath,

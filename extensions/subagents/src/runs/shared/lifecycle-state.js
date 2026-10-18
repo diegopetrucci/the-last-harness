@@ -959,6 +959,9 @@ export function recoverStoppedLifecycleOwnership(status, options = {}) {
             pidLiveness,
         };
     }
+    if (normalized.state === "paused" && pidLiveness !== "dead") {
+        return { status: normalized, repaired: false, pidLiveness };
+    }
     const repaired = {
         ...normalized,
         pid: undefined,
