@@ -1423,3 +1423,116 @@ test("tlh-defaults mcporter enable/disable cycles keep ownership idempotent", ()
   assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
   assert.equal(settings.tlh?.builtinMcpExclusionManaged, true);
 });
+
+test("tlh-defaults enable on already-enabled extension with retired toolBudget key removes the key and writes a backup", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // Settings already has helper enabled; the only mutation is the retired toolBudget key.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: ["npm:helper"],
+        subagents: {
+          agentOverrides: {
+            developer: { toolBudget: 50 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "enable",
+    "helper",
+  ]);
+
+  const saved = readJson(fixture.settings);
+  assert.equal(
+    saved.subagents?.agentOverrides?.developer?.toolBudget,
+    undefined,
+    "retired toolBudget key must be removed",
+  );
+  const backups = backupFiles(fixture.settings);
+  assert.equal(backups.length, 1, "a backup must be written when the scrub changes settings");
+  assert.doesNotMatch(
+    result,
+    /No settings changes were needed/,
+    "must not report no-op when toolBudget was scrubbed",
+  );
+});
+
+test("tlh-defaults disable on already-disabled extension with retired toolBudget key removes the key and writes a backup", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.extensions,
+    JSON.stringify(
+      [
+        {
+          id: "helper",
+          source: "npm:helper",
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  // Settings already has helper disabled; the only mutation is the retired toolBudget key.
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify(
+      {
+        packages: [],
+        tlh: { disabledDefaultExtensions: ["helper"] },
+        subagents: {
+          agentOverrides: {
+            developer: { toolBudget: 50 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    fixture.extensions,
+    "disable",
+    "helper",
+  ]);
+
+  const saved = readJson(fixture.settings);
+  assert.equal(
+    saved.subagents?.agentOverrides?.developer?.toolBudget,
+    undefined,
+    "retired toolBudget key must be removed",
+  );
+  const backups = backupFiles(fixture.settings);
+  assert.equal(backups.length, 1, "a backup must be written when the scrub changes settings");
+  assert.doesNotMatch(
+    result,
+    /No settings changes were needed/,
+    "must not report no-op when toolBudget was scrubbed",
+  );
+});

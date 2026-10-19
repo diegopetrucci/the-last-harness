@@ -472,12 +472,13 @@ function main() {
         return;
     }
     ensureMutableSettings(settings);
+    const beforeScrub = JSON.stringify(settings);
     scrubRetiredTlhSettings(settings);
     if (args.command === "disable") {
         const id = args.commandArgs[0];
         if (!id || args.commandArgs.length !== 1)
             throw new Error("Usage: tlh defaults disable <id>");
-        const before = JSON.stringify(settings);
+        const before = beforeScrub;
         const warningChanged = commandDisable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
         const changed = before !== JSON.stringify(settings);
@@ -495,7 +496,7 @@ function main() {
         const id = args.commandArgs[0];
         if (!id || args.commandArgs.length !== 1)
             throw new Error("Usage: tlh defaults enable <id>");
-        const before = JSON.stringify(settings);
+        const before = beforeScrub;
         const warningChanged = commandEnable(settings, defaultExtensions, id);
         syncDefaultExtensionProvenance(settings, defaultExtensions);
         const changed = before !== JSON.stringify(settings);

@@ -80,7 +80,6 @@ import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-c
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
-  type SubagentCompletionBatchDetails,
   type SubagentNotifyDetails,
 } from "../runs/background/notify.ts";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
@@ -708,7 +707,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     return new Text(content, 0, 0);
   });
 
-  pi.registerMessageRenderer<SubagentNotifyDetails | SubagentCompletionBatchDetails>(
+  pi.registerMessageRenderer<SubagentNotifyDetails>(
     "subagent-notify",
     (message, options, theme) => {
       const content = typeof message.content === "string" ? message.content : "";

@@ -1,13 +1,14 @@
 /**
- * Tests for step behavior resolution.
+ * Tests for step behavior resolution and skill input normalization.
  *
- * Covers the pure logic of resolveStepBehavior and
+ * Covers the pure logic of normalizeSkillInput, resolveStepBehavior, and
  * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates.
  * Uses dynamic import since settings.ts transitively depends on pi packages.
  */
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { normalizeSkillInput } from "../../src/agents/skills.ts";
 import { tryImport } from "../support/helpers.ts";
 
 // Top-level await
@@ -199,3 +200,38 @@ describe(
     });
   },
 );
+
+// normalizeSkillInput is a pure function and requires no pi packages.
+describe("normalizeSkillInput", () => {
+  it("returns undefined for undefined input", () => {
+    assert.equal(normalizeSkillInput(undefined), undefined);
+  });
+
+  it("returns undefined for true (use default)", () => {
+    assert.equal(normalizeSkillInput(true), undefined);
+  });
+
+  it("returns false for false (disable)", () => {
+    assert.equal(normalizeSkillInput(false), false);
+  });
+
+  it("splits comma-separated string", () => {
+    assert.deepEqual(normalizeSkillInput("web-search,pdf"), ["web-search", "pdf"]);
+  });
+
+  it("passes through array", () => {
+    assert.deepEqual(normalizeSkillInput(["a", "b"]), ["a", "b"]);
+  });
+
+  it("deduplicates", () => {
+    assert.deepEqual(normalizeSkillInput(["a", "b", "a"]), ["a", "b"]);
+  });
+
+  it("trims whitespace", () => {
+    assert.deepEqual(normalizeSkillInput(" a , b "), ["a", "b"]);
+  });
+
+  it("filters empty strings", () => {
+    assert.deepEqual(normalizeSkillInput(",a,,b,"), ["a", "b"]);
+  });
+});

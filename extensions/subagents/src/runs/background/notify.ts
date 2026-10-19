@@ -624,11 +624,6 @@ export default function registerSubagentNotify(
   globalStore[unsubscribeStoreKey] = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete);
 }
 
-// The branch does not have completion batching. SubagentCompletionBatchDetails
-// is kept as a type alias so the index.ts import surface does not need to change;
-// the isSubagentCompletionBatchDetails guard stub (always-false) has been removed
-// because nothing imports it and it only existed for main's batching design.
-export type SubagentCompletionBatchDetails = SubagentNotifyDetails;
 export function isSubagentNotifyDetails(value: unknown): value is SubagentNotifyDetails {
   return (
     typeof value === "object" &&
