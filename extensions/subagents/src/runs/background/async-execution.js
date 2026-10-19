@@ -546,8 +546,8 @@ export function executeAsyncParallel(id, params) {
         },
     };
 }
-function buildAsyncSingleRunnerPlan(params, inputs) {
-    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
+export function buildAsyncSingleRunnerPlan(params, inputs) {
+    const { agent, agentConfig, ctx, modelOverride, restoredModelIdentity, modelResolution: persistedModelResolution, availableModels, providerFallbackModels, modelFallbackNotice, contextUsage, contextPressure, contextPressureCrossedThresholds, priorTerminalResult, timeoutMs, projectAgent, sessionFile, maxSubagentDepth, } = params;
     const { taskWithOutputInstruction, runnerCwd, systemPrompt, resolvedSkillNames, skillsWarning, outputPath, outputMode, runDeadlineAt, childLocation, } = inputs;
     const durableResume = persistedModelResolution !== undefined || restoredModelIdentity !== undefined;
     const explicitResumeModel = durableResume && typeof modelOverride === "string" && modelOverride.trim() !== ""
@@ -654,6 +654,7 @@ function buildAsyncSingleRunnerPlan(params, inputs) {
                 ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
                 ...(timeoutOwner ? { timeoutOwner } : {}),
                 ...(childLocation ? { childLocation } : {}),
+                ...(priorTerminalResult ? { terminalResult: priorTerminalResult } : {}),
             },
         }),
         effectiveTimeoutMs,

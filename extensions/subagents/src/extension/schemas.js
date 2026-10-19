@@ -72,15 +72,6 @@ const SubagentParamsSchema = Type.Object({
     id: Type.Optional(Type.String({
         description: "Run id or prefix for action='status', action='interrupt', action='resume', or action='steer', including durable paused-awaiting-supervisor runs.",
     })),
-    view: Type.Optional(Type.String({
-        enum: ["transcript"],
-        description: "Optional retained-output transcript view for action='status'.",
-    })),
-    lines: Type.Optional(Type.Integer({
-        minimum: 1,
-        maximum: 500,
-        description: "Transcript tail line count for action='status' (1-500).",
-    })),
     index: Type.Optional(Type.Integer({
         minimum: 0,
         description: "Zero-based child index for actions that target a specific child.",

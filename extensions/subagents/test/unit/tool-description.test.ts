@@ -61,10 +61,11 @@ describe("registered subagent tool description", () => {
     fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
   }
 
-  it("documents the surviving bounded transcript status view without internal directory input", () => {
-    assert.match(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /action: "status"[^\n]*view\?: "transcript"/);
-    assert.match(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /lines\?: 1-500/);
-    assert.match(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /Status-only options/);
+  it("does not document the retired transcript status view and documents status without transcript options", () => {
+    assert.match(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /action: "status", id\?: "\.\.\." }/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /view\?: "transcript"/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /lines\?: 1-500/);
+    assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /Status-only options/);
     assert.doesNotMatch(COMPACT_SUBAGENT_TOOL_DESCRIPTION, /\bdir\s*:/);
   });
 

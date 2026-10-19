@@ -4,13 +4,14 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
   buildAsyncRunnerPlan,
+  buildAsyncSingleRunnerPlan,
   resolveAsyncRunnerLogPaths,
 } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
 import type { ProjectAgentIdentity } from "../../src/agents/project-agent-loader.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
-import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
+import { DEFAULT_ARTIFACT_CONFIG, type SubagentTerminalResult } from "../../src/shared/types.ts";
 import { makeAsyncCtx } from "../support/helpers.ts";
 
 const agent = (name: string, maxExecutionTimeMs?: number): AgentConfig => ({
@@ -255,6 +256,82 @@ describe("async runner plan child-location persistence", () => {
       steps[0]?.childLocation?.childCwd,
       steps[2]?.childLocation?.childCwd,
       "distinct step cwds must yield distinct snapshots",
+    );
+  });
+});
+
+describe("revival: priorTerminalResult propagation", () => {
+  it("carries priorTerminalResult into the plan task as terminalResult", () => {
+    // Regression: the merged file dropped priorTerminalResult from AsyncSingleParams
+    // so revival/resume passes silently lost the prior attempts. Verify the field
+    // is restored and propagated into the runner plan step.
+    const revivalAgent = agent("worker");
+    const prior: SubagentTerminalResult = {
+      state: "failed",
+      facts: { attempts: [] },
+    };
+    const result = buildAsyncSingleRunnerPlan(
+      {
+        agent: "worker",
+        agentConfig: revivalAgent,
+        ctx,
+        maxSubagentDepth: 2,
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        shareEnabled: false,
+        priorTerminalResult: prior,
+        sessionRoot: os.tmpdir(),
+        sessionFile: path.join(os.tmpdir(), "session.jsonl"),
+      } as any,
+      {
+        task: "retry the task",
+        taskWithOutputInstruction: "retry the task",
+        runnerCwd: process.cwd(),
+        systemPrompt: "You are a test agent.",
+        resolvedSkillNames: [],
+        outputMode: "inline",
+      },
+    );
+    assert.ok(!("error" in result), "plan build must succeed");
+    if ("error" in result) return;
+    const plan = result.buildPlan();
+    assert.equal(plan.kind, "single");
+    assert.deepEqual(
+      plan.task.terminalResult,
+      prior,
+      "terminalResult in the plan step must equal the supplied priorTerminalResult",
+    );
+  });
+
+  it("omits terminalResult from the plan step when priorTerminalResult is absent", () => {
+    const revivalAgent = agent("worker");
+    const result = buildAsyncSingleRunnerPlan(
+      {
+        agent: "worker",
+        agentConfig: revivalAgent,
+        ctx,
+        maxSubagentDepth: 2,
+        artifactConfig: DEFAULT_ARTIFACT_CONFIG,
+        shareEnabled: false,
+        sessionRoot: os.tmpdir(),
+        sessionFile: path.join(os.tmpdir(), "session.jsonl"),
+      } as any,
+      {
+        task: "first attempt",
+        taskWithOutputInstruction: "first attempt",
+        runnerCwd: process.cwd(),
+        systemPrompt: "You are a test agent.",
+        resolvedSkillNames: [],
+        outputMode: "inline",
+      },
+    );
+    assert.ok(!("error" in result), "plan build must succeed");
+    if ("error" in result) return;
+    const plan = result.buildPlan();
+    assert.equal(plan.kind, "single");
+    assert.equal(
+      plan.task.terminalResult,
+      undefined,
+      "terminalResult must be absent when no priorTerminalResult was supplied",
     );
   });
 });

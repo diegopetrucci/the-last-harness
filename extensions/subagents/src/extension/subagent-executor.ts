@@ -42,6 +42,7 @@ export {
 };
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import { retiredNestedLaunchError } from "../runs/shared/pi-args.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.ts";
 import {
@@ -173,12 +174,6 @@ function applyProjectAgentOpenRouterModel(
     });
   }
   return next;
-}
-
-function statusTranscriptOptionError(params: SubagentParamsLike): string | undefined {
-  if (params.view === undefined && params.lines === undefined) return undefined;
-  if (params.action === "status") return undefined;
-  return 'Status transcript options `view` and `lines` are only supported with action=\'status\'; use { action: "status", id: "...", view: "transcript" } (optional lines 1-500).';
 }
 
 function retiredExecutionControlError(params: SubagentParamsLike): string | undefined {
@@ -825,9 +820,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         paramsWithResolvedCwd,
         unsupportedSavedChainDetail,
       ) as SubagentToolResult<Details>;
-    const statusTranscriptDetail = statusTranscriptOptionError(paramsWithResolvedCwd);
-    if (statusTranscriptDetail)
-      return buildRequestedModeError(paramsWithResolvedCwd, statusTranscriptDetail);
     const action = paramsWithResolvedCwd.action;
     if (action) {
       if (action === "doctor")
@@ -944,6 +936,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       enabled: effectiveParams.artifacts !== false,
     };
     const artifactsDir = getArtifactsDir(parentSessionFile);
+
+    const retiredNestedError = retiredNestedLaunchError(effectiveParams);
+    if (retiredNestedError)
+      return toExecutionErrorResult(effectiveParams, new Error(retiredNestedError));
 
     let sessionRoot: string;
     if (effectiveParams.sessionDir) {

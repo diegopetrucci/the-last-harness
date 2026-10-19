@@ -9,6 +9,7 @@ import { authorizeProjectInterruptTarget, authorizeProjectSteerTarget, buildMana
 import { isRecordValue, normalizeProjectAgentAccess, resolveProjectAgentExecution, } from "../runs/shared/project-agent-control.js";
 export { buildResumeModelResolution, normalizeProjectAgentAccess, requestInterruptAllRunningSubagentRuns, };
 import { resolveSubagentModelOverride } from "../runs/shared/model-fallback.js";
+import { retiredNestedLaunchError } from "../runs/shared/pi-args.js";
 import { normalizeSkillInput } from "../agents/skills.js";
 import { resolveExecutionPolicy } from "../agents/execution-ceiling.js";
 import { executeAsyncParallel, executeAsyncSingle, isAsyncAvailable, } from "../runs/background/async-execution.js";
@@ -70,13 +71,6 @@ function applyProjectAgentOpenRouterModel(params, identities, currentModel) {
         });
     }
     return next;
-}
-function statusTranscriptOptionError(params) {
-    if (params.view === undefined && params.lines === undefined)
-        return undefined;
-    if (params.action === "status")
-        return undefined;
-    return 'Status transcript options `view` and `lines` are only supported with action=\'status\'; use { action: "status", id: "...", view: "transcript" } (optional lines 1-500).';
 }
 function retiredExecutionControlError(params) {
     const input = params;
@@ -608,9 +602,6 @@ export function createSubagentExecutor(deps) {
         const unsupportedSavedChainDetail = unsupportedSavedChainInput(paramsWithResolvedCwd);
         if (unsupportedSavedChainDetail)
             return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);
-        const statusTranscriptDetail = statusTranscriptOptionError(paramsWithResolvedCwd);
-        if (statusTranscriptDetail)
-            return buildRequestedModeError(paramsWithResolvedCwd, statusTranscriptDetail);
         const action = paramsWithResolvedCwd.action;
         if (action) {
             if (action === "doctor")
@@ -709,6 +700,9 @@ export function createSubagentExecutor(deps) {
             enabled: effectiveParams.artifacts !== false,
         };
         const artifactsDir = getArtifactsDir(parentSessionFile);
+        const retiredNestedError = retiredNestedLaunchError(effectiveParams);
+        if (retiredNestedError)
+            return toExecutionErrorResult(effectiveParams, new Error(retiredNestedError));
         let sessionRoot;
         if (effectiveParams.sessionDir) {
             sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));

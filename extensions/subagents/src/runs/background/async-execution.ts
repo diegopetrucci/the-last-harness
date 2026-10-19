@@ -61,6 +61,7 @@ import {
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
+  type SubagentTerminalResult,
   ASYNC_DIR,
   RESULTS_DIR,
   SUBAGENT_ASYNC_STARTED_EVENT,
@@ -156,8 +157,8 @@ interface AsyncSingleParams {
   availableModels?: ModelInfo[];
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
-  acceptance?: unknown;
-  continuationAcceptance?: unknown;
+  /** Prior persisted facts retained when this invocation revives a child. */
+  priorTerminalResult?: SubagentTerminalResult;
   activeRuntimeMs?: number;
   activeRuntimeCheckpointAt?: number;
   timeoutMs?: number;
@@ -925,7 +926,8 @@ export function executeAsyncParallel<T extends AsyncParallelParams>(
   };
 }
 
-interface AsyncSingleRunnerPlanInputs {
+/** @internal Exposed for unit tests; not a stable public API. */
+export interface AsyncSingleRunnerPlanInputs {
   task: string;
   taskWithOutputInstruction: string;
   runnerCwd: string;
@@ -939,7 +941,8 @@ interface AsyncSingleRunnerPlanInputs {
   childLocation?: import("../../shared/child-location.ts").ChildLocationSnapshot;
 }
 
-interface AsyncSingleRunnerPlanBuildResult {
+/** @internal Exposed for unit tests; not a stable public API. */
+export interface AsyncSingleRunnerPlanBuildResult {
   buildPlan: () => Extract<SubagentRunPlan, { kind: "single" }>;
   effectiveTimeoutMs?: number;
   effectiveDeadlineAt?: number;
@@ -951,7 +954,8 @@ interface AsyncSingleRunnerPlanBuildResult {
  * synchronous launch seam while leaving filesystem and lifecycle effects
  * with the caller.
  */
-function buildAsyncSingleRunnerPlan(
+/** @internal Exposed for unit tests; not a stable public API. */
+export function buildAsyncSingleRunnerPlan(
   params: AsyncSingleParams,
   inputs: AsyncSingleRunnerPlanInputs,
 ): AsyncSingleRunnerPlanBuildResult | { error: string } {
@@ -968,6 +972,7 @@ function buildAsyncSingleRunnerPlan(
     contextUsage,
     contextPressure,
     contextPressureCrossedThresholds,
+    priorTerminalResult,
     timeoutMs,
     projectAgent,
     sessionFile,
@@ -1110,6 +1115,7 @@ function buildAsyncSingleRunnerPlan(
         ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
         ...(timeoutOwner ? { timeoutOwner } : {}),
         ...(childLocation ? { childLocation } : {}),
+        ...(priorTerminalResult ? { terminalResult: priorTerminalResult } : {}),
       },
     }),
     effectiveTimeoutMs,

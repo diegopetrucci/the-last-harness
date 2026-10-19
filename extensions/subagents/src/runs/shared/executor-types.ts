@@ -32,10 +32,6 @@ export interface SubagentParamsLike {
   /** Internal trusted directory override; omitted from the model-facing schema. */
   dir?: string;
   index?: number;
-  /** Status-only retained-output view. */
-  view?: "transcript";
-  /** Status transcript tail size, bounded by the executor. */
-  lines?: number;
   agent?: string;
   task?: string;
   ticket?: string;

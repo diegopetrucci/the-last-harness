@@ -113,20 +113,9 @@ describe("SubagentParams schema", () => {
     assert.equal(getPropertySchema(SubagentParams, ["timeoutMs"]), undefined);
   });
 
-  it("exposes only the bounded transcript status options", () => {
-    const viewSchema = getPropertySchema(SubagentParams, ["view"]);
-    assert.ok(viewSchema, "view schema should exist");
-    assert.equal(viewSchema.type, "string");
-    assert.deepEqual(viewSchema.enum, ["transcript"]);
-    assert.match(String(viewSchema.description ?? ""), /action='status'/);
-
-    const linesSchema = getPropertySchema(SubagentParams, ["lines"]);
-    assert.ok(linesSchema, "lines schema should exist");
-    assert.equal(linesSchema.type, "integer");
-    assert.equal(linesSchema.minimum, 1);
-    assert.equal(linesSchema.maximum, 500);
-    assert.match(String(linesSchema.description ?? ""), /1-500/);
-
+  it("does not expose the retired transcript status view options", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["view"]), undefined);
+    assert.equal(getPropertySchema(SubagentParams, ["lines"]), undefined);
     assert.equal(getPropertySchema(SubagentParams, ["dir"]), undefined);
   });
 
@@ -335,7 +324,6 @@ describe("SubagentParams schema", () => {
       },
       { tasks: [{ agent: "reviewer", task: "check this", model: "anthropic/claude-sonnet-4" }] },
       { action: "status", id: "run-1" },
-      { action: "status", id: "run-1", view: "transcript", lines: 500 },
       { action: "interrupt", id: "run-1" },
       { action: "resume", id: "run-1", message: "focus on tests" },
       { action: "resume", id: "run-1", index: 0, message: "focus on tests" },
@@ -442,8 +430,6 @@ describe("SubagentParams schema", () => {
       "cwd",
       "artifacts",
       "ticket",
-      "view",
-      "lines",
     ].sort();
     assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
     const actionEnum = getPropertySchema(schema, ["action"])?.enum;
@@ -469,6 +455,8 @@ describe("SubagentParams schema", () => {
       "config",
       "control",
       "dir",
+      "view",
+      "lines",
       "sessionDir",
       "runId",
       "maxRuntimeMs",

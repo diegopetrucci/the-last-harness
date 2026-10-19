@@ -67,16 +67,12 @@ export function buildRunStatusParams(params: SubagentParamsLike): {
   id?: string;
   dir?: string;
   index?: number;
-  view?: "transcript";
-  lines?: number;
 } {
   return {
     action: "status",
     id: params.id,
     dir: params.dir,
     index: params.index,
-    view: params.view,
-    lines: params.lines,
   };
 }
 export function buildManagementActionParams(params: SubagentParamsLike): SubagentParamsLike {

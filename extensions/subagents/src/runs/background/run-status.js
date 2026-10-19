@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, } from "./async-status.js";
-import { formatAsyncRunTranscript, formatAsyncResultTranscript, MAX_TRANSCRIPT_LINES, } from "./status-transcript.js";
 import { formatDuration, formatModelThinking } from "../../shared/formatters.js";
 import { formatActivityLabel } from "../../shared/status-format.js";
 import { ASYNC_DIR, RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
@@ -18,26 +17,6 @@ function statusErrorMessage(error) {
     if (isAsyncStatusReadError(error))
         return formatUnreadableStatus(error.statusPath);
     return error instanceof Error ? error.message : String(error);
-}
-function resultArtifactSessionId(value) {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-        return undefined;
-    const sessionId = value.sessionId;
-    return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
-}
-function validateStatusTranscriptOptions(params) {
-    const view = params.view;
-    if (view !== undefined && view !== "transcript") {
-        return `Unknown status view: ${safeTerminalText(String(view))}. Valid: transcript.`;
-    }
-    if (params.lines !== undefined &&
-        (typeof params.lines !== "number" ||
-            !Number.isInteger(params.lines) ||
-            params.lines < 1 ||
-            params.lines > MAX_TRANSCRIPT_LINES)) {
-        return `Status transcript lines must be an integer from 1 through ${MAX_TRANSCRIPT_LINES}.`;
-    }
-    return undefined;
 }
 function hasExistingSessionFile(value) {
     return typeof value === "string" && fs.existsSync(value);
@@ -250,50 +229,11 @@ function formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation,
         lines.push(`Events: ${safeTerminalText(eventsPath)}`);
     return safeTerminalDocument(lines.join("\n"));
 }
-function inspectAsyncResultFile(resultPath, params, resolvedId, currentSessionId) {
+function inspectAsyncResultFile(resultPath, params, resolvedId) {
     try {
         const raw = fs.readFileSync(resultPath, "utf-8");
         const parsed = JSON.parse(raw);
         const data = parsed;
-        if (params.view === "transcript" &&
-            typeof currentSessionId === "string" &&
-            currentSessionId.length > 0 &&
-            resultArtifactSessionId(parsed) !== currentSessionId) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "Status transcript view is only available for async runs owned by the current session.",
-                    },
-                ],
-                isError: true,
-                details: { mode: "single", results: [] },
-            };
-        }
-        if (params.view === "transcript") {
-            try {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: formatAsyncResultTranscript(data, resultPath, {
-                                index: params.index,
-                                lines: params.lines,
-                            }),
-                        },
-                    ],
-                    details: { mode: "single", results: [] },
-                };
-            }
-            catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                return {
-                    content: [{ type: "text", text: message }],
-                    isError: true,
-                    details: { mode: "single", results: [] },
-                };
-            }
-        }
         const status = data.success
             ? "complete"
             : data.state === "cancelled" || data.state === "pausing"
@@ -339,14 +279,6 @@ export function inspectSubagentStatus(params, deps = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
     const resultsDir = deps.resultsDir ?? RESULTS_DIR;
     const currentSessionId = deps.state?.currentSessionId ?? undefined;
-    const transcriptOptionError = validateStatusTranscriptOptions(params);
-    if (transcriptOptionError) {
-        return {
-            content: [{ type: "text", text: transcriptOptionError }],
-            isError: true,
-            details: { mode: "single", results: [] },
-        };
-    }
     if (!params.id && !params.dir) {
         try {
             const unreadableStatuses = [];
@@ -359,22 +291,6 @@ export function inspectSubagentStatus(params, deps = {}) {
                 statusRead: deps.statusRead,
                 onUnreadable: (issue) => unreadableStatuses.push(issue),
             });
-            if (params.view === "transcript") {
-                if (runs.length === 1)
-                    return inspectSubagentStatus({ ...params, id: runs[0].id }, deps);
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: runs.length === 0
-                                ? "No active async run status transcript is available."
-                                : `Status transcript view requires an id when ${runs.length} active async runs exist. Provide the run id to choose one.`,
-                        },
-                    ],
-                    isError: true,
-                    details: { mode: "single", results: [] },
-                };
-            }
             return {
                 content: [
                     { type: "text", text: formatAsyncRunList(runs, "Active async runs", unreadableStatuses) },
@@ -448,42 +364,6 @@ export function inspectSubagentStatus(params, deps = {}) {
         const logPath = path.join(asyncDir, `subagent-log-${effectiveRunId}.md`);
         const eventsPath = path.join(asyncDir, "events.jsonl");
         if (status) {
-            if (params.view === "transcript") {
-                if (currentSessionId && status.sessionId !== currentSessionId) {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: "Status transcript view is only available for async runs owned by the current session.",
-                            },
-                        ],
-                        isError: true,
-                        details: { mode: "single", results: [] },
-                    };
-                }
-                try {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: formatAsyncRunTranscript(status, asyncDir, {
-                                    index: params.index,
-                                    lines: params.lines,
-                                }),
-                            },
-                        ],
-                        details: { mode: "single", results: [] },
-                    };
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    return {
-                        content: [{ type: "text", text: message }],
-                        isError: true,
-                        details: { mode: "single", results: [] },
-                    };
-                }
-            }
             const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
             const now = deps.now?.() ?? Date.now();
             return {
@@ -498,7 +378,7 @@ export function inspectSubagentStatus(params, deps = {}) {
         }
     }
     if (resultPath)
-        return inspectAsyncResultFile(resultPath, params, resolvedId, currentSessionId);
+        return inspectAsyncResultFile(resultPath, params, resolvedId);
     return {
         content: [{ type: "text", text: "Status file not found." }],
         isError: true,

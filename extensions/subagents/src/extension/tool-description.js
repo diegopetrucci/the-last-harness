@@ -17,8 +17,7 @@ OUTPUT / MODELS
 
 
 ACTIONS
-• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "status", id?: "...", view?: "transcript", lines?: 1-500 }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "doctor" }.
-• Status-only options: view: "transcript" tails retained output/session text; lines limits that tail to 1-500 lines. Do not send them with another action or execution call.
+• Supported actions only: { action: "list" }, { action: "get", agent: "name" }, { action: "status", id?: "..." }, { action: "interrupt", id?: "..." }, { action: "resume", id: "...", message?: "...", index?: 0 }, { action: "steer", id: "...", message: "...", index?: 0 }, { action: "doctor" }.
 • Paused-awaiting-supervisor status reports that no child process is running and gives exact unchanged resume, guided resume, and cancel commands.
 
 ASYNC / SAFETY

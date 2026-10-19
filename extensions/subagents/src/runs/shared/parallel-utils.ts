@@ -2,7 +2,6 @@ import type {
   MaxOutputConfig,
   ResolvedArtifactConfig,
   ResolvedControlConfig,
-  TkTicketMetadata,
 } from "../../shared/types.ts";
 import type { ProjectAgentIdentity } from "../../agents/project-agent-loader.ts";
 import type { ChildLocationSnapshot } from "../../shared/child-location.ts";
@@ -110,7 +109,6 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  tkTicket?: TkTicketMetadata;
   /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentIdentity[];
   deadlineAt?: number;

@@ -40,8 +40,6 @@ export function buildRunStatusParams(params) {
         id: params.id,
         dir: params.dir,
         index: params.index,
-        view: params.view,
-        lines: params.lines,
     };
 }
 export function buildManagementActionParams(params) {

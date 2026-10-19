@@ -184,11 +184,9 @@ When a run starts, the runtime walks the following locations and collects all sk
 | 200      | `user-package`     | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root                                                   |
 | 180      | `project-claude`   | `.claude/skills/` in the project root ²                                                                       |
 | 170      | `user-claude`      | `~/.claude/skills/` ²                                                                                         |
-| 150      | `extension`        | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹        |
-| 100      | `builtin`          | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹        |
 | 0        | `unknown`          | Anything that does not match a known root                                                                     |
 
-¹ Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where these lower-priority roots are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
+² Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where these lower-priority roots are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
 
 Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
 
@@ -294,7 +292,7 @@ The scanner retains only bounded allowlisted projections needed for pairing, ope
 
 ## Async control, pause, and resume
 
-An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status" })` to list active runs from the current session, or provide an `id` to inspect a specific model-facing run and its children. Add `view: "transcript"` with optional `lines: 1` through `500` to tail retained output or a canonical child session; transcript reads are limited to runs owned by the current session.
+An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status" })` to list active runs from the current session, or provide an `id` to inspect a specific model-facing run and its children.
 
 **Unreadable status files.** A status/list request, direct status lookup, or `/subagents-doctor` scan retries an unreadable, invalid, or oversized `status.json` exactly once after a short bounded delay. If it remains unreadable, the surface reports `unreadable status at <path>` and continues showing healthy runs; list and doctor output shows the first 20 paths and then a bounded count of additional failures. TLH does not automatically rename, delete, rewrite, or create directories for this condition. Manually inspect the status and its sibling artifacts before repairing or undoing a partial write; preserve a copy first and make any repair explicitly. Existing `<tempRoot>/quarantined-async-subagent-runs/` directories are no longer scanned; after preserving any needed evidence, you may remove them manually. The new runtime never auto-deletes that legacy directory.
 
@@ -478,7 +476,7 @@ Per-child run artifacts are written by default using the **compact** profile. Th
 - **Omitted:** task input (`*_input.md`), the diagnostic child transcript (`*_transcript.jsonl`), and high-volume child-event projections. Compact `events.jsonl` can still contain bounded runner diagnostics such as stderr truncation/overflow notices or protocol-limit records, but it omits ordinary per-line stderr events; its existence is not a promise that a full child transcript was retained.
 - **Failures:** result/status diagnostics retain a bounded stderr tail. The shared runner's `output-N.log` retains raw stderr for both awaited and detached runs in every profile; debug additionally provides the diagnostic child transcript.
 
-`subagent({ action: "status", id: "...", view: "transcript" })` is a **status transcript view**, not a read of the optional `_transcript.jsonl` diagnostic artifact. It renders retained output, recent status output, or the canonical session tail. The view can remain useful when compact mode has no diagnostic transcript. The canonical child session is the ordinary recovery record; use the status/session pointers to inspect or resume a paused or failed run.
+The historical model-facing transcript status view is retired. Status returns bounded lifecycle diagnostics and recovery/session references; inspect the retained output, canonical child session, or debug artifacts directly when a failure needs more context. Compact foreground results retain only a bounded stderr tail; async `output-N.log` already retains raw stderr regardless of profile.
 
 For a failure that requires the diagnostic child transcript or surrounding child protocol, set the human-owned profile before reproducing it. Result/status diagnostics retain a bounded stderr tail, while `output-N.log` already retains raw stderr for both awaited and detached runs regardless of profile.
 
@@ -513,7 +511,7 @@ Useful diagnostics:
 - `tlh doctor` checks installer-owned profile resources without writing.
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics, including the shared run ceiling and fresh-per-spawn role-deadline policy.
-- `subagent({ action: "status", id: "..." })` reports the selected active run and its children; use `view: "transcript"` with optional `lines: 1` through `500` to inspect retained output.
+- `subagent({ action: "status", id: "..." })` reports the selected active run and its children; inspect retained output and canonical session references from the status artifact paths.
 - When parallel work is rejected or queued, inspect `parallel.maxTasks` and `parallel.concurrency` in the active config.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.

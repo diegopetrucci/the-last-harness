@@ -1103,15 +1103,3 @@ export function recoverStoppedLifecycleOwnership(
   };
   return { status: repaired, repaired: true, pidLiveness };
 }
-
-export function normalizeActiveRuntimeMs(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value))
-    : undefined;
-}
-
-export function normalizeActiveRuntimeCheckpointAt(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
-    : undefined;
-}
